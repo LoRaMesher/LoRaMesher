@@ -1,0 +1,22 @@
+{
+  "name": "LoRaMesher",
+  "version": "0.0.1",
+  "description": "A mesh network for LoRa",
+  "keywords": "lora, mesh, network",
+  "authors":
+  [
+    {
+      "name": "Roger Pueyo"
+    },
+    {
+      "name": "Sergi Miralles"
+    }
+  ],
+  "dependencies": {
+	"arkhipenko/TaskScheduler": "^3.2.2",
+	"thijse/ArduinoLog": "^1.0.3",
+	"jgromes/RadioLib": "^4.3.0"
+  },
+  "frameworks": "arduino",
+  "platforms": "*"
+}
