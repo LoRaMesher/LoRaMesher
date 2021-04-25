@@ -2,8 +2,7 @@
 #define __LORAMESHER__
 
 // LoRa libraries
-//#include <SPI.h>
-#include <LoRa.h>
+#include "RadioLib.h"
 
 // WiFi libraries
 #include <WiFi.h>
@@ -81,10 +80,27 @@ struct routableNode
 
 
 
+// Packet types
+#define HELLO_P 0x04
+#define DATA_P  0x03
+
+
+
 class LoraMesher{
 
     private:
-
+        // Packet definition (BETA)
+        struct packet
+        {
+          uint8_t dst;
+          uint8_t src;
+          uint8_t type;
+          uint32_t payload;
+          uint8_t sizExtra;
+          uint8_t address[20];
+          int32_t metric [20];
+        };
+        
         routableNode routingTable[RTMAXSIZE];
 
         byte localAddress;
@@ -102,10 +118,11 @@ class LoraMesher{
         byte broadcastAddress;
         int metric;
 
+        SX1276 *radio;
+
         void initializeLocalAddress();
         void initializeLoRa();
         void sendHelloPacket();
-        void onReceive(int packetSize);
         bool isNodeInRoutingTable(byte address);
         void addNeighborToRoutingTable(byte neighborAddress, int helloID);
         int knownNodes();
@@ -121,8 +138,9 @@ class LoraMesher{
         void sendDataPacket();
         void printRoutingTable();
         int routingTableSize();
+        void onReceive();
 
-        void poll();
+
 
 
 

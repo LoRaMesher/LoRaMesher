@@ -14,16 +14,15 @@ LoraMesher::LoraMesher(){
   initializeLocalAddress();
   initializeLoRa();
   sendHelloPacket();
+  Log.verbose(F("Initiaization DONE, starting receiving packets..." CR));
+  int res = radio->startReceive();
+  if (res != 0) Log.error(F("Receiving on constructor gave error: %d" CR), res);
+
   
 }
 
 LoraMesher::~LoraMesher(){
 
-}
-
-
-void LoraMesher::poll(){
-  onReceive(LoRa.parsePacket());
 }
 
 
@@ -39,116 +38,125 @@ void LoraMesher::initializeLocalAddress () {
 void LoraMesher::initializeLoRa () {
   Log.trace(F("LoRa module initialization..." CR));
 
-  // LoRa SPI pins initialization
-  SPI.begin(SCK, MISO, MOSI, SS);
-
-  // LoRa transceiver pins setup
-  LoRa.setPins(SS, RST, DIO0);
-  while (!LoRa.begin(BAND)) {
-    Log.error(F("LoRa.begin(BAND) failed. Retrying..." CR));
-    delay (1000);
+  // TODO: Optimize memory, this could lead to heap fragmentation
+  Log.verbose(F("Initializing Radiolib" CR));
+  Module *mod = new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_IO1);
+  radio = new SX1276(mod);
+  if (radio == NULL) 
+  {
+      Log.error(F("Radiolib not initialized properly" CR));
   }
 
-  //LoRa.setSpreadingFactor(LORASF);
+  // Set up the radio parameters
+  Log.verbose(F("Initializing radio" CR));
+  int res = radio->begin(868.0);
+  if (res != 0)
+  {
+    Log.error(F("Radio module gave error: %d" CR), res);
+  }
 
+  Log.verbose(F("Setting up callback function" CR));
+  //attachInterrupt(LORA_IRQ, std::bind(&LoraMesher::onReceive, this), FALLING);
+  radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
+  
   Log.trace(F("LoRa module initialization DONE" CR));
-
-
+  
   delay (1000);
 }
 
 
 void LoraMesher::sendHelloPacket() {
 
-  byte packetType = 0x04;
-
   Log.trace(F("Sending HELLO packet %d" CR), helloCounter);
 
-  //Send LoRa packet to receiver
-  LoRa.beginPacket();                   // start packet
-  LoRa.write(broadcastAddress);         // add destination address
-  LoRa.write(localAddress);             // add sender address
-  LoRa.write(packetType);               // packet type
-  LoRa.write(helloCounter);             // add message ID
+  packet tx;
+  tx.dst = broadcastAddress;
+  tx.src = localAddress;
+  tx.type = HELLO_P;
+  tx.payload = helloCounter;
+  tx.sizExtra = routingTableSize();
 
-  switch (metric) {
-    case HOPCOUNT:
-      for (int i = 0; i < routingTableSize(); i++) {
-        LoRa.write(routingTable[i].address);
-        LoRa.write(routingTable[i].metric);
-      }
-      break;
-    case RSSISUM:
-      break;
+  for (size_t i = 0; i < routingTableSize(); i++)
+  {
+    tx.address[i] = routingTable[i].address;
+    tx.metric[i] = routingTable[i].metric;
+    
   }
-
-
-  LoRa.endPacket();                     // finish packet and send it
-
-  Log.trace("HELLO packet sended" CR);
-
+  
+  int res = radio->transmit((uint8_t *)&tx, sizeof(tx));
+  if (res != 0)
+  {
+    Log.error(F("Transmit hello gave error: %d" CR), res);
+  }
+  else{
+    Log.trace("HELLO packet sended" CR);
+  }
   helloCounter++;
 }
 
 
 void LoraMesher::sendDataPacket() {
 
-  byte packetType = 0x03;
-  String outMessage = String("Data packet");
-
   Log.trace(F("Sending DATA packet %d" CR), dataCounter);
 
-  //Send LoRa packet to receiver
-  LoRa.beginPacket();                   // start packet
-  LoRa.write(broadcastAddress);         // add destination address
-  LoRa.write(localAddress);             // add sender address
-  LoRa.write(packetType);             // add message ID
-  LoRa.write(dataCounter);             // add message ID
-  //LoRa.write(outMessage.length());    // add payload length
-  LoRa.print(outMessage);               // add payload
-  LoRa.endPacket();                     // finish packet and send it
+  packet tx;
+  tx.dst = broadcastAddress;
+  tx.src = localAddress;
+  tx.type = DATA_P;
+  tx.payload = dataCounter;
 
-  Log.trace("Data packet sended" CR);
+  int res = radio->transmit((uint8_t *)&tx, sizeof(tx));
+  if (res != 0)
+  {
+    Log.error(F("Transmit data gave error: %d" CR), res);
+  }
+  else{
+    Log.trace("Data packet sended" CR);
+  }
 
   dataCounter++;
+  res = radio->startReceive();
+  if (res != 0) Log.error(F("Receiving on datapacket gave error: %d" CR), res);
 }
 
-
-void LoraMesher::onReceive(int packetSize) {
-  if (packetSize == 0)
+// TODO: This routine can not be so large as it's the ISR
+void IRAM_ATTR LoraMesher::onReceive() {
+  
+  int packetSize = radio->getPacketLength();
+  if (packetSize == 0){
+    Log.warning(F("Empty packet received" CR));
     return;
-
+  }
+  
   receivedPackets++;
 
-  int rssi = LoRa.packetRssi();
-  int snr = LoRa.packetSnr();
+  int rssi = radio->getRSSI();
+  int snr = radio->getSNR();
+  Log.trace("Received packet" CR);
+  Log.trace(F("Receiving LoRa packet %d: Size: %d RSSI: %d SNR: %d" CR), receivedPackets, packetSize ,rssi, snr);
+  packet rx;
+  int res = radio->readData((uint8_t*)&rx, sizeof(rx));
+  if (res != 0){
+    Log.error(F("Reading packet data gave error: %d" CR), res);
+  }
+  if (rx.dst == broadcastAddress) {
+    if (rx.type == HELLO_P) {
+      int helloseqnum = rx.payload;
 
-  Log.trace(F("Receiving LoRa packet %d: RSSI: %d SNR: %d" CR), receivedPackets, rssi, snr);
-
-  // read packet header bytes:
-  byte destination = LoRa.read();       // destination address
-  byte sender = LoRa.read();            // sender address
-  byte packetType = LoRa.read();        // packet type
-
-  if (destination == broadcastAddress) {
-    if (packetType == 0x04) {
-      int helloseqnum = LoRa.read();
-
-      Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, sender);
+      Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx.src);
 
       switch (metric) {
         
         case HOPCOUNT:
-          processRoute(localAddress, helloseqnum, rssi, snr, sender, 1);
-          if (!isNodeInRoutingTable(sender)) {
-            Log.verbose(F("Adding new neighbour %X to the routing table" CR), sender);
+          processRoute(localAddress, helloseqnum, rssi, snr, rx.src, 1);
+          if (!isNodeInRoutingTable(rx.src)) {
+            Log.verbose(F("Adding new neighbour %X to the routing table" CR), rx.src);
           }
-          while (LoRa.available()) {
-            byte addr = LoRa.read();
-            int mtrc = LoRa.read();
-            mtrc = mtrc + 1; // Add one hop to the received metric
-            processRoute(sender, helloseqnum, rssi, snr, addr, mtrc);
+
+          for (size_t i = 0; i < rx.sizExtra; i++) {
+            processRoute(rx.src, helloseqnum, rssi, snr, rx.address[i], rx.metric[i]+1);
           }
+
           printRoutingTable();
           break;
 
@@ -156,30 +164,26 @@ void LoraMesher::onReceive(int packetSize) {
           break;
       }
     }
-    else if (packetType == 0x03) {
+    else if (rx.type == DATA_P) {
       Log.verbose(F("Data broadcast message:" CR));
-      String inMessage = "";
-      while (LoRa.available()) {
-        inMessage += (char)LoRa.read();
-      }
-      Log.verbose(F("PAYLOAD: %s" CR), inMessage);
+      Log.verbose(F("PAYLOAD: %X" CR), rx.payload);
     }
     else {
       Log.verbose(F("Random broadcast message... ignoring." CR));
     }
   }
 
-  else if (destination == localAddress) {
-    if ( packetType == 0x03 ) {
-      Log.trace(F("Data packet from %X for me" CR), sender);
+  else if (rx.dst == localAddress) {
+    if ( rx.payload == DATA_P) {
+      Log.trace(F("Data packet from %X for me" CR), rx.src);
     }
-    else if ( packetType == 0x04) {
-      Log.trace(F("HELLO packet from %X for me" CR), sender);
+    else if ( rx.payload == HELLO_P) {
+      Log.trace(F("HELLO packet from %X for me" CR), rx.src);
     }
   }
 
   else {
-    Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), sender, destination);
+    Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx.src, rx.dst);
   }
 }
 
@@ -247,6 +251,8 @@ void LoraMesher::DataCallback() {
   }
 }
 
+
+// TODO: Run this routine frequently
 void LoraMesher::HelloCallback() {
   Log.verbose(F("HELLO callback at t=%l milis" CR), millis());
 
