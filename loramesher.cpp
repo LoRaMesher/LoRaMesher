@@ -116,7 +116,7 @@ void LoraMesher::sendDataPacket() {
 
   dataCounter++;
   res = radio->startReceive();
-  if (res != 0) Log.error(F("Receiving on datapacket gave error: %d" CR), res);
+  if (res != 0) Log.error(F("Starting listening after sending datapacket gave ERROR: %d" CR), res);
 }
 
 // TODO: This routine can not be so large as it's the ISR
@@ -127,12 +127,13 @@ void IRAM_ATTR LoraMesher::onReceive() {
     Log.warning(F("Empty packet received" CR));
     return;
   }
-  
+
   receivedPackets++;
 
+  //TODO: This two variables should be float, not int. We need to redefine all the functions that use this variables
   int rssi = radio->getRSSI();
   int snr = radio->getSNR();
-  Log.trace("Received packet" CR);
+  
   Log.trace(F("Receiving LoRa packet %d: Size: %d RSSI: %d SNR: %d" CR), receivedPackets, packetSize ,rssi, snr);
   packet rx;
   int res = radio->readData((uint8_t*)&rx, sizeof(rx));

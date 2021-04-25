@@ -8,6 +8,7 @@
 #include <WiFi.h>
 
 // Logger
+//#define DISABLE_LOGGING
 #include <ArduinoLog.h>
 
 // LoRa transceiver module pins
