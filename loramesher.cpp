@@ -93,7 +93,6 @@ void LoraMesher::sendHelloPacket() {
     {
       tx.address[i] = routingTable[i].address;
       tx.metric[i] = routingTable[i].metric;
-      
     }
     Log.trace(F("About to transmit HELLO packet" CR));
     int res = radio->transmit((uint8_t *)&tx, sizeof(tx));
