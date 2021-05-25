@@ -121,8 +121,11 @@ class LoraMesher{
 
         SX1276 *radio;
 
+        TaskHandle_t Hello_TaskHandle;
+
         void initializeLocalAddress();
         void initializeLoRa();
+        void initializeNetwork();
         void sendHelloPacket();
         bool isNodeInRoutingTable(byte address);
         void addNeighborToRoutingTable(byte neighborAddress, int helloID);
@@ -140,6 +143,7 @@ class LoraMesher{
         void printRoutingTable();
         int routingTableSize();
         void onReceive();
+        uint8_t getLocalAddress();
 
 
 

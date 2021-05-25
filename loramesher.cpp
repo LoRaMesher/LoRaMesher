@@ -13,7 +13,8 @@ LoraMesher::LoraMesher(){
   dataCounter = 0;
   initializeLocalAddress();
   initializeLoRa();
-  sendHelloPacket();
+  initializeNetwork();
+  delay(1000);
   Log.verbose(F("Initiaization DONE, starting receiving packets..." CR));
   int res = radio->startReceive();
   if (res != 0) Log.error(F("Receiving on constructor gave error: %d" CR), res);
@@ -22,7 +23,20 @@ LoraMesher::LoraMesher(){
 }
 
 LoraMesher::~LoraMesher(){
+  vTaskDelete(Hello_TaskHandle);
+  radio->clearDio0Action();
+  radio->reset();
+}
 
+void LoraMesher::initializeNetwork(){
+  xTaskCreate(
+			[](void* o){ static_cast<LoraMesher*>(o)->sendHelloPacket(); },
+			"Hello routine",
+			4096,
+			this,
+			1,
+      &Hello_TaskHandle  
+  );
 }
 
 
@@ -56,7 +70,6 @@ void LoraMesher::initializeLoRa () {
   }
 
   Log.verbose(F("Setting up callback function" CR));
-  //attachInterrupt(LORA_IRQ, std::bind(&LoraMesher::onReceive, this), FALLING);
   radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
   
   Log.trace(F("LoRa module initialization DONE" CR));
@@ -66,32 +79,38 @@ void LoraMesher::initializeLoRa () {
 
 
 void LoraMesher::sendHelloPacket() {
+  for (;;){
+    Log.trace(F("Sending HELLO packet %d" CR), helloCounter);
+    delay(100);
+    packet tx;
+    tx.dst = broadcastAddress;
+    tx.src = localAddress;
+    tx.type = HELLO_P;
+    tx.payload = helloCounter;
+    tx.sizExtra = routingTableSize();
 
-  Log.trace(F("Sending HELLO packet %d" CR), helloCounter);
+    for (size_t i = 0; i < routingTableSize(); i++)
+    {
+      tx.address[i] = routingTable[i].address;
+      tx.metric[i] = routingTable[i].metric;
+      
+    }
+    Log.trace(F("About to transmit HELLO packet" CR));
+    int res = radio->transmit((uint8_t *)&tx, sizeof(tx));
+    if (res != 0)
+    {
+      Log.error(F("Transmit hello gave error: %d" CR), res);
+    }
+    else{
+      Log.trace("HELLO packet sended" CR);
+    }
+    helloCounter++;
 
-  packet tx;
-  tx.dst = broadcastAddress;
-  tx.src = localAddress;
-  tx.type = HELLO_P;
-  tx.payload = helloCounter;
-  tx.sizExtra = routingTableSize();
-
-  for (size_t i = 0; i < routingTableSize(); i++)
-  {
-    tx.address[i] = routingTable[i].address;
-    tx.metric[i] = routingTable[i].metric;
-    
+    res = radio->startReceive();
+    if (res != 0) Log.error(F("Receiving on end of HELLO packet transmision gave error: %d" CR), res);
+    //TODO: Change this to vTaskDelayUntil to prevent sending too many packets as this is not considering normal data packets sent for legal purposes
+    vTaskDelay(30000/portTICK_PERIOD_MS);
   }
-  
-  int res = radio->transmit((uint8_t *)&tx, sizeof(tx));
-  if (res != 0)
-  {
-    Log.error(F("Transmit hello gave error: %d" CR), res);
-  }
-  else{
-    Log.trace("HELLO packet sended" CR);
-  }
-  helloCounter++;
 }
 
 
@@ -130,9 +149,9 @@ void IRAM_ATTR LoraMesher::onReceive() {
 
   receivedPackets++;
 
-  //TODO: This two variables should be float, not int. We need to redefine all the functions that use this variables
-  int rssi = radio->getRSSI();
-  int snr = radio->getSNR();
+  //TODO: We can't call this inside the ISR, we need to move the code outside of a ISR for different reasons.
+  int rssi = 0;//radio->getRSSI();
+  int snr = 0;//radio->getSNR();
   
   Log.trace(F("Receiving LoRa packet %d: Size: %d RSSI: %d SNR: %d" CR), receivedPackets, packetSize ,rssi, snr);
   packet rx;
@@ -186,6 +205,9 @@ void IRAM_ATTR LoraMesher::onReceive() {
   else {
     Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx.src, rx.dst);
   }
+  Log.verbose(F("Starting to listen again after receiving a packet" CR));
+  res = radio->startReceive();
+  if (res != 0) Log.error(F("Receiving on end of listener gave error: %d" CR), res);
 }
 
 bool LoraMesher::isNodeInRoutingTable(byte address) {
@@ -195,6 +217,10 @@ bool LoraMesher::isNodeInRoutingTable(byte address) {
     }
   }
   return false;
+}
+
+uint8_t LoraMesher::getLocalAddress(){
+  return this->localAddress;
 }
 
 void LoraMesher::addNeighborToRoutingTable(byte neighborAddress, int helloID) {
@@ -248,37 +274,6 @@ void LoraMesher::DataCallback() {
 
     Log.verbose(F("Scheduling next DATA packet in %d ms" CR), 2 * timeToNextPacket / 1000);
 
-    //HelloTask.setInterval(2 * (timeToNextPacket) / 1000);
-  }
-}
-
-
-// TODO: Run this routine frequently
-void LoraMesher::HelloCallback() {
-  Log.verbose(F("HELLO callback at t=%l milis" CR), millis());
-
-  if (dutyCycleEnd < micros()) {
-    unsigned long transmissionStart = micros();
-
-    sendHelloPacket();
-
-    unsigned long transmissionEnd = micros();
-
-    unsigned long timeToNextPacket = 0;
-
-    // Avoid micros() rollover
-    if ( transmissionEnd < transmissionStart ) {
-      timeToNextPacket = 99 * (timeToNextPacket - 1 - transmissionStart + transmissionEnd);
-    }
-    // Default behaviour
-    else {
-      timeToNextPacket = 99 * (micros() - transmissionStart);
-    }
-
-    dutyCycleEnd = millis() + timeToNextPacket / 1000 + 1;
-
-
-    Log.verbose(F("Scheduling next DATA packet in %d ms" CR), 2 * timeToNextPacket / 1000);
     //HelloTask.setInterval(2 * (timeToNextPacket) / 1000);
   }
 }

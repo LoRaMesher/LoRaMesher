@@ -13,9 +13,8 @@
     }
   ],
   "dependencies": {
-	"arkhipenko/TaskScheduler": "^3.2.2",
-	"thijse/ArduinoLog": "^1.0.3",
-	"jgromes/RadioLib": "^4.3.0"
+    "thijse/ArduinoLog": "^1.0.3",
+    "jgromes/RadioLib": "^4.3.0"
   },
   "frameworks": "arduino",
   "platforms": "*"
