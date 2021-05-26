@@ -34,7 +34,7 @@ void LoraMesher::initializeNetwork(){
 			"Hello routine",
 			4096,
 			this,
-			1,
+			0,
       &Hello_TaskHandle  
   );
 }
@@ -81,7 +81,7 @@ void LoraMesher::initializeLoRa () {
 void LoraMesher::sendHelloPacket() {
   for (;;){
     Log.trace(F("Sending HELLO packet %d" CR), helloCounter);
-    delay(100);
+    radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
     packet tx;
     tx.dst = broadcastAddress;
     tx.src = localAddress;
@@ -95,6 +95,7 @@ void LoraMesher::sendHelloPacket() {
       tx.metric[i] = routingTable[i].metric;
     }
     Log.trace(F("About to transmit HELLO packet" CR));
+    //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
     int res = radio->transmit((uint8_t *)&tx, sizeof(tx));
     if (res != 0)
     {
@@ -105,6 +106,7 @@ void LoraMesher::sendHelloPacket() {
     }
     helloCounter++;
 
+    radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
     res = radio->startReceive();
     if (res != 0) Log.error(F("Receiving on end of HELLO packet transmision gave error: %d" CR), res);
     //TODO: Change this to vTaskDelayUntil to prevent sending too many packets as this is not considering normal data packets sent for legal purposes
@@ -116,6 +118,7 @@ void LoraMesher::sendHelloPacket() {
 void LoraMesher::sendDataPacket() {
 
   Log.trace(F("Sending DATA packet %d" CR), dataCounter);
+  radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
 
   packet tx;
   tx.dst = broadcastAddress;
@@ -133,6 +136,8 @@ void LoraMesher::sendDataPacket() {
   }
 
   dataCounter++;
+
+  radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
   res = radio->startReceive();
   if (res != 0) Log.error(F("Starting listening after sending datapacket gave ERROR: %d" CR), res);
 }
