@@ -24,19 +24,23 @@ LoraMesher::LoraMesher(){
 
 LoraMesher::~LoraMesher(){
   vTaskDelete(Hello_TaskHandle);
+  vTaskDelete(ReceivePacket_TaskHandle);
   radio->clearDio0Action();
   radio->reset();
 }
 
 void LoraMesher::initializeNetwork(){
-  xTaskCreate(
+  int res = xTaskCreate(
 			[](void* o){ static_cast<LoraMesher*>(o)->sendHelloPacket(); },
 			"Hello routine",
 			4096,
 			this,
 			0,
-      &Hello_TaskHandle  
+      &Hello_TaskHandle
   );
+  if (res != pdPASS){
+    Log.error(F("Hello Task creation gave error: %d" CR), res);
+  }
 }
 
 
@@ -67,6 +71,19 @@ void LoraMesher::initializeLoRa () {
   if (res != 0)
   {
     Log.error(F("Radio module gave error: %d" CR), res);
+  }
+
+  Log.verbose(F("Setting up receiving task" CR));
+  res = xTaskCreate(
+			[](void* o){ static_cast<LoraMesher*>(o)->receivingRoutine(); },
+			"Receiving routine",
+			4096,
+			this,
+			0,
+      &ReceivePacket_TaskHandle
+  );
+  if (res != pdPASS){
+    Log.error(F("Hello Task creation gave error: %d" CR), res);
   }
 
   Log.verbose(F("Setting up callback function" CR));
@@ -142,76 +159,102 @@ void LoraMesher::sendDataPacket() {
   if (res != 0) Log.error(F("Starting listening after sending datapacket gave ERROR: %d" CR), res);
 }
 
-// TODO: This routine can not be so large as it's the ISR
 void IRAM_ATTR LoraMesher::onReceive() {
-  
-  int packetSize = radio->getPacketLength();
-  if (packetSize == 0){
-    Log.warning(F("Empty packet received" CR));
-    return;
-  }
 
-  receivedPackets++;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-  //TODO: We can't call this inside the ISR, we need to move the code outside of a ISR for different reasons.
-  int rssi = 0;//radio->getRSSI();
-  int snr = 0;//radio->getSNR();
-  
-  Log.trace(F("Receiving LoRa packet %d: Size: %d RSSI: %d SNR: %d" CR), receivedPackets, packetSize ,rssi, snr);
+  xTaskNotifyFromISR(
+    ReceivePacket_TaskHandle,
+    0,
+    eSetValueWithoutOverwrite,
+    &xHigherPriorityTaskWoken
+  );
+
+  if (xHigherPriorityTaskWoken == pdTRUE)
+    portYIELD_FROM_ISR();
+}
+
+void LoraMesher::receivingRoutine(){
+  BaseType_t TWres;
+  int packetSize;
+  int rssi, snr, res, helloseqnum;
   packet rx;
-  int res = radio->readData((uint8_t*)&rx, sizeof(rx));
-  if (res != 0){
-    Log.error(F("Reading packet data gave error: %d" CR), res);
-  }
-  if (rx.dst == broadcastAddress) {
-    if (rx.type == HELLO_P) {
-      int helloseqnum = rx.payload;
+  for (;;){
+    TWres = xTaskNotifyWait(
+      pdFALSE,
+      ULONG_MAX,
+      NULL,
+      portMAX_DELAY // The most amount of time possible
+    );
 
-      Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx.src);
+    if (TWres == pdPASS){
+      packetSize = radio->getPacketLength();
+      if (packetSize == 0)
+        Log.warning(F("Empty packet received" CR));
 
-      switch (metric) {
+      else{
+        receivedPackets++;
+
+        rssi = radio->getRSSI();
+        snr = radio->getSNR();
         
-        case HOPCOUNT:
-          processRoute(localAddress, helloseqnum, rssi, snr, rx.src, 1);
-          if (!isNodeInRoutingTable(rx.src)) {
-            Log.verbose(F("Adding new neighbour %X to the routing table" CR), rx.src);
+        Log.notice(F("Receiving LoRa packet %d: Size: %d RSSI: %d SNR: %d" CR), receivedPackets, packetSize ,rssi, snr);
+        res = radio->readData((uint8_t*)&rx, sizeof(rx));
+        if (res != 0){
+          Log.error(F("Reading packet data gave error: %d" CR), res);
+        }
+        if (rx.dst == broadcastAddress) {
+          if (rx.type == HELLO_P) {
+            helloseqnum = rx.payload;
+
+            Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx.src);
+
+            switch (metric) {
+
+              case HOPCOUNT:
+                processRoute(localAddress, helloseqnum, rssi, snr, rx.src, 1);
+                if (!isNodeInRoutingTable(rx.src)) {
+                  Log.verbose(F("Adding new neighbour %X to the routing table" CR), rx.src);
+                }
+
+                for (size_t i = 0; i < rx.sizExtra; i++) {
+                  processRoute(rx.src, helloseqnum, rssi, snr, rx.address[i], rx.metric[i]+1);
+                }
+
+                printRoutingTable();
+                break;
+
+              case RSSISUM:
+                break;
+            }
           }
-
-          for (size_t i = 0; i < rx.sizExtra; i++) {
-            processRoute(rx.src, helloseqnum, rssi, snr, rx.address[i], rx.metric[i]+1);
+          else if (rx.type == DATA_P) {
+            Log.verbose(F("Data broadcast message:" CR));
+            Log.verbose(F("PAYLOAD: %X" CR), rx.payload);
           }
+          else {
+            Log.verbose(F("Random broadcast message... ignoring." CR));
+          }
+        }
 
-          printRoutingTable();
-          break;
+        else if (rx.dst == localAddress) {
+          if ( rx.payload == DATA_P) {
+            Log.trace(F("Data packet from %X for me" CR), rx.src);
+          }
+          else if ( rx.payload == HELLO_P) {
+            Log.trace(F("HELLO packet from %X for me" CR), rx.src);
+          }
+        }
 
-        case RSSISUM:
-          break;
+        else {
+          Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx.src, rx.dst);
+        }
+        Log.verbose(F("Starting to listen again after receiving a packet" CR));
+        res = radio->startReceive();
+        if (res != 0) Log.error(F("Receiving on end of listener gave error: %d" CR), res);
       }
     }
-    else if (rx.type == DATA_P) {
-      Log.verbose(F("Data broadcast message:" CR));
-      Log.verbose(F("PAYLOAD: %X" CR), rx.payload);
-    }
-    else {
-      Log.verbose(F("Random broadcast message... ignoring." CR));
-    }
   }
-
-  else if (rx.dst == localAddress) {
-    if ( rx.payload == DATA_P) {
-      Log.trace(F("Data packet from %X for me" CR), rx.src);
-    }
-    else if ( rx.payload == HELLO_P) {
-      Log.trace(F("HELLO packet from %X for me" CR), rx.src);
-    }
-  }
-
-  else {
-    Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx.src, rx.dst);
-  }
-  Log.verbose(F("Starting to listen again after receiving a packet" CR));
-  res = radio->startReceive();
-  if (res != 0) Log.error(F("Receiving on end of listener gave error: %d" CR), res);
 }
 
 bool LoraMesher::isNodeInRoutingTable(byte address) {

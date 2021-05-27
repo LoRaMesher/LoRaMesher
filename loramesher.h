@@ -122,6 +122,7 @@ class LoraMesher{
         SX1276 *radio;
 
         TaskHandle_t Hello_TaskHandle;
+        TaskHandle_t ReceivePacket_TaskHandle;
 
         void initializeLocalAddress();
         void initializeLoRa();
@@ -143,6 +144,7 @@ class LoraMesher{
         void printRoutingTable();
         int routingTableSize();
         void onReceive();
+        void receivingRoutine();
         uint8_t getLocalAddress();
 
 
