@@ -23,7 +23,7 @@
 // 433E6 for Asia
 // 866E6 for Europe
 // 915E6 for North America
-#define BAND 866E6
+#define BAND 868.0
 #define LORASF 7 // Spreading factor 6-12 (default 7)
 
 // SSD1306 OLED display pins
@@ -60,97 +60,87 @@
 #define OLED_SCL 22
 #endif
 
-
-
 // Routing table max size
 #define RTMAXSIZE 256
+#define MAXPAYLOADSIZE 200 //In bytes
 
-
-struct routableNode
-{
-  byte address = 0;
-  int metric;
-  int lastSeqNo;
-  unsigned long timeout;
-  byte via;
+struct routableNode {
+  uint16_t address = 0;
+  uint8_t metric = 0;
+  int lastSeqNo = 0;
+  unsigned long timeout = 0;
+  uint16_t via = 0;
 };
 
 // Metric
 #define HOPCOUNT 0
 #define RSSISUM 1
 
-
-
 // Packet types
 #define HELLO_P 0x04
-#define DATA_P  0x03
+#define DATA_P 0x03
 
+class LoraMesher {
 
+private:
+  // Packet definition (BETA)
+#pragma pack(1)
+  struct packet {
+    uint16_t dst; //TODO: uint32_t
+    uint16_t src; //TODO: uint32_t
+    uint8_t type;
+    uint8_t sizExtra = 0;
+    uint16_t address[20];
+    uint8_t metric[20];
+    uint8_t payloadSize = 0;
+    uint32_t payload[];
+  };
 
-class LoraMesher{
+  routableNode routingTable[RTMAXSIZE];
+  const size_t MAXPAYLOAD = MAXPAYLOADSIZE / sizeof(LoraMesher::packet::payload[0]);
+  uint16_t localAddress;
+  // LoRa packets counter
+  int helloCounter;
+  int receivedPackets;
+  int dataCounter;
+  // Duty cycle end
+  unsigned long dutyCycleEnd;
+  // Time for last HELLO packet
+  unsigned long lastSendTime;
+  // Routable node timeout (µs)
+  unsigned long routeTimeout;
+  // LoRa broadcast address
+  uint16_t broadcastAddress;
+  uint8_t metric;
 
-    private:
-        // Packet definition (BETA)
-        struct packet
-        {
-          uint8_t dst;
-          uint8_t src;
-          uint8_t type;
-          uint32_t payload;
-          uint8_t sizExtra;
-          uint8_t address[20];
-          int32_t metric [20];
-        };
-        
-        routableNode routingTable[RTMAXSIZE];
+  SX1276* radio;
 
-        byte localAddress;
-        // LoRa packets counter
-        int helloCounter;
-        int receivedPackets;
-        int dataCounter;
-        // Duty cycle end
-        unsigned long dutyCycleEnd;
-        // Time for last HELLO packet
-        unsigned long lastSendTime ;
-        // Routable node timeout (µs)
-        unsigned long routeTimeout;
-        // LoRa broadcast address
-        byte broadcastAddress;
-        int metric;
+  TaskHandle_t Hello_TaskHandle;
+  TaskHandle_t ReceivePacket_TaskHandle;
 
-        SX1276 *radio;
+  void initializeLocalAddress();
+  void initializeLoRa();
+  void initializeNetwork();
+  void sendHelloPacket();
+  bool isNodeInRoutingTable(byte address);
+  void AddNodeToRoutingTable(uint16_t neighborAddress, int helloID, uint8_t metric, uint16_t via);
+  void DataCallback();
+  void HelloCallback();
+  void ProcessRoute(uint16_t sender, int helloseqnum, int rssi, int snr, uint16_t addr, uint8_t mtrc);
+  struct packet* CreatePacket(uint32_t payload[], uint8_t payloadLength);
+  size_t GetPacketLength(packet* p);
+  void PrintPacket(packet* p, bool received);
 
-        TaskHandle_t Hello_TaskHandle;
-        TaskHandle_t ReceivePacket_TaskHandle;
+public:
+  LoraMesher();
+  ~LoraMesher();
 
-        void initializeLocalAddress();
-        void initializeLoRa();
-        void initializeNetwork();
-        void sendHelloPacket();
-        bool isNodeInRoutingTable(byte address);
-        void addNeighborToRoutingTable(byte neighborAddress, int helloID);
-        int knownNodes();
-        void DataCallback();
-        void HelloCallback();
-        void processRoute(byte sender, int helloseqnum, int rssi, int snr, byte addr, int mtrc);
-
-    public:
-
-        LoraMesher();
-        ~LoraMesher();
-
-        void sendDataPacket();
-        void printRoutingTable();
-        int routingTableSize();
-        void onReceive();
-        void receivingRoutine();
-        uint8_t getLocalAddress();
-
-
-
-
-
+  void sendDataPacket();
+  void printRoutingTable();
+  int routingTableSize();
+  void onReceive();
+  void receivingRoutine();
+  uint8_t getLocalAddress();
 };
 
 #endif
