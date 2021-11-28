@@ -2,7 +2,7 @@
 #include "loramesher.h"
 
 
-LoraMesher *radio;
+LoraMesher* radio;
 
 
 void setup() {

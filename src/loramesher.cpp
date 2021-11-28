@@ -5,7 +5,7 @@ LoraMesher::LoraMesher() {
   dutyCycleEnd = 0;
   lastSendTime = 0;
   routeTimeout = 10000000;
-  metric = HOPCOUNT;
+  metricType = HOPCOUNT;
   broadcastAddress = 0xFFFF;
   helloCounter = 0;
   receivedPackets = 0;
@@ -14,7 +14,7 @@ LoraMesher::LoraMesher() {
   initializeLoRa();
   initializeNetwork();
   delay(1000);
-  Log.verbose(F("Initiaization DONE, starting receiving packets..." CR));
+  Log.verbose(F("Initialization DONE, starting receiving packets..." CR));
   int res = radio->startReceive();
   if (res != 0)
     Log.error(F("Receiving on constructor gave error: %d" CR), res);
@@ -67,6 +67,10 @@ void LoraMesher::initializeLoRa() {
     Log.error(F("Radio module gave error: %d" CR), res);
   }
 
+#ifdef RELIABLE_PAYLOAD
+  radio->setCRC(true);
+#endif
+
   Log.verbose(F("Setting up receiving task" CR));
   res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
@@ -107,7 +111,7 @@ void LoraMesher::sendHelloPacket() {
     Log.trace(F("About to transmit HELLO packet" CR));
     //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
     int res = radio->transmit((uint8_t*) tx, GetPacketLength(tx));
-    delete(tx);
+    free(tx);
 
     if (res != 0) {
       Log.error(F("Transmit hello gave error: %d" CR), res);
@@ -120,9 +124,13 @@ void LoraMesher::sendHelloPacket() {
     radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
     res = radio->startReceive();
     if (res != 0)
-      Log.error(F("Receiving on end of HELLO packet transmision gave error: %d" CR), res);
+      Log.error(F("Receiving on end of HELLO packet transmission gave error: %d" CR), res);
+
     //TODO: Change this to vTaskDelayUntil to prevent sending too many packets as this is not considering normal data packets sent for legal purposes
-    vTaskDelay(30000 / portTICK_PERIOD_MS);
+    //Set random task delay between sending data.
+    //This will prevent that two microcontrollers sending data at the same time every time and one of them not received for the other ones.
+    uint32_t randomTime = esp_random() % 10000;
+    vTaskDelay(((randomTime + 30000) / portTICK_PERIOD_MS));
   }
 }
 
@@ -142,7 +150,7 @@ void LoraMesher::sendDataPacket() {
   tx->type = DATA_P;
 
   int res = radio->transmit((uint8_t*) tx, GetPacketLength(tx));
-  delete(tx);
+  free(tx);
 
   if (res != 0) {
     Log.error(F("Transmit data gave error: %d" CR), res);
@@ -203,55 +211,57 @@ void LoraMesher::receivingRoutine() {
         if (res != 0) {
           Log.error(F("Reading packet data gave error: %d" CR), res);
         }
-        if (rx->dst == broadcastAddress) {
-          PrintPacket(rx, true);
-          if (rx->type == HELLO_P) {
-            helloseqnum = rx->payload[0];
+        else {
+          if (rx->dst == broadcastAddress) {
+            PrintPacket(rx, true);
+            if (rx->type == HELLO_P) {
+              helloseqnum = rx->payload[0];
 
-            Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx->src);
+              Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx->src);
 
-            switch (metric) {
+              switch (metricType) {
 
-              case HOPCOUNT:
-                ProcessRoute(localAddress, helloseqnum, rssi, snr, rx->src, 1);
+                case HOPCOUNT:
+                  ProcessRoute(localAddress, helloseqnum, rssi, snr, rx->src, 1);
 
-                for (size_t i = 0; i < rx->sizExtra; i++)
-                  ProcessRoute(rx->src, helloseqnum, rssi, snr, rx->address[i], rx->metric[i] + 1);
+                  for (size_t i = 0; i < rx->sizExtra; i++)
+                    ProcessRoute(rx->src, helloseqnum, rssi, snr, rx->address[i], rx->metric[i] + 1);
 
-                printRoutingTable();
-                break;
+                  printRoutingTable();
+                  break;
 
-              case RSSISUM:
-                break;
+                case RSSISUM:
+                  break;
+              }
+            }
+            else if (rx->type == DATA_P) {
+              Log.verbose(F("Data broadcast message:" CR));
+              Log.verbose(F("PAYLOAD: %X" CR), rx->payload[0]);
+            }
+            else {
+              Log.verbose(F("Random broadcast message... ignoring." CR));
             }
           }
-          else if (rx->type == DATA_P) {
-            Log.verbose(F("Data broadcast message:" CR));
-            Log.verbose(F("PAYLOAD: %X" CR), rx->payload[0]);
+
+          else if (rx->dst == localAddress) {
+            if (rx->type == DATA_P) {
+              Log.trace(F("Data packet from %X for me" CR), rx->src);
+            }
+            else if (rx->type == HELLO_P) {
+              Log.trace(F("HELLO packet from %X for me" CR), rx->src);
+            }
           }
+
           else {
-            Log.verbose(F("Random broadcast message... ignoring." CR));
+            Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx->src, rx->dst);
           }
+          Log.verbose(F("Starting to listen again after receiving a packet" CR));
+          res = radio->startReceive();
+          if (res != 0)
+            Log.error(F("Receiving on end of listener gave error: %d" CR), res);
         }
 
-        else if (rx->dst == localAddress) {
-          if (rx->type == DATA_P) {
-            Log.trace(F("Data packet from %X for me" CR), rx->src);
-          }
-          else if (rx->type == HELLO_P) {
-            Log.trace(F("HELLO packet from %X for me" CR), rx->src);
-          }
-        }
-
-        else {
-          Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx->src, rx->dst);
-        }
-        Log.verbose(F("Starting to listen again after receiving a packet" CR));
-        res = radio->startReceive();
-        if (res != 0)
-          Log.error(F("Receiving on end of listener gave error: %d" CR), res);
-
-        delete(rx);
+        free(rx);
       }
     }
   }
@@ -286,7 +296,7 @@ void LoraMesher::AddNodeToRoutingTable(uint16_t address, int helloID, uint8_t me
 
 // This function should be erased as it's the user the one deciding when to send data.
 void LoraMesher::DataCallback() {
-  Log.verbose(F("DATA callback at t=%l milis" CR), millis());
+  Log.verbose(F("DATA callback at t=%l ms" CR), millis());
 
   if (dutyCycleEnd < millis()) {
     unsigned long transmissionStart = micros();
@@ -329,7 +339,7 @@ void LoraMesher::ProcessRoute(uint16_t sender, int helloseqnum, int rssi, int sn
 
   bool knownAddr = false;
 
-  switch (metric) {
+  switch (metricType) {
     case HOPCOUNT:
       if (addr != localAddress) {
         for (int i = 0; i < routingTableSize(); i++) {
@@ -367,7 +377,7 @@ void LoraMesher::printRoutingTable() {
 void LoraMesher::PrintPacket(packet* p, bool received) {
   Log.verbose(F("-----------------------------------------\n"));
   Log.verbose(F("Current Packet: %s\n"), received ? "Received" : "Sended");
-  Log.verbose(F("Destinatary: %X\n"), p->dst);
+  Log.verbose(F("Destination: %X\n"), p->dst);
   Log.verbose(F("Source: %X\n"), p->src);
   Log.verbose(F("Type: %d\n"), p->type);
   Log.verbose(F("----Routing table from packet: %d of size----\n"), p->sizExtra);

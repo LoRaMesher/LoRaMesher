@@ -26,6 +26,9 @@
 #define BAND 868.0
 #define LORASF 7 // Spreading factor 6-12 (default 7)
 
+// Comment this line if you want to remove the reliable payload
+#define RELIABLE_PAYLOAD
+
 // SSD1306 OLED display pins
 // For TTGO T3_V1.6: SDA/SCL/RST 21/22/16
 // For Heltec ESP32: SDA/SCL/RST 4/15/16
@@ -86,8 +89,8 @@ private:
   // Packet definition (BETA)
 #pragma pack(1)
   struct packet {
-    uint16_t dst; //TODO: uint32_t
-    uint16_t src; //TODO: uint32_t
+    uint16_t dst;
+    uint16_t src;
     uint8_t type;
     uint8_t sizExtra = 0;
     uint16_t address[20];
@@ -111,7 +114,7 @@ private:
   unsigned long routeTimeout;
   // LoRa broadcast address
   uint16_t broadcastAddress;
-  uint8_t metric;
+  uint8_t metricType;
 
   SX1276* radio;
 
@@ -119,16 +122,47 @@ private:
   TaskHandle_t ReceivePacket_TaskHandle;
 
   void initializeLocalAddress();
+
   void initializeLoRa();
+
   void initializeNetwork();
+
   void sendHelloPacket();
+
   bool isNodeInRoutingTable(byte address);
+
   void AddNodeToRoutingTable(uint16_t neighborAddress, int helloID, uint8_t metric, uint16_t via);
+
   void DataCallback();
+
   void HelloCallback();
+
   void ProcessRoute(uint16_t sender, int helloseqnum, int rssi, int snr, uint16_t addr, uint8_t mtrc);
+
+  /**
+   * @brief Creates a LoraMesher::packet with a specified payload
+   *
+   * @param payload Array of the payload you want to sent
+   * @param payloadLength length of the payload
+   * @return struct LoraMesher::packet*
+   */
   struct packet* CreatePacket(uint32_t payload[], uint8_t payloadLength);
+
+  /**
+   * @brief Get all the packet Length, including payload and headers
+   *
+   * @param p packet reference that you want to know the length of it
+   * @return size_t
+   */
   size_t GetPacketLength(packet* p);
+
+  /**
+ * @brief Prints the packet into the Log Verbose
+ *
+ * @param p The packet you want to print
+ * @param received If true is that you received the code, false is that you are sending this packet
+ * Used to differentiate between received and sended packets.
+ */
   void PrintPacket(packet* p, bool received);
 
 public:
