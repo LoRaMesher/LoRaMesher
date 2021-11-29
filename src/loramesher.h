@@ -67,14 +67,6 @@
 #define RTMAXSIZE 256
 #define MAXPAYLOADSIZE 200 //In bytes
 
-struct routableNode {
-  uint16_t address = 0;
-  uint8_t metric = 0;
-  int lastSeqNo = 0;
-  unsigned long timeout = 0;
-  uint16_t via = 0;
-};
-
 // Metric
 #define HOPCOUNT 0
 #define RSSISUM 1
@@ -99,8 +91,19 @@ private:
     uint32_t payload[];
   };
 
+  struct networkNode {
+    uint16_t address = 0;
+    uint8_t metric = 0;
+  };
+
+  struct routableNode {
+    LoraMesher::networkNode networkNode;
+    int lastSeqNo = 0;
+    unsigned long timeout = 0;
+    uint16_t via = 0;
+  };
+
   routableNode routingTable[RTMAXSIZE];
-  const size_t MAXPAYLOAD = MAXPAYLOADSIZE / sizeof(LoraMesher::packet::payload[0]);
   uint16_t localAddress;
   // LoRa packets counter
   int helloCounter;
@@ -131,13 +134,20 @@ private:
 
   bool isNodeInRoutingTable(byte address);
 
-  void AddNodeToRoutingTable(uint16_t neighborAddress, int helloID, uint8_t metric, uint16_t via);
-
   void DataCallback();
 
   void HelloCallback();
 
-  void ProcessRoute(uint16_t sender, int helloseqnum, int rssi, int snr, uint16_t addr, uint8_t mtrc);
+  void ProcessRoute(uint16_t via, LoraMesher::networkNode node, int helloseqnum, int rssi, int snr);
+
+  /**
+   * @brief Add node to the routing table
+   *
+   * @param node Network node that includes the address and the metric
+   * @param via Address to next hop to reach the network node address
+   * @param helloID Hello Id count
+   */
+  void AddNodeToRoutingTable(LoraMesher::networkNode node, uint16_t via, int helloID);
 
   /**
    * @brief Creates a LoraMesher::packet with a specified payload
@@ -149,21 +159,28 @@ private:
   struct packet* CreatePacket(uint32_t payload[], uint8_t payloadLength);
 
   /**
+   * @brief Create a Routing Packet adding the routing table to the payload
+   *
+   * @return struct LoraMesher::packet*
+   */
+  struct packet* CreateRoutingPacket();
+
+  /**
    * @brief Get all the packet Length, including payload and headers
    *
    * @param p packet reference that you want to know the length of it
    * @return size_t
    */
-  size_t GetPacketLength(packet* p);
+  size_t GetPacketLength(LoraMesher::packet* p);
 
   /**
- * @brief Prints the packet into the Log Verbose
- *
- * @param p The packet you want to print
- * @param received If true is that you received the code, false is that you are sending this packet
- * Used to differentiate between received and sended packets.
- */
-  void PrintPacket(packet* p, bool received);
+   * @brief Prints the packet into the Log Verbose
+   *
+   * @param p The packet you want to print
+   * @param received If true is that you received the code, false is that you are sending this packet
+   * Used to differentiate between received and sended packets.
+   */
+  void PrintPacket(LoraMesher::packet* p, bool received);
 
 public:
   LoraMesher();

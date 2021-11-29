@@ -105,8 +105,8 @@ void LoraMesher::sendHelloPacket() {
     tx->sizExtra = routingTableSize();
 
     for (size_t i = 0; i < routingTableSize(); i++) {
-      tx->address[i] = routingTable[i].address;
-      tx->metric[i] = routingTable[i].metric;
+      tx->address[i] = routingTable[i].networkNode.address;
+      tx->metric[i] = routingTable[i].networkNode.metric;
     }
     Log.trace(F("About to transmit HELLO packet" CR));
     //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
@@ -199,8 +199,8 @@ void LoraMesher::receivingRoutine() {
         Log.warning(F("Empty packet received" CR));
 
       else {
-        uint32_t payload[MAXPAYLOAD];
-        packet* rx = CreatePacket(payload, MAXPAYLOAD);
+        uint32_t payload[MAXPAYLOADSIZE];
+        packet* rx = CreatePacket(payload, MAXPAYLOADSIZE);
         receivedPackets++;
 
         rssi = radio->getRSSI();
@@ -220,14 +220,21 @@ void LoraMesher::receivingRoutine() {
               Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx->src);
 
               switch (metricType) {
-
                 case HOPCOUNT:
-                  ProcessRoute(localAddress, helloseqnum, rssi, snr, rx->src, 1);
+                  {
+                    LoraMesher::networkNode receivedNode;
+                    receivedNode.address = rx->src;
+                    receivedNode.metric = 1;
+                    ProcessRoute(localAddress, receivedNode, helloseqnum, rssi, snr);
 
-                  for (size_t i = 0; i < rx->sizExtra; i++)
-                    ProcessRoute(rx->src, helloseqnum, rssi, snr, rx->address[i], rx->metric[i] + 1);
+                    for (size_t i = 0; i < rx->sizExtra; i++) {
+                      receivedNode.address = rx->address[i];
+                      receivedNode.metric = rx->metric[i] + 1;
+                      ProcessRoute(rx->src, receivedNode, helloseqnum, rssi, snr);
+                    }
 
-                  printRoutingTable();
+                    printRoutingTable();
+                  }
                   break;
 
                 case RSSISUM:
@@ -269,7 +276,7 @@ void LoraMesher::receivingRoutine() {
 
 bool LoraMesher::isNodeInRoutingTable(byte address) {
   for (int i = 0; i < RTMAXSIZE; i++) {
-    if (routingTable[i].address == address) {
+    if (routingTable[i].networkNode.address == address) {
       return true;
     }
   }
@@ -280,15 +287,14 @@ uint8_t LoraMesher::getLocalAddress() {
   return this->localAddress;
 }
 
-void LoraMesher::AddNodeToRoutingTable(uint16_t address, int helloID, uint8_t metric, uint16_t via) {
+void LoraMesher::AddNodeToRoutingTable(LoraMesher::networkNode node, uint16_t via, int helloID) {
   for (int i = 0; i < RTMAXSIZE; i++) {
-    if (routingTable[i].address == 0) {
-      routingTable[i].address = address;
-      routingTable[i].metric = metric;
+    if (routingTable[i].networkNode.address == 0) {
+      routingTable[i].networkNode = node;
       routingTable[i].lastSeqNo = helloID;
       routingTable[i].timeout = micros() + routeTimeout;
       routingTable[i].via = via;
-      Log.verbose(F("New route added: %X via %X metric %d" CR), address, via, metric);
+      Log.verbose(F("New route added: %X via %X metric %d" CR), node.address, via, node.metric);
       break;
     }
   }
@@ -328,32 +334,32 @@ int LoraMesher::routingTableSize() {
   int size = 0;
 
   for (int i = 0; i < RTMAXSIZE; i++) {
-    if (routingTable[i].address != 0) {
+    if (routingTable[i].networkNode.address != 0) {
       size++;
     }
   }
   return size;
 }
 
-void LoraMesher::ProcessRoute(uint16_t sender, int helloseqnum, int rssi, int snr, uint16_t addr, uint8_t mtrc) {
+void LoraMesher::ProcessRoute(uint16_t via, LoraMesher::networkNode node, int helloseqnum, int rssi, int snr) {
 
   bool knownAddr = false;
 
   switch (metricType) {
     case HOPCOUNT:
-      if (addr != localAddress) {
+      if (node.address != localAddress) {
         for (int i = 0; i < routingTableSize(); i++) {
-          if (routingTable[i].address != 0 && addr == routingTable[i].address) {
+          if (routingTable[i].networkNode.address != 0 && node.address == routingTable[i].networkNode.address) {
             knownAddr = true;
-            if (mtrc < routingTable[i].metric) {
-              routingTable[i].metric = mtrc;
-              routingTable[i].via = sender;
+            if (node.metric < routingTable[i].networkNode.metric) {
+              routingTable[i].networkNode.metric = node.metric;
+              routingTable[i].via = via;
             }
             break;
           }
         }
         if (!knownAddr)
-          AddNodeToRoutingTable(addr, helloseqnum, mtrc, sender);
+          AddNodeToRoutingTable(node, via, helloseqnum);
       }
       break;
     case RSSISUM:
@@ -365,16 +371,16 @@ void LoraMesher::ProcessRoute(uint16_t sender, int helloseqnum, int rssi, int sn
 void LoraMesher::printRoutingTable() {
   Serial.println("Current routing table:");
   for (int i = 0; i < routingTableSize(); i++) {
-    Serial.print(routingTable[i].address, HEX);
+    Serial.print(routingTable[i].networkNode.address, HEX);
     Serial.print(" via ");
     Serial.print(routingTable[i].via, HEX);
     Serial.print(" metric ");
-    Serial.println(routingTable[i].metric);
+    Serial.println(routingTable[i].networkNode.metric);
   }
   Serial.println("");
 }
 
-void LoraMesher::PrintPacket(packet* p, bool received) {
+void LoraMesher::PrintPacket(LoraMesher::packet* p, bool received) {
   Log.verbose(F("-----------------------------------------\n"));
   Log.verbose(F("Current Packet: %s\n"), received ? "Received" : "Sended");
   Log.verbose(F("Destination: %X\n"), p->dst);
@@ -388,13 +394,13 @@ void LoraMesher::PrintPacket(packet* p, bool received) {
   }
   Log.verbose(F("\n"));
   Log.verbose(F("------- Payload Size: %d bytes ------\n"), p->payloadSize);
-  for (int i = 0; i < (p->payloadSize < MAXPAYLOAD ? p->payloadSize : MAXPAYLOAD); i++) //GetPacketLength(p)
+  for (int i = 0; i < (p->payloadSize < MAXPAYLOADSIZE ? p->payloadSize : MAXPAYLOADSIZE); i++) //GetPacketLength(p)
     Log.verbose(F("%d - %d --- "), i, p->payload[i]);
   Log.verbose(F("\n"));
   Log.verbose(F("-----------------------------------------\n"));
 }
 
-size_t LoraMesher::GetPacketLength(packet* p) {
+size_t LoraMesher::GetPacketLength(LoraMesher::packet* p) {
   return sizeof(LoraMesher::packet) + sizeof(LoraMesher::packet::payload[0]) * p->payloadSize;
 }
 
