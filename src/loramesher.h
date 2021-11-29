@@ -84,11 +84,8 @@ private:
     uint16_t dst;
     uint16_t src;
     uint8_t type;
-    uint8_t sizExtra = 0;
-    uint16_t address[20];
-    uint8_t metric[20];
     uint8_t payloadSize = 0;
-    uint32_t payload[];
+    uint8_t payload[];
   };
 
   struct networkNode {
@@ -103,7 +100,7 @@ private:
     uint16_t via = 0;
   };
 
-  routableNode routingTable[RTMAXSIZE];
+  LoraMesher::routableNode routingTable[RTMAXSIZE];
   uint16_t localAddress;
   // LoRa packets counter
   int helloCounter;
@@ -156,14 +153,14 @@ private:
    * @param payloadLength length of the payload
    * @return struct LoraMesher::packet*
    */
-  struct packet* CreatePacket(uint32_t payload[], uint8_t payloadLength);
+  struct LoraMesher::packet* CreatePacket(uint8_t payload[], uint8_t payloadLength);
 
   /**
    * @brief Create a Routing Packet adding the routing table to the payload
    *
    * @return struct LoraMesher::packet*
    */
-  struct packet* CreateRoutingPacket();
+  struct LoraMesher::packet* CreateRoutingPacket();
 
   /**
    * @brief Get all the packet Length, including payload and headers
@@ -172,6 +169,31 @@ private:
    * @return size_t
    */
   size_t GetPacketLength(LoraMesher::packet* p);
+
+  /**
+   * @brief Get the Payload Length
+   *
+   * @param p packet reference that you want to know the payload length of it
+   * @return size_t
+   */
+  size_t GetPayloadLength(LoraMesher::packet* p);
+
+  /**
+   * @brief Get the Number Of Nodes that are inside the packet payload
+   *
+   * @param p packet reference
+   * @return size_t
+   */
+  size_t GetNumberOfNodes(LoraMesher::packet* p);
+
+  /**
+   * @brief Get the Network Node with a given Position
+   *
+   * @param p packet
+   * @param position position that is the next network node
+   * @return LoraMesher::networkNode
+   */
+  LoraMesher::networkNode GetNetworkNodeByPosition(LoraMesher::packet* p, size_t position);
 
   /**
    * @brief Prints the packet into the Log Verbose

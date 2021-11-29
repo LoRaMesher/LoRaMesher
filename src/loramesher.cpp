@@ -95,19 +95,9 @@ void LoraMesher::sendHelloPacket() {
   for (;;) {
     Log.trace(F("Sending HELLO packet %d" CR), helloCounter);
     radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
-    uint32_t counter[1];
-    counter[0] = helloCounter;
 
-    packet* tx = CreatePacket(counter, 1);
-    tx->dst = broadcastAddress;
-    tx->src = localAddress;
-    tx->type = HELLO_P;
-    tx->sizExtra = routingTableSize();
+    packet* tx = CreateRoutingPacket();
 
-    for (size_t i = 0; i < routingTableSize(); i++) {
-      tx->address[i] = routingTable[i].networkNode.address;
-      tx->metric[i] = routingTable[i].networkNode.metric;
-    }
     Log.trace(F("About to transmit HELLO packet" CR));
     //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
     int res = radio->transmit((uint8_t*) tx, GetPacketLength(tx));
@@ -139,7 +129,7 @@ void LoraMesher::sendDataPacket() {
   Log.trace(F("Sending DATA packet %d" CR), dataCounter);
   radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
 
-  uint32_t counter[30];
+  uint8_t counter[30];
   counter[0] = dataCounter;
   for (int i = 1; i < 30; i++)
     counter[i] = i;
@@ -199,7 +189,7 @@ void LoraMesher::receivingRoutine() {
         Log.warning(F("Empty packet received" CR));
 
       else {
-        uint32_t payload[MAXPAYLOADSIZE];
+        uint8_t payload[MAXPAYLOADSIZE];
         packet* rx = CreatePacket(payload, MAXPAYLOADSIZE);
         receivedPackets++;
 
@@ -215,7 +205,7 @@ void LoraMesher::receivingRoutine() {
           if (rx->dst == broadcastAddress) {
             PrintPacket(rx, true);
             if (rx->type == HELLO_P) {
-              helloseqnum = rx->payload[0];
+              helloseqnum = rx->payload[GetPayloadLength(rx) - 1]; //TODO: Change this for a function or something
 
               Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx->src);
 
@@ -227,10 +217,10 @@ void LoraMesher::receivingRoutine() {
                     receivedNode.metric = 1;
                     ProcessRoute(localAddress, receivedNode, helloseqnum, rssi, snr);
 
-                    for (size_t i = 0; i < rx->sizExtra; i++) {
-                      receivedNode.address = rx->address[i];
-                      receivedNode.metric = rx->metric[i] + 1;
-                      ProcessRoute(rx->src, receivedNode, helloseqnum, rssi, snr);
+                    for (size_t i = 0; i < GetNumberOfNodes(rx); i++) {
+                      LoraMesher::networkNode nodes = GetNetworkNodeByPosition(rx, i);
+                      nodes.metric += 1;
+                      ProcessRoute(rx->src, nodes, helloseqnum, rssi, snr);
                     }
 
                     printRoutingTable();
@@ -386,13 +376,21 @@ void LoraMesher::PrintPacket(LoraMesher::packet* p, bool received) {
   Log.verbose(F("Destination: %X\n"), p->dst);
   Log.verbose(F("Source: %X\n"), p->src);
   Log.verbose(F("Type: %d\n"), p->type);
-  Log.verbose(F("----Routing table from packet: %d of size----\n"), p->sizExtra);
-  for (int i = 0; i < ((p->sizExtra < 20) ? p->sizExtra : 20); i++) {
-    Log.verbose(F("-- Address: %X, "), p->address[i]);
-    Log.verbose(F("via: %X, "), p->src);
-    Log.verbose(F("Metric: %d -- "), p->metric[i]);
+
+  if (p->type == HELLO_P) {
+    //Print the Routing table of the packet
+    size_t numberOfBytesNodes = GetNumberOfNodes(p);
+    Log.verbose(F("----Routing table from packet: %d of size----\n"), numberOfBytesNodes);
+    for (int i = 0; i < numberOfBytesNodes; i++) {
+      LoraMesher::networkNode node = GetNetworkNodeByPosition(p, i);
+      Log.verbose(F("-- Address: %X, "), node.address);
+      Log.verbose(F("via: %X, "), p->src);
+      Log.verbose(F("Metric: %d -- "), node.metric);
+    }
+    Log.verbose(F("\n"));
   }
-  Log.verbose(F("\n"));
+
+  //Print all the payload included Routing table if inside payload
   Log.verbose(F("------- Payload Size: %d bytes ------\n"), p->payloadSize);
   for (int i = 0; i < (p->payloadSize < MAXPAYLOADSIZE ? p->payloadSize : MAXPAYLOADSIZE); i++) //GetPacketLength(p)
     Log.verbose(F("%d - %d --- "), i, p->payload[i]);
@@ -400,22 +398,66 @@ void LoraMesher::PrintPacket(LoraMesher::packet* p, bool received) {
   Log.verbose(F("-----------------------------------------\n"));
 }
 
+LoraMesher::networkNode LoraMesher::GetNetworkNodeByPosition(LoraMesher::packet* p, size_t position) {
+  return *(LoraMesher::networkNode*) (p->payload + position * sizeof(LoraMesher::networkNode));
+}
+
 size_t LoraMesher::GetPacketLength(LoraMesher::packet* p) {
   return sizeof(LoraMesher::packet) + sizeof(LoraMesher::packet::payload[0]) * p->payloadSize;
 }
 
-struct LoraMesher::packet* LoraMesher::CreatePacket(uint32_t payload[], uint8_t payloadLength) {
-  int packetLength = sizeof(LoraMesher::packet) + payloadLength * sizeof(packet::payload[0]);
-  packet* p = (packet*) malloc(packetLength);
+size_t LoraMesher::GetPayloadLength(LoraMesher::packet* p) {
+  return p->payloadSize;
+}
+
+size_t LoraMesher::GetNumberOfNodes(LoraMesher::packet* p) {
+  //Get the number of networkNodes inside the payload
+  size_t packetLength = GetPayloadLength(p);
+  size_t counterSize = sizeof(uint8_t); //TODO: Change it for a generic type
+  return (packetLength - counterSize) / sizeof(LoraMesher::networkNode);
+}
+
+struct LoraMesher::packet* LoraMesher::CreatePacket(uint8_t payload[], uint8_t payloadLength) {
+  int packetLength = sizeof(LoraMesher::packet) + payloadLength * sizeof(LoraMesher::packet::payload[0]);
+  LoraMesher::packet* p = (LoraMesher::packet*) malloc(packetLength);
   Log.trace("Packet created with %d bytes." CR, packetLength);
 
   if (p) {
-    memcpy(p->payload, payload, payloadLength * sizeof(packet::payload[0]));
+    memcpy(p->payload, payload, payloadLength * sizeof(LoraMesher::packet::payload[0]));
     p->payloadSize = payloadLength;
 
-    //Default values --- TODO: this should be automatically done?
+    //Default values --- TODO: this should be automatically done
     p->type = 3;
-    p->sizExtra = 0;
+  }
+
+  return p;
+}
+
+//TODO: Use the CreatePacket function
+struct LoraMesher::packet* LoraMesher::CreateRoutingPacket() {
+  int routingSize = routingTableSize();
+  int routingSizeInBytes = routingSize * sizeof(LoraMesher::networkNode);
+
+  //Packet Length in bytes = Packet + Routing Table Size * (sizeof(networkNode)) + HelloCounter (sizeof(payload[0]))
+  int packetLength = sizeof(LoraMesher::packet) + routingSizeInBytes + sizeof(LoraMesher::packet::payload[0]);
+
+  LoraMesher::packet* p = (LoraMesher::packet*) malloc(packetLength);
+  Log.trace("Routing packet created with %d bytes." CR, packetLength);
+
+  if (p) {
+    for (int i = 0; i < routingSize; i++) {
+      LoraMesher::networkNode n = routingTable[i].networkNode;
+      memcpy(p->payload + i * sizeof(LoraMesher::networkNode), &n, sizeof(LoraMesher::networkNode));
+    }
+
+    //Sets the hello Counter to the Last position in the payload
+    p->payload[routingSizeInBytes] = (typeof(LoraMesher::packet::payload[0])) helloCounter;
+    p->payloadSize = routingSizeInBytes + 1;
+
+    //Default properties
+    p->dst = broadcastAddress;
+    p->src = localAddress;
+    p->type = HELLO_P;
   }
 
   return p;
