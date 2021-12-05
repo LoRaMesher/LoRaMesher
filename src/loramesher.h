@@ -67,27 +67,87 @@
 #define RTMAXSIZE 256
 #define MAXPAYLOADSIZE 200 //In bytes
 
-// Metric
-#define HOPCOUNT 0
-#define RSSISUM 1
-
 // Packet types
 #define HELLO_P 0x04
 #define DATA_P 0x03
 
+// Packet configuration
+#define BROADCAST_ADDR 0xFFFF
+
+#pragma pack(1)
 class LoraMesher {
 
-private:
-  // Packet definition (BETA)
-#pragma pack(1)
+public:
+  LoraMesher();
+  ~LoraMesher();
+
+  void sendDataPacket();
+  void printRoutingTable();
+
+  /**
+   * @brief Returns the routing table size
+   *
+   * @return int
+   */
+  int routingTableSize();
+  void onReceive();
+  void receivingRoutine();
+  uint8_t getLocalAddress();
+
+  template <typename T>
   struct packet {
     uint16_t dst;
     uint16_t src;
     uint8_t type;
     uint8_t payloadSize = 0;
-    uint8_t payload[];
+    T payload[];
   };
 
+  /**
+   * @brief Create a Packet<T>
+   *
+   * @tparam T
+   * @param dst Destination
+   * @param src Source, normally local addres, use getLocalAddress()
+   * @param type Type of packet
+   * @param payload Payload of type T
+   * @param payloadSize Length of the payload in T
+   * @return struct LoraMesher::packet<T>*
+   */
+  template <typename T>
+  struct LoraMesher::packet<T>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Create a Packet<T>
+   *
+   * @tparam T
+   * @param payload Payload of type T
+   * @param payloadSize Length of the payload in T
+   * @return struct LoraMesher::packet<T>*
+   */
+  template <typename T>
+  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Send a packet through Lora
+   *
+   * @tparam T Generic type
+   * @param p Packet
+   */
+  template <typename T>
+  void sendPacket(LoraMesher::packet<T>* p);
+
+  /**
+   * @brief Delete the packet from memory
+   *
+   * @tparam T Type of packet
+   * @param p Packet to delete
+   */
+  template <typename T>
+  void deletePacket(LoraMesher::packet<T>* p);
+
+
+private:
   struct networkNode {
     uint16_t address = 0;
     uint8_t metric = 0;
@@ -95,26 +155,19 @@ private:
 
   struct routableNode {
     LoraMesher::networkNode networkNode;
-    int lastSeqNo = 0;
     unsigned long timeout = 0;
     uint16_t via = 0;
   };
-
-  LoraMesher::routableNode routingTable[RTMAXSIZE];
+  //Routing table
+  routableNode routingTable[RTMAXSIZE];
+  //Local Address
   uint16_t localAddress;
-  // LoRa packets counter
-  int helloCounter;
-  int receivedPackets;
-  int dataCounter;
   // Duty cycle end
   unsigned long dutyCycleEnd;
   // Time for last HELLO packet
   unsigned long lastSendTime;
   // Routable node timeout (µs)
   unsigned long routeTimeout;
-  // LoRa broadcast address
-  uint16_t broadcastAddress;
-  uint8_t metricType;
 
   SX1276* radio;
 
@@ -129,71 +182,49 @@ private:
 
   void sendHelloPacket();
 
-  bool isNodeInRoutingTable(byte address);
+  // void dataCallback();
 
-  void DataCallback();
+  // void helloCallback();
 
-  void HelloCallback();
+  /**
+   * @brief process the network node, adds the node in the routing table if can
+   *
+   * @param via via address
+   * @param node networkNode
+   */
+  void processRoute(uint16_t via, LoraMesher::networkNode* node);
 
-  void ProcessRoute(uint16_t via, LoraMesher::networkNode node, int helloseqnum, int rssi, int snr);
+  /**
+   * @brief Process the network packet
+   *
+   * @param p Packet of type networkNode
+   */
+  void processRoute(LoraMesher::packet<networkNode>* p);
 
   /**
    * @brief Add node to the routing table
    *
    * @param node Network node that includes the address and the metric
    * @param via Address to next hop to reach the network node address
-   * @param helloID Hello Id count
    */
-  void AddNodeToRoutingTable(LoraMesher::networkNode node, uint16_t via, int helloID);
-
-  /**
-   * @brief Creates a LoraMesher::packet with a specified payload
-   *
-   * @param payload Array of the payload you want to sent
-   * @param payloadLength length of the payload
-   * @return struct LoraMesher::packet*
-   */
-  struct LoraMesher::packet* CreatePacket(uint8_t payload[], uint8_t payloadLength);
+  void addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t via);
 
   /**
    * @brief Create a Routing Packet adding the routing table to the payload
    *
    * @return struct LoraMesher::packet*
    */
-  struct LoraMesher::packet* CreateRoutingPacket();
+  struct LoraMesher::packet<networkNode>* createRoutingPacket();
 
   /**
-   * @brief Get all the packet Length, including payload and headers
+   * @brief Get the Packet Length
    *
-   * @param p packet reference that you want to know the length of it
-   * @return size_t
+   * @tparam T
+   * @param p Packet of Type T
+   * @return size_t Packet size in bytes
    */
-  size_t GetPacketLength(LoraMesher::packet* p);
-
-  /**
-   * @brief Get the Payload Length
-   *
-   * @param p packet reference that you want to know the payload length of it
-   * @return size_t
-   */
-  size_t GetPayloadLength(LoraMesher::packet* p);
-
-  /**
-   * @brief Get the Number Of Nodes that are inside the packet payload
-   *
-   * @param p packet reference
-   * @return size_t
-   */
-  size_t GetNumberOfNodes(LoraMesher::packet* p);
-
-  /**
-   * @brief Get the Network Node with a given Position
-   *
-   * @param p packet
-   * @param position position that is the next network node
-   * @return LoraMesher::networkNode
-   */
-  LoraMesher::networkNode GetNetworkNodeByPosition(LoraMesher::packet* p, size_t position);
+  template <typename T>
+  size_t getPacketLength(LoraMesher::packet<T>* p);
 
   /**
    * @brief Prints the packet into the Log Verbose
@@ -202,18 +233,16 @@ private:
    * @param received If true is that you received the code, false is that you are sending this packet
    * Used to differentiate between received and sended packets.
    */
-  void PrintPacket(LoraMesher::packet* p, bool received);
 
-public:
-  LoraMesher();
-  ~LoraMesher();
-
-  void sendDataPacket();
-  void printRoutingTable();
-  int routingTableSize();
-  void onReceive();
-  void receivingRoutine();
-  uint8_t getLocalAddress();
+   /**
+    * @brief Print the packet in the Log verbose, if the type is not defined it will print the payload in Hexadecimals
+    *
+    * @tparam T
+    * @param p Packet of Type T
+    * @param received If true it will print received, else will print Created
+    */
+  template <typename T>
+  void printPacket(LoraMesher::packet<T>* p, bool received);
 };
 
 #endif

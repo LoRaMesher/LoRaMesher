@@ -5,11 +5,6 @@ LoraMesher::LoraMesher() {
   dutyCycleEnd = 0;
   lastSendTime = 0;
   routeTimeout = 10000000;
-  metricType = HOPCOUNT;
-  broadcastAddress = 0xFFFF;
-  helloCounter = 0;
-  receivedPackets = 0;
-  dataCounter = 0;
   initializeLocalAddress();
   initializeLoRa();
   initializeNetwork();
@@ -91,30 +86,39 @@ void LoraMesher::initializeLoRa() {
   delay(1000);
 }
 
+template <typename T>
+void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
+  Log.trace(F("Sending packet of type %d" CR), p->type);
+  radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
+
+  Log.trace(F("About to transmit packet" CR));
+  //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
+  int res = radio->transmit((uint8_t*) p, getPacketLength(p));
+
+  if (res != 0) {
+    Log.error(F("Transmit gave error: %d" CR), res);
+  }
+  else {
+    Log.trace("Packet sended" CR);
+  }
+
+  radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
+  res = radio->startReceive();
+  if (res != 0)
+    Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
+}
+
+template <typename T>
+void LoraMesher::deletePacket(LoraMesher::packet<T>* p) {
+  // free(p->payload);
+  free(p);
+}
+
 void LoraMesher::sendHelloPacket() {
   for (;;) {
-    Log.trace(F("Sending HELLO packet %d" CR), helloCounter);
-    radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
-
-    packet* tx = CreateRoutingPacket();
-
-    Log.trace(F("About to transmit HELLO packet" CR));
-    //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
-    int res = radio->transmit((uint8_t*) tx, GetPacketLength(tx));
-    free(tx);
-
-    if (res != 0) {
-      Log.error(F("Transmit hello gave error: %d" CR), res);
-    }
-    else {
-      Log.trace("HELLO packet sended" CR);
-    }
-    helloCounter++;
-
-    radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
-    res = radio->startReceive();
-    if (res != 0)
-      Log.error(F("Receiving on end of HELLO packet transmission gave error: %d" CR), res);
+    packet<networkNode>* tx = createRoutingPacket();
+    sendPacket(tx);
+    deletePacket(tx);
 
     //TODO: Change this to vTaskDelayUntil to prevent sending too many packets as this is not considering normal data packets sent for legal purposes
     //Set random task delay between sending data.
@@ -124,38 +128,37 @@ void LoraMesher::sendHelloPacket() {
   }
 }
 
-void LoraMesher::sendDataPacket() {
+// void LoraMesher::sendDataPacket() {
 
-  Log.trace(F("Sending DATA packet %d" CR), dataCounter);
-  radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
+  // Log.trace(F("Sending DATA packet %d" CR), dataCounter);
+  // radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
 
-  uint8_t counter[30];
-  counter[0] = dataCounter;
-  for (int i = 1; i < 30; i++)
-    counter[i] = i;
+  // uint8_t counter[30];
+  // counter[0] = dataCounter;
+  // for (int i = 1; i < 30; i++)
+  //   counter[i] = i;
 
-  packet* tx = CreatePacket(counter, 30);
-  tx->dst = broadcastAddress;
-  tx->src = localAddress;
-  tx->type = DATA_P;
+  // packet* tx = CreatePacket(counter, 30);
+  // tx->dst = broadcastAddress;
+  // tx->src = localAddress;
+  // tx->type = DATA_P;
 
-  int res = radio->transmit((uint8_t*) tx, GetPacketLength(tx));
-  free(tx);
+  // int res = radio->transmit((uint8_t*) tx, getPacketLength(tx));
+  // free(tx);
 
-  if (res != 0) {
-    Log.error(F("Transmit data gave error: %d" CR), res);
-  }
-  else {
-    Log.trace("Data packet sended" CR);
-  }
+  // if (res != 0) {
+  //   Log.error(F("Transmit data gave error: %d" CR), res);
+  // } else {
+  //   Log.trace("Data packet sended" CR);
+  // }
 
-  dataCounter++;
+  // dataCounter++;
 
-  radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
-  res = radio->startReceive();
-  if (res != 0)
-    Log.error(F("Starting listening after sending datapacket gave ERROR: %d" CR), res);
-}
+  // radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
+  // res = radio->startReceive();
+  // if (res != 0)
+  //   Log.error(F("Starting listening after sending datapacket gave ERROR: %d" CR), res);
+// }
 
 void IRAM_ATTR LoraMesher::onReceive() {
 
@@ -174,7 +177,7 @@ void IRAM_ATTR LoraMesher::onReceive() {
 void LoraMesher::receivingRoutine() {
   BaseType_t TWres;
   int packetSize;
-  int rssi, snr, res, helloseqnum;
+  int rssi, snr, res;
   for (;;) {
     TWres = xTaskNotifyWait(
       pdFALSE,
@@ -190,173 +193,147 @@ void LoraMesher::receivingRoutine() {
 
       else {
         uint8_t payload[MAXPAYLOADSIZE];
-        packet* rx = CreatePacket(payload, MAXPAYLOADSIZE);
-        receivedPackets++;
+        packet<byte>* rx = createPacket<byte>(payload, MAXPAYLOADSIZE);
 
         rssi = radio->getRSSI();
         snr = radio->getSNR();
 
-        Log.notice(F("Receiving LoRa packet %d: Size: %d RSSI: %d SNR: %d" CR), receivedPackets, packetSize, rssi, snr);
+        Log.notice(F("Receiving LoRa packet: Size: %d RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
         res = radio->readData((uint8_t*) rx, packetSize);
         if (res != 0) {
           Log.error(F("Reading packet data gave error: %d" CR), res);
         }
         else {
-          if (rx->dst == broadcastAddress) {
-            PrintPacket(rx, true);
-            if (rx->type == HELLO_P) {
-              helloseqnum = rx->payload[GetPayloadLength(rx) - 1]; //TODO: Change this for a function or something
+          switch (rx->type) {
+            case HELLO_P:
+              processRoute((packet<networkNode>*) rx);
+              break;
 
-              Log.verbose(F("HELLO packet %d from %X" CR), helloseqnum, rx->src);
-
-              switch (metricType) {
-                case HOPCOUNT:
-                  {
-                    LoraMesher::networkNode receivedNode;
-                    receivedNode.address = rx->src;
-                    receivedNode.metric = 1;
-                    ProcessRoute(localAddress, receivedNode, helloseqnum, rssi, snr);
-
-                    for (size_t i = 0; i < GetNumberOfNodes(rx); i++) {
-                      LoraMesher::networkNode nodes = GetNetworkNodeByPosition(rx, i);
-                      nodes.metric += 1;
-                      ProcessRoute(rx->src, nodes, helloseqnum, rssi, snr);
-                    }
-
-                    printRoutingTable();
-                  }
-                  break;
-
-                case RSSISUM:
-                  break;
+            case DATA_P:
+              if (rx->dst == localAddress) {
+                Log.trace(F("Data packet from %X for me" CR), rx->src);
               }
-            }
-            else if (rx->type == DATA_P) {
-              Log.verbose(F("Data broadcast message:" CR));
-              Log.verbose(F("PAYLOAD: %X" CR), rx->payload[0]);
-            }
-            else {
-              Log.verbose(F("Random broadcast message... ignoring." CR));
-            }
+              else if (rx->dst == BROADCAST_ADDR) {
+                Log.verbose(F("Data broadcast message:" CR));
+                Log.verbose(F("PAYLOAD: %X" CR), rx->payload[0]);
+              }
+              else {
+                Log.verbose(F("Data Packet from %X for %X (not for me). IGNORING" CR), rx->src, rx->dst);
+              }
+              break;
+
+            default:
+              Log.verbose(F("Packet not identified" CR));
           }
 
-          else if (rx->dst == localAddress) {
-            if (rx->type == DATA_P) {
-              Log.trace(F("Data packet from %X for me" CR), rx->src);
-            }
-            else if (rx->type == HELLO_P) {
-              Log.trace(F("HELLO packet from %X for me" CR), rx->src);
-            }
-          }
-
-          else {
-            Log.verbose(F("Packet from %X for %X (not for me). IGNORING" CR), rx->src, rx->dst);
-          }
-          Log.verbose(F("Starting to listen again after receiving a packet" CR));
-          res = radio->startReceive();
-          if (res != 0)
-            Log.error(F("Receiving on end of listener gave error: %d" CR), res);
+          deletePacket(rx);
         }
 
-        free(rx);
+        Log.verbose(F("Starting to listen again after receiving a packet" CR));
+        res = radio->startReceive();
+        if (res != 0) {
+          Log.error(F("Receiving on end of listener gave error: %d" CR), res);
+        }
       }
     }
   }
-}
-
-bool LoraMesher::isNodeInRoutingTable(byte address) {
-  for (int i = 0; i < RTMAXSIZE; i++) {
-    if (routingTable[i].networkNode.address == address) {
-      return true;
-    }
-  }
-  return false;
 }
 
 uint8_t LoraMesher::getLocalAddress() {
   return this->localAddress;
 }
 
-void LoraMesher::AddNodeToRoutingTable(LoraMesher::networkNode node, uint16_t via, int helloID) {
+void LoraMesher::addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t via) {
   for (int i = 0; i < RTMAXSIZE; i++) {
     if (routingTable[i].networkNode.address == 0) {
-      routingTable[i].networkNode = node;
-      routingTable[i].lastSeqNo = helloID;
+      routingTable[i].networkNode.address = node->address;
+      routingTable[i].networkNode.metric = node->metric;
       routingTable[i].timeout = micros() + routeTimeout;
       routingTable[i].via = via;
-      Log.verbose(F("New route added: %X via %X metric %d" CR), node.address, via, node.metric);
+      Log.verbose(F("New route added: %X via %X metric %d" CR), node->address, via, node->metric);
       break;
     }
   }
 }
 
 // This function should be erased as it's the user the one deciding when to send data.
-void LoraMesher::DataCallback() {
-  Log.verbose(F("DATA callback at t=%l ms" CR), millis());
+// void LoraMesher::dataCallback() {
+  // Log.verbose(F("DATA callback at t=%l ms" CR), millis());
 
-  if (dutyCycleEnd < millis()) {
-    unsigned long transmissionStart = micros();
+  // if (dutyCycleEnd < millis()) {
+  //   unsigned long transmissionStart = micros();
 
-    sendDataPacket();
+  //   sendDataPacket();
 
-    unsigned long transmissionEnd = micros();
+  //   unsigned long transmissionEnd = micros();
 
-    unsigned long timeToNextPacket = 0;
+  //   unsigned long timeToNextPacket = 0;
 
-    // Avoid micros() rollover
-    if (transmissionEnd < transmissionStart) {
-      timeToNextPacket = 99 * (timeToNextPacket - 1 - transmissionStart + transmissionEnd);
-    }
-    // Default behaviour
-    else {
-      timeToNextPacket = 99 * (micros() - transmissionStart);
-    }
+  //   // Avoid micros() rollover
+  //   if (transmissionEnd < transmissionStart) {
+  //     timeToNextPacket = 99 * (timeToNextPacket - 1 - transmissionStart + transmissionEnd);
+  //   }
+  //   // Default behaviour
+  //   else {
+  //     timeToNextPacket = 99 * (micros() - transmissionStart);
+  //   }
 
-    dutyCycleEnd = millis() + timeToNextPacket / 1000 + 1;
+  //   dutyCycleEnd = millis() + timeToNextPacket / 1000 + 1;
 
-    Log.verbose(F("Scheduling next DATA packet in %d ms" CR), 2 * timeToNextPacket / 1000);
+  //   Log.verbose(F("Scheduling next DATA packet in %d ms" CR), 2 * timeToNextPacket / 1000);
 
-    //HelloTask.setInterval(2 * (timeToNextPacket) / 1000);
-  }
-}
+  //   //HelloTask.setInterval(2 * (timeToNextPacket) / 1000);
+  // }
+// }
 
 int LoraMesher::routingTableSize() {
-  int size = 0;
-
-  for (int i = 0; i < RTMAXSIZE; i++) {
-    if (routingTable[i].networkNode.address != 0) {
-      size++;
-    }
-  }
-  return size;
+  size_t sum = 0;
+  for (int i = 0; i < RTMAXSIZE; i++)
+    sum += (routingTable[i].networkNode.address != 0);
+  return sum;
 }
 
-void LoraMesher::ProcessRoute(uint16_t via, LoraMesher::networkNode node, int helloseqnum, int rssi, int snr) {
-
+void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
   bool knownAddr = false;
 
-  switch (metricType) {
-    case HOPCOUNT:
-      if (node.address != localAddress) {
-        for (int i = 0; i < routingTableSize(); i++) {
-          if (routingTable[i].networkNode.address != 0 && node.address == routingTable[i].networkNode.address) {
-            knownAddr = true;
-            if (node.metric < routingTable[i].networkNode.metric) {
-              routingTable[i].networkNode.metric = node.metric;
-              routingTable[i].via = via;
-            }
-            break;
-          }
+  if (node->address != localAddress) {
+    for (int i = 0; i < routingTableSize(); i++) {
+      if (routingTable[i].networkNode.address != 0 && node->address == routingTable[i].networkNode.address) {
+        knownAddr = true;
+        if (node->metric < routingTable[i].networkNode.metric) {
+          routingTable[i].networkNode.metric = node->metric;
+          routingTable[i].via = via;
         }
-        if (!knownAddr)
-          AddNodeToRoutingTable(node, via, helloseqnum);
+        break;
       }
-      break;
-    case RSSISUM:
-      break;
+    }
+    if (!knownAddr)
+      addNodeToRoutingTable(node, via);
   }
-  return;
 }
+
+void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
+  Log.verbose(F("HELLO packet from %X with size %d" CR), p->src, p->payloadSize);
+  printPacket(p, true);
+
+  LoraMesher::networkNode* receivedNode = new networkNode();
+  receivedNode->address = p->src;
+  receivedNode->metric = 1;
+  processRoute(localAddress, receivedNode);
+  delete receivedNode;
+
+  Log.verbose(F("HELLO packet from %X with size %d" CR), p->src, p->payloadSize);
+
+  for (size_t i = 0; i < p->payloadSize; i++) {
+    LoraMesher::networkNode* node = &p->payload[i];
+    node->metric++;
+    // Log.verbose(F("Before: %d + -> Address: %X - Metric: %d" CR), i, node->address, node->metric);
+    processRoute(p->src, node);
+  }
+
+  printRoutingTable();
+}
+
 
 void LoraMesher::printRoutingTable() {
   Serial.println("Current routing table:");
@@ -370,95 +347,64 @@ void LoraMesher::printRoutingTable() {
   Serial.println("");
 }
 
-void LoraMesher::PrintPacket(LoraMesher::packet* p, bool received) {
+template <typename T>
+void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
   Log.verbose(F("-----------------------------------------\n"));
-  Log.verbose(F("Current Packet: %s\n"), received ? "Received" : "Sended");
+  Log.verbose(F("Current Packet: %s\n"), received ? "Received" : "Created");
   Log.verbose(F("Destination: %X\n"), p->dst);
   Log.verbose(F("Source: %X\n"), p->src);
   Log.verbose(F("Type: %d\n"), p->type);
+  Log.verbose(F("----Packet of size %d bytes----\n"), getPacketLength(p));
+  switch (p->type) {
+    case HELLO_P:
+      for (int i = 0; i < p->payloadSize; i++)
+        Log.verbose(F("%d ->(%u) Address: %X - Metric: %d" CR), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
 
-  if (p->type == HELLO_P) {
-    //Print the Routing table of the packet
-    size_t numberOfBytesNodes = GetNumberOfNodes(p);
-    Log.verbose(F("----Routing table from packet: %d of size----\n"), numberOfBytesNodes);
-    for (int i = 0; i < numberOfBytesNodes; i++) {
-      LoraMesher::networkNode node = GetNetworkNodeByPosition(p, i);
-      Log.verbose(F("-- Address: %X, "), node.address);
-      Log.verbose(F("via: %X, "), p->src);
-      Log.verbose(F("Metric: %d -- "), node.metric);
-    }
-    Log.verbose(F("\n"));
   }
 
-  //Print all the payload included Routing table if inside payload
-  Log.verbose(F("------- Payload Size: %d bytes ------\n"), p->payloadSize);
-  for (int i = 0; i < (p->payloadSize < MAXPAYLOADSIZE ? p->payloadSize : MAXPAYLOADSIZE); i++) //GetPacketLength(p)
-    Log.verbose(F("%d - %d --- "), i, p->payload[i]);
-  Log.verbose(F("\n"));
   Log.verbose(F("-----------------------------------------\n"));
 }
 
-LoraMesher::networkNode LoraMesher::GetNetworkNodeByPosition(LoraMesher::packet* p, size_t position) {
-  return *(LoraMesher::networkNode*) (p->payload + position * sizeof(LoraMesher::networkNode));
+template <typename T>
+size_t LoraMesher::getPacketLength(LoraMesher::packet<T>* p) {
+  return sizeof(LoraMesher::packet<T>) + sizeof(T) * p->payloadSize;
 }
 
-size_t LoraMesher::GetPacketLength(LoraMesher::packet* p) {
-  return sizeof(LoraMesher::packet) + sizeof(LoraMesher::packet::payload[0]) * p->payloadSize;
-}
-
-size_t LoraMesher::GetPayloadLength(LoraMesher::packet* p) {
-  return p->payloadSize;
-}
-
-size_t LoraMesher::GetNumberOfNodes(LoraMesher::packet* p) {
-  //Get the number of networkNodes inside the payload
-  size_t packetLength = GetPayloadLength(p);
-  size_t counterSize = sizeof(uint8_t); //TODO: Change it for a generic type
-  return (packetLength - counterSize) / sizeof(LoraMesher::networkNode);
-}
-
-struct LoraMesher::packet* LoraMesher::CreatePacket(uint8_t payload[], uint8_t payloadLength) {
-  int packetLength = sizeof(LoraMesher::packet) + payloadLength * sizeof(LoraMesher::packet::payload[0]);
-  LoraMesher::packet* p = (LoraMesher::packet*) malloc(packetLength);
-  Log.trace("Packet created with %d bytes." CR, packetLength);
+template <typename T>
+LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize) {
+  int payloadLength = payloadSize * sizeof(T);
+  int packetLength = sizeof(packet<T>) + payloadLength;
+  packet<T>* p = (packet<T>*) malloc(packetLength);
+  Log.trace(F("Packet created with %d bytes" CR), packetLength);
 
   if (p) {
-    memcpy(p->payload, payload, payloadLength * sizeof(LoraMesher::packet::payload[0]));
-    p->payloadSize = payloadLength;
-
-    //Default values --- TODO: this should be automatically done
-    p->type = 3;
+    memcpy(p->payload, payload, payloadLength);
+    p->payloadSize = payloadSize;
   }
+  return p;
+};
+
+template <typename T>
+LoraMesher::packet<T>* LoraMesher::createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
+  packet<T>* p = createPacket(payload, payloadSize);
+  p->dst = dst;
+  p->type = type;
+  p->src = src;
 
   return p;
-}
+};
 
-//TODO: Use the CreatePacket function
-struct LoraMesher::packet* LoraMesher::CreateRoutingPacket() {
+LoraMesher::packet<LoraMesher::networkNode>* LoraMesher::createRoutingPacket() {
   int routingSize = routingTableSize();
-  int routingSizeInBytes = routingSize * sizeof(LoraMesher::networkNode);
+  Log.trace(F("Network node" CR));
 
-  //Packet Length in bytes = Packet + Routing Table Size * (sizeof(networkNode)) + HelloCounter (sizeof(payload[0]))
-  int packetLength = sizeof(LoraMesher::packet) + routingSizeInBytes + sizeof(LoraMesher::packet::payload[0]);
 
-  LoraMesher::packet* p = (LoraMesher::packet*) malloc(packetLength);
-  Log.trace("Routing packet created with %d bytes." CR, packetLength);
+  networkNode* payload = new networkNode[routingSize];
 
-  if (p) {
-    for (int i = 0; i < routingSize; i++) {
-      LoraMesher::networkNode n = routingTable[i].networkNode;
-      memcpy(p->payload + i * sizeof(LoraMesher::networkNode), &n, sizeof(LoraMesher::networkNode));
-    }
+  for (int i = 0; i < routingSize; i++)
+    payload[i] = routingTable[i].networkNode;
 
-    //Sets the hello Counter to the Last position in the payload
-    p->payload[routingSizeInBytes] = (typeof(LoraMesher::packet::payload[0])) helloCounter;
-    p->payloadSize = routingSizeInBytes + 1;
-
-    //Default properties
-    p->dst = broadcastAddress;
-    p->src = localAddress;
-    p->type = HELLO_P;
-  }
-
-  return p;
+  packet<networkNode>* networkPacket = createPacket<LoraMesher::networkNode>(BROADCAST_ADDR, localAddress, HELLO_P, payload, routingSize);
+  delete[]payload;
+  return networkPacket;
 }
