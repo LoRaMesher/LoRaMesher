@@ -1,13 +1,14 @@
 #include "loramesher.h"
+using namespace NLoraMesher;
 
-LoraMesher::LoraMesher() {
+LoraMesher::LoraMesher(void (*func)(void*)) {
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
   dutyCycleEnd = 0;
   lastSendTime = 0;
   routeTimeout = 10000000;
   initializeLocalAddress();
   initializeLoRa();
-  initializeScheduler();
+  initializeScheduler(func);
   delay(1000);
   Log.verbose(F("Initialization DONE, starting receiving packets..." CR));
   int res = radio->startReceive();
@@ -62,14 +63,14 @@ void LoraMesher::initializeLoRa() {
 }
 
 int helloCounter = 0;
-void LoraMesher::initializeScheduler() {
+void LoraMesher::initializeScheduler(void (*func)(void*)) {
   Log.verbose(F("Setting up receiving task" CR));
   int res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
     "Receiving routine",
     4096,
     this,
-    DEFAULT_PRIORITY + 1,
+    3,
     &ReceivePacket_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Receiving routine creation gave error: %d" CR), res);
@@ -99,10 +100,20 @@ void LoraMesher::initializeScheduler() {
     "Sending routine",
     4096,
     this,
-    0,
+    1,
     &SendData_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Sending Task creation gave error: %d" CR), res);
+  }
+  res = xTaskCreate(
+    func,
+    "Receive User routine",
+    4096,
+    this,
+    0,
+    &ReceivedUserData_TaskHandle);
+  if (res != pdPASS) {
+    Log.error(F("Receive User Task creation gave error: %d" CR), res);
   }
 }
 
@@ -110,7 +121,7 @@ void IRAM_ATTR LoraMesher::onReceive() {
 
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-  xTaskNotifyFromISR(
+  xHigherPriorityTaskWoken = xTaskNotifyFromISR(
     ReceivePacket_TaskHandle,
     0,
     eSetValueWithoutOverwrite,
@@ -208,35 +219,34 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
 
 void LoraMesher::sendPackets() {
   for (;;) {
+    /* Wait for the notification of receivingRoutine and enter blocking */
     Log.verbose("Size of Send Packets Fifo: %d" CR, ToSendPackets->Size());
-    packetQueue<uint8_t>* tx = ToSendPackets->Pop<uint8_t>();
+    while (ToSendPackets->Size() > 0) {
 
-    if (tx != nullptr) {
-      Log.verbose("Send %d:", helloCounter);
-      helloCounter++;
-      switch (tx->packet->type) {
-        case HELLO_P:
-          sendPacket((packet<networkNode>*) tx->packet);
-          break;
-        default:
-          sendPacket(tx->packet);
+      packetQueue<uint8_t>* tx = ToSendPackets->Pop<uint8_t>();
+
+      if (tx != nullptr) {
+        Log.verbose("Send nº %d" CR, helloCounter);
+        helloCounter++;
+        sendPacket(tx->packet);
+
+        delete tx->packet;
+        delete tx;
+        //Wait for 5s to send the next packet
+        //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
       }
-
-      //Wait for 10s to send the next packet
-      //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
     }
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
   }
 }
 
 void LoraMesher::sendHelloPacket() {
   for (;;) {
     packet<networkNode>* tx = createRoutingPacket();
-    Log.error(F("Helloo: %d" CR), 0);
-    setPackedForSend(tx, DEFAULT_PRIORITY, DEFAULT_TIMEOUT);
+    setPackedForSend(tx, DEFAULT_PRIORITY + 1, DEFAULT_TIMEOUT);
 
     //Wait for 30s to send the next hello packet
-    vTaskDelay(30000 / portTICK_PERIOD_MS);
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -244,18 +254,19 @@ template <typename T>
 void LoraMesher::setPackedForSend(packet<T>* tx, uint8_t priority, uint32_t timeout) {
   LoraMesher::packetQueue<uint32_t>* send = createPacketQueue<uint32_t>(tx, priority, timeout);
   ToSendPackets->Add(send);
-
   //TODO: Using vTaskDelay to kill the packet inside LoraMesher
 }
 
-
 void LoraMesher::processPackets() {
+  BaseType_t TWres;
+  bool userNotify = false;
   for (;;) {
     /* Wait for the notification of receivingRoutine and enter blocking */
     ulTaskNotifyTake(pdPASS, portMAX_DELAY);
+    userNotify = false;
 
     Log.verbose("Size of Received Packets Fifo: %d" CR, ReceivedPackets->Size());
-    packetQueue<uint8_t>* rx = ReceivedPackets->Pop<uint8_t>();
+    packetQueue<uint32_t>* rx = ReceivedPackets->Pop<uint32_t>();
     //Important! The packet should be deleted or moved to another section
 
     if (rx != nullptr) {
@@ -267,10 +278,11 @@ void LoraMesher::processPackets() {
         case DATA_P:
           if (rx->packet->dst == localAddress) {
             Log.trace(F("Data packet from %X for me" CR), rx->packet->src);
+            userNotify = true;
           }
           else if (rx->packet->dst == BROADCAST_ADDR) {
-            Log.verbose(F("Data broadcast message:" CR));
-            Log.verbose(F("PAYLOAD: %X" CR), rx->packet->payload[0]);
+            Log.trace(F("Data packet from %X BROADCAST" CR), rx->packet->src);
+            userNotify = true;
           }
           else {
             Log.verbose(F("Data Packet from %X for %X (not for me). IGNORING" CR), rx->packet->src, rx->packet->dst);
@@ -281,40 +293,25 @@ void LoraMesher::processPackets() {
           Log.verbose(F("Packet not identified" CR));
       }
 
+      if (userNotify) {
+        //Add packet to the received Packets
+        ReceivedUserPackets->Add((packetQueue<uint32_t>*)rx);
+
+        //Notify that there is a packets to be processed by the user
+        TWres = xTaskNotifyFromISR(
+          ReceivedUserData_TaskHandle,
+          0,
+          eSetValueWithoutOverwrite, &TWres);
+      }
     }
   }
 }
 
-
-// This function should be erased as it's the user the one deciding when to send data.
-// void LoraMesher::dataCallback() {
-  // Log.verbose(F("DATA callback at t=%l ms" CR), millis());
-
-  // if (dutyCycleEnd < millis()) {
-  //   unsigned long transmissionStart = micros();
-
-  //   sendDataPacket();
-
-  //   unsigned long transmissionEnd = micros();
-
-  //   unsigned long timeToNextPacket = 0;
-
-  //   // Avoid micros() rollover
-  //   if (transmissionEnd < transmissionStart) {
-  //     timeToNextPacket = 99 * (timeToNextPacket - 1 - transmissionStart + transmissionEnd);
-  //   }
-  //   // Default behaviour
-  //   else {
-  //     timeToNextPacket = 99 * (micros() - transmissionStart);
-  //   }
-
-  //   dutyCycleEnd = millis() + timeToNextPacket / 1000 + 1;
-
-  //   Log.verbose(F("Scheduling next DATA packet in %d ms" CR), 2 * timeToNextPacket / 1000);
-
-  //   //HelloTask.setInterval(2 * (timeToNextPacket) / 1000);
-  // }
-// }
+template <typename T>
+void LoraMesher::createPacketAndSend(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
+  Log.trace("Create and send" CR);
+  setPackedForSend(createPacket(dst, src, type, payload, payloadSize), DEFAULT_PRIORITY, DEFAULT_TIMEOUT);
+}
 
 template <typename T>
 void LoraMesher::deletePacket(LoraMesher::packet<T>* p) {
@@ -346,7 +343,7 @@ void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
 
   Log.verbose(F("HELLO packet from %X with size %d" CR), p->src, p->payloadSize);
 
-  for (size_t i = 0; i < p->payloadSize; i++) {
+  for (size_t i = 0; i < getPayloadLength(p); i++) {
     LoraMesher::networkNode* node = &p->payload[i];
     node->metric++;
     processRoute(p->src, node);
@@ -414,7 +411,7 @@ void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
   Log.verbose(F("----Packet of size %d bytes----\n"), getPacketLength(p));
   switch (p->type) {
     case HELLO_P:
-      for (int i = 0; i < p->payloadSize; i++)
+      for (int i = 0; i < getPayloadLength((packet<networkNode>*) p); i++)
         Log.verbose(F("%d ->(%u) Address: %X - Metric: %d" CR), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
 
   }
@@ -424,7 +421,13 @@ void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
 
 template <typename T>
 size_t LoraMesher::getPacketLength(LoraMesher::packet<T>* p) {
-  return sizeof(LoraMesher::packet<T>) + sizeof(T) * p->payloadSize;
+  return sizeof(LoraMesher::packet<T>) + p->payloadSize;
+}
+
+
+template <typename T>
+size_t LoraMesher::getPayloadLength(LoraMesher::packet<T>* p) {
+  return p->payloadSize / sizeof(T);
 }
 
 template <typename T>
@@ -436,7 +439,7 @@ LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize)
 
   if (p) {
     memcpy(p->payload, payload, payloadLength);
-    p->payloadSize = payloadSize;
+    p->payloadSize = payloadLength;
   }
   return p;
 };
@@ -483,13 +486,13 @@ void LoraMesher::PacketQueue::Add(packetQueue<uint32_t>* pq) {
 
   else {
     packetQueue<uint32_t>* firstCp = first;
-    if (firstCp->next == nullptr && first->priority > pq->priority) {
+    if (firstCp->next == nullptr && first->priority < pq->priority) {
       first = pq;
       pq->next = firstCp;
       return;
     }
 
-    while (firstCp->next != nullptr && firstCp->priority < pq->priority)
+    while (firstCp->next != nullptr && firstCp->priority >= pq->priority)
       firstCp = firstCp->next;
 
     if (firstCp->next == nullptr)
@@ -514,12 +517,15 @@ LoraMesher::packetQueue<T>* LoraMesher::PacketQueue::Pop() {
 }
 
 size_t LoraMesher::PacketQueue::Size() {
-  if (first == nullptr)
+  packetQueue<uint32_t>* firstCp = (packetQueue<uint32_t>*) first;
+  if (firstCp == nullptr)
     return 0;
 
   size_t size = 1;
-  while (first->next != nullptr)
+  while (firstCp->next != nullptr) {
     size++;
+    firstCp = firstCp->next;
+  }
   return size;
 }
 
