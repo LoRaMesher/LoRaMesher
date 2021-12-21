@@ -1,5 +1,4 @@
 #include "loramesher.h"
-using namespace NLoraMesher;
 
 LoraMesher::LoraMesher(void (*func)(void*)) {
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
@@ -17,8 +16,16 @@ LoraMesher::LoraMesher(void (*func)(void*)) {
 }
 
 LoraMesher::~LoraMesher() {
-  vTaskDelete(Hello_TaskHandle);
   vTaskDelete(ReceivePacket_TaskHandle);
+  vTaskDelete(Hello_TaskHandle);
+  vTaskDelete(ReceiveData_TaskHandle);
+  vTaskDelete(SendData_TaskHandle);
+  vTaskDelete(ReceivedUserData_TaskHandle);
+
+  ReceivedPackets->Clear();
+  ToSendPackets->Clear();
+  ReceivedUserPackets->Clear();
+
   radio->clearDio0Action();
   radio->reset();
 }
@@ -193,7 +200,9 @@ uint8_t LoraMesher::getLocalAddress() {
 }
 
 
-#pragma region Packet Service
+/**
+ *  Region Packet Service
+**/
 
 template <typename T>
 void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
@@ -319,10 +328,14 @@ void LoraMesher::deletePacket(LoraMesher::packet<T>* p) {
   free(p);
 }
 
-#pragma endregion Packet Service
+/**
+ *  End Region Packet Service
+**/
 
 
-#pragma region Routing Table
+/**
+ *  Region Routing Table
+**/
 
 int LoraMesher::routingTableSize() {
   size_t sum = 0;
@@ -397,9 +410,14 @@ void LoraMesher::printRoutingTable() {
   Serial.println("");
 }
 
-#pragma endregion Routing Table
+/**
+ *  End Region Routing Table
+**/
 
-#pragma region Packet
+
+/**
+ *  Region Packet
+**/
 
 template <typename T>
 void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
@@ -466,9 +484,15 @@ LoraMesher::packet<LoraMesher::networkNode>* LoraMesher::createRoutingPacket() {
   return networkPacket;
 }
 
-#pragma endregion 
+/**
+ *  End Region Packet
+**/
 
-#pragma region PacketQueue
+
+
+/**
+ *  Region PacketQueue
+**/
 
 template <typename T, typename I>
 LoraMesher::packetQueue<T>* LoraMesher::createPacketQueue(LoraMesher::packet<I>* p, uint8_t priority, uint32_t timeout) {
@@ -529,4 +553,19 @@ size_t LoraMesher::PacketQueue::Size() {
   return size;
 }
 
-#pragma endregion Packet
+void LoraMesher::PacketQueue::Clear() {
+  if (first == nullptr)
+    return;
+
+  packetQueue<uint32_t>* firstCp = (packetQueue<uint32_t>*) first;
+  while (first != nullptr) {
+    firstCp = first->next;
+    delete first->packet;
+    delete first;
+    first = firstCp;
+  }
+}
+
+/**
+ *  End Region PacketQueue
+**/
