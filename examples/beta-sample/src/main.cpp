@@ -75,8 +75,6 @@ void processReceivedPackets(void*) {
     }
 }
 
-TaskHandle_t SendData_TaskHandle = NULL;
-
 void setupLoraMesher() {
 
     //Create a loramesher with a processReceivedPackets function
