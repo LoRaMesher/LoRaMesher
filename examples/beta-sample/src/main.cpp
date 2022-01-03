@@ -39,10 +39,10 @@ void printPacket(dataPacket* data) {
  */
 void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
     Log.trace(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
+    dataPacket* packets = radio->getPayload(packet);
     for (size_t i = 0; i < radio->getPayloadLength(packet); i++) {
         //Print the packet
-        printPacket(&packet->payload[i]);
-
+        printPacket(&packets[i]);
     }
     //Delete the packet. It is very important to delete the packet.
     delete packet;
@@ -100,7 +100,7 @@ void loop() {
         helloPacket->counter = dataCounter++;
 
         //Create packet and send it.
-        radio->createPacketAndSend(BROADCAST_ADDR, radio->getLocalAddress(), DATA_P, helloPacket, 1);
+        radio->createPacketAndSend(0xC5FC, helloPacket, 1);
 
         //Wait 10 seconds to send the next packet
         vTaskDelay(10000 / portTICK_PERIOD_MS);

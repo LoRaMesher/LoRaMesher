@@ -71,6 +71,7 @@
 // Packet types
 #define HELLO_P 0x04
 #define DATA_P 0x03
+#define PAYLOADONLY_P 0x02
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -117,7 +118,31 @@ public:
    * @return int
    */
   int routingTableSize();
-  uint8_t getLocalAddress();
+
+  /**
+   * @brief Get the Local Address
+   *
+   * @return uint16_t Address
+   */
+  uint16_t getLocalAddress();
+
+  /**
+   * @brief Returns if address is inside the routing table
+   *
+   * @param address Addres you want to check if is inside the routing table
+   * @return true If the address is inside the routing table
+   * @return false If the addres is not inside the routing table
+   */
+  bool hasAddresRoutingTable(uint16_t address);
+
+  /**
+   * @brief Get the Next Hop address
+   *
+   * @param dst address of the next hop
+   * @return uint16_t address of the next hop
+   */
+  uint16_t getNextHop(uint16_t dst);
+
 
 #pragma pack(push, 1)
   template <typename T>
@@ -128,6 +153,7 @@ public:
     uint8_t payloadSize = 0;
     T payload[];
   };
+
 #pragma pack(pop)
 
   /**
@@ -141,7 +167,17 @@ public:
    * @param payloadSize Length of the payload in T
    */
   template <typename T>
-  void createPacketAndSend(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize);
+  void createPacketAndSend(uint16_t dst, T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Get the Payload of the packet
+   *
+   * @tparam T type of the payload
+   * @param packet Packet that you want to get the payload
+   * @return T* pointer of the packet payload
+   */
+  template <typename T>
+  T* getPayload(packet<T>* packet);
 
   /**
    * @brief Create a Packet<T>
@@ -163,10 +199,11 @@ public:
    * @tparam T
    * @param payload Payload of type T
    * @param payloadSize Length of the payload in T
+   * @param hasVia Indicates the function that it need to add the via
    * @return struct LoraMesher::packet<T>*
    */
   template <typename T>
-  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize);
+  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize, bool hasVia);
 
   /**
    * @brief Delete the packet from memory

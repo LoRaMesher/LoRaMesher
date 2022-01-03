@@ -159,7 +159,7 @@ void LoraMesher::receivingRoutine() {
 
       else {
         uint8_t payload[MAXPAYLOADSIZE];
-        packet<byte>* rx = createPacket<byte>(payload, MAXPAYLOADSIZE);
+        packet<byte>* rx = createPacket<byte>(payload, MAXPAYLOADSIZE, true);
 
         rssi = radio->getRSSI();
         snr = radio->getSNR();
@@ -195,10 +195,9 @@ void LoraMesher::receivingRoutine() {
   }
 }
 
-uint8_t LoraMesher::getLocalAddress() {
+uint16_t LoraMesher::getLocalAddress() {
   return this->localAddress;
 }
-
 
 /**
  *  Region Packet Service
@@ -237,15 +236,21 @@ void LoraMesher::sendPackets() {
       if (tx != nullptr) {
         Log.verbose("Send nº %d" CR, helloCounter);
         helloCounter++;
+
+        //If the packet is type DATA_P add the via to the packet and forward the packet
+        if (tx->packet->type == DATA_P)
+          tx->packet->payload[0] = getNextHop(tx->packet->src);
+
         sendPacket(tx->packet);
 
         delete tx->packet;
         delete tx;
-        //Wait for 5s to send the next packet
-        //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
       }
     }
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+    //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
+    //Wait for 10s to send the next packet
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -254,7 +259,7 @@ void LoraMesher::sendHelloPacket() {
     packet<networkNode>* tx = createRoutingPacket();
     setPackedForSend(tx, DEFAULT_PRIORITY + 1, DEFAULT_TIMEOUT);
 
-    //Wait for 30s to send the next hello packet
+    //Wait for 60s to send the next hello packet
     vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
 }
@@ -269,10 +274,13 @@ void LoraMesher::setPackedForSend(packet<T>* tx, uint8_t priority, uint32_t time
 void LoraMesher::processPackets() {
   BaseType_t TWres;
   bool userNotify = false;
+  bool isDataPacket = false;
+
   for (;;) {
     /* Wait for the notification of receivingRoutine and enter blocking */
     ulTaskNotifyTake(pdPASS, portMAX_DELAY);
     userNotify = false;
+    isDataPacket = false;
 
     Log.verbose("Size of Received Packets Fifo: %d" CR, ReceivedPackets->Size());
     packetQueue<uint32_t>* rx = ReceivedPackets->Pop<uint32_t>();
@@ -285,16 +293,33 @@ void LoraMesher::processPackets() {
           break;
 
         case DATA_P:
+          isDataPacket = true;
+        case PAYLOADONLY_P:
           if (rx->packet->dst == localAddress) {
             Log.trace(F("Data packet from %X for me" CR), rx->packet->src);
             userNotify = true;
+            break;
           }
           else if (rx->packet->dst == BROADCAST_ADDR) {
             Log.trace(F("Data packet from %X BROADCAST" CR), rx->packet->src);
             userNotify = true;
+            break;
           }
-          else {
-            Log.verbose(F("Data Packet from %X for %X (not for me). IGNORING" CR), rx->packet->src, rx->packet->dst);
+          //If the packet is a Datapacket and the via is me
+          else if (isDataPacket && ((uint16_t) rx->packet->payload[0]) == localAddress) {
+            Log.verbose(F("Data Packet from %X for %X. Via is me" CR), rx->packet->src, rx->packet->dst);
+
+            //If the destiny of the packet is inside the Routing table, forward the packet
+            if (hasAddresRoutingTable(rx->packet->dst)) {
+              Log.verbose(F("Data Packet forwarding it." CR));
+              ToSendPackets->Add(rx);
+            }
+            //If the destiny is not inside the Routing table, delete the packet and ignore
+            else {
+              Log.verbose(F("Data Packet deleting it." CR));
+              delete rx->packet;
+              delete rx;
+            }
           }
           break;
 
@@ -317,9 +342,17 @@ void LoraMesher::processPackets() {
 }
 
 template <typename T>
-void LoraMesher::createPacketAndSend(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
-  Log.trace("Create and send" CR);
-  setPackedForSend(createPacket(dst, src, type, payload, payloadSize), DEFAULT_PRIORITY, DEFAULT_TIMEOUT);
+void LoraMesher::createPacketAndSend(uint16_t dst, T* payload, uint8_t payloadSize) {
+  uint8_t type = dst == BROADCAST_ADDR ? PAYLOADONLY_P : DATA_P;
+  setPackedForSend(createPacket(dst, getLocalAddress(), type, payload, payloadSize), DEFAULT_PRIORITY, DEFAULT_TIMEOUT);
+}
+
+template <typename T>
+T* LoraMesher::getPayload(packet<T>* packet) {
+  if (packet->type == DATA_P)
+    return (T*) (((unsigned long) packet->payload) + sizeof(uint16_t));
+
+  return packet->payload;
 }
 
 template <typename T>
@@ -342,6 +375,24 @@ int LoraMesher::routingTableSize() {
   for (int i = 0; i < RTMAXSIZE; i++)
     sum += (routingTable[i].networkNode.address != 0);
   return sum;
+}
+
+bool LoraMesher::hasAddresRoutingTable(uint16_t address) {
+  for (int i = 0; i < RTMAXSIZE; i++) {
+    if (routingTable[i].networkNode.address == address)
+      return true;
+  }
+
+  return false;
+}
+
+uint16_t LoraMesher::getNextHop(uint16_t dst) {
+  for (int i = 0; i < RTMAXSIZE; i++) {
+    if (routingTable[i].networkNode.address == dst)
+      return routingTable[i].via;
+  }
+
+  return 0;
 }
 
 void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
@@ -439,9 +490,8 @@ void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
 
 template <typename T>
 size_t LoraMesher::getPacketLength(LoraMesher::packet<T>* p) {
-  return sizeof(LoraMesher::packet<T>) + p->payloadSize;
+  return sizeof(LoraMesher::packet<T>) + p->payloadSize + (p->type == DATA_P ? sizeof(uint16_t) : 0);
 }
-
 
 template <typename T>
 size_t LoraMesher::getPayloadLength(LoraMesher::packet<T>* p) {
@@ -449,14 +499,22 @@ size_t LoraMesher::getPayloadLength(LoraMesher::packet<T>* p) {
 }
 
 template <typename T>
-LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize) {
+LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize, bool hasVia) {
   int payloadLength = payloadSize * sizeof(T);
-  int packetLength = sizeof(packet<T>) + payloadLength;
+
+  int viaSize = (hasVia ? sizeof(uint16_t) : 0);
+
+  //Packet length = size of the packet + size of the payload + if has via -> size of via
+  int packetLength = sizeof(packet<T>) + payloadLength + viaSize;
+
   packet<T>* p = (packet<T>*) malloc(packetLength);
   Log.trace(F("Packet created with %d bytes" CR), packetLength);
 
   if (p) {
-    memcpy(p->payload, payload, payloadLength);
+    //Copy the payload into the packet
+    //If hasVia, we need to add the sizeof via to point correctly to the p->payload
+    memcpy((void*) ((unsigned long) p->payload + (viaSize)), payload, payloadLength);
+
     p->payloadSize = payloadLength;
   }
   return p;
@@ -464,7 +522,8 @@ LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize)
 
 template <typename T>
 LoraMesher::packet<T>* LoraMesher::createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
-  packet<T>* p = createPacket(payload, payloadSize);
+  bool hasVia = type == DATA_P;
+  packet<T>* p = createPacket(payload, payloadSize, hasVia);
   p->dst = dst;
   p->type = type;
   p->src = src;
