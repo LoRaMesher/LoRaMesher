@@ -403,14 +403,11 @@ void LoraMesher::deletePacket(LoraMesher::packet<T>* p) {
 **/
 
 int LoraMesher::routingTableSize() {
-  size_t sum = 0;
   int i = 0;
-  while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0) {
-    sum++;
+  while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0)
     i++;
-  }
 
-  return sum;
+  return i;
 }
 
 bool LoraMesher::hasAddresRoutingTable(uint16_t address) {
@@ -458,9 +455,8 @@ void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
 void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
   if (node->address != localAddress) {
     bool knownAddr = false;
-    int i = 0;
-    while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0) {
-      if (node->address == routingTable[i].networkNode.address) {
+    for (int i = 0; i < routingTableSize(); i++) {
+      if (routingTable[i].networkNode.address != 0 && node->address == routingTable[i].networkNode.address) {
         knownAddr = true;
         if (node->metric < routingTable[i].networkNode.metric) {
           routingTable[i].networkNode.metric = node->metric;
@@ -469,7 +465,6 @@ void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
         }
         break;
       }
-      i++;
     }
     if (!knownAddr)
       addNodeToRoutingTable(node, via);
