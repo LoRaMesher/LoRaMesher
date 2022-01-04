@@ -323,8 +323,8 @@ void LoraMesher::processPackets() {
               delete rx->packet;
               delete rx;
             }
-            break;
           }
+          break;
 
         default:
           Log.verbose(F("Packet not identified, deleting it" CR));
