@@ -107,9 +107,17 @@ public:
     LoraMesher radio = new LoraMesher(processReceivedPackets);
    */
   LoraMesher(void (*receiverFunction)(void*));
+
+  /**
+   * @brief Destroy the Lora Mesher
+   *
+   */
   ~LoraMesher();
 
-  void sendDataPacket();
+  /**
+   * @brief Prints the actual routing table in the log
+   *
+   */
   void printRoutingTable();
 
   /**
@@ -118,13 +126,6 @@ public:
    * @return int
    */
   int routingTableSize();
-
-  /**
-   * @brief Get the Local Address
-   *
-   * @return uint16_t Address
-   */
-  uint16_t getLocalAddress();
 
   /**
    * @brief Returns if address is inside the routing table
@@ -143,6 +144,14 @@ public:
    */
   uint16_t getNextHop(uint16_t dst);
 
+  /**
+   * @brief Get the Local Address
+   *
+   * @return uint16_t Address
+   */
+  uint16_t getLocalAddress();
+
+
 
 #pragma pack(push, 1)
   template <typename T>
@@ -151,6 +160,12 @@ public:
     uint16_t src;
     uint8_t type;
     uint8_t payloadSize = 0;
+    T payload[];
+  };
+
+  template <typename T>
+  struct dataPacket {
+    uint16_t via;
     T payload[];
   };
 
@@ -250,6 +265,16 @@ public:
   };
 #pragma pack(pop)
 
+  /**
+   * @brief Create a Packet Queue element
+   *
+   * @tparam T type of the packet queue
+   * @tparam I type of the packet
+   * @param p packet
+   * @param priority priority inside the queue
+   * @param timeout timeout in s
+   * @return packetQueue<T>*
+   */
   template <typename T, typename I>
   packetQueue<T>* createPacketQueue(packet<I>* p, uint8_t priority, uint32_t timeout);
 
