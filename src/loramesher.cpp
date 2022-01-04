@@ -217,7 +217,7 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
     Log.error(F("Transmit gave error: %d" CR), res);
   }
   else {
-    Log.trace("Packet sended" CR);
+    Log.trace("Packet sent" CR);
   }
 
   radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
