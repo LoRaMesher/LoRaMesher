@@ -319,10 +319,15 @@ void LoraMesher::processPackets() {
             }
             //If the destiny is not inside the Routing table, delete the packet and ignore it
             else {
-              Log.verbose(F("Data Packet not for me." CR));
+              Log.verbose(F("Data Packet destiny not reachable, deleting it." CR));
               delete rx->packet;
               delete rx;
             }
+          }
+          else {
+            Log.verbose(F("Data Packet not for me, deleting it." CR));
+            delete rx->packet;
+            delete rx;
           }
           break;
 
