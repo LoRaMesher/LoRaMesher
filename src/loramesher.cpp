@@ -78,7 +78,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Receiving routine",
     4096,
     this,
-    3,
+    4,
     &ReceivePacket_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Receiving routine creation gave error: %d" CR), res);
@@ -88,7 +88,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Hello routine",
     4096,
     this,
-    0,
+    2,
     &Hello_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Process Task creation gave error: %d" CR), res);
@@ -98,7 +98,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Process routine",
     4096,
     this,
-    0,
+    1,
     &ReceiveData_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Process Task creation gave error: %d" CR), res);
@@ -108,7 +108,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Sending routine",
     4096,
     this,
-    1,
+    3,
     &SendData_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Sending Task creation gave error: %d" CR), res);
@@ -154,7 +154,7 @@ void LoraMesher::receivingRoutine() {
     receivedFlag = false;
 
     if (TWres == pdPASS) {
-      packetSize = radio->getPacketLength(true);
+      packetSize = radio->getPacketLength();
       if (packetSize == 0)
         Log.warning(F("Empty packet received" CR));
 
@@ -165,7 +165,7 @@ void LoraMesher::receivingRoutine() {
         rssi = radio->getRSSI();
         snr = radio->getSNR();
 
-        Log.notice(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
+        Log.notice(F("Receiving LoRa packet: Size: %d RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
         res = radio->readData((uint8_t*) rx, packetSize);
         if (res != 0) {
           Log.error(F("Reading packet data gave error: %d" CR), res);
@@ -263,8 +263,8 @@ void LoraMesher::sendHelloPacket() {
     packet<networkNode>* tx = createRoutingPacket();
     setPackedForSend(tx, DEFAULT_PRIORITY + 1, DEFAULT_TIMEOUT);
 
-    //Wait for 60s to send the next hello packet
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    //Wait for 30s to send the next hello packet
+    vTaskDelay(30000 / portTICK_PERIOD_MS);
   }
 }
 
@@ -386,7 +386,8 @@ void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
   switch (p->type) {
     case HELLO_P:
       for (int i = 0; i < getPayloadLength((packet<networkNode>*) p); i++)
-        Log.verbose(F("%d - Address: %X - Metric: %d" CR), i, ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
+        Log.verbose(F("%d ->(%u) Address: %X - Metric: %d" CR), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
+
   }
 
   Log.verbose(F("-----------------------------------------\n"));
