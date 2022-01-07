@@ -154,7 +154,7 @@ void LoraMesher::receivingRoutine() {
     receivedFlag = false;
 
     if (TWres == pdPASS) {
-      packetSize = radio->getPacketLength();
+      packetSize = radio->getPacketLength(true);
       if (packetSize == 0)
         Log.warning(F("Empty packet received" CR));
 
@@ -165,7 +165,7 @@ void LoraMesher::receivingRoutine() {
         rssi = radio->getRSSI();
         snr = radio->getSNR();
 
-        Log.notice(F("Receiving LoRa packet: Size: %d RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
+        Log.notice(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
         res = radio->readData((uint8_t*) rx, packetSize);
         if (res != 0) {
           Log.error(F("Reading packet data gave error: %d" CR), res);
@@ -386,8 +386,7 @@ void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
   switch (p->type) {
     case HELLO_P:
       for (int i = 0; i < getPayloadLength((packet<networkNode>*) p); i++)
-        Log.verbose(F("%d ->(%u) Address: %X - Metric: %d" CR), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
-
+        Log.verbose(F("%d - Address: %X - Metric: %d" CR), i, ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
   }
 
   Log.verbose(F("-----------------------------------------\n"));
