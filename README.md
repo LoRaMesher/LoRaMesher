@@ -1,10 +1,11 @@
 # LoRaMesher
-This library aims to implement a user firendly way to create a mesh network between multiple ESP32 LoRa Nodes. This library is currently under construction.
+## Introduction
+The LoRaMesher library implements a distance vector routing protocol for communicating messages among LoRa nodes. For the interaction with the LoRa radio chip, we leverage RadioLib, a versatile communication library which supports the SX126X LoRa series module available on the hardware we used.
 
 ## Dependencies
 You can check `library.json` for more details. Basically we use a modded version of [Radiolib](https://github.com/jgromes/RadioLib) that supports class methods as callbacks and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks
 
-###  Configure LoRaMesher with PlatformIO and Visual Studio Code
+##  Configure LoRaMesher with PlatformIO and Visual Studio Code
 1. Download Visual Studio Code
 2. Download PlatformIO inside Visual Studio Code.
 3. Clone the LoraMesher Repository.
@@ -47,7 +48,7 @@ radio = new LoraMesher(processReceivedPackets);
 We can see that when starting a new instance of LoRa Mesher we need to pass through a function. 
         
 ### Received packets function
-The function that is notified every time that the library receives a packet for the user is similar to the next one, Figure \ref{fig:processreceivedpacketsfunction}.
+The function that is notified every time that the library receives a packet for the user is similar to the next one.
 ```
   /**
    * @brief Function that process the received packets
@@ -76,12 +77,12 @@ There are some important things that need to be aware of:
         
 1. This function should have a void* in the parameters.
 2. The function should contain an endless loop.
-3. Inside the loop, it is mandatory to have the **ulTaskNotifyTake(pdPASS,portMAX_DELAY)** or equivalent. This function allows the library to notify the function to process pending packets.
-4. All the packets are stored inside the **radio->ReceiveduserPackets**.
+3. Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
+4. All the packets are stored inside the `radio->ReceiveduserPackets`.
 5. Every time you call Pop, you need to be sure to delete the Packet Queue after using it.
         
 ### Send data packet function
-In this section we will present how you can create and send packets, in this example we will use the \ref{fig:DataTypeExample} data type.
+In this section we will present how you can create and send packets, in this example we will use the data type.
 
 ```
   void loop() {
@@ -97,12 +98,12 @@ In this section we will present how you can create and send packets, in this exa
 
 In the previous figure we can see that we are using the helloPacket, we add the counter inside it, and we create and send the packet using the LoRa Mesher.\par
 
-The most important part of this piece of code is the function that we call in the **radio->createPacketAndSend**:
+The most important part of this piece of code is the function that we call in the `radio->createPacketAndSend`:
 
 1. The first parameter is the destiny, in this case the broadcast address.
 2. And finally, the helloPacket (the packet we created) and the number of elements we are sending, in this case only 1 dataPacket.
 
-### Print packet example}
+### Print packet example
 When receiving the packet, there is a need to understand what the Queue will return to us. For this reason, in the next subsection, we will explain who to implement a simple packet processing.
 
 ```
@@ -133,8 +134,8 @@ When receiving the packet, there is a need to understand what the Queue will ret
       delete packet;
   }
 ```
-1. After receiving the packet in the function Figure \ref{fig:processreceivedpacketsfunction} we call the printDataPacket function. See who the function will only accept packets of type dataPacket.
-2. We need to get the payload of the packet, as we have different types of packet the payload is not allways in the same memory position. We have the function radio->getPayload(packet) that will return a pointer to the payload in the format we want.
-3. We iterate through the radio->getPayloadLength(packet). This will give us how many Payloads in dataPackets types are inside the packet. In our case, we always send only one dataPacket.
+1. After receiving the packet in the function `processReceivedPackets()` we call the printDataPacket function.
+2. We need to get the payload of the packet, as we have different types of packet the payload is not allways in the same memory position. We have the function `radio->getPayload(packet)` that will return a pointer to the payload.
+3. We iterate through the `radio->getPayloadLength(packet)`. This will give us how many Payloads in dataPackets types are inside the packet. In our case, we always send only one dataPacket.
 4. Get the payload and call the printPacket function, that will print the counter received.
 5. Lastly, we need to delete the packet.
