@@ -250,6 +250,9 @@ void LoraMesher::sendPackets() {
         delete tx->packet;
         delete tx;
       }
+
+      //Wait for 0.5s to send the next packet to prevent some collisions
+      vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 
     //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
