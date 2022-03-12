@@ -314,11 +314,6 @@ public:
 
   LoraMesher::PacketQueue* ReceivedUserPackets = new PacketQueue();
 
-private:
-
-  PacketQueue* ReceivedPackets = new PacketQueue();
-  PacketQueue* ToSendPackets = new PacketQueue();
-
 #pragma pack(push, 1)
   struct networkNode {
     uint16_t address = 0;
@@ -334,6 +329,12 @@ private:
 
   //Routing table
   routableNode routingTable[RTMAXSIZE];
+
+private:
+
+  PacketQueue* ReceivedPackets = new PacketQueue();
+  PacketQueue* ToSendPackets = new PacketQueue();
+
   //Local Address
   uint16_t localAddress;
   // Duty cycle end
