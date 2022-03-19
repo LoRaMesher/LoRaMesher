@@ -24,8 +24,9 @@
 // 433E6 for Asia
 // 866E6 for Europe
 // 915E6 for North America
-#define BAND 868.0
-#define LORASF 7 // Spreading factor 6-12 (default 7)
+#define BAND 868.0F
+#define BANDWIDTH 125.0F
+#define LORASF 7U // Spreading factor 6-12 (default 7)
 
 // Comment this line if you want to remove the reliable payload
 #define RELIABLE_PAYLOAD
@@ -113,6 +114,25 @@ public:
    *
    */
   ~LoraMesher();
+
+#pragma pack(push, 1)
+  struct networkNode {
+    uint16_t address = 0;
+    uint8_t metric = 0;
+  };
+
+  struct routableNode {
+    LoraMesher::networkNode networkNode;
+    unsigned long timeout = 0;
+    uint16_t via = 0;
+  };
+#pragma pack(pop)
+
+  /**
+   * @brief Routing table array
+   *
+   */
+  routableNode routingTable[RTMAXSIZE];
 
   /**
    * @brief Prints the actual routing table in the log
@@ -313,22 +333,6 @@ public:
   };
 
   LoraMesher::PacketQueue* ReceivedUserPackets = new PacketQueue();
-
-#pragma pack(push, 1)
-  struct networkNode {
-    uint16_t address = 0;
-    uint8_t metric = 0;
-  };
-
-  struct routableNode {
-    LoraMesher::networkNode networkNode;
-    unsigned long timeout = 0;
-    uint16_t via = 0;
-  };
-#pragma pack(pop)
-
-  //Routing table
-  routableNode routingTable[RTMAXSIZE];
 
 private:
 

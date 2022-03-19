@@ -53,7 +53,7 @@ void LoraMesher::initializeLoRa() {
 
   // Set up the radio parameters
   Log.verbose(F("Initializing radio" CR));
-  int res = radio->begin(BAND);
+  int res = radio->begin(BAND, BANDWIDTH, LORASF, 7U, 18U, 10);
   if (res != 0) {
     Log.error(F("Radio module gave error: %d" CR), res);
   }
@@ -72,13 +72,13 @@ void LoraMesher::initializeLoRa() {
 
 int helloCounter = 0;
 void LoraMesher::initializeScheduler(void (*func)(void*)) {
-  Log.verbose(F("Setting up receiving task" CR));
+  Log.verbose(F("Setting up Schedulers" CR));
   int res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
     "Receiving routine",
     4096,
     this,
-    4,
+    6,
     &ReceivePacket_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Receiving routine creation gave error: %d" CR), res);
@@ -88,7 +88,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Hello routine",
     4096,
     this,
-    2,
+    5,
     &Hello_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Process Task creation gave error: %d" CR), res);
@@ -98,7 +98,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Process routine",
     4096,
     this,
-    1,
+    3,
     &ReceiveData_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Process Task creation gave error: %d" CR), res);
@@ -108,7 +108,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Sending routine",
     4096,
     this,
-    3,
+    4,
     &SendData_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Sending Task creation gave error: %d" CR), res);
@@ -118,7 +118,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     "Receive User routine",
     4096,
     this,
-    0,
+    2,
     &ReceivedUserData_TaskHandle);
   if (res != pdPASS) {
     Log.error(F("Receive User Task creation gave error: %d" CR), res);
@@ -165,12 +165,11 @@ void LoraMesher::receivingRoutine() {
         rssi = radio->getRSSI();
         snr = radio->getSNR();
 
-        Log.notice(F("Receiving LoRa packet: Size: %d RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
+        Log.notice(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d" CR), packetSize, rssi, snr);
         res = radio->readData((uint8_t*) rx, packetSize);
         if (res != 0) {
           Log.error(F("Reading packet data gave error: %d" CR), res);
-        }
-        else {
+        } else {
           //Set the received flag to true
           receivedFlag = true;
 
@@ -215,8 +214,7 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
 
   if (res != 0) {
     Log.error(F("Transmit gave error: %d" CR), res);
-  }
-  else {
+  } else {
     Log.trace("Packet sent" CR);
   }
 
@@ -229,8 +227,11 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
 void LoraMesher::sendPackets() {
   for (;;) {
     /* Wait for the notification of receivingRoutine and enter blocking */
-    Log.verbose("Size of Send Packets Fifo: %d" CR, ToSendPackets->Size());
+    Log.verbose("Size of Send Packets Queue: %d" CR, ToSendPackets->Size());
     while (ToSendPackets->Size() > 0) {
+
+      //Set a random delay, to avoid some collisions. Between 1 and 4 seconds
+      // vTaskDelay((rand() % 4 + 1) * 1000 / portTICK_PERIOD_MS);
 
       packetQueue<uint8_t>* tx = ToSendPackets->Pop<uint8_t>();
 
@@ -242,7 +243,7 @@ void LoraMesher::sendPackets() {
         if (tx->packet->type == DATA_P) {
           ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via = getNextHop(tx->packet->dst);
           Log.trace(F("NextHop %X" CR), getNextHop(tx->packet->dst));
-          Log.trace(F("Sending data packet from %X, destiny %X, via %X" CR), tx->packet->src, tx->packet->dst, ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via);
+          Log.trace(F("Sending data packet from %X, destination %X, via %X" CR), tx->packet->src, tx->packet->dst, ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via);
         }
 
         sendPacket(tx->packet);
@@ -251,12 +252,13 @@ void LoraMesher::sendPackets() {
         delete tx;
       }
 
-      //Wait for 0.5s to send the next packet to prevent some collisions
-      vTaskDelay(500 / portTICK_PERIOD_MS);
+      //Wait for 1 second to send the next packet
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 
     //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
     //Wait for 10s to send the next packet
+    // vTaskDelay((rand() % 10 + 5) * 1000 / portTICK_PERIOD_MS);
     vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
 }
@@ -289,7 +291,7 @@ void LoraMesher::processPackets() {
     userNotify = false;
     isDataPacket = false;
 
-    Log.verbose("Size of Received Packets Fifo: %d" CR, ReceivedPackets->Size());
+    Log.verbose("Size of Received Packets Queue: %d" CR, ReceivedPackets->Size());
     packetQueue<uint32_t>* rx = ReceivedPackets->Pop<uint32_t>();
     //Important! The packet should be deleted or moved to another section
 
@@ -301,13 +303,12 @@ void LoraMesher::processPackets() {
 
         case DATA_P:
           isDataPacket = true;
-          Log.trace(F("Data packet from %X, destiny %X, via %X" CR), rx->packet->src, rx->packet->dst, ((LoraMesher::dataPacket<uint32_t>*) (&rx->packet->payload))->via);
+          Log.trace(F("Data packet from %X, destination %X, via %X" CR), rx->packet->src, rx->packet->dst, ((LoraMesher::dataPacket<uint32_t>*) (&rx->packet->payload))->via);
         case PAYLOADONLY_P:
           if (rx->packet->dst == localAddress) {
             Log.trace(F("Data packet from %X for me" CR), rx->packet->src);
             userNotify = true;
-          }
-          else if (rx->packet->dst == BROADCAST_ADDR) {
+          } else if (rx->packet->dst == BROADCAST_ADDR) {
             Log.trace(F("Data packet from %X BROADCAST" CR), rx->packet->src);
             userNotify = true;
           }
@@ -315,19 +316,18 @@ void LoraMesher::processPackets() {
           else if (isDataPacket && (((LoraMesher::dataPacket<uint32_t>*) (&rx->packet->payload))->via) == localAddress) {
             Log.verbose(F("Data Packet from %X for %X. Via is me" CR), rx->packet->src, rx->packet->dst);
 
-            //If the destiny of the packet is inside the Routing table, forward the packet
+            //If the destination of the packet is inside the Routing table, forward the packet
             if (hasAddresRoutingTable(rx->packet->dst)) {
               Log.verbose(F("Data Packet forwarding it." CR));
               ToSendPackets->Add(rx);
             }
-            //If the destiny is not inside the Routing table, delete the packet and ignore it
+            //If the destination is not inside the Routing table, delete the packet and ignore it
             else {
-              Log.verbose(F("Data Packet destiny not reachable, deleting it." CR));
+              Log.verbose(F("Data Packet destination not reachable, deleting it." CR));
               delete rx->packet;
               delete rx;
             }
-          }
-          else {
+          } else {
             Log.verbose(F("Data Packet not for me, deleting it." CR));
             delete rx->packet;
             delete rx;
