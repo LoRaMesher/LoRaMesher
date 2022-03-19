@@ -1,6 +1,5 @@
 #include "loramesher.cpp"
 #include "display.h"
-#include <TinyGPS++.h>
 #include "WString.h"
 
 #define BOARD_LED 4
@@ -49,7 +48,7 @@ void printPacket(dataPacket* data, uint16_t sourceAddress) {
  * @param packet
  */
 void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
-  Log.trace(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
+  Log.trace(F("Packet arrived from %X with size %d bytes" CR), packet->src, packet->payloadSize);
 
   //Get the payload to iterate through it
   dataPacket* packets = radio->getPayload(packet);
@@ -75,7 +74,7 @@ void processReceivedPackets(void*) {
     //Iterate through all the packets inside the Received User Packets FiFo
     while (radio->ReceivedUserPackets->Size() > 0) {
       Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-      Log.trace(F("Fifo receiveUserData size: %d" CR), radio->ReceivedUserPackets->Size());
+      Log.trace(F("Queue receiveUserData size: %d" CR), radio->ReceivedUserPackets->Size());
 
       //Get the first element inside the Received User Packets FiFo
       LoraMesher::packetQueue<dataPacket>* helloReceived = radio->ReceivedUserPackets->Pop<dataPacket>();
@@ -126,15 +125,29 @@ void printRoutingTableToDisplay() {
 
 
 /**
- * @brief Every 20 seconds it will send a counter to broadcast
+ * @brief Every 20 seconds it will send a counter to a position of the dataTable
  *
  */
 void sendLoRaMessage(void*) {
+  int dataTablePosition = 0;
+
   for (;;) {
-    Log.trace(F("Send data packet nº %d" CR), dataCounter);
+    if (radio->routingTableSize() == 0) {
+      vTaskDelay(20000 / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    if (radio->routingTableSize() <= dataTablePosition)
+      dataTablePosition = 0;
+
+    uint16_t addr = radio->routingTable[dataTablePosition].networkNode.address;
+
+    Log.trace(F("Send data packet nº %d to %X (%d)" CR), dataCounter, addr, dataTablePosition);
+
+    dataTablePosition++;
 
     //Create packet and send it.
-    radio->createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
+    radio->createPacketAndSend(addr, helloPacket, 1);
 
     //Print second line in the screen
     Screen.changeLineTwo("Send " + String(dataCounter));
@@ -164,6 +177,7 @@ void createSendMessages() {
     1,
     &sendLoRaMessage_Handle);
   if (res != pdPASS) {
+    Log.error(F("Send LoRa Message task creation gave error: %d" CR), res);
     vTaskDelete(sendLoRaMessage_Handle);
   }
 }
@@ -183,5 +197,6 @@ void setup() {
 
 
 void loop() {
+  vTaskPrioritySet(NULL, 1);
   Screen.drawDisplay();
 }
