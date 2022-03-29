@@ -46,7 +46,7 @@ Serial.begin(115200); //This configuration can be changed
 Serial.println("initBoard");
 
 //Get the LoraMesher instance
-LoraMesher radio = LoraMesher::getInstance();
+LoraMesher& radio = LoraMesher::getInstance();
 
 //Initialize the LoraMesher with a processReceivedPackets function
 radio.init(processReceivedPackets);

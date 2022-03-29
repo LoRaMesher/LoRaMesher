@@ -4,7 +4,7 @@
 
 #define BOARD_LED 4
 
-LoraMesher* radio;
+LoraMesher& radio = LoraMesher::getInstance();
 
 uint32_t dataCounter = 0;
 struct dataPacket {
@@ -51,9 +51,9 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
   Log.trace(F("Packet arrived from %X with size %d bytes" CR), packet->src, packet->payloadSize);
 
   //Get the payload to iterate through it
-  dataPacket* packets = radio->getPayload(packet);
+  dataPacket* packets = radio.getPayload(packet);
 
-  for (size_t i = 0; i < radio->getPayloadLength(packet); i++) {
+  for (size_t i = 0; i < radio.getPayloadLength(packet); i++) {
     //Print the packet
     printPacket(&packets[i], packet->src);
   }
@@ -72,12 +72,12 @@ void processReceivedPackets(void*) {
     led_Flash(1, 100); //one quick LED flashes to indicate a packet has arrived
 
     //Iterate through all the packets inside the Received User Packets FiFo
-    while (radio->ReceivedUserPackets->Size() > 0) {
+    while (radio.ReceivedUserPackets->Size() > 0) {
       Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-      Log.trace(F("Queue receiveUserData size: %d" CR), radio->ReceivedUserPackets->Size());
+      Log.trace(F("Queue receiveUserData size: %d" CR), radio.ReceivedUserPackets->Size());
 
       //Get the first element inside the Received User Packets FiFo
-      LoraMesher::packetQueue<dataPacket>* helloReceived = radio->ReceivedUserPackets->Pop<dataPacket>();
+      LoraMesher::packetQueue<dataPacket>* helloReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
 
       //Print the data packet
       printDataPacket(helloReceived->packet);
@@ -94,7 +94,7 @@ void processReceivedPackets(void*) {
  */
 void setupLoraMesher() {
   //Create a loramesher with a processReceivedPackets function
-  radio = new LoraMesher(processReceivedPackets);
+  radio.init(processReceivedPackets);
 
   Serial.println("Lora initialized");
 }
@@ -105,7 +105,7 @@ void setupLoraMesher() {
  */
 void printAddressDisplay() {
   char addrStr[15];
-  snprintf(addrStr, 15, "Id: %X\r\n", radio->getLocalAddress());
+  snprintf(addrStr, 15, "Id: %X\r\n", radio.getLocalAddress());
 
   Screen.changeLineOne(String(addrStr));
 }
@@ -113,13 +113,13 @@ void printAddressDisplay() {
 
 void printRoutingTableToDisplay() {
   char text[15];
-  for (int i = 0; i < radio->routingTableSize(); i++) {
-    LoraMesher::networkNode node = radio->routingTable[i].networkNode;
-    snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, radio->routingTable[i].via);
+  for (int i = 0; i < radio.routingTableSize(); i++) {
+    LoraMesher::networkNode node = radio.routingTable[i].networkNode;
+    snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, radio.routingTable[i].via);
     Screen.changeRoutingText(text, i);
   }
 
-  Screen.changeSizeRouting(radio->routingTableSize());
+  Screen.changeSizeRouting(radio.routingTableSize());
   Screen.changeLineFour();
 }
 
@@ -132,22 +132,22 @@ void sendLoRaMessage(void*) {
   int dataTablePosition = 0;
 
   for (;;) {
-    if (radio->routingTableSize() == 0) {
+    if (radio.routingTableSize() == 0) {
       vTaskDelay(20000 / portTICK_PERIOD_MS);
       continue;
     }
 
-    if (radio->routingTableSize() <= dataTablePosition)
+    if (radio.routingTableSize() <= dataTablePosition)
       dataTablePosition = 0;
 
-    uint16_t addr = radio->routingTable[dataTablePosition].networkNode.address;
+    uint16_t addr = radio.routingTable[dataTablePosition].networkNode.address;
 
     Log.trace(F("Send data packet nº %d to %X (%d)" CR), dataCounter, addr, dataTablePosition);
 
     dataTablePosition++;
 
     //Create packet and send it.
-    radio->createPacketAndSend(addr, helloPacket, 1);
+    radio.createPacketAndSend(addr, helloPacket, 1);
 
     //Print second line in the screen
     Screen.changeLineTwo("Send " + String(dataCounter));

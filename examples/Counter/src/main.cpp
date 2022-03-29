@@ -3,7 +3,7 @@
 
 #define BOARD_LED 4
 
-LoraMesher* radio;
+LoraMesher& radio = LoraMesher::getInstance();
 
 uint32_t dataCounter = 0;
 struct dataPacket {
@@ -41,9 +41,9 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
     Log.trace(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
-    dataPacket* packets = radio->getPayload(packet);
+    dataPacket* packets = radio.getPayload(packet);
 
-    for (size_t i = 0; i < radio->getPayloadLength(packet); i++) {
+    for (size_t i = 0; i < radio.getPayloadLength(packet); i++) {
         //Print the packet
         printPacket(&packets[i]);
     }
@@ -62,12 +62,12 @@ void processReceivedPackets(void*) {
         led_Flash(1, 100); //one quick LED flashes to indicate a packet has arrived
 
         //Iterate through all the packets inside the Received User Packets FiFo
-        while (radio->ReceivedUserPackets->Size() > 0) {
+        while (radio.ReceivedUserPackets->Size() > 0) {
             Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.trace(F("Fifo receiveUserData size: %d" CR), radio->ReceivedUserPackets->Size());
+            Log.trace(F("Fifo receiveUserData size: %d" CR), radio.ReceivedUserPackets->Size());
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::packetQueue<dataPacket>* helloReceived = radio->ReceivedUserPackets->Pop<dataPacket>();
+            LoraMesher::packetQueue<dataPacket>* helloReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
 
             //Print the data packet
             printDataPacket(helloReceived->packet);
@@ -79,9 +79,8 @@ void processReceivedPackets(void*) {
 }
 
 void setupLoraMesher() {
-
-    //Create a loramesher with a processReceivedPackets function
-    radio = new LoraMesher(processReceivedPackets);
+    //Init the loramesher with a processReceivedPackets function
+    radio.init(processReceivedPackets);
 
     Serial.println("Lora initialized");
 }
@@ -103,7 +102,7 @@ void loop() {
         helloPacket->counter = dataCounter++;
 
         //Create packet and send it.
-        radio->createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
+        radio.createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
 
         //Wait 20 seconds to send the next packet
         vTaskDelay(20000 / portTICK_PERIOD_MS);
