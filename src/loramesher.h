@@ -84,8 +84,13 @@
 class LoraMesher {
 
 public:
+  static LoraMesher& getInstance() {
+    static LoraMesher instance;
+    return instance;
+  }
+
   /**
-   * @brief Construct a new Lora Mesher object
+   * @brief Initialize the Lora Mesher object
    *
    * @param receiverFunction Receiver function. It will be notified when data for the user is habailable.
    * Example of usage:
@@ -96,7 +101,7 @@ public:
 
         // Get the receivedUserPackets and get all the elements
         while (radio->ReceivedUserPackets->Size() > 0) {
-          LoraMesher::packetQueue<dataPacket>* packetReceived = radio->ReceivedUserPackets->Pop<dataPacket>();
+          LoraMesher::packetQueue<dataPacket>* packetReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
 
           //Do something with the packet, ex: print(packetReceived);
 
@@ -105,9 +110,10 @@ public:
     }
 
     Then initialize:
-    LoraMesher radio = new LoraMesher(processReceivedPackets);
+    LoraMesher radio = LoraMesher::getInstance();
+    radio.init(processReceivedPackets);
    */
-  LoraMesher(void (*receiverFunction)(void*));
+  void init(void (*receiverFunction)(void*));
 
   /**
    * @brief Destroy the Lora Mesher
@@ -336,6 +342,8 @@ public:
 
 private:
 
+  LoraMesher();
+
   PacketQueue* ReceivedPackets = new PacketQueue();
   PacketQueue* ToSendPackets = new PacketQueue();
 
@@ -359,7 +367,7 @@ private:
   TaskHandle_t ReceivedUserData_TaskHandle = NULL;
 
 
-  void onReceive();
+  static void onReceive(void);
 
   void receivingRoutine();
 

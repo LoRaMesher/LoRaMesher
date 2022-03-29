@@ -45,8 +45,11 @@ To initialize the new implementation, LoRaMesher must be initialized with a func
 Serial.begin(115200); //This configuration can be changed
 Serial.println("initBoard");
 
-//Create a LoraMesher with a processReceivedPackets function
-radio = new LoraMesher(processReceivedPackets);
+//Get the LoraMesher instance
+LoraMesher radio = LoraMesher::getInstance();
+
+//Initialize the LoraMesher with a processReceivedPackets function
+radio.init(processReceivedPackets);
 ```
 
 We can see that, when starting a new instance of LoRaMesher, we need to pass through a function.
@@ -66,9 +69,9 @@ void processReceivedPackets(void*) {
     ulTaskNotifyTake(pdPASS, portMAX_DELAY);
 
     //Iterate through all the packets inside the Received User Packets FiFo
-    while (radio->ReceivedUserPackets->Size() > 0) {
+    while (radio.ReceivedUserPackets->Size() > 0) {
       //Get the first element inside the Received User Packets FiFo
-      LoraMesher::packetQueue<dataPacket>* helloReceived = radio->ReceivedUserPackets->Pop<dataPacket>();
+      LoraMesher::packetQueue<dataPacket>* helloReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
 
       //Print the data packet
       printDataPacket(helloReceived->packet);
@@ -85,7 +88,7 @@ There are some important things we need to be aware of:
 1. This function should have a `void*` in the parameters.
 2. The function should contain an endless loop.
 3. Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
-4. All the packets are stored inside `radio->ReceiveduserPackets`.
+4. All the packets are stored inside `radio.ReceiveduserPackets`.
 5. Every time you call Pop, you need to be sure to delete the Packet Queue after using it.
 
 ### Send data packet function
@@ -97,7 +100,7 @@ In this section we will present how you can create and send packets. in this exa
         helloPacket->counter = dataCounter++;
 
         //Create packet and send it.
-         radio->createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
+         radio.createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
 
         //Wait 10 seconds to send the next packet
         vTaskDelay(10000 / portTICK_PERIOD_MS);
@@ -106,7 +109,7 @@ In this section we will present how you can create and send packets. in this exa
 
 In the previous figure we can see that we are using the helloPacket, we add the counter inside it, and we create and send the packet using the LoRaMesher.
 
-The most important part of this piece of code is the function that we call in the `radio->createPacketAndSend()`:
+The most important part of this piece of code is the function that we call in the `radio.createPacketAndSend()`:
 
 1. The first parameter is the destination, in this case the broadcast address.
 2. And finally, the helloPacket (the packet we created) and the number of elements we are sending, in this case only 1 dataPacket.
@@ -132,9 +135,9 @@ void printPacket(dataPacket* data) {
  */
 void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
   //Get the payload to iterate through it
-  dataPacket* packets = radio->getPayload(packet);
+  dataPacket* packets = radio.getPayload(packet);
 
-  for (size_t i = 0; i < radio->getPayloadLength(packet); i++) {
+  for (size_t i = 0; i < radio.getPayloadLength(packet); i++) {
     //Print the packet
     printPacket(&packets[i]);
   }
@@ -145,7 +148,7 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
 ```
 
 1. After receiving the packet in the `processReceivedPackets()` function, we call the `printDataPacket()` function.
-2. We need to get the payload of the packet, as we have different types of packet. The payload is not always in the same memory position. We have the function `radio->getPayload(packet)` that will return a pointer to the payload.
-3. We iterate through the `radio->getPayloadLength(packet)`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
+2. We need to get the payload of the packet, as we have different types of packet. The payload is not always in the same memory position. We have the function `radio.getPayload(packet)` that will return a pointer to the payload.
+3. We iterate through the `radio.getPayloadLength(packet)`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
 4. Get the payload and call the `printPacket()` function, that will print the counter received.
 5. Lastly, we need to delete the packet.

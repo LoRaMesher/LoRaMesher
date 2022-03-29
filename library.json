@@ -1,21 +1,23 @@
 {
-  "name": "LoRaMesher",
-  "version": "0.0.1",
-  "description": "A mesh network for LoRa",
-  "keywords": "lora, mesh, network",
-  "authors":
-  [
-    {
-      "name": "Roger Pueyo"
+    "name": "LoRaMesher",
+    "version": "0.0.3",
+    "description": "A mesh network for LoRa",
+    "keywords": "lora, mesh, network",
+    "authors": [
+        {
+            "name": "Joan Miquel Solé"
+        },
+        {
+            "name": "Roger Pueyo"
+        },
+        {
+            "name": "Sergi Miralles"
+        }
+    ],
+    "dependencies": {
+        "thijse/ArduinoLog": "https://github.com/thijse/Arduino-Log.git",
+        "jgromes/RadioLib": "https://github.com/jgromes/RadioLib.git"
     },
-    {
-      "name": "Sergi Miralles"
-    }
-  ],
-  "dependencies": {
-    "thijse/ArduinoLog": "^1.0.3",
-    "sergimn/RadioLib": "https://github.com/sergimn/RadioLib.git"
-  },
-  "frameworks": "arduino",
-  "platforms": "*"
+    "frameworks": "arduino",
+    "platforms": "*"
 }

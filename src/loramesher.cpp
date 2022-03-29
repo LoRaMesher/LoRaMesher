@@ -1,6 +1,8 @@
 #include "loramesher.h"
 
-LoraMesher::LoraMesher(void (*func)(void*)) {
+LoraMesher::LoraMesher() {}
+
+void LoraMesher::init(void (*func)(void*)) {
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
   dutyCycleEnd = 0;
   lastSendTime = 0;
@@ -63,7 +65,7 @@ void LoraMesher::initializeLoRa() {
 #endif
 
   Log.verbose(F("Setting up callback function" CR));
-  radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
+  radio->setDio0Action(onReceive);
 
   Log.trace(F("LoRa module initialization DONE" CR));
 
@@ -130,7 +132,7 @@ void IRAM_ATTR LoraMesher::onReceive() {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
   xHigherPriorityTaskWoken = xTaskNotifyFromISR(
-    ReceivePacket_TaskHandle,
+    LoraMesher::getInstance().ReceivePacket_TaskHandle,
     0,
     eSetValueWithoutOverwrite,
     &xHigherPriorityTaskWoken);
@@ -218,7 +220,7 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
     Log.trace("Packet sent" CR);
   }
 
-  radio->setDio0Action(std::bind(&LoraMesher::onReceive, this));
+  radio->setDio0Action(onReceive);
   res = radio->startReceive();
   if (res != 0)
     Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
