@@ -305,8 +305,6 @@ public:
   packetQueue<T>* createPacketQueue(packet<I>* p, uint8_t priority, uint32_t timeout);
 
   class PacketQueue {
-    packetQueue<uint32_t>* first = nullptr;
-
   public:
     /**
      * @brief Add pq in order of priority
@@ -336,6 +334,22 @@ public:
      *
      */
     void Clear();
+
+  private:
+    bool* enabled = new bool(true);
+    packetQueue<uint32_t>* first = nullptr;
+
+    /**
+     * @brief Wait for the enabled flag to be true, set it to false then
+     *
+     */
+    void WaitAndDisable();
+
+    /**
+     * @brief Set the enabled flag to true
+     *
+     */
+    void Enable();
   };
 
   LoraMesher::PacketQueue* ReceivedUserPackets = new PacketQueue();
@@ -368,6 +382,8 @@ private:
 
 
   static void onReceive(void);
+
+  static void onFinishTransmit(void);
 
   void receivingRoutine();
 

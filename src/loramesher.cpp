@@ -127,7 +127,10 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   }
 }
 
-void IRAM_ATTR LoraMesher::onReceive() {
+#if defined(ESP8266) || defined(ESP32)
+ICACHE_RAM_ATTR
+#endif
+void LoraMesher::onReceive() {
 
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
@@ -139,6 +142,23 @@ void IRAM_ATTR LoraMesher::onReceive() {
 
   if (xHigherPriorityTaskWoken == pdTRUE)
     portYIELD_FROM_ISR();
+}
+
+#if defined(ESP8266) || defined(ESP32)
+ICACHE_RAM_ATTR
+#endif
+void LoraMesher::onFinishTransmit() {
+  //Add the onReceive function into the Dio0 Action again.
+  LoraMesher::getInstance().radio->setDio0Action(onReceive);
+
+  //Start receiving packets again
+  int res = LoraMesher::getInstance().radio->startReceive();
+  if (res != 0) {
+    Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
+    return;
+  }
+
+  Log.verbose(F("Packet send" CR));
 }
 
 void LoraMesher::receivingRoutine() {
@@ -207,55 +227,50 @@ uint16_t LoraMesher::getLocalAddress() {
 
 template <typename T>
 void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
-  Log.trace(F("Sending packet of type %d" CR), p->type);
-  radio->clearDio0Action(); //For some reason, while transmitting packets, the interrupt pin is set with a ghost packet
+  //Put Radio on StandBy mode. Prevent receiving packets when changing the Dio0 action.
+  radio->standby();
 
-  Log.trace(F("About to transmit packet" CR));
-  //TODO: Change this to startTransmit as a mitigation to the wdt error so we can raise the priority of the task. We'll have to look on how to start to listen for the radio again
-  int res = radio->transmit((uint8_t*) p, getPacketLength(p));
+  //Set onFinishTransmit Dio0 Action
+  radio->setDio0Action(onFinishTransmit);
+
+  //Blocking transmit, it is necessary due to deleting the packet after sending it. 
+  int res = radio->startTransmit((uint8_t*) p, getPacketLength(p));
+
+  // int res = radio->transmit((uint8_t*) p, getPacketLength(p));
 
   if (res != 0) {
     Log.error(F("Transmit gave error: %d" CR), res);
-  } else {
-    Log.trace("Packet sent" CR);
+    return;
   }
 
-  radio->setDio0Action(onReceive);
-  res = radio->startReceive();
-  if (res != 0)
-    Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
+  Log.trace(F("Sending packet of type %d" CR), p->type);
 }
 
 void LoraMesher::sendPackets() {
   for (;;) {
     /* Wait for the notification of receivingRoutine and enter blocking */
     Log.verbose("Size of Send Packets Queue: %d" CR, ToSendPackets->Size());
-    while (ToSendPackets->Size() > 0) {
 
-      //Set a random delay, to avoid some collisions. Between 1 and 4 seconds
-      // vTaskDelay((rand() % 4 + 1) * 1000 / portTICK_PERIOD_MS);
+    //Set a random delay, to avoid some collisions. Between 1 and 4 seconds
+    // vTaskDelay((rand() % 4 + 1) * 1000 / portTICK_PERIOD_MS);
 
-      packetQueue<uint8_t>* tx = ToSendPackets->Pop<uint8_t>();
+    packetQueue<uint8_t>* tx = ToSendPackets->Pop<uint8_t>();
 
-      if (tx != nullptr) {
-        Log.verbose("Send nº %d" CR, helloCounter);
-        helloCounter++;
+    if (tx != nullptr) {
+      Log.verbose("Send nº %d" CR, helloCounter);
+      helloCounter++;
 
-        //If the packet is type DATA_P add the via to the packet and forward the packet
-        if (tx->packet->type == DATA_P) {
-          ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via = getNextHop(tx->packet->dst);
-          Log.trace(F("NextHop %X" CR), getNextHop(tx->packet->dst));
-          Log.trace(F("Sending data packet from %X, destination %X, via %X" CR), tx->packet->src, tx->packet->dst, ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via);
-        }
-
-        sendPacket(tx->packet);
-
-        delete tx->packet;
-        delete tx;
+      //If the packet is type DATA_P add the via to the packet and forward the packet
+      if (tx->packet->type == DATA_P) {
+        ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via = getNextHop(tx->packet->dst);
+        Log.trace(F("NextHop %X" CR), getNextHop(tx->packet->dst));
+        Log.trace(F("Sending data packet from %X, destination %X, via %X" CR), tx->packet->src, tx->packet->dst, ((LoraMesher::dataPacket<uint32_t>*) (&tx->packet->payload))->via);
       }
 
-      //Wait for 1 second to send the next packet
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      sendPacket(tx->packet);
+
+      delete tx->packet;
+      delete tx;
     }
 
     //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
@@ -579,7 +594,22 @@ LoraMesher::packetQueue<T>* LoraMesher::createPacketQueue(LoraMesher::packet<I>*
   return pq;
 }
 
+void LoraMesher::PacketQueue::Enable() {
+  *enabled = true;
+}
+
+void LoraMesher::PacketQueue::WaitAndDisable() {
+  while (!*enabled) {
+    Log.verbose(F("Waiting for free queue" CR));
+    vTaskDelay(100);
+  }
+  *enabled = false;
+}
+
+
 void LoraMesher::PacketQueue::Add(packetQueue<uint32_t>* pq) {
+  WaitAndDisable();
+
   if (first == nullptr)
     first = pq;
 
@@ -588,6 +618,7 @@ void LoraMesher::PacketQueue::Add(packetQueue<uint32_t>* pq) {
     if (firstCp->next == nullptr && first->priority < pq->priority) {
       first = pq;
       pq->next = firstCp;
+      Enable();
       return;
     }
 
@@ -603,34 +634,51 @@ void LoraMesher::PacketQueue::Add(packetQueue<uint32_t>* pq) {
       pq->next = cp;
     }
   }
+
+  Enable();
 }
 
 template <typename T>
 LoraMesher::packetQueue<T>* LoraMesher::PacketQueue::Pop() {
-  if (first == nullptr)
+  WaitAndDisable();
+
+  if (first == nullptr) {
+    Enable();
     return nullptr;
+  }
 
   packetQueue<T>* firstCp = (packetQueue<T>*) first;
   first = first->next;
+
+  Enable();
   return firstCp;
 }
 
 size_t LoraMesher::PacketQueue::Size() {
+  WaitAndDisable();
   packetQueue<uint32_t>* firstCp = (packetQueue<uint32_t>*) first;
-  if (firstCp == nullptr)
+  if (firstCp == nullptr) {
+    Enable();
     return 0;
+  }
 
   size_t size = 1;
   while (firstCp->next != nullptr) {
     size++;
     firstCp = firstCp->next;
   }
+
+  Enable();
   return size;
 }
 
 void LoraMesher::PacketQueue::Clear() {
-  if (first == nullptr)
+  WaitAndDisable();
+
+  if (first == nullptr) {
+    Enable();
     return;
+  }
 
   packetQueue<uint32_t>* firstCp = (packetQueue<uint32_t>*) first;
   while (first != nullptr) {
@@ -639,6 +687,8 @@ void LoraMesher::PacketQueue::Clear() {
     delete first;
     first = firstCp;
   }
+
+  Enable();
 }
 
 /**
