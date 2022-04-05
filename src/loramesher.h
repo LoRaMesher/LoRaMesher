@@ -7,6 +7,8 @@
 // WiFi libraries
 #include <WiFi.h>
 
+#include "helpers\LinkedQueue.hpp"
+
 // Logger
 //#define DISABLE_LOGGING
 #include <ArduinoLog.h>
@@ -31,48 +33,24 @@
 // Comment this line if you want to remove the reliable payload
 #define RELIABLE_PAYLOAD
 
-// SSD1306 OLED display pins
-// For TTGO T3_V1.6: SDA/SCL/RST 21/22/16
-// For Heltec ESP32: SDA/SCL/RST 4/15/16
-
-#ifdef ARDUINO_TTGO_LoRa32_V1
-#define HASOLEDSSD1306 true
-#define HASGPS false
-#define GPS_SDA 0
-#define GPS_SCL 0
-#define OLED_SDA 21
-#define OLED_SCL 22
-#define OLED_RST 16
-#endif
-
-#ifdef ARDUINO_HELTEC_WIFI_LORA_32
-#define HASOLEDSSD1306 true
-#define HASGPS false
-#define GPS_SDA 0
-#define GPS_SCL 0
-#define OLED_SDA 4
-#define OLED_SCL 15
-#define OLED_RST 16
-#endif
-
-#ifdef ARDUINO_TTGO_T1
-#define HASOLEDSSD1306 true
-#define HASGPS true
-#define GPS_SDA 21
-#define GPS_SCL 22
-#define OLED_RST 0
-#define OLED_SDA 21
-#define OLED_SCL 22
-#endif
-
 // Routing table max size
 #define RTMAXSIZE 256
-#define MAXPAYLOADSIZE 200 //In bytes
+
+//Max payload size per packet
+//Automatically separated through multiple packets if exceed
+//In bytes (222 bytes [UE max allowed with SF7 and 125khz] - 6 bytes of header)
+//If contains via (214 bytes)
+//If contains ack (211 bytes)
+#define MAXPAYLOADSIZE 216 
 
 // Packet types
-#define HELLO_P 0x04
-#define DATA_P 0x03
+#define NEED_ACK_P 0x01
 #define PAYLOADONLY_P 0x02
+#define HELLO_P 0x04
+#define DATA_P 0x06
+#define ACK_P 0x08
+#define LOST_P 0x10
+#define SYNC_P 0x12
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -177,8 +155,6 @@ public:
    */
   uint16_t getLocalAddress();
 
-
-
 #pragma pack(push, 1)
   template <typename T>
   struct packet {
@@ -195,6 +171,13 @@ public:
     T payload[];
   };
 
+  template <typename T>
+  struct controlPacket {
+    uint8_t seq_id;
+    uint16_t number;
+    T payload[];
+  };
+
 #pragma pack(pop)
 
   /**
@@ -202,13 +185,22 @@ public:
    *
    * @tparam T
    * @param dst Destination
-   * @param src Source, normally local addres, use getLocalAddress()
-   * @param type Type of packet
    * @param payload Payload of type T
    * @param payloadSize Length of the payload in T
    */
   template <typename T>
   void createPacketAndSend(uint16_t dst, T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Send the payload reliable. It will wait for an ack of the destination.
+   *
+   * @tparam T
+   * @param dst Destination
+   * @param payload Payload of type T
+   * @param payloadSize Length of the payload in T
+   */
+  template <typename T>
+  void sendReliable(uint16_t dst, T* payload, uint8_t payloadSize);
 
   /**
    * @brief Get the Payload of the packet
@@ -240,11 +232,11 @@ public:
    * @tparam T
    * @param payload Payload of type T
    * @param payloadSize Length of the payload in T
-   * @param hasVia Indicates the function that it need to add the via
+   * @param extraSize Indicates the function that it need to allocate extra space before the payload
    * @return struct LoraMesher::packet<T>*
    */
   template <typename T>
-  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize, bool hasVia);
+  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize, size_t extraSize);
 
   /**
    * @brief Delete the packet from memory
@@ -281,11 +273,13 @@ public:
    *
    * @tparam T
    */
+   //TODO: Pragma pack here, could it be removed?
 #pragma pack(push, 1)
   template <typename T>
   struct packetQueue {
     uint32_t timeout;
     uint8_t priority = DEFAULT_PRIORITY;
+    uint32_t sequence_number = 0;
     LoraMesher::packet<T>* packet;
     packetQueue<T>* next;
   };
@@ -402,10 +396,6 @@ private:
    */
   void processPackets();
 
-  // void dataCallback();
-
-  // void helloCallback();
-
   /**
    * @brief process the network node, adds the node in the routing table if can
    *
@@ -462,6 +452,14 @@ private:
   size_t getPacketLength(LoraMesher::packet<T>* p);
 
   /**
+   * @brief Get the number of bytes to the payload, between a Packet<T> and their real payload
+   *
+   * @param type type of the packet
+   * @return size_t number of bytes
+   */
+  size_t getExtraLengthToPayload(uint8_t type);
+
+  /**
    * @brief Print the packet in the Log verbose, if the type is not defined it will print the payload in Hexadecimals
    *
    * @tparam T
@@ -470,6 +468,35 @@ private:
    */
   template <typename T>
   void printPacket(LoraMesher::packet<T>* p, bool received);
+
+
+
+
+  /**
+   * @brief Sequence Id, used to get the id of the packet sequence
+   *
+   */
+  uint8_t sequence_id = 0;
+
+  /**
+   * @brief Get the Sequence Id for the packet sequence
+   *
+   * @return uint8_t
+   */
+  uint8_t getSequenceId();
+
+  /**
+   * @brief Queue Waiting Sending Packets (Q_WSP)
+   *
+   */
+  LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>* q_WSP = new LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>();
+
+  /**
+   * @brief Queue Waiting Received Packet (Q_WRP)
+   *
+   */
+  LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>* q_WRP = new LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>();
+
 };
 
 #endif
