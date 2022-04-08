@@ -3,96 +3,152 @@
 #include <Arduino.h>
 
 template <class T>
-class QueueNode {
+class ListNode {
 public:
     T* element;
-    QueueNode* next;
-    QueueNode* prev;
+    ListNode* next;
+    ListNode* prev;
 
-    QueueNode(T* element, QueueNode* prev, QueueNode* next) : element(element) {
-        this->next = next;
-        this->prev = prev;
+    ListNode(T* element, ListNode* prev, ListNode* next)
+        : element(element), prev(prev), next(next) {
     };
+
+    ~ListNode() {
+        delete element;
+    }
 };
 
 template <class T>
-class LinkedQueue {
+class LinkedList {
 private:
-    uint8_t id = 0;
     int length;
-    QueueNode<T>* head;
-    QueueNode<T>* tail;
+    ListNode<T>* head;
+    ListNode<T>* tail;
+    ListNode<T>* curr;
 public:
-    LinkedQueue(uint8_t id = 0);
-    ~LinkedQueue();
-    T& First() const;
-    T& Last() const;
+    LinkedList();
+    ~LinkedList();
+    T* getCurrent();
+    T* First() const;
+    T* Last() const;
     int getLength();
     void Append(T*);
-    T* Pop();
+    void DeleteCurrent();
+    bool next();
+    bool moveToStart();
+    bool prev();
     void Clear();
 };
 
 template <class T>
-LinkedQueue<T>::LinkedQueue(uint8_t id) {
+LinkedList<T>::LinkedList() {
     length = 0;
     head = nullptr;
     tail = nullptr;
-    id = id;
+    curr = nullptr;
 }
 
+
 template <class T>
-LinkedQueue<T>::~LinkedQueue() {
+LinkedList<T>::~LinkedList() {
     Clear();
 }
 
 template<class T>
-T& LinkedQueue<T>::First() const {
+T* LinkedList<T>::getCurrent() {
+    return curr->element;
+}
+
+template<class T>
+T* LinkedList<T>::First() const {
     return head->element;
 }
 
 template<class T>
-T& LinkedQueue<T>::Last() const {
+T* LinkedList<T>::Last() const {
     return tail->element;
 }
 
 template<class T>
-int LinkedQueue<T>::getLength() {
+int LinkedList<T>::getLength() {
     return length;
 }
 
 template <class T>
-void LinkedQueue<T>::Append(T* element) {
-    QueueNode<T>* node = new QueueNode<T>(element, tail, nullptr);
+void LinkedList<T>::Append(T* element) {
+    ListNode<T>* node = new ListNode<T>(element, tail, nullptr);
 
     if (length == 0)
-        tail = head = node;
+        curr = tail = head = node;
     else {
         tail->next = node;
         tail = node;
     }
 
     length++;
+
 }
 
 template <class T>
-T* LinkedQueue<T>::Pop() {
+bool LinkedList<T>::next() {
     if (length == 0)
-        return nullptr;
+        return false;
 
-    T* elem = head->element;
-    head = head->next;
-    delete head;
+    if (curr->next == nullptr)
+        return false;
 
-    length--;
-    return elem;
+    curr = curr->next;
+    return true;
 }
 
 template <class T>
-void LinkedQueue<T>::Clear() {
+bool LinkedList<T>::moveToStart() {
+    curr = head;
+    return length != 0;
+}
+
+template<class T>
+bool LinkedList<T>::prev() {
+    if (length == 0)
+        return false;
+
+    if (curr->prev != nullptr)
+        return false;
+
+    curr = curr->prev;
+    return true;
+}
+
+template <class T>
+void LinkedList<T>::DeleteCurrent() {
     if (length == 0)
         return;
-    QueueNode<T>* temp = head;
+    length--;
+    ListNode<T>* temp = curr;
+
+    if (temp->prev != nullptr)
+        temp->prev->next = temp->next;
+    if (temp->next != nullptr)
+        temp->next->prev = temp->prev;
+
+    if (length == 0)
+        head = curr = tail = nullptr;
+    else if (curr == head)
+        curr = head = head->next;
+    else if (curr == tail)
+        curr = tail = tail->prev;
+    else
+        curr = curr->prev;
+
+    delete temp->element;
+    delete temp;
+}
+
+template <class T>
+void LinkedList<T>::Clear() {
+    if (length == 0)
+        return;
+    ListNode<T>* temp = head;
 
     while (temp != nullptr) {
         head = head->next;
@@ -101,7 +157,8 @@ void LinkedQueue<T>::Clear() {
         temp = head;
     }
 
-    head = tail = nullptr;
+    head = curr = tail = nullptr;
 
     length = 0;
+
 }

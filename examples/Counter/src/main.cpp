@@ -47,8 +47,6 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
         //Print the packet
         printPacket(&packets[i]);
     }
-    //Delete the packet. It is very important to delete the packet.
-    delete packet;
 }
 
 /**
@@ -72,8 +70,8 @@ void processReceivedPackets(void*) {
             //Print the data packet
             printDataPacket(helloReceived->packet);
 
-            //Delete the packet when used. It is very important to delete the packets.
-            delete helloReceived;
+            //Delete the packet when used. It is very important to call this function to delete the packet queue and the packet.
+            radio.deletepacketQueue(helloReceived);
         }
     }
 }

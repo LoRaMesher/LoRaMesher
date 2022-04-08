@@ -45,12 +45,11 @@
 
 // Packet types
 #define NEED_ACK_P 0x01
-#define PAYLOADONLY_P 0x02
+#define DATA_P 0x02
 #define HELLO_P 0x04
-#define DATA_P 0x06
-#define ACK_P 0x08
-#define LOST_P 0x10
-#define SYNC_P 0x12
+#define ACK_P 0x06
+#define LOST_P 0x8
+#define SYNC_P 0x10
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -58,6 +57,9 @@
 
 //Time out by default 60s
 #define DEFAULT_TIMEOUT 60
+
+//Maximum times that a sequence of packets reach timeout
+#define MAX_TIMEOUTS 3
 
 class LoraMesher {
 
@@ -220,7 +222,7 @@ public:
    * @param src Source, normally local addres, use getLocalAddress()
    * @param type Type of packet
    * @param payload Payload of type T
-   * @param payloadSize Length of the payload in T
+   * @param payloadSize Length of the payload in bytes
    * @return struct LoraMesher::packet<T>*
    */
   template <typename T>
@@ -231,7 +233,7 @@ public:
    *
    * @tparam T
    * @param payload Payload of type T
-   * @param payloadSize Length of the payload in T
+   * @param payloadSize Length of the payload in bytes
    * @param extraSize Indicates the function that it need to allocate extra space before the payload
    * @return struct LoraMesher::packet<T>*
    */
@@ -253,10 +255,9 @@ public:
    * @tparam T
    * @param p packet of type T
    * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
-   * @param timeout Packet timeout, DEFAULT_TIMEOUT
    */
   template <typename T>
-  void setPackedForSend(LoraMesher::packet<T>* p, uint8_t priority, uint32_t timeout);
+  void setPackedForSend(LoraMesher::packet<T>* p, uint8_t priority);
 
   /**
    * @brief Get the payload in number of elements
@@ -277,13 +278,15 @@ public:
 #pragma pack(push, 1)
   template <typename T>
   struct packetQueue {
-    uint32_t timeout;
+    uint16_t number{0};
     uint8_t priority = DEFAULT_PRIORITY;
-    uint32_t sequence_number = 0;
     LoraMesher::packet<T>* packet;
     packetQueue<T>* next;
   };
 #pragma pack(pop)
+
+  template <typename T>
+  void deletepacketQueue(packetQueue<T>* pq);
 
   /**
    * @brief Create a Packet Queue element
@@ -292,11 +295,11 @@ public:
    * @tparam I type of the packet
    * @param p packet
    * @param priority priority inside the queue
-   * @param timeout timeout in s
+   * @param number Number of the sequence
    * @return packetQueue<T>*
    */
   template <typename T, typename I>
-  packetQueue<T>* createPacketQueue(packet<I>* p, uint8_t priority, uint32_t timeout);
+  packetQueue<T>* createPacketQueue(packet<I>* p, uint8_t priority, uint16_t number = 0);
 
   class PacketQueue {
   public:
@@ -305,7 +308,7 @@ public:
      *
      * @param pq
      */
-    void Add(packetQueue<uint32_t>* pq);
+    void Add(packetQueue<uint8_t>* pq);
 
     /**
      * @brief Get the first packetQueue of the list and deletes it from the list
@@ -331,7 +334,7 @@ public:
 
   private:
     bool* enabled = new bool(true);
-    packetQueue<uint32_t>* first = nullptr;
+    packetQueue<uint8_t>* first = nullptr;
 
     /**
      * @brief Wait for the enabled flag to be true, set it to false then
@@ -366,14 +369,15 @@ private:
 
   SX1276* radio;
 
-  TaskHandle_t Hello_TaskHandle = NULL;
-  TaskHandle_t ReceivePacket_TaskHandle = NULL;
+  TaskHandle_t Hello_TaskHandle = nullptr;
+  TaskHandle_t ReceivePacket_TaskHandle = nullptr;
 
-  TaskHandle_t ReceiveData_TaskHandle = NULL;
-  TaskHandle_t SendData_TaskHandle = NULL;
+  TaskHandle_t ReceiveData_TaskHandle = nullptr;
+  TaskHandle_t SendData_TaskHandle = nullptr;
 
-  TaskHandle_t ReceivedUserData_TaskHandle = NULL;
+  TaskHandle_t ReceivedUserData_TaskHandle = nullptr;
 
+  TaskHandle_t PacketManager_TaskHandle = nullptr;
 
   static void onReceive(void);
 
@@ -388,6 +392,8 @@ private:
   void initializeScheduler(void (*func)(void*));
 
   void sendHelloPacket();
+
+  void packetManager();
 
   /**
    * @brief Function that process the packets inside Received Packets
@@ -442,6 +448,15 @@ private:
   void sendPackets();
 
   /**
+   * @brief Sends an ACK packet to the destination
+   *
+   * @param destination destination address
+   * @param seq_id Id of the sequence
+   * @param seq_num Number of the ack
+   */
+  void sendAckPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+
+  /**
    * @brief Get the Packet Length
    *
    * @tparam T
@@ -469,9 +484,6 @@ private:
   template <typename T>
   void printPacket(LoraMesher::packet<T>* p, bool received);
 
-
-
-
   /**
    * @brief Sequence Id, used to get the id of the packet sequence
    *
@@ -486,16 +498,50 @@ private:
   uint8_t getSequenceId();
 
   /**
-   * @brief Queue Waiting Sending Packets (Q_WSP)
+   * @brief Manage all the packets inside the Q_WSP, checking for timeouts and erasing them if lost connection
    *
    */
-  LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>* q_WSP = new LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>();
+  void managerSendQueue();
+
+  /**
+   * @brief Manage all the packets inside the Q_WRP, checking for timeouts and erasing them if lost connection
+   *
+   */
+  void managerReceivedQueue();
+
+  /**
+   * @brief Clear the Linked List deleting all the elements inside
+   *
+   * @param list List to be cleared
+   */
+  void clearLinkedList(LinkedList<packetQueue<uint8_t>>* list);
+
+  /**
+   * @brief Used to set the configuration of the sequence of packets of the lists of packets
+   *
+   */
+  struct sequencePacketConfig {
+    uint8_t seq_id; //Sequence Id
+    uint16_t number; //Number of packets of the sequence
+    uint16_t lastAck{0}; //Last ack received/send. To 0-n+1 (0) is the initial configuration.
+    uint32_t timeout{0}; //Timeout of the sequence
+    uint32_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
+    uint16_t source; //Source Address
+  };
+
+  /**
+   * @brief Queue Waiting Sending Packets (Q_WSP)
+   * List pairs (sequencePacketConfig defines the configuration of the following packets, id and number of packets,
+   * then there is another linked list with all the packets of the sequence)
+   *
+   */
+  LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>* q_WSP = new LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>();
 
   /**
    * @brief Queue Waiting Received Packet (Q_WRP)
    *
    */
-  LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>* q_WRP = new LinkedQueue<LinkedQueue<packetQueue<uint32_t>>>();
+  LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>* q_WRP = new LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>();
 
 };
 

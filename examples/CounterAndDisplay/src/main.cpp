@@ -8,7 +8,7 @@ LoraMesher& radio = LoraMesher::getInstance();
 
 uint32_t dataCounter = 0;
 struct dataPacket {
-  uint32_t counter = 0;
+  uint32_t counter[35] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34};
 };
 
 dataPacket* helloPacket = new dataPacket;
@@ -36,10 +36,10 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  */
 void printPacket(dataPacket* data, uint16_t sourceAddress) {
   char text[32];
-  snprintf(text, 32, ("%X-> %d" CR), sourceAddress, data->counter);
+  snprintf(text, 32, ("%X-> %d" CR), sourceAddress, data->counter[0]);
 
   Screen.changeLineThree(String(text));
-  Log.verbose(F("Received data nº %d" CR), data->counter);
+  Log.verbose(F("Received data nº %d" CR), data->counter[0]);
 }
 
 /**
@@ -53,12 +53,12 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
   //Get the payload to iterate through it
   dataPacket* packets = radio.getPayload(packet);
 
-  for (size_t i = 0; i < radio.getPayloadLength(packet); i++) {
-    //Print the packet
-    printPacket(&packets[i], packet->src);
-  }
-  //Delete the packet. It is very important to delete the packet.
-  delete packet;
+  printPacket(&packets[0], packet->src);
+
+  Log.trace(F("---- Payload ---- " CR));
+  for (int i = 0; i < 35; i++)
+    Log.trace(F("%d, "), packets[0].counter[i]);
+  Log.trace(F("---- Payload Done ---- " CR));
 }
 
 /**
@@ -82,8 +82,9 @@ void processReceivedPackets(void*) {
       //Print the data packet
       printDataPacket(helloReceived->packet);
 
-      //Delete the packet when used. It is very important to delete the packets.
-      delete helloReceived;
+      //Delete the packet when used. It is very important to call this function to delete the packet queue and the packet.
+      radio.deletepacketQueue(helloReceived);
+
     }
   }
 }
@@ -96,7 +97,7 @@ void setupLoraMesher() {
   //Create a loramesher with a processReceivedPackets function
   radio.init(processReceivedPackets);
 
-  Serial.println("Lora initialized");
+  Log.verbose("Lora initialized" CR);
 }
 
 /**
@@ -153,7 +154,7 @@ void sendLoRaMessage(void*) {
     Screen.changeLineTwo("Send " + String(dataCounter));
 
     //Increment data counter
-    helloPacket->counter = dataCounter++;
+    helloPacket->counter[0] = dataCounter++;
 
     //Print routing Table to Display
     printRoutingTableToDisplay();
@@ -187,14 +188,14 @@ void setup() {
   pinMode(BOARD_LED, OUTPUT); //setup pin as output for indicator LED
 
   Screen.initDisplay();
-  Serial.println("initBoard");
+  Log.verbose("Board Init" CR);
+
 
   led_Flash(2, 125);          //two quick LED flashes to indicate program start
   setupLoraMesher();
   printAddressDisplay();
   createSendMessages();
 }
-
 
 void loop() {
   vTaskPrioritySet(NULL, 1);

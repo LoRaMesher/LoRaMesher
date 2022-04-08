@@ -77,8 +77,8 @@ void processReceivedPackets(void*) {
       printDataPacket(helloReceived->packet);
 
       //Delete the packet when used. It is very important to delete the packets.
-        delete helloReceived;
-      }
+      radio.deletepacketQueue(helloReceived);
+    }
   }
 }
 ```
@@ -89,7 +89,7 @@ There are some important things we need to be aware of:
 2. The function should contain an endless loop.
 3. Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
 4. All the packets are stored inside `radio.ReceiveduserPackets`.
-5. Every time you call Pop, you need to be sure to delete the Packet Queue after using it.
+5. IMPORTANT!!! Every time you call Pop, you need to be sure to call deletepacketQueue. It will free the memory that has been allocated for the packet and the packetQueue. If not executed it can cause memory leaks and out of memory errors.
 
 ### Send data packet function
 
@@ -141,9 +141,6 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
     //Print the packet
     printPacket(&packets[i]);
   }
-
-  //Delete the packet. It is important to delete the packet.
-  delete packet;
 }
 ```
 
@@ -151,4 +148,3 @@ void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
 2. We need to get the payload of the packet, as we have different types of packet. The payload is not always in the same memory position. We have the function `radio.getPayload(packet)` that will return a pointer to the payload.
 3. We iterate through the `radio.getPayloadLength(packet)`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
 4. Get the payload and call the `printPacket()` function, that will print the counter received.
-5. Lastly, we need to delete the packet.
