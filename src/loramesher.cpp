@@ -1002,7 +1002,7 @@ void LoraMesher::managerReceivedQueue() {
 }
 
 void LoraMesher::managerSendQueue() {
-
+  //TODO: Same as before but with the q_WSP
 }
 
 uint8_t LoraMesher::getSequenceId() {
