@@ -21,7 +21,8 @@ public:
 template <class T>
 class LinkedList {
 private:
-    int length;
+    int* length = new int();
+    bool* inUse = new bool(true);
     ListNode<T>* head;
     ListNode<T>* tail;
     ListNode<T>* curr;
@@ -38,14 +39,17 @@ public:
     bool moveToStart();
     bool prev();
     void Clear();
+    void setInUse();
+    void releaseInUse();
 };
 
 template <class T>
 LinkedList<T>::LinkedList() {
-    length = 0;
+    *length = 0;
     head = nullptr;
     tail = nullptr;
     curr = nullptr;
+    occupied = false;
 }
 
 
@@ -71,27 +75,27 @@ T* LinkedList<T>::Last() const {
 
 template<class T>
 int LinkedList<T>::getLength() {
-    return length;
+    return *length;
 }
 
 template <class T>
 void LinkedList<T>::Append(T* element) {
     ListNode<T>* node = new ListNode<T>(element, tail, nullptr);
 
-    if (length == 0)
+    if (*length == 0)
         curr = tail = head = node;
     else {
         tail->next = node;
         tail = node;
     }
 
-    length++;
+    *length++;
 
 }
 
 template <class T>
 bool LinkedList<T>::next() {
-    if (length == 0)
+    if (*length == 0)
         return false;
 
     if (curr->next == nullptr)
@@ -104,12 +108,12 @@ bool LinkedList<T>::next() {
 template <class T>
 bool LinkedList<T>::moveToStart() {
     curr = head;
-    return length != 0;
+    return *length != 0;
 }
 
 template<class T>
 bool LinkedList<T>::prev() {
-    if (length == 0)
+    if (*length == 0)
         return false;
 
     if (curr->prev != nullptr)
@@ -121,9 +125,9 @@ bool LinkedList<T>::prev() {
 
 template <class T>
 void LinkedList<T>::DeleteCurrent() {
-    if (length == 0)
+    if (*length == 0)
         return;
-    length--;
+    *length--;
     ListNode<T>* temp = curr;
 
     if (temp->prev != nullptr)
@@ -131,7 +135,7 @@ void LinkedList<T>::DeleteCurrent() {
     if (temp->next != nullptr)
         temp->next->prev = temp->prev;
 
-    if (length == 0)
+    if (*length == 0)
         head = curr = tail = nullptr;
     else if (curr == head)
         curr = head = head->next;
@@ -140,25 +144,36 @@ void LinkedList<T>::DeleteCurrent() {
     else
         curr = curr->prev;
 
-    delete temp->element;
     delete temp;
 }
 
 template <class T>
 void LinkedList<T>::Clear() {
-    if (length == 0)
+    if (*length == 0)
         return;
     ListNode<T>* temp = head;
 
     while (temp != nullptr) {
         head = head->next;
-        delete temp->element;
         delete temp;
         temp = head;
     }
 
     head = curr = tail = nullptr;
 
-    length = 0;
+    *length = 0;
 
+}
+
+template <class T>
+void LinkedList<T>::setInUse() {
+    while (!*inUse) {
+        vTaskDelay(100);
+    }
+    *inUse = true;
+}
+
+template <class T>
+void LinkedList<T>::releaseInUse() {
+    *inUse = false;
 }

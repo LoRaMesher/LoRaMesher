@@ -47,9 +47,10 @@
 #define NEED_ACK_P 0x01
 #define DATA_P 0x02
 #define HELLO_P 0x04
-#define ACK_P 0x06
-#define LOST_P 0x8
-#define SYNC_P 0x10
+#define ACK_P 0x08
+#define XL_DATA_P 0x016
+#define LOST_P 0x32
+#define SYNC_P 0x64
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -247,7 +248,7 @@ public:
    * @param p Packet to delete
    */
   template <typename T>
-  void deletePacket(LoraMesher::packet<T>* p);
+  static void deletePacket(LoraMesher::packet<T>* p);
 
   /**
    * @brief Sets the packet in a Fifo with priority and will send the packet when needed.
@@ -286,7 +287,7 @@ public:
 #pragma pack(pop)
 
   template <typename T>
-  void deletepacketQueue(packetQueue<T>* pq);
+  static void deletepacketQueue(packetQueue<T>* pq);
 
   /**
    * @brief Create a Packet Queue element
@@ -418,6 +419,26 @@ private:
   void processRoute(LoraMesher::packet<networkNode>* p);
 
   /**
+   * @brief Process the data packet
+   *
+   * @param pq packet queue to be processed as data packet
+   */
+  void processDataPacket(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq);
+
+  /**
+   * @brief Process the data packet that destination is this node
+   *
+   * @param pq packet queue to be processed as data packet
+   */
+  void processDataPacketForMe(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq);
+
+  /**
+   * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
+   *
+   */
+  void notifyUserReceivedPacket(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq);
+
+  /**
    * @brief Add node to the routing table
    *
    * @param node Network node that includes the address and the metric
@@ -448,6 +469,15 @@ private:
   void sendPackets();
 
   /**
+   * @brief Send a packet to start the sequence of the packets
+   *
+   * @param destination destination address
+   * @param seq_id Sequence Id
+   * @param num_packets Number of packets of the sequence
+   */
+  void sendStartSequencePackets(uint16_t destination, uint16_t seq_id, uint16_t num_packets);
+
+  /**
    * @brief Sends an ACK packet to the destination
    *
    * @param destination destination address
@@ -473,6 +503,24 @@ private:
    * @return size_t number of bytes
    */
   size_t getExtraLengthToPayload(uint8_t type);
+  
+  /**
+   * @brief Given a type returns if needs a data packet
+   * 
+   * @param type type of the packet
+   * @return true True if needed
+   * @return false If not
+   */
+  bool hasDataPacket(uint8_t type);
+
+  /**
+   * @brief Given a type returns if needs a control packet
+   * 
+   * @param type type of the packet
+   * @return true True if needed
+   * @return false If not
+   */
+  bool hasControlPacket(uint8_t type);
 
   /**
    * @brief Print the packet in the Log verbose, if the type is not defined it will print the payload in Hexadecimals
@@ -483,6 +531,15 @@ private:
    */
   template <typename T>
   void printPacket(LoraMesher::packet<T>* p, bool received);
+
+  /**
+   * @brief Send a packet of the sequence_id and sequence_num
+   *
+   * @param destination Destination to send the packet
+   * @param seq_id sequence_id of the packet
+   * @param seq_num number of the packet inside the sequence id
+   */
+  void sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Sequence Id, used to get the id of the packet sequence
@@ -510,24 +567,51 @@ private:
   void managerReceivedQueue();
 
   /**
-   * @brief Clear the Linked List deleting all the elements inside
-   *
-   * @param list List to be cleared
-   */
-  void clearLinkedList(LinkedList<packetQueue<uint8_t>>* list);
-
-  /**
    * @brief Used to set the configuration of the sequence of packets of the lists of packets
    *
    */
   struct sequencePacketConfig {
     uint8_t seq_id; //Sequence Id
     uint16_t number; //Number of packets of the sequence
-    uint16_t lastAck{0}; //Last ack received/send. To 0-n+1 (0) is the initial configuration.
+    uint16_t lastAck{-1}; //Last ack received/send. -1 has not been received any ACK to n-1 where n is number of packets. 
     uint32_t timeout{0}; //Timeout of the sequence
     uint32_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
     uint16_t source; //Source Address
   };
+
+  /**
+   * @brief List configuration
+   *
+   */
+  struct listConfiguration {
+    sequencePacketConfig* config;
+    LinkedList<packetQueue<uint8_t>>* list;
+  };
+
+  /**
+   * @brief Clear the Linked List deleting all the elements inside
+   *
+   * @param list List to be cleared
+   */
+  void clearLinkedList(listConfiguration* listConfig);
+
+  /**
+   * @brief With a sequence id and a linkedList, it will find the first sequence inside a queue that have the sequence id
+   *
+   * @param queue Queue to find the sequence id
+   * @param seq_id Sequence id to find
+   * @return listConfiguration*
+   */
+  listConfiguration* findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id);
+
+  /**
+   * @brief Find the packet queue inside the list of packet queues
+   *
+   * @param queue Queue to find the packet queue
+   * @param num Number of the sequence of the packet queue
+   * @return packetQueue<uint8_t>*
+   */
+  packetQueue<uint8_t>* findPacketQueue(LinkedList<packetQueue<uint8_t>>* queue, uint8_t num);
 
   /**
    * @brief Queue Waiting Sending Packets (Q_WSP)
@@ -535,13 +619,13 @@ private:
    * then there is another linked list with all the packets of the sequence)
    *
    */
-  LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>* q_WSP = new LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>();
+  LinkedList<listConfiguration>* q_WSP = new LinkedList<listConfiguration>();
 
   /**
    * @brief Queue Waiting Received Packet (Q_WRP)
    *
    */
-  LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>* q_WRP = new LinkedList<std::pair<sequencePacketConfig, LinkedList<packetQueue<uint8_t>>*>>();
+  LinkedList<listConfiguration>* q_WRP = new LinkedList<listConfiguration>();
 
 };
 
