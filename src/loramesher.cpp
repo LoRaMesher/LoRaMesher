@@ -213,7 +213,7 @@ void LoraMesher::receivingRoutine() {
           receivedFlag = true;
 
           //Add the packet created into the ReceivedPackets List
-          packetQueue<uint8_t>* pq = createPacketQueue<uint8_t>(rx, 15);
+          packetQueue<uint8_t>* pq = createPacketQueue<uint8_t>(rx, 0);
           ReceivedPackets->Add(pq);
 
           Log.verbose(F("Starting to listen again after receiving a packet" CR));
@@ -382,13 +382,16 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
   //Number of packets
   size_t numOfPackets = payloadInBytes / maxPayloadSize + (payloadInBytes % maxPayloadSize > 0);
 
-  for (int i = 0; i < numOfPackets; i++) {
+  //Add the SYNC configuration packet
+  packetList->Append(getStartSequencePacketQueue(dst, sequence_id, numOfPackets));
+
+  for (int i = 1; i <= numOfPackets; i++) {
     //Get the position of the payload
-    uint8_t* payloadToSend = (uint8_t*) ((unsigned long) payload + i * maxPayloadSize);
+    uint8_t* payloadToSend = (uint8_t*) ((unsigned long) payload + (i - 1) * maxPayloadSize);
 
     //Get the payload Size in bytes
     size_t payloadSizeToSend = maxPayloadSize;
-    if (i == numOfPackets - 1)
+    if (i == numOfPackets)
       payloadSizeToSend = payloadInBytes - (maxPayloadSize * (numOfPackets - 1));
 
     //Create a new packet with the previous payload
@@ -400,7 +403,7 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
     cPacket->seq_id = sequence_id;
 
     //Create a packet queue
-    packetQueue<T>* pq = createPacketQueue<uint8_t>(packet, DEFAULT_PRIORITY, DEFAULT_TIMEOUT, i);
+    packetQueue<uint8_t>* pq = createPacketQueue<uint8_t>(packet, DEFAULT_PRIORITY, i);
 
     //Append the packet queue in the linked list
     packetList->Append(pq);
@@ -411,15 +414,16 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
   listConfig->config = new sequencePacketConfig();
   listConfig->list = packetList;
 
-  dataList->config->seq_id = sequence_id;
-  dataList->config->number = numOfPackets;
-  dataList->second = packetList;
+  listConfig->config->seq_id = sequence_id;
+  listConfig->config->number = numOfPackets;
 
   //Add dataList pair to the waiting send packets queue
-  q_WSP->Append(dataList);
+  q_WSP->setInUse();
+  q_WSP->Append(listConfig);
+  q_WSP->releaseInUse();
 
-  //Create configuration packet, send it and wait for ack to send first element of sequence
-  sendStartSequencePackets(dst, sequence_id, numOfPackets);
+  //Send the first packet of the sequence (SYNC packet)
+  sendPacketSequence(dst, sequence_id, 0);
 }
 
 template <typename T>
@@ -524,12 +528,16 @@ void LoraMesher::processDataPacketForMe(LoraMesher::packetQueue<dataPacket<uint8
   notifyUserReceivedPacket(pq);
 
   if ((packet->type & ACK_P) == ACK_P) {
-    //TODO: Add the ack to the specified queue and send the next packet
-    //TODO: If all sended, remove the list
+    Log.verbose(F("ACK Packet received" CR));
+    addAck(packet->dst, cPacket->seq_id, cPacket->number);
 
   } else if ((packet->type & LOST_P) == LOST_P) {
     Log.verbose(F("Lost Packet received" CR));
-    sendPacketSequence(packet->dst, cPacket->seq_id, cPacket->number);
+    //Send the packet sequence that has been lost
+    if (sendPacketSequence(packet->dst, cPacket->seq_id, cPacket->number)) {
+      //Reset the timeout of this sequence packets inside the q_WSP
+      resetTimeout(q_WSP, packet->dst, cPacket->seq_id);
+    }
 
   } else if ((packet->type & SYNC_P) == SYNC_P) {
     Log.verbose(F("Syncronization Packet received" CR));
@@ -857,8 +865,10 @@ void LoraMesher::sendStartSequencePackets(uint16_t destination, uint16_t seq_id,
   //Create the packet
   packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
 
+  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) p->payload;
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) dPacket->payload;
+
   //Add the sequence id and the number of packets of the sequence
-  controlPacket<uint8_t>* cPacket = ((controlPacket<uint8_t>*) ((dataPacket<uint8_t>*) (p->payload))->payload);
   cPacket->seq_id = seq_id;
   cPacket->number = num_packets;
 
@@ -866,17 +876,34 @@ void LoraMesher::sendStartSequencePackets(uint16_t destination, uint16_t seq_id,
   setPackedForSend(p, DEFAULT_PRIORITY);
 }
 
+LoraMesher::packetQueue<uint8_t>* LoraMesher::getStartSequencePacketQueue(uint16_t destination, uint16_t seq_id, uint16_t num_packets) {
+  uint16_t type = SYNC_P | NEED_ACK_P | XL_DATA_P;
+
+  //Create the packet
+  packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
+
+  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) p->payload;
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) dPacket->payload;
+
+  //Add the sequence id and the number of packets of the sequence
+  cPacket->seq_id = seq_id;
+  cPacket->number = num_packets;
+
+  //Create a packet queue
+  return createPacketQueue<uint8_t>(p, DEFAULT_PRIORITY, 0);
+}
+
 void LoraMesher::sendAckPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num) {
   setPackedForSend(createPacket(destination, getLocalAddress(), ACK_P, (uint8_t*) 0, 0), DEFAULT_PRIORITY + 1);
 }
 
-void LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num) {
+bool LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num) {
   //Get the listConfiguration with the sequence id
-  listConfiguration* config = findSequenceList(q_WSP, seq_id);
+  listConfiguration* config = findSequenceList(q_WSP, seq_id, destination);
 
   if (config == nullptr) {
     Log.error(F("NOT FOUND the sequence packet config with Id: %d" CR), seq_id);
-    return;
+    return false;
   }
 
   //Get the packet queue with the sequence number
@@ -884,7 +911,7 @@ void LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint1
 
   if (pq == nullptr) {
     Log.error(F("NOT FOUND the packet queue with Seq_id: %d, Num: %d" CR), seq_id, seq_num);
-    return;
+    return false;
   }
 
   //Set the type
@@ -896,6 +923,53 @@ void LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint1
   //Add the packet to the send queue
   setPackedForSend(p, DEFAULT_PRIORITY);
 
+  return true;
+}
+
+void LoraMesher::addAck(uint16_t source, uint16_t seq_id, uint16_t seq_num) {
+  listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
+  if (config == nullptr) {
+    Log.error(F("NOT FOUND the sequence packet config in add ack with Id: %d" CR), seq_id);
+    return;
+  }
+
+  //If all packets has been arrived to the destiny
+  //Delete this sequence
+  if (config->config->number == seq_num) {
+    findAndClearLinkedList(q_WSP, config);
+    return;
+  }
+
+  //Set has been received some ACK
+  config->config->firstAckReceived = 1;
+
+  //Add the last ack to the config packet
+  config->config->lastAck = seq_num;
+
+  //Reset the timeouts
+  resetTimeout(config->config);
+
+  //Send the next packet sequence
+  if (sendPacketSequence(source, seq_id, seq_num + 1))
+    Log.verbose(F("Sending next packet after receiving an ACK" CR));
+  else
+    Log.error(F("Error at sending next packet after receiving an ACK" CR));
+
+}
+
+void LoraMesher::resetTimeout(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
+  listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
+  if (config == nullptr) {
+    Log.error(F("NOT FOUND the sequence packet config in reset timeout with Id: %d" CR), seq_id);
+    return;
+  }
+
+  resetTimeout(config->config);
+}
+
+void LoraMesher::resetTimeout(sequencePacketConfig* configPacket) {
+  configPacket->numberOfTimeouts = 0;
+  addTimeoutTime(configPacket);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
@@ -909,17 +983,33 @@ void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
 
   delete listConfig->list;
   delete listConfig->config;
-  delete listConfig;
 }
 
-LoraMesher::listConfiguration* LoraMesher::findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id) {
+void LoraMesher::findAndClearLinkedList(LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
+  queue->setInUse();
+
+  auto current = queue->getCurrent();
+  //Find list config inside the queue, if not find error
+  if (current != listConfig && !queue->Search(listConfig)) {
+    Log.error(F("Not found list config" CR));
+    //TODO: What to do inside all errors????????????????
+    return;
+  }
+
+  clearLinkedList(listConfig);
+  queue->DeleteCurrent();
+
+  queue->releaseInUse();
+}
+
+LoraMesher::listConfiguration* LoraMesher::findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
   queue->setInUse();
   queue->moveToStart();
 
   for (int i = 0; i < queue->getLength(); i++) {
     auto current = queue->getCurrent();
 
-    if (current->config->seq_id == seq_id) {
+    if (current->config->seq_id == seq_id && current->config->source == source) {
       queue->releaseInUse();
       return current;
     }
@@ -988,7 +1078,8 @@ void LoraMesher::managerReceivedQueue() {
         continue;
       }
 
-      configPacket->timeout = micros() + (DEFAULT_TIMEOUT * 1000) / portTICK_PERIOD_MS;
+      addTimeoutTime(configPacket);
+
 
       //Repeat the configPacket ACK
       sendAckPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck);
@@ -1003,6 +1094,10 @@ void LoraMesher::managerReceivedQueue() {
 
 void LoraMesher::managerSendQueue() {
   //TODO: Same as before but with the q_WSP
+}
+
+void LoraMesher::addTimeoutTime(sequencePacketConfig* configPacket) {
+  configPacket->timeout = micros() + (DEFAULT_TIMEOUT * 1000) / portTICK_PERIOD_MS;
 }
 
 uint8_t LoraMesher::getSequenceId() {

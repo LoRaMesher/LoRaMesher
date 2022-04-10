@@ -477,6 +477,17 @@ private:
    */
   void sendStartSequencePackets(uint16_t destination, uint16_t seq_id, uint16_t num_packets);
 
+
+  /**
+   * @brief Get the Start Sequence Packet Queue object
+   *
+   * @param destination destination address
+   * @param seq_id Sequence Id
+   * @param num_packets Number of packets of the sequence
+   * @return packetQueue<uint8_t>*
+   */
+  packetQueue<uint8_t>* getStartSequencePacketQueue(uint16_t destination, uint16_t seq_id, uint16_t num_packets);
+
   /**
    * @brief Sends an ACK packet to the destination
    *
@@ -503,10 +514,10 @@ private:
    * @return size_t number of bytes
    */
   size_t getExtraLengthToPayload(uint8_t type);
-  
+
   /**
    * @brief Given a type returns if needs a data packet
-   * 
+   *
    * @param type type of the packet
    * @return true True if needed
    * @return false If not
@@ -515,7 +526,7 @@ private:
 
   /**
    * @brief Given a type returns if needs a control packet
-   * 
+   *
    * @param type type of the packet
    * @return true True if needed
    * @return false If not
@@ -538,8 +549,20 @@ private:
    * @param destination Destination to send the packet
    * @param seq_id sequence_id of the packet
    * @param seq_num number of the packet inside the sequence id
+   * @return true If has been send
+   * @return false If not
    */
-  void sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+  bool sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+
+  /**
+   * @brief Add the ack number to the respectively sequence and reset the timeout numbers
+   *
+   * @param source Source of the packet
+   * @param seq_id Sequence id of the packet
+   * @param seq_num Sequence number that has been Acknowledged
+   */
+  void addAck(uint16_t source, uint16_t seq_id, uint16_t seq_num);
+
 
   /**
    * @brief Sequence Id, used to get the id of the packet sequence
@@ -571,12 +594,15 @@ private:
    *
    */
   struct sequencePacketConfig {
+    //Identification is Sequence Id and Source address
     uint8_t seq_id; //Sequence Id
-    uint16_t number; //Number of packets of the sequence
-    uint16_t lastAck{-1}; //Last ack received/send. -1 has not been received any ACK to n-1 where n is number of packets. 
-    uint32_t timeout{0}; //Timeout of the sequence
-    uint32_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
     uint16_t source; //Source Address
+
+    uint16_t number; //Number of packets of the sequence
+    uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
+    uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
+    unsigned long timeout{0};; //Timeout of the sequence
+    uint32_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
   };
 
   /**
@@ -589,6 +615,29 @@ private:
   };
 
   /**
+   * @brief If executed it will reset the number of timeouts to 0 and reset the timeout
+   *
+   * @param queue queue to be found the sequence
+   * @param seq_id sequence id
+   * @param source source address
+   */
+  void resetTimeout(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
+
+  /**
+   * @brief If executed it will reset the number of timeouts to 0 and reset the timeout
+   *
+   * @param configPacket configuration packet to be modified
+   */
+  void resetTimeout(sequencePacketConfig* configPacket);
+
+  /**
+   * @brief Adds the micros() + default timeout to the config packet
+   *
+   * @param configPacket config packet to be modified
+   */
+  void addTimeoutTime(sequencePacketConfig* configPacket);
+
+  /**
    * @brief Clear the Linked List deleting all the elements inside
    *
    * @param list List to be cleared
@@ -596,13 +645,22 @@ private:
   void clearLinkedList(listConfiguration* listConfig);
 
   /**
+   * @brief Find the listConfig element inside the queue and delete the element from the list
+   *
+   * @param queue Queue where to find and delete the element
+   * @param listConfig Element that needs to be found in the queue
+   */
+  void findAndClearLinkedList(LinkedList<listConfiguration>* queue, listConfiguration* listConfig);
+
+  /**
    * @brief With a sequence id and a linkedList, it will find the first sequence inside a queue that have the sequence id
    *
    * @param queue Queue to find the sequence id
    * @param seq_id Sequence id to find
+   * @param source Source of the list
    * @return listConfiguration*
    */
-  listConfiguration* findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id);
+  listConfiguration* findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
 
   /**
    * @brief Find the packet queue inside the list of packet queues
