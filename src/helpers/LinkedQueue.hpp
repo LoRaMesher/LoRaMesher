@@ -6,8 +6,8 @@ template <class T>
 class ListNode {
 public:
     T* element;
-    ListNode* next;
     ListNode* prev;
+    ListNode* next;
 
     ListNode(T* element, ListNode* prev, ListNode* next)
         : element(element), prev(prev), next(next) {
@@ -181,7 +181,7 @@ void LinkedList<T>::Clear() {
 
 template <class T>
 void LinkedList<T>::setInUse() {
-    while (!inUse) {
+    while (inUse) {
         vTaskDelay(100);
     }
     inUse = true;

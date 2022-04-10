@@ -436,7 +436,7 @@ private:
    * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
    *
    */
-  void notifyUserReceivedPacket(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq);
+  void notifyUserReceivedPacket(LoraMesher::packetQueue<uint8_t>* pq);
 
   /**
    * @brief Add node to the routing table
@@ -498,6 +498,15 @@ private:
   void sendAckPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
 
   /**
+   * @brief Send a lost packet
+   *
+   * @param destination destination address
+   * @param seq_id Id of the sequence
+   * @param seq_num Number of the lost packet
+   */
+  void sendLostPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+
+  /**
    * @brief Get the Packet Length
    *
    * @tparam T
@@ -553,6 +562,22 @@ private:
    * @return false If not
    */
   bool sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+
+  /**
+   * @brief Process a large payload packet
+   *
+   * @param pq PacketQueue packet queue to be processed
+   */
+  void processLargePayloadPacket(packetQueue<dataPacket<uint8_t>>* pq);
+
+  /**
+   * @brief Process a received synchronization packet
+   *
+   * @param source Source Id
+   * @param seq_id Sequence Id
+   * @param seq_num Sequence number
+   */
+  void processSyncPacket(uint16_t source, uint16_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Add the ack number to the respectively sequence and reset the timeout numbers
@@ -613,6 +638,13 @@ private:
     sequencePacketConfig* config;
     LinkedList<packetQueue<uint8_t>>* list;
   };
+
+  /**
+   * @brief Join all the packets inside the list configuration and notify the user
+   *
+   * @param listConfig list configuration to join
+   */
+  void joinPacketsAndNotifyUser(listConfiguration* listConfig);
 
   /**
    * @brief If executed it will reset the number of timeouts to 0 and reset the timeout
