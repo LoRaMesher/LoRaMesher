@@ -12,10 +12,6 @@ public:
     ListNode(T* element, ListNode* prev, ListNode* next)
         : element(element), prev(prev), next(next) {
     };
-
-    ~ListNode() {
-        delete element;
-    }
 };
 
 template <class T>

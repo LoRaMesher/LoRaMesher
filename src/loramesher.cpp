@@ -260,6 +260,9 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
 }
 
 void LoraMesher::sendPackets() {
+  //Wait an initial 0.5 second
+  vTaskDelay(500 / portTICK_PERIOD_MS);
+
   for (;;) {
     /* Wait for the notification of receivingRoutine and enter blocking */
     Log.verbose("Size of Send Packets Queue: %d" CR, ToSendPackets->Size());
@@ -303,7 +306,11 @@ void LoraMesher::sendPackets() {
 }
 
 void LoraMesher::sendHelloPacket() {
+  //Wait an initial 1 second
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+
   for (;;) {
+
     packet<networkNode>* tx = createRoutingPacket();
     setPackedForSend(tx, DEFAULT_PRIORITY + 1);
 
@@ -1047,13 +1054,17 @@ void LoraMesher::processLargePayloadPacket(packetQueue<dataPacket<uint8_t>>* pq)
   configList->list->releaseInUse();
 
   //All packets has been arrived, join them and send to the user
-  if (configList->config->lastAck == configList->config->number)
+  if (configList->config->lastAck == configList->config->number) {
     joinPacketsAndNotifyUser(configList);
+    return;
+  }
 
   resetTimeout(configList->config);
 }
 
 void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
+  Log.verbose(F("Joining packets seq_Id: %d Src: %X" CR), listConfig->config->seq_id, listConfig->config->source);
+
   auto list = listConfig->list;
 
   list->setInUse();
@@ -1090,16 +1101,17 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
     do {
       auto currentP = list->getCurrent()->packet;
-      auto dataP = (packet<dataPacket<controlPacket<uint8_t>>>*) currentP;
+      auto dataP = (dataPacket<controlPacket<uint8_t>>*) currentP->payload;
 
       if (first) {
         first = false;
         auto firstPayloadSize = getPacketLength(currentP);
-        memcpy((void*) ((unsigned long) p->payload), currentP, firstPayloadSize);
+
+        memcpy(p, currentP, firstPayloadSize);
         actualPayloadSize += firstPayloadSize;
 
       } else {
-        memcpy((void*) ((unsigned long) p->payload + (actualPayloadSize)), dataP->payload->payload->payload, currentP->payloadSize);
+        memcpy((void*) ((unsigned long) p + (actualPayloadSize)), dataP->payload->payload, currentP->payloadSize);
         actualPayloadSize += currentP->payloadSize;
 
       }
@@ -1108,6 +1120,8 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
   }
 
   p->payloadSize = payloadSize;
+
+
   list->releaseInUse();
 
   findAndClearLinkedList(q_WRP, listConfig);
@@ -1150,17 +1164,17 @@ void LoraMesher::resetTimeout(sequencePacketConfig* configPacket) {
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
   auto list = listConfig->list;
   list->setInUse();
-  Log.trace(F("Clearing list configuration Seq_Id: %d" CR), listConfig->config->seq_id);
+  Log.trace(F("Clearing list configuration Seq_Id: %d Src: %X" CR), listConfig->config->seq_id, listConfig->config->source);
 
   for (int i = 0; i < list->getLength(); i++) {
     deletepacketQueue(list->getCurrent());
-
-    Log.trace(F("Deleted pq" CR));
     list->DeleteCurrent();
+
   }
 
   delete listConfig->list;
   delete listConfig->config;
+  delete listConfig;
 }
 
 void LoraMesher::findAndClearLinkedList(LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
