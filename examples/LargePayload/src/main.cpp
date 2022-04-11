@@ -147,8 +147,8 @@ void sendLoRaMessage(void*) {
 
     dataTablePosition++;
 
-    //Create packet and send it.
-    radio.createPacketAndSend(addr, helloPacket, 1);
+    //Create packet and send it reliable
+    radio.sendReliable(addr, helloPacket, 1);
 
     //Print second line in the screen
     Screen.changeLineTwo("Send " + String(dataCounter));
