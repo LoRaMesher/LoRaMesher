@@ -257,8 +257,6 @@ void LoraMesher::sendPacket(LoraMesher::packet<T>* p) {
     Log.error(F("Transmit gave error: %d" CR), res);
     return;
   }
-
-  Log.trace(F("Sending packet of type %d" CR), p->type);
 }
 
 void LoraMesher::sendPackets() {
@@ -273,17 +271,23 @@ void LoraMesher::sendPackets() {
 
     if (tx != nullptr) {
       Log.verbose("Send nº %d" CR, helloCounter);
+      printHeaderPacket(tx->packet, "send");
+
       helloCounter++;
 
       //If the packet has a data packet and its destination is not broadcast add the via to the packet and forward the packet
       if (hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
         uint16_t nextHop = getNextHop(tx->packet->dst);
+
         if (nextHop != 0) {
-          ((LoraMesher::dataPacket<uint8_t>*) (&tx->packet->payload))->via = nextHop;
-          Log.trace(F("NextHop %X" CR), nextHop);
-          Log.trace(F("Sending data packet from %X, destination %X, via %X" CR), tx->packet->src, tx->packet->dst, nextHop);
-        } else
+          ((LoraMesher::dataPacket<uint8_t>*) (tx->packet->payload))->via = nextHop;
+
+        } else {
           Log.error(F("NextHop Not found from %X, destination %X, via %X" CR), tx->packet->src, tx->packet->dst, nextHop);
+          deletepacketQueue(tx);
+          continue;
+
+        }
       }
 
       sendPacket(tx->packet);
@@ -324,16 +328,21 @@ void LoraMesher::processPackets() {
     packetQueue<uint8_t>* rx = ReceivedPackets->Pop<uint8_t>();
 
     if (rx != nullptr) {
+      printHeaderPacket(rx->packet, "received");
+
       uint8_t type = rx->packet->type;
 
       if ((type & HELLO_P) == HELLO_P) {
         processRoute((packet<networkNode>*) rx->packet);
         deletepacketQueue(rx);
-      } else if ((type & DATA_P) == DATA_P || (type & XL_DATA_P) == XL_DATA_P)
+
+      } else if (hasDataPacket(type))
         processDataPacket((packetQueue<dataPacket<uint8_t>>*) rx);
+
       else {
         Log.verbose(F("Packet not identified, deleting it" CR));
         deletepacketQueue(rx);
+
       }
     }
   }
@@ -354,7 +363,7 @@ void LoraMesher::createPacketAndSend(uint16_t dst, T* payload, uint8_t payloadSi
 
 template <typename T>
 void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
-  //Cannot send an empty packet?? Maybe it could be like a ping?
+  //TODO: Cannot send an empty packet?? Maybe it could be like a ping?
   if (payloadSize == 0)
     return;
   //TODO: Could it send reliable messages to broadcast?
@@ -362,7 +371,7 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
     return;
 
   //Generate a sequence Id for this list of packets
-  uint8_t sequence_id = getSequenceId();
+  uint8_t seq_id = getSequenceId();
 
   //Get the Type of the packet
   uint8_t type = NEED_ACK_P | XL_DATA_P;
@@ -373,21 +382,21 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
   //Get the payload size in bytes
   size_t payloadInBytes = sizeof(T) * payloadSize;
 
-  //Create a new Linked list to store the packetQueues and the payload
-  LinkedList<packetQueue<uint8_t>>* packetList = new LinkedList<packetQueue<uint8_t>>();
-
   //Max payload size per packet
   size_t maxPayloadSize = MAXPAYLOADSIZE - extraLength;
 
   //Number of packets
-  size_t numOfPackets = payloadInBytes / maxPayloadSize + (payloadInBytes % maxPayloadSize > 0);
+  uint16_t numOfPackets = payloadInBytes / maxPayloadSize + (payloadInBytes % maxPayloadSize > 0);
+
+  //Create a new Linked list to store the packetQueues and the payload
+  LinkedList<packetQueue<uint8_t>>* packetList = new LinkedList<packetQueue<uint8_t>>();
 
   //Add the SYNC configuration packet
-  packetList->Append(getStartSequencePacketQueue(dst, sequence_id, numOfPackets));
+  packetList->Append(getStartSequencePacketQueue(dst, seq_id, numOfPackets));
 
-  for (int i = 1; i <= numOfPackets; i++) {
+  for (uint16_t i = 1; i <= numOfPackets; i++) {
     //Get the position of the payload
-    uint8_t* payloadToSend = (uint8_t*) ((unsigned long) payload + (i - 1) * maxPayloadSize);
+    uint8_t* payloadToSend = (uint8_t*) ((unsigned long) payload + ((i - 1) * maxPayloadSize));
 
     //Get the payload Size in bytes
     size_t payloadSizeToSend = maxPayloadSize;
@@ -395,15 +404,16 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
       payloadSizeToSend = payloadInBytes - (maxPayloadSize * (numOfPackets - 1));
 
     //Create a new packet with the previous payload
-    packet<T>* packet = createPacket(dst, getLocalAddress(), type, payloadToSend, payloadSizeToSend);
+    packet<uint8_t>* p = createPacket(dst, getLocalAddress(), type, payloadToSend, payloadSizeToSend);
 
     //Add control Packet information
-    controlPacket<T>* cPacket = ((controlPacket<T>*) ((dataPacket<T>*) (packet->payload))->payload);
+    packet<dataPacket<uint8_t>>* dPacket = (packet<dataPacket<uint8_t>>*) p;
+    controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (dPacket->payload->payload);
     cPacket->number = i;
-    cPacket->seq_id = sequence_id;
+    cPacket->seq_id = seq_id;
 
     //Create a packet queue
-    packetQueue<uint8_t>* pq = createPacketQueue<uint8_t>(packet, DEFAULT_PRIORITY, i);
+    packetQueue<uint8_t>* pq = createPacketQueue<uint8_t>(p, DEFAULT_PRIORITY, i);
 
     //Append the packet queue in the linked list
     packetList->Append(pq);
@@ -411,11 +421,8 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
 
   //Create the pair of configuration
   listConfiguration* listConfig = new listConfiguration();
-  listConfig->config = new sequencePacketConfig();
+  listConfig->config = new sequencePacketConfig(seq_id, dst, numOfPackets);
   listConfig->list = packetList;
-
-  listConfig->config->seq_id = sequence_id;
-  listConfig->config->number = numOfPackets;
 
   //Add dataList pair to the waiting send packets queue
   q_WSP->setInUse();
@@ -423,7 +430,7 @@ void LoraMesher::sendReliable(uint16_t dst, T* payload, uint8_t payloadSize) {
   q_WSP->releaseInUse();
 
   //Send the first packet of the sequence (SYNC packet)
-  sendPacketSequence(dst, sequence_id, 0);
+  sendPacketSequence(dst, seq_id, 0);
 }
 
 template <typename T>
@@ -431,9 +438,9 @@ size_t LoraMesher::getPacketLength(LoraMesher::packet<T>* p) {
   return sizeof(LoraMesher::packet<T>) + p->payloadSize + getExtraLengthToPayload(p->type);
 }
 
-size_t LoraMesher::getExtraLengthToPayload(uint8_t type) {
+uint8_t LoraMesher::getExtraLengthToPayload(uint8_t type) {
   //Offset to the payload
-  size_t extraSize = 0;
+  uint8_t extraSize = 0;
 
   //Check if type contains DATA_P or XL_DATA_P, add via size to extra size
   if (hasDataPacket(type))
@@ -447,11 +454,11 @@ size_t LoraMesher::getExtraLengthToPayload(uint8_t type) {
 }
 
 bool LoraMesher::hasDataPacket(uint8_t type) {
-  return (type & DATA_P) == DATA_P || (type & XL_DATA_P) == XL_DATA_P || (type & LOST_P) == LOST_P;
+  return !((HELLO_P & type) == HELLO_P);
 }
 
 bool LoraMesher::hasControlPacket(uint8_t type) {
-  return (type & XL_DATA_P) == XL_DATA_P || (type & NEED_ACK_P) == NEED_ACK_P || (type & ACK_P) == ACK_P || (type & LOST_P) == LOST_P;
+  return !((HELLO_P & type) == HELLO_P || (DATA_P & type) == DATA_P);
 }
 
 template <typename T>
@@ -482,8 +489,26 @@ void LoraMesher::printPacket(LoraMesher::packet<T>* p, bool received) {
   Log.verbose(F("-----------------------------------------\n"));
 }
 
+void LoraMesher::printHeaderPacket(packet<uint8_t>* p, String title) {
+  Log.setShowLevel(false);
+  Log.verbose(F("Packet %s -- Size: %d Src: %X Dst: %X Type: %b "), title, getPacketLength(p), p->src, p->dst, p->type);
+  if (hasDataPacket(p->type)) {
+    dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (p->payload);
+    Log.verbose(F("Via: %X "), dPacket->via);
+    if (hasControlPacket(p->type)) {
+      controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (dPacket->payload);
+      Log.verbose(F("Seq_Id: %d Num: %d"), cPacket->seq_id, cPacket->number);
+    }
+  }
+
+  Log.verbose(F("" CR));
+
+  Log.setShowLevel(true);
+}
+
 template <typename T>
 void LoraMesher::deletePacket(LoraMesher::packet<T>* p) {
+  Log.trace(F("Deleting packet" CR));
   free(p);
 }
 
@@ -523,7 +548,7 @@ void LoraMesher::processDataPacket(LoraMesher::packetQueue<dataPacket<uint8_t>>*
 
 void LoraMesher::processDataPacketForMe(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq) {
   packet<dataPacket<uint8_t>>* packet = pq->packet;
-  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) packet->payload->payload;
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (packet->payload->payload);
 
   //By default, delete the packet queue at the finish of this function
   bool deleteQueuepacket = true;
@@ -531,12 +556,6 @@ void LoraMesher::processDataPacketForMe(LoraMesher::packetQueue<dataPacket<uint8
   if ((packet->type & DATA_P) == DATA_P) {
     Log.verbose(F("Data Packet received" CR));
     notifyUserReceivedPacket((packetQueue<uint8_t>*) pq);
-
-    deleteQueuepacket = false;
-
-  } else if ((packet->type & XL_DATA_P) == XL_DATA_P) {
-    Log.verbose(F("Large payload Packet received" CR));
-    processLargePayloadPacket(pq);
 
     deleteQueuepacket = false;
 
@@ -553,8 +572,18 @@ void LoraMesher::processDataPacketForMe(LoraMesher::packetQueue<dataPacket<uint8
     }
 
   } else if ((packet->type & SYNC_P) == SYNC_P) {
-    Log.verbose(F("Syncronization Packet received" CR));
+    Log.verbose(F("Synchronization Packet received" CR));
     processSyncPacket(packet->src, cPacket->seq_id, cPacket->number);
+
+    //Change the number to send the ack to the correct one
+    cPacket->number = 0;
+
+  } else if ((packet->type & XL_DATA_P) == XL_DATA_P) {
+    Log.verbose(F("Large payload Packet received" CR));
+    processLargePayloadPacket(pq);
+
+    deleteQueuepacket = false;
+
   }
 
   //Need ack
@@ -689,7 +718,7 @@ void LoraMesher::printRoutingTable() {
 **/
 
 template <typename T>
-LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize, size_t extraSize) {
+LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize, uint8_t extraSize) {
   if (payloadSize + extraSize > MAXPAYLOADSIZE) {
     Log.error(F("Trying to create a packet with a payload greater than MAXPAYLOAD" CR));
     return nullptr;
@@ -700,10 +729,13 @@ LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize,
 
   packet<T>* p = (packet<T>*) malloc(packetLength);
 
-  if (p && payloadSize > 0) {
+  if (p) {
     //Copy the payload into the packet
     //If has extraSize, we need to add the extraSize to point correctly to the p->payload
     memcpy((void*) ((unsigned long) p->payload + (extraSize)), payload, payloadSize);
+  } else {
+    Log.error(F("packet not allocated" CR));
+    return nullptr;
   }
 
   p->payloadSize = payloadSize;
@@ -715,7 +747,7 @@ LoraMesher::packet<T>* LoraMesher::createPacket(T* payload, uint8_t payloadSize,
 
 template <typename T>
 LoraMesher::packet<T>* LoraMesher::createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
-  size_t extraSize = getExtraLengthToPayload(type);
+  uint8_t extraSize = getExtraLengthToPayload(type);
 
   packet<T>* p = createPacket(payload, payloadSize, extraSize);
   p->dst = dst;
@@ -724,6 +756,17 @@ LoraMesher::packet<T>* LoraMesher::createPacket(uint16_t dst, uint16_t src, uint
 
   return p;
 };
+
+LoraMesher::packet<uint8_t>* LoraMesher::copyPacket(packet<uint8_t>* p) {
+  int packetLength = getPacketLength(p);
+
+  packet<uint8_t>* cpPacket = (packet<uint8_t>*) malloc(packetLength);
+  if (p) {
+    memcpy(cpPacket, p, packetLength);
+  }
+
+  return cpPacket;
+}
 
 LoraMesher::packet<LoraMesher::networkNode>* LoraMesher::createRoutingPacket() {
   int routingSize = routingTableSize();
@@ -761,6 +804,7 @@ LoraMesher::packetQueue<T>* LoraMesher::createPacketQueue(LoraMesher::packet<I>*
 
 template <typename T>
 void LoraMesher::deletepacketQueue(LoraMesher::packetQueue<T>* pq) {
+  Log.trace(F("Deleting packet queue" CR));
   deletePacket(pq->packet);
   delete pq;
 }
@@ -771,7 +815,7 @@ void LoraMesher::PacketQueue::Enable() {
 
 void LoraMesher::PacketQueue::WaitAndDisable() {
   while (!*enabled) {
-    Log.verbose(F("Waiting for free queue" CR));
+    Log.trace(F("Waiting for free queue" CR));
     vTaskDelay(100);
   }
   *enabled = false;
@@ -869,31 +913,14 @@ void LoraMesher::PacketQueue::Clear() {
  * Large and Reliable payloads
  */
 
-void LoraMesher::sendStartSequencePackets(uint16_t destination, uint16_t seq_id, uint16_t num_packets) {
-  uint16_t type = SYNC_P | NEED_ACK_P | XL_DATA_P;
+LoraMesher::packetQueue<uint8_t>* LoraMesher::getStartSequencePacketQueue(uint16_t destination, uint8_t seq_id, uint16_t num_packets) {
+  uint8_t type = SYNC_P | NEED_ACK_P | XL_DATA_P;
 
   //Create the packet
   packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
 
-  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) p->payload;
-  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) dPacket->payload;
-
-  //Add the sequence id and the number of packets of the sequence
-  cPacket->seq_id = seq_id;
-  cPacket->number = num_packets;
-
-  //Add the packet to the send queue
-  setPackedForSend(p, DEFAULT_PRIORITY);
-}
-
-LoraMesher::packetQueue<uint8_t>* LoraMesher::getStartSequencePacketQueue(uint16_t destination, uint16_t seq_id, uint16_t num_packets) {
-  uint16_t type = SYNC_P | NEED_ACK_P | XL_DATA_P;
-
-  //Create the packet
-  packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
-
-  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) p->payload;
-  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) dPacket->payload;
+  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (p->payload);
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (dPacket->payload);
 
   //Add the sequence id and the number of packets of the sequence
   cPacket->seq_id = seq_id;
@@ -903,18 +930,30 @@ LoraMesher::packetQueue<uint8_t>* LoraMesher::getStartSequencePacketQueue(uint16
   return createPacketQueue<uint8_t>(p, DEFAULT_PRIORITY, 0);
 }
 
-void LoraMesher::sendAckPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num) {
-  setPackedForSend(createPacket(destination, getLocalAddress(), ACK_P, (uint8_t*) 0, 0), DEFAULT_PRIORITY + 1);
-}
-
-void LoraMesher::sendLostPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num) {
-  uint16_t type = LOST_P;
+void LoraMesher::sendAckPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num) {
+  uint8_t type = ACK_P;
 
   //Create the packet
   packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
 
-  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) p->payload;
-  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) dPacket->payload;
+  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (p->payload);
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (dPacket->payload);
+
+  //Add the sequence id and the number of packets of the sequence
+  cPacket->seq_id = seq_id;
+  cPacket->number = seq_num;
+
+  setPackedForSend(p, DEFAULT_PRIORITY + 1);
+}
+
+void LoraMesher::sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num) {
+  uint8_t type = LOST_P;
+
+  //Create the packet
+  packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
+
+  dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (p->payload);
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (dPacket->payload);
 
   //Add the sequence id and the number of packets of the sequence
   cPacket->seq_id = seq_id;
@@ -923,7 +962,8 @@ void LoraMesher::sendLostPacket(uint16_t destination, uint16_t seq_id, uint16_t 
   setPackedForSend(p, DEFAULT_PRIORITY);
 }
 
-bool LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num) {
+bool LoraMesher::sendPacketSequence(uint16_t destination, uint8_t seq_id, uint16_t seq_num) {
+  Log.verbose(F("Trying to send the sequence packet. Dst: %X Seq_Id: %d Seq_Num: %d" CR), destination, seq_id, seq_num);
   //Get the listConfiguration with the sequence id
   listConfiguration* config = findSequenceList(q_WSP, seq_id, destination);
 
@@ -940,11 +980,8 @@ bool LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint1
     return false;
   }
 
-  //Set the type
-  uint16_t type = NEED_ACK_P | XL_DATA_P;
-
   //Create the packet
-  packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, pq->packet->payload, pq->packet->payloadSize);
+  packet<uint8_t>* p = copyPacket(pq->packet);
 
   //Add the packet to the send queue
   setPackedForSend(p, DEFAULT_PRIORITY);
@@ -952,7 +989,7 @@ bool LoraMesher::sendPacketSequence(uint16_t destination, uint16_t seq_id, uint1
   return true;
 }
 
-void LoraMesher::addAck(uint16_t source, uint16_t seq_id, uint16_t seq_num) {
+void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
   listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
   if (config == nullptr) {
     Log.error(F("NOT FOUND the sequence packet config in add ack with Id: %d" CR), seq_id);
@@ -962,6 +999,7 @@ void LoraMesher::addAck(uint16_t source, uint16_t seq_id, uint16_t seq_num) {
   //If all packets has been arrived to the destiny
   //Delete this sequence
   if (config->config->number == seq_num) {
+    Log.trace(F("All the packets has been arrived to the seq_Id: %d" CR), seq_id);
     findAndClearLinkedList(q_WSP, config);
     return;
   }
@@ -985,7 +1023,7 @@ void LoraMesher::addAck(uint16_t source, uint16_t seq_id, uint16_t seq_num) {
 
 void LoraMesher::processLargePayloadPacket(packetQueue<dataPacket<uint8_t>>* pq) {
   packet<dataPacket<uint8_t>>* packet = pq->packet;
-  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) packet->payload->payload;
+  controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (packet->payload->payload);
 
   listConfiguration* configList = findSequenceList(q_WRP, cPacket->seq_id, packet->src);
   if (configList == nullptr) {
@@ -1039,13 +1077,8 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
   //Get the extra payload from one packet
   size_t extraPayloadSize = getExtraLengthToPayload(list->getCurrent()->packet->type);
 
-  //Remove all the extra payload but one
-  size_t totalExtraRemovedPayload = extraPayloadSize * (listConfig->config->number - 1);
-
-  payloadSize -= totalExtraRemovedPayload;
-
   //Packet length = size of the packet + size of the payload + extra payload before payload
-  int packetLength = sizeof(packet<uint8_t>) + payloadSize;
+  int packetLength = sizeof(packet<uint8_t>) + payloadSize + extraPayloadSize;
 
   packet<uint8_t>* p = (packet<uint8_t>*) malloc(packetLength);
 
@@ -1054,19 +1087,23 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     list->moveToStart();
     bool first = true;
     unsigned long actualPayloadSize = 0;
+
     do {
       auto currentP = list->getCurrent()->packet;
       auto dataP = (packet<dataPacket<controlPacket<uint8_t>>>*) currentP;
+
       if (first) {
         first = false;
-        memcpy((void*) ((unsigned long) p->payload), currentP->payload, currentP->payloadSize);
-        actualPayloadSize += currentP->payloadSize;
+        auto firstPayloadSize = getPacketLength(currentP);
+        memcpy((void*) ((unsigned long) p->payload), currentP, firstPayloadSize);
+        actualPayloadSize += firstPayloadSize;
+
       } else {
-        auto currentPayloadSize = currentP->payloadSize - extraPayloadSize;
-        memcpy((void*) ((unsigned long) p->payload + (actualPayloadSize)), dataP->payload->payload->payload, currentPayloadSize);
-        actualPayloadSize += currentPayloadSize;
+        memcpy((void*) ((unsigned long) p->payload + (actualPayloadSize)), dataP->payload->payload->payload, currentP->payloadSize);
+        actualPayloadSize += currentP->payloadSize;
 
       }
+
     } while (list->next());
   }
 
@@ -1080,15 +1117,11 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
   notifyUserReceivedPacket(pq);
 }
 
-void LoraMesher::processSyncPacket(uint16_t source, uint16_t seq_id, uint16_t seq_num) {
+void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
   //Create the pair of configuration
   listConfiguration* listConfig = new listConfiguration();
-  listConfig->config = new sequencePacketConfig();
+  listConfig->config = new sequencePacketConfig(seq_id, source, seq_num);
   listConfig->list = new LinkedList<packetQueue<uint8_t>>();
-
-  listConfig->config->seq_id = sequence_id;
-  listConfig->config->number = seq_num;
-  listConfig->config->source = source;
 
   resetTimeout(listConfig->config);
 
@@ -1117,9 +1150,12 @@ void LoraMesher::resetTimeout(sequencePacketConfig* configPacket) {
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
   auto list = listConfig->list;
   list->setInUse();
+  Log.trace(F("Clearing list configuration Seq_Id: %d" CR), listConfig->config->seq_id);
 
   for (int i = 0; i < list->getLength(); i++) {
     deletepacketQueue(list->getCurrent());
+
+    Log.trace(F("Deleted pq" CR));
     list->DeleteCurrent();
   }
 
@@ -1255,6 +1291,24 @@ uint8_t LoraMesher::getSequenceId() {
 
   return id;
 }
+
+
+// void LoraMesher::sendStartSequencePackets(uint16_t destination, uint8_t seq_id, uint16_t num_packets) {
+//   uint8_t type = SYNC_P | NEED_ACK_P | XL_DATA_P;
+
+//   //Create the packet
+//   packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
+
+//   dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (&p->payload);
+//   controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (&dPacket->payload);
+
+//   //Add the sequence id and the number of packets of the sequence
+//   cPacket->seq_id = seq_id;
+//   cPacket->number = num_packets;
+
+//   //Add the packet to the send queue
+//   setPackedForSend(p, DEFAULT_PRIORITY);
+// }
 
 /**
  * End Large and Reliable payloads

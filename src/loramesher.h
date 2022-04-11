@@ -44,13 +44,13 @@
 #define MAXPAYLOADSIZE 216 
 
 // Packet types
-#define NEED_ACK_P 0x01
-#define DATA_P 0x02
-#define HELLO_P 0x04
-#define ACK_P 0x08
-#define XL_DATA_P 0x016
-#define LOST_P 0x32
-#define SYNC_P 0x64
+#define NEED_ACK_P 0b00000001
+#define DATA_P     0b00000010
+#define HELLO_P    0b00000100
+#define ACK_P      0b00001000
+#define XL_DATA_P  0b00010000
+#define LOST_P     0b00100000
+#define SYNC_P     0b01000000
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -239,7 +239,15 @@ public:
    * @return struct LoraMesher::packet<T>*
    */
   template <typename T>
-  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize, size_t extraSize);
+  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize, uint8_t extraSize);
+
+  /**
+   * @brief Copy a packet
+   *
+   * @param p packet to be copied
+   * @return struct packet<uint8_t>*
+   */
+  struct packet<uint8_t>* copyPacket(packet<uint8_t>* p);
 
   /**
    * @brief Delete the packet from memory
@@ -475,7 +483,7 @@ private:
    * @param seq_id Sequence Id
    * @param num_packets Number of packets of the sequence
    */
-  void sendStartSequencePackets(uint16_t destination, uint16_t seq_id, uint16_t num_packets);
+  void sendStartSequencePackets(uint16_t destination, uint8_t seq_id, uint16_t num_packets);
 
 
   /**
@@ -486,7 +494,7 @@ private:
    * @param num_packets Number of packets of the sequence
    * @return packetQueue<uint8_t>*
    */
-  packetQueue<uint8_t>* getStartSequencePacketQueue(uint16_t destination, uint16_t seq_id, uint16_t num_packets);
+  packetQueue<uint8_t>* getStartSequencePacketQueue(uint16_t destination, uint8_t seq_id, uint16_t num_packets);
 
   /**
    * @brief Sends an ACK packet to the destination
@@ -495,7 +503,7 @@ private:
    * @param seq_id Id of the sequence
    * @param seq_num Number of the ack
    */
-  void sendAckPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+  void sendAckPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Send a lost packet
@@ -504,7 +512,7 @@ private:
    * @param seq_id Id of the sequence
    * @param seq_num Number of the lost packet
    */
-  void sendLostPacket(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+  void sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Get the Packet Length
@@ -522,7 +530,7 @@ private:
    * @param type type of the packet
    * @return size_t number of bytes
    */
-  size_t getExtraLengthToPayload(uint8_t type);
+  uint8_t getExtraLengthToPayload(uint8_t type);
 
   /**
    * @brief Given a type returns if needs a data packet
@@ -553,6 +561,14 @@ private:
   void printPacket(LoraMesher::packet<T>* p, bool received);
 
   /**
+   * @brief Prints the header of the packet without the payload
+   *
+   * @param p packet to be printed
+   * @param title Title to print the header
+   */
+  void printHeaderPacket(packet<uint8_t>* p, String title);
+
+  /**
    * @brief Send a packet of the sequence_id and sequence_num
    *
    * @param destination Destination to send the packet
@@ -561,7 +577,7 @@ private:
    * @return true If has been send
    * @return false If not
    */
-  bool sendPacketSequence(uint16_t destination, uint16_t seq_id, uint16_t seq_num);
+  bool sendPacketSequence(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Process a large payload packet
@@ -577,7 +593,7 @@ private:
    * @param seq_id Sequence Id
    * @param seq_num Sequence number
    */
-  void processSyncPacket(uint16_t source, uint16_t seq_id, uint16_t seq_num);
+  void processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Add the ack number to the respectively sequence and reset the timeout numbers
@@ -586,8 +602,7 @@ private:
    * @param seq_id Sequence id of the packet
    * @param seq_num Sequence number that has been Acknowledged
    */
-  void addAck(uint16_t source, uint16_t seq_id, uint16_t seq_num);
-
+  void addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num);
 
   /**
    * @brief Sequence Id, used to get the id of the packet sequence
@@ -628,6 +643,8 @@ private:
     uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
     unsigned long timeout{0};; //Timeout of the sequence
     uint32_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
+
+    sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number) : seq_id(seq_id), source(source), number(number) {};
   };
 
   /**
