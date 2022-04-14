@@ -78,7 +78,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   int res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
     "Receiving routine",
-    4096,
+    configMINIMAL_STACK_SIZE,
     this,
     6,
     &ReceivePacket_TaskHandle);
@@ -86,9 +86,19 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     Log.error(F("Receiving routine creation gave error: %d" CR), res);
   }
   res = xTaskCreate(
+    [](void* o) { static_cast<LoraMesher*>(o)->onFinishTransmitRoutine(); },
+    "Receiving routine",
+    configMINIMAL_STACK_SIZE,
+    this,
+    6,
+    &FinishTransmit_TaskHandle);
+  if (res != pdPASS) {
+    Log.error(F("Receiving routine creation gave error: %d" CR), res);
+  }
+  res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
     "Hello routine",
-    4096,
+    configMINIMAL_STACK_SIZE,
     this,
     5,
     &Hello_TaskHandle);
@@ -108,7 +118,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
     "Sending routine",
-    4096,
+    configMINIMAL_STACK_SIZE,
     this,
     4,
     &SendData_TaskHandle);
@@ -158,17 +168,43 @@ void LoraMesher::onReceive() {
 ICACHE_RAM_ATTR
 #endif
 void LoraMesher::onFinishTransmit() {
-  //Add the onReceive function into the Dio0 Action again.
-  LoraMesher::getInstance().radio->setDio0Action(onReceive);
 
-  //Start receiving packets again
-  int res = LoraMesher::getInstance().radio->startReceive();
-  if (res != 0) {
-    Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
-    return;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+  xHigherPriorityTaskWoken = xTaskNotifyFromISR(
+    LoraMesher::getInstance().FinishTransmit_TaskHandle,
+    0,
+    eSetValueWithoutOverwrite,
+    &xHigherPriorityTaskWoken);
+
+  if (xHigherPriorityTaskWoken == pdTRUE)
+    portYIELD_FROM_ISR();
+}
+
+void LoraMesher::onFinishTransmitRoutine() {
+  BaseType_t TWres;
+  for (;;) {
+    TWres = xTaskNotifyWait(
+      pdFALSE,
+      ULONG_MAX,
+      NULL,
+      portMAX_DELAY
+    );
+
+    if (TWres == pdPASS) {
+      //Add the onReceive function into the Dio0 Action again.
+      LoraMesher::getInstance().radio->setDio0Action(onReceive);
+
+      //Start receiving packets again
+      int res = LoraMesher::getInstance().radio->startReceive();
+      if (res != 0) {
+        Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
+        return;
+      }
+
+      Log.verbose(F("Packet send" CR));
+    }
   }
-
-  Log.verbose(F("Packet send" CR));
 }
 
 void LoraMesher::receivingRoutine() {
@@ -181,8 +217,7 @@ void LoraMesher::receivingRoutine() {
       pdFALSE,
       ULONG_MAX,
       NULL,
-      portMAX_DELAY // The most amount of time possible
-    );
+      portMAX_DELAY);
     receivedFlag = false;
 
     if (TWres == pdPASS) {
@@ -226,7 +261,8 @@ void LoraMesher::receivingRoutine() {
           TWres = xTaskNotifyFromISR(
             ReceiveData_TaskHandle,
             0,
-            eSetValueWithoutOverwrite, &TWres);
+            eSetValueWithoutOverwrite,
+            &TWres);
         }
       }
     }
@@ -1031,7 +1067,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
       Log.error(F("Wrong packet order" CR));
 
     number++;
-    payloadSize += currentP->payloadSize;
+    payloadSize += getPayloadLength(currentP);
   } while (list->next());
 
   //Move to start again
@@ -1057,7 +1093,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
       currentP = (packet<dataPacket<controlPacket<uint8_t>>>*) list->getCurrent()->packet;
 
-      size_t actualPayloadSizeSrc = currentP->payloadSize - getExtraLengthToPayload(currentP->type);
+      size_t actualPayloadSizeSrc = getPayloadLength(currentP);
       Log.verbose(F("Actual size src: %d" CR), actualPayloadSizeSrc);
 
       memcpy((void*) ((unsigned long) p + (actualPayloadSizeDst)), currentP->payload->payload->payload, actualPayloadSizeSrc);

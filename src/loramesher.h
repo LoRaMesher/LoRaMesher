@@ -289,6 +289,7 @@ private:
 
   TaskHandle_t ReceiveData_TaskHandle = nullptr;
   TaskHandle_t SendData_TaskHandle = nullptr;
+  TaskHandle_t FinishTransmit_TaskHandle = nullptr;
 
   TaskHandle_t ReceivedUserData_TaskHandle = nullptr;
 
@@ -297,6 +298,8 @@ private:
   static void onReceive(void);
 
   static void onFinishTransmit(void);
+
+  void onFinishTransmitRoutine();
 
   void receivingRoutine();
 
