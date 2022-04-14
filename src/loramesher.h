@@ -36,12 +36,13 @@
 // Routing table max size
 #define RTMAXSIZE 256
 
-//Max payload size per packet
-//Automatically separated through multiple packets if exceed
-//In bytes (222 bytes [UE max allowed with SF7 and 125khz] - 6 bytes of header)
-//If contains via (214 bytes)
-//If contains ack (211 bytes)
-#define MAXPAYLOADSIZE 216 
+//MAX packet size per packet
+//If exceed it will be automatically separated through multiple packets 
+//In bytes (226 bytes [UE max allowed with SF7 and 125khz])
+//MAX payload size for hello packets = MAXPACKETSIZE - 6 bytes of header
+//MAX payload size for data packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via
+//MAX payload size for reliable and large packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via - 3 of control packet
+#define MAXPACKETSIZE 222
 
 // Packet types
 #define NEED_ACK_P 0b00000001
@@ -82,7 +83,7 @@ public:
 
         // Get the receivedUserPackets and get all the elements
         while (radio->ReceivedUserPackets->Size() > 0) {
-          LoraMesher::packetQueue<dataPacket>* packetReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
+          packetQueue<dataPacket>* packetReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
 
           //Do something with the packet, ex: print(packetReceived);
 
@@ -101,6 +102,74 @@ public:
    *
    */
   ~LoraMesher();
+
+#pragma pack(push, 1)
+  template <typename T>
+  //TODO: What should be needed by the user?
+  struct userPacket {
+    uint16_t dst;
+    uint16_t src;
+    uint32_t payloadSize = 0;
+    T payload[];
+  };
+#pragma pack(pop)
+
+  /**
+   * @brief Create a Packet And Send it
+   *
+   * @tparam T
+   * @param dst Destination
+   * @param payload Payload of type T
+   * @param payloadSize Length of the payload in T
+   */
+  template <typename T>
+  void createPacketAndSend(uint16_t dst, T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Send the payload reliable. It will wait for an ack of the destination.
+   *
+   * @tparam T
+   * @param dst Destination
+   * @param payload Payload of type T
+   * @param payloadSize Length of the payload in T
+   */
+  template <typename T>
+  void sendReliable(uint16_t dst, T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Returns the number of packets inside the received packets queue
+   *
+   * @return size_t
+   */
+  size_t getReceivedQueueSize();
+
+  /**
+   * @brief Get the Next User Packet
+   *
+   * @tparam T Type to be converted
+   * @return userPacket<T>*
+   */
+  template<typename T>
+  userPacket<T>* getNextUserPacket();
+
+  /**
+   * @brief Get the payload length in number of T
+   *
+   * @tparam T Type to be converted
+   * @param p user packet
+   * @return size_t size in number of T
+   */
+  template <typename T>
+  size_t getPayloadLength(userPacket<T>* p);
+
+  /**
+   * @brief Delete the packet from memory
+   *
+   * @tparam T Type of packet
+   * @param p Packet to delete
+   */
+  template <typename T>
+  static void deletePacket(userPacket<T>* p);
 
 #pragma pack(push, 1)
   struct networkNode {
@@ -158,6 +227,55 @@ public:
    */
   uint16_t getLocalAddress();
 
+
+private:
+
+  LoraMesher();
+
+  //Local Address
+  uint16_t localAddress;
+  // Duty cycle end
+  unsigned long dutyCycleEnd;
+  // Time for last HELLO packet
+  unsigned long lastSendTime;
+  // Routable node timeout (µs)
+  unsigned long routeTimeout;
+
+  SX1276* radio;
+
+  TaskHandle_t Hello_TaskHandle = nullptr;
+  TaskHandle_t ReceivePacket_TaskHandle = nullptr;
+
+  TaskHandle_t ReceiveData_TaskHandle = nullptr;
+  TaskHandle_t SendData_TaskHandle = nullptr;
+
+  TaskHandle_t ReceivedUserData_TaskHandle = nullptr;
+
+  TaskHandle_t PacketManager_TaskHandle = nullptr;
+
+  static void onReceive(void);
+
+  static void onFinishTransmit(void);
+
+  void receivingRoutine();
+
+  void initializeLocalAddress();
+
+  void initializeLoRa();
+
+  void initializeScheduler(void (*func)(void*));
+
+  void sendHelloPacket();
+
+  void packetManager();
+
+  /**
+   * @brief Function that process the packets inside Received Packets
+   * Task executed every time that a packet arrive.
+   *
+   */
+  void processPackets();
+
 #pragma pack(push, 1)
   template <typename T>
   struct packet {
@@ -183,27 +301,6 @@ public:
 
 #pragma pack(pop)
 
-  /**
-   * @brief Create a Packet And Send it
-   *
-   * @tparam T
-   * @param dst Destination
-   * @param payload Payload of type T
-   * @param payloadSize Length of the payload in T
-   */
-  template <typename T>
-  void createPacketAndSend(uint16_t dst, T* payload, uint8_t payloadSize);
-
-  /**
-   * @brief Send the payload reliable. It will wait for an ack of the destination.
-   *
-   * @tparam T
-   * @param dst Destination
-   * @param payload Payload of type T
-   * @param payloadSize Length of the payload in T
-   */
-  template <typename T>
-  void sendReliable(uint16_t dst, T* payload, uint8_t payloadSize);
 
   /**
    * @brief Get the Payload of the packet
@@ -224,10 +321,29 @@ public:
    * @param type Type of packet
    * @param payload Payload of type T
    * @param payloadSize Length of the payload in bytes
-   * @return struct LoraMesher::packet<T>*
+   * @return struct packet<T>*
    */
   template <typename T>
-  struct LoraMesher::packet<T>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize);
+  struct packet<T>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize);
+
+  /**
+   * @brief Create a User Packet
+   *
+   * @param dst destination address
+   * @param src source address
+   * @param payload payload array
+   * @param payloadSize payload size in bytes
+   * @return struct userPacket<uint8_t>*
+   */
+  struct userPacket<uint8_t>* createUserPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize);
+
+  /**
+   * @brief given a Packet<uint8_t> it will be converted to a userPacket
+   *
+   * @param p packet of type packet<uint8_t>
+   * @return struct userPacket<uint8_t>*
+   */
+  struct userPacket<uint8_t>* convertPacket(packet<uint8_t>* p);
 
   /**
    * @brief Create a Packet<T>
@@ -236,10 +352,18 @@ public:
    * @param payload Payload of type T
    * @param payloadSize Length of the payload in bytes
    * @param extraSize Indicates the function that it need to allocate extra space before the payload
-   * @return struct LoraMesher::packet<T>*
+   * @return struct packet<T>*
    */
   template <typename T>
-  struct LoraMesher::packet<T>* createPacket(T* payload, uint8_t payloadSize, uint8_t extraSize);
+  struct packet<T>* createPacket(T* payload, uint8_t payloadSize, uint8_t extraSize);
+
+  /**
+   * @brief Create an Empty Packet
+   *
+   * @param packetSize Packet size in bytes
+   * @return struct packet<uint8_t>*
+   */
+  struct packet<uint8_t>* createEmptyPacket(size_t packetSize);
 
   /**
    * @brief Copy a packet
@@ -256,7 +380,7 @@ public:
    * @param p Packet to delete
    */
   template <typename T>
-  static void deletePacket(LoraMesher::packet<T>* p);
+  static void deletePacket(packet<T>* p);
 
   /**
    * @brief Sets the packet in a Fifo with priority and will send the packet when needed.
@@ -266,7 +390,7 @@ public:
    * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
    */
   template <typename T>
-  void setPackedForSend(LoraMesher::packet<T>* p, uint8_t priority);
+  void setPackedForSend(packet<T>* p, uint8_t priority);
 
   /**
    * @brief Get the payload in number of elements
@@ -276,26 +400,38 @@ public:
    * @return size_t
    */
   template<typename T>
-  size_t getPayloadLength(LoraMesher::packet<T>* p);
+  size_t getPayloadLength(packet<T>* p);
 
   /**
    * @brief packetQueue template
    *
    * @tparam T
    */
-   //TODO: Pragma pack here, could it be removed?
-#pragma pack(push, 1)
   template <typename T>
   struct packetQueue {
     uint16_t number{0};
     uint8_t priority = DEFAULT_PRIORITY;
-    LoraMesher::packet<T>* packet;
+    T* packet;
     packetQueue<T>* next;
   };
-#pragma pack(pop)
 
+  /**
+   * @brief It will delete the packet queue and the packet inside it
+   *
+   * @tparam T Type of the packet queue
+   * @param pq packet queue to be deleted
+   */
   template <typename T>
-  static void deletepacketQueue(packetQueue<T>* pq);
+  static void deletePacketQueueAndPacket(packetQueue<T>* pq);
+
+  /**
+   * @brief It will delete the packet queue
+   *
+   * @tparam T Type of packetQueue
+   * @param pq Packet queue to be deleted
+   */
+  template <typename T>
+  static void deletePacketQueue(packetQueue<T>* pq);
 
   /**
    * @brief Create a Packet Queue element
@@ -307,8 +443,8 @@ public:
    * @param number Number of the sequence
    * @return packetQueue<T>*
    */
-  template <typename T, typename I>
-  packetQueue<T>* createPacketQueue(packet<I>* p, uint8_t priority, uint16_t number = 0);
+  template <typename T>
+  packetQueue<uint8_t>* createPacketQueue(T* p, uint8_t priority, uint16_t number = 0);
 
   class PacketQueue {
   public:
@@ -358,58 +494,12 @@ public:
     void Enable();
   };
 
-  LoraMesher::PacketQueue* ReceivedUserPackets = new PacketQueue();
-
-private:
-
-  LoraMesher();
+  PacketQueue* ReceivedUserPackets = new PacketQueue();
 
   PacketQueue* ReceivedPackets = new PacketQueue();
+
   PacketQueue* ToSendPackets = new PacketQueue();
 
-  //Local Address
-  uint16_t localAddress;
-  // Duty cycle end
-  unsigned long dutyCycleEnd;
-  // Time for last HELLO packet
-  unsigned long lastSendTime;
-  // Routable node timeout (µs)
-  unsigned long routeTimeout;
-
-  SX1276* radio;
-
-  TaskHandle_t Hello_TaskHandle = nullptr;
-  TaskHandle_t ReceivePacket_TaskHandle = nullptr;
-
-  TaskHandle_t ReceiveData_TaskHandle = nullptr;
-  TaskHandle_t SendData_TaskHandle = nullptr;
-
-  TaskHandle_t ReceivedUserData_TaskHandle = nullptr;
-
-  TaskHandle_t PacketManager_TaskHandle = nullptr;
-
-  static void onReceive(void);
-
-  static void onFinishTransmit(void);
-
-  void receivingRoutine();
-
-  void initializeLocalAddress();
-
-  void initializeLoRa();
-
-  void initializeScheduler(void (*func)(void*));
-
-  void sendHelloPacket();
-
-  void packetManager();
-
-  /**
-   * @brief Function that process the packets inside Received Packets
-   * Task executed every time that a packet arrive.
-   *
-   */
-  void processPackets();
 
   /**
    * @brief process the network node, adds the node in the routing table if can
@@ -417,34 +507,34 @@ private:
    * @param via via address
    * @param node networkNode
    */
-  void processRoute(uint16_t via, LoraMesher::networkNode* node);
+  void processRoute(uint16_t via, networkNode* node);
 
   /**
    * @brief Process the network packet
    *
    * @param p Packet of type networkNode
    */
-  void processRoute(LoraMesher::packet<networkNode>* p);
+  void processRoute(packet<networkNode>* p);
 
   /**
    * @brief Process the data packet
    *
    * @param pq packet queue to be processed as data packet
    */
-  void processDataPacket(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq);
+  void processDataPacket(packetQueue<packet<dataPacket<uint8_t>>>* pq);
 
   /**
    * @brief Process the data packet that destination is this node
    *
    * @param pq packet queue to be processed as data packet
    */
-  void processDataPacketForMe(LoraMesher::packetQueue<dataPacket<uint8_t>>* pq);
+  void processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>* pq);
 
   /**
    * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
    *
    */
-  void notifyUserReceivedPacket(LoraMesher::packetQueue<uint8_t>* pq);
+  void notifyUserReceivedPacket(packetQueue<userPacket<uint8_t>>* pq);
 
   /**
    * @brief Add node to the routing table
@@ -452,14 +542,14 @@ private:
    * @param node Network node that includes the address and the metric
    * @param via Address to next hop to reach the network node address
    */
-  void addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t via);
+  void addNodeToRoutingTable(networkNode* node, uint16_t via);
 
   /**
    * @brief Create a Routing Packet adding the routing table to the payload
    *
-   * @return struct LoraMesher::packet*
+   * @return struct packet*
    */
-  struct LoraMesher::packet<networkNode>* createRoutingPacket();
+  struct packet<networkNode>* createRoutingPacket();
 
   /**
    * @brief Send a packet through Lora
@@ -468,7 +558,7 @@ private:
    * @param p Packet
    */
   template <typename T>
-  void sendPacket(LoraMesher::packet<T>* p);
+  void sendPacket(packet<T>* p);
 
   /**
    * @brief Proccess that sends the data inside the FIFO
@@ -522,7 +612,7 @@ private:
    * @return size_t Packet size in bytes
    */
   template <typename T>
-  size_t getPacketLength(LoraMesher::packet<T>* p);
+  size_t getPacketLength(packet<T>* p);
 
   /**
    * @brief Get the number of bytes to the payload, between a Packet<T> and their real payload
@@ -531,6 +621,14 @@ private:
    * @return size_t number of bytes
    */
   uint8_t getExtraLengthToPayload(uint8_t type);
+
+  /**
+   * @brief Get the Maximum Payload Length with a MAXPACKETSIZE defined
+   *
+   * @param type
+   * @return uint8_t
+   */
+  uint8_t getMaximumPayloadLength(uint8_t type);
 
   /**
    * @brief Given a type returns if needs a data packet
@@ -558,7 +656,7 @@ private:
    * @param received If true it will print received, else will print Created
    */
   template <typename T>
-  void printPacket(LoraMesher::packet<T>* p, bool received);
+  void printPacket(packet<T>* p, bool received);
 
   /**
    * @brief Prints the header of the packet without the payload
@@ -584,7 +682,7 @@ private:
    *
    * @param pq PacketQueue packet queue to be processed
    */
-  void processLargePayloadPacket(packetQueue<dataPacket<uint8_t>>* pq);
+  void processLargePayloadPacket(packetQueue<packet<dataPacket<uint8_t>>>* pq);
 
   /**
    * @brief Process a received synchronization packet
