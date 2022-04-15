@@ -717,6 +717,16 @@ private:
   uint8_t getMaximumPayloadLength(uint8_t type);
 
   /**
+   * @brief Get the Packet Payload Length in bytes
+   *
+   * @tparam T Type of packets
+   * @param p packet to know the payload length in bytes
+   * @return size_t The payload length in bytes of the packet
+   */
+  template <typename T>
+  size_t getPacketPayloadLength(packet<T>* p) { return p->payloadSize - getExtraLengthToPayload(p->type); }
+
+  /**
    * @brief Given a type returns if needs a data packet
    *
    * @param type type of the packet

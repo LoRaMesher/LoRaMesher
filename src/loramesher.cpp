@@ -78,7 +78,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   int res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
     "Receiving routine",
-    configMINIMAL_STACK_SIZE,
+    2048,
     this,
     6,
     &ReceivePacket_TaskHandle);
@@ -88,7 +88,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->onFinishTransmitRoutine(); },
     "Receiving routine",
-    configMINIMAL_STACK_SIZE,
+    2048,
     this,
     6,
     &FinishTransmit_TaskHandle);
@@ -98,7 +98,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
     "Hello routine",
-    configMINIMAL_STACK_SIZE,
+    2048,
     this,
     5,
     &Hello_TaskHandle);
@@ -118,7 +118,7 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
   res = xTaskCreate(
     [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
     "Sending routine",
-    configMINIMAL_STACK_SIZE,
+    2048,
     this,
     4,
     &SendData_TaskHandle);
@@ -242,6 +242,7 @@ void LoraMesher::receivingRoutine() {
 
         if (res != 0) {
           Log.error(F("Reading packet data gave error: %d" CR), res);
+          //TODO:? Send reading packet has not been received?
         } else {
           //Set the received flag to true
           receivedFlag = true;
@@ -1067,7 +1068,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
       Log.error(F("Wrong packet order" CR));
 
     number++;
-    payloadSize += getPayloadLength(currentP);
+    payloadSize += getPacketPayloadLength(currentP);
   } while (list->next());
 
   //Move to start again
@@ -1093,7 +1094,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
       currentP = (packet<dataPacket<controlPacket<uint8_t>>>*) list->getCurrent()->packet;
 
-      size_t actualPayloadSizeSrc = getPayloadLength(currentP);
+      size_t actualPayloadSizeSrc = getPacketPayloadLength(currentP);
       Log.verbose(F("Actual size src: %d" CR), actualPayloadSizeSrc);
 
       memcpy((void*) ((unsigned long) p + (actualPayloadSizeDst)), currentP->payload->payload->payload, actualPayloadSizeSrc);
