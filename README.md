@@ -64,22 +64,26 @@ The function that gets a notification each time the library receives a packet fo
  *
  */
 void processReceivedPackets(void*) {
-  for (;;) {
-    /* Wait for the notification of processReceivedPackets and enter blocking */
-    ulTaskNotifyTake(pdPASS, portMAX_DELAY);
+    for (;;) {
+        /* Wait for the notification of processReceivedPackets and enter blocking */
+        ulTaskNotifyTake(pdPASS, portMAX_DELAY);
 
-    //Iterate through all the packets inside the Received User Packets FiFo
-    while (radio.ReceivedUserPackets->Size() > 0) {
-      //Get the first element inside the Received User Packets FiFo
-      LoraMesher::packetQueue<dataPacket>* helloReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
+        //Iterate through all the packets inside the Received User Packets FiFo
+        while (radio.getReceivedQueueSize() > 0) {
+            Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
+            Log.trace(F("Queue receiveUserData size: %d" CR), radio.getReceivedQueueSize());
 
-      //Print the data packet
-      printDataPacket(helloReceived->packet);
+            //Get the first element inside the Received User Packets FiFo
+            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
 
-      //Delete the packet when used. It is very important to delete the packets.
-      radio.deletepacketQueue(helloReceived);
+            //Print the data packet
+            printDataPacket(packet);
+
+            //Delete the packet when used. It is very important to call this function to release the memory of the packet.
+            radio.deletePacket(packet);
+
+        }
     }
-  }
 }
 ```
 
@@ -88,8 +92,26 @@ There are some important things we need to be aware of:
 1. This function should have a `void*` in the parameters.
 2. The function should contain an endless loop.
 3. Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
-4. All the packets are stored inside `radio.ReceiveduserPackets`.
-5. IMPORTANT!!! Every time you call Pop, you need to be sure to call deletepacketQueue. It will free the memory that has been allocated for the packet and the packetQueue. If not executed it can cause memory leaks and out of memory errors.
+4. All the packets are stored inside a private queue.
+5. There is a function to get the size of the queue `radio.getReceivedQueueSize()`.
+6. You can get the first element with `radio.getNextUserPacket<T>()` where T is the type of your data. 
+7. IMPORTANT!!! Every time you call Pop, you need to be sure to call `radio.deletePacket(packet)`. It will free the memory that has been allocated for the packet. If not executed it can cause memory leaks and out of memory errors.
+
+### User data packet
+
+In this section we will show you what there are inside a `userPacket`.
+```
+struct userPacket {
+    uint16_t dst; //Destination address, in this case it should be or local address or BROADCAST_ADDR
+    uint16_t src; //Source address
+    uint32_t payloadSize = 0; //Payload size in bytes
+    T payload[]; //Payload
+};
+```
+
+Functionalities to use after getting the packet with `LoraMesher::userPacket<T>* userPacket = radio.getNextUserPacket<T>()`:
+1. `radio.getPayloadLength(userPacket)` it will get you the payload size in number of T
+2. `radio.deletePacket(userPacket)` it will release the memory allocated for this packet.
 
 ### Send data packet function
 
@@ -124,8 +146,8 @@ When receiving the packet, we need to understand what the Queue will return us. 
  *
  * @param data
  */
-void printPacket(dataPacket* data) {
-  Log.verbose(F("Hello Counter received n %X" CR), data->counter);
+void printPacket(dataPacket data) {
+  Log.verbose(F("Hello Counter received n %X" CR), data.counter);
 }
 
 /**
@@ -133,18 +155,19 @@ void printPacket(dataPacket* data) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
-  //Get the payload to iterate through it
-  dataPacket* packets = radio.getPayload(packet);
+void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
+    //Get the payload to iterate through it
+    dataPacket* dPacket = packet->payload;
+    size_t payloadLength = radio.getPayloadLength(packet);
 
-  for (size_t i = 0; i < radio.getPayloadLength(packet); i++) {
-    //Print the packet
-    printPacket(&packets[i]);
-  }
+    for (size_t i = 0; i < payloadLength; i++) {
+        //Print the packet
+        printPacket(dPacket[i]);
+    }
 }
 ```
 
 1. After receiving the packet in the `processReceivedPackets()` function, we call the `printDataPacket()` function.
-2. We need to get the payload of the packet, as we have different types of packet. The payload is not always in the same memory position. We have the function `radio.getPayload(packet)` that will return a pointer to the payload.
+2. We need to get the payload of the packet using `packet->payload`.
 3. We iterate through the `radio.getPayloadLength(packet)`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
-4. Get the payload and call the `printPacket()` function, that will print the counter received.
+4. Get the payload and call the `printPacket(dPacket[i])` function, that will print the counter received.

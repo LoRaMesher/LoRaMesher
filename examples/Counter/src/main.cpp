@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "loramesher.cpp"
+#include "loramesher.h"
 
 #define BOARD_LED 4
 
@@ -28,8 +28,8 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  *
  * @param data
  */
-void printPacket(dataPacket* data) {
-    Log.verbose(F("Hello Counter received nº %X" CR), data->counter);
+void printPacket(dataPacket data) {
+    Log.verbose(F("Hello Counter received nº %X" CR), data.counter);
 }
 
 /**
@@ -37,15 +37,16 @@ void printPacket(dataPacket* data) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::packet<dataPacket>* packet) {
+void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
     Log.trace(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
-    dataPacket* packets = radio.getPayload(packet);
+    dataPacket* dPacket = packet->payload;
+    size_t payloadLength = radio.getPayloadLength(packet);
 
-    for (size_t i = 0; i < radio.getPayloadLength(packet); i++) {
+    for (size_t i = 0; i < payloadLength; i++) {
         //Print the packet
-        printPacket(&packets[i]);
+        printPacket(dPacket[i]);
     }
 }
 
@@ -60,18 +61,18 @@ void processReceivedPackets(void*) {
         led_Flash(1, 100); //one quick LED flashes to indicate a packet has arrived
 
         //Iterate through all the packets inside the Received User Packets FiFo
-        while (radio.ReceivedUserPackets->Size() > 0) {
+        while (radio.getReceivedQueueSize() > 0) {
             Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.trace(F("Fifo receiveUserData size: %d" CR), radio.ReceivedUserPackets->Size());
+            Log.trace(F("Fifo receiveUserData size: %d" CR), radio.getReceivedQueueSize() > 0);
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::packetQueue<dataPacket>* helloReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
+            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
 
             //Print the data packet
-            printDataPacket(helloReceived->packet);
+            printDataPacket(packet);
 
-            //Delete the packet when used. It is very important to call this function to delete the packet queue and the packet.
-            radio.deletepacketQueue(helloReceived);
+            //Delete the packet when used. It is very important to call this function to release the memory of the packet.
+            radio.deletePacket(packet);
         }
     }
 }
