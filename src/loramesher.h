@@ -78,24 +78,32 @@ public:
      *
      * @param receiverFunction Receiver function. It will be notified when data for the user is habailable.
      * Example of usage:
-      void processReceivedPackets(void* parameters) {
-       for (;;) {
-          //Wait for the notification of processReceivedPackets and enter blocking
-          ulTaskNotifyTake(pdPASS, portMAX_DELAY);
-
-          // Get the receivedUserPackets and get all the elements
-          while (radio->ReceivedUserPackets->Size() > 0) {
-            packetQueue<dataPacket>* packetReceived = radio.ReceivedUserPackets->Pop<dataPacket>();
-
-            //Do something with the packet, ex: print(packetReceived);
-
-          }
-        }
-      }
-
-      Then initialize:
-      LoraMesher radio = LoraMesher::getInstance();
-      radio.init(processReceivedPackets);
+     * @code
+     * void processReceivedPackets(void* parameters) {
+     *      for (;;) {
+     *          //Wait for the notification of processReceivedPackets and enter blocking
+     *          ulTaskNotifyTake(pdPASS, portMAX_DELAY);
+     *
+     *          // Get the receivedUserPackets and get all the elements
+     *          while (radio.getReceivedQueueSize() > 0) {
+     *              //Get the first element inside the Received User Packets FiFo
+     *              LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+     *
+     *              //Do something with the packet, ex: print(packetReceived);
+     *
+     *              //Then delete the packet
+     *              radio.deletePacket(packet);
+     *          }
+     *      }
+     * }
+     * @endcode
+     *
+     *
+     *   Then initialize:
+     * @code
+     *   LoraMesher radio = LoraMesher::getInstance();
+     *   radio.init(processReceivedPackets);
+     * @endcode
      */
     void init(void (*receiverFunction)(void*));
 
@@ -106,12 +114,35 @@ public:
     ~LoraMesher();
 
 #pragma pack(push, 1)
+    /**
+     * @brief User packet, it is used to send the packet to the user
+     *
+     * @tparam T
+     */
     template <typename T>
-    //TODO: What should be needed by the user?
     struct userPacket {
+        /**
+         * @brief Destination address, normally it will be localadress or BROADCAST_ADDR
+         *
+         */
         uint16_t dst;
+
+        /**
+         * @brief Source Address
+         *
+         */
         uint16_t src;
+
+        /**
+         * @brief Payload Size in bytes
+         *
+         */
         uint32_t payloadSize = 0;
+
+        /**
+         * @brief Payload Array
+         *
+         */
         T payload[];
     };
 #pragma pack(pop)
@@ -208,14 +239,45 @@ public:
     }
 
 #pragma pack(push, 1)
+    /**
+     * @brief Network node, used to send and store the routing table
+     *
+     */
     struct networkNode {
+        /**
+         * @brief Address
+         *
+         */
         uint16_t address = 0;
+
+        /**
+         * @brief Metric, how many hops to reach the previous address
+         *
+         */
         uint8_t metric = 0;
     };
 
+    /**
+     * @brief Routable node, store the network node, via and timeout of this route
+     *
+     */
     struct routableNode {
+        /**
+         * @brief Network node
+         *
+         */
         LoraMesher::networkNode networkNode;
+
+        /**
+         * @brief Timeout of the route
+         *
+         */
         unsigned long timeout = 0;
+
+        /**
+         * @brief Next hop to send the message
+         *
+         */
         uint16_t via = 0;
     };
 #pragma pack(pop)
