@@ -1,5 +1,7 @@
 # LoRaMesher
 
+## See the [GitHub Pages](https://jaimi5.github.io/LoRaMesher) for more information
+
 ## Introduction
 
 The LoRaMesher library implements a distance-vector routing protocol for communicating messages among LoRa nodes. For the interaction with the LoRa radio chip, we leverage RadioLib, a versatile communication library which supports the SX127X LoRa series module available on the hardware we used, among others.
