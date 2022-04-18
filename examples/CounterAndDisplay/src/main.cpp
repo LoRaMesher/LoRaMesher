@@ -213,6 +213,5 @@ void setup() {
 }
 
 void loop() {
-    vTaskPrioritySet(NULL, 1);
     Screen.drawDisplay();
 }

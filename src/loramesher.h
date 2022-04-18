@@ -318,13 +318,6 @@ private:
     TaskHandle_t SendData_TaskHandle = nullptr;
 
     /**
-     * @brief Finish transmit task handle. Every time the transmission is finished it will execute this function.
-     //TODO: This function should notify send data task handle, to start the counter when finish transmission
-     *
-     */
-    TaskHandle_t FinishTransmit_TaskHandle = nullptr;
-
-    /**
      * @brief Received user data task handle. Every time the receivedata task handle found a data packet for the user it will be notified.
      * This function is implemented by the user.
      *
@@ -338,10 +331,6 @@ private:
     TaskHandle_t PacketManager_TaskHandle = nullptr;
 
     static void onReceive(void);
-
-    static void onFinishTransmit(void);
-
-    void onFinishTransmitRoutine();
 
     void receivingRoutine();
 

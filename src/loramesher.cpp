@@ -84,16 +84,6 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
         Log.error(F("Receiving routine creation gave error: %d" CR), res);
     }
     res = xTaskCreate(
-        [](void* o) { static_cast<LoraMesher*>(o)->onFinishTransmitRoutine(); },
-        "Receiving routine",
-        2048,
-        this,
-        6,
-        &FinishTransmit_TaskHandle);
-    if (res != pdPASS) {
-        Log.error(F("Receiving routine creation gave error: %d" CR), res);
-    }
-    res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
         "Hello routine",
         2048,
@@ -160,49 +150,6 @@ void LoraMesher::onReceive() {
 
     if (xHigherPriorityTaskWoken == pdTRUE)
         portYIELD_FROM_ISR();
-}
-
-#if defined(ESP8266) || defined(ESP32)
-ICACHE_RAM_ATTR
-#endif
-void LoraMesher::onFinishTransmit() {
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    xHigherPriorityTaskWoken = xTaskNotifyFromISR(
-        LoraMesher::getInstance().FinishTransmit_TaskHandle,
-        0,
-        eSetValueWithoutOverwrite,
-        &xHigherPriorityTaskWoken);
-
-    if (xHigherPriorityTaskWoken == pdTRUE)
-        portYIELD_FROM_ISR();
-}
-
-void LoraMesher::onFinishTransmitRoutine() {
-    BaseType_t TWres;
-    for (;;) {
-        TWres = xTaskNotifyWait(
-            pdFALSE,
-            ULONG_MAX,
-            NULL,
-            portMAX_DELAY
-        );
-
-        if (TWres == pdPASS) {
-            //Add the onReceive function into the Dio0 Action again.
-            LoraMesher::getInstance().radio->setDio0Action(onReceive);
-
-            //Start receiving packets again
-            int res = LoraMesher::getInstance().radio->startReceive();
-            if (res != 0) {
-                Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
-                return;
-            }
-
-            Log.verbose(F("Packet send" CR));
-        }
-    }
 }
 
 void LoraMesher::receivingRoutine() {
@@ -280,16 +227,18 @@ void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
     //Put Radio on StandBy mode. Prevent receiving packets when changing the Dio0 action.
     radio->standby();
 
-    //Set onFinishTransmit Dio0 Action
-    radio->setDio0Action(onFinishTransmit);
+    //Clear Dio0 Action
+    radio->clearDio0Action();
 
     //Blocking transmit, it is necessary due to deleting the packet after sending it. 
-    int res = radio->startTransmit((uint8_t*) p, getPacketLength(p));
+    int res = radio->transmit((uint8_t*) p, getPacketLength(p));
 
     if (res != 0) {
         Log.error(F("Transmit gave error: %d" CR), res);
         return;
     }
+
+    Log.verbose(F("Packet send" CR));
 }
 
 void LoraMesher::sendPackets() {
