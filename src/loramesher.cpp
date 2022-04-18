@@ -187,7 +187,10 @@ void LoraMesher::receivingRoutine() {
 
                 if (res != 0) {
                     Log.error(F("Reading packet data gave error: %d" CR), res);
-                    //TODO:? Send reading packet has not been received?
+                    deletePacket(rx);
+                } else if (snr < 0) {
+                    Log.error(F("Packet with bad SNR, deleting it" CR));
+                    deletePacket(rx);
                 } else {
                     //Set the received flag to true
                     receivedFlag = true;
@@ -224,9 +227,6 @@ uint16_t LoraMesher::getLocalAddress() {
 **/
 
 void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
-    //Put Radio on StandBy mode. Prevent receiving packets when changing the Dio0 action.
-    radio->standby();
-
     //Clear Dio0 Action
     radio->clearDio0Action();
 
@@ -239,6 +239,12 @@ void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
     }
 
     Log.verbose(F("Packet send" CR));
+
+    radio->setDio0Action(onReceive);
+    res = radio->startReceive();
+    if (res != 0)
+        Log.error(F("Receiving on end of packet transmission gave error: %d" CR), res);
+
 }
 
 void LoraMesher::sendPackets() {
@@ -284,7 +290,7 @@ void LoraMesher::sendPackets() {
         //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
         //Wait for 10s to send the next packet
         // vTaskDelay((rand() % 10 + 5) * 1000 / portTICK_PERIOD_MS);
-        vTaskDelay(SEND_PACKETS_DELAY * 10000 / portTICK_PERIOD_MS);
+        vTaskDelay(SEND_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -298,7 +304,7 @@ void LoraMesher::sendHelloPacket() {
         setPackedForSend(tx, DEFAULT_PRIORITY + 1);
 
         //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
-        vTaskDelay(HELLO_PACKETS_DELAY * 10000 / portTICK_PERIOD_MS);
+        vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -490,9 +496,6 @@ void LoraMesher::processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>
 
         //Convert the packet into a user packet
         pqUser->packet = convertPacket((packet<uint8_t>*) p);
-
-        //delete the previous packet
-        deletePacket(p);
 
         //Add and notify the user of this packet
         notifyUserReceivedPacket(pqUser);
