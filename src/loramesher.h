@@ -59,8 +59,8 @@
 
 //Definition Times in secods
 #define DEFAULT_TIMEOUT 60
-#define HELLO_PACKETS_DELAY 60
-#define SEND_PACKETS_DELAY 10
+#define HELLO_PACKETS_DELAY 300
+#define SEND_PACKETS_DELAY 60
 
 //Maximum times that a sequence of packets reach timeout
 #define MAX_TIMEOUTS 3

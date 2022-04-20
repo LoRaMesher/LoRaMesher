@@ -58,7 +58,7 @@ void LoraMesher::initializeLoRa() {
         Log.error(F("Radio module gave error: %d" CR), res);
     }
 
-#ifdef RELIABLE_PAYLOAD
+#ifdef ADDCRC_PAYLOAD
     radio->setCRC(true);
 #endif
 
@@ -188,7 +188,7 @@ void LoraMesher::receivingRoutine() {
                 if (res != 0) {
                     Log.error(F("Reading packet data gave error: %d" CR), res);
                     deletePacket(rx);
-                } else if (snr < 0) {
+                } else if (snr <= 0) {
                     Log.error(F("Packet with bad SNR, deleting it" CR));
                     deletePacket(rx);
                 } else {
