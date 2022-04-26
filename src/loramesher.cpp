@@ -45,7 +45,7 @@ void LoraMesher::initializeLoRa() {
 
     // TODO: Optimize memory, this could lead to heap fragmentation
     Log.verbose(F("Initializing Radiolib" CR));
-    Module* mod = new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_IO1);
+    Module* mod = new Module(LORA_CS, LORA_IRQ, LORA_RST);
     radio = new SX1276(mod);
     if (radio == NULL) {
         Log.error(F("Radiolib not initialized properly" CR));
