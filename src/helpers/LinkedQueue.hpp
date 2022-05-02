@@ -3,28 +3,28 @@
 #include <Arduino.h>
 
 template <class T>
-class ListNode {
+class LM_ListNode {
 public:
     T* element;
-    ListNode* prev;
-    ListNode* next;
+    LM_ListNode* prev;
+    LM_ListNode* next;
 
-    ListNode(T* element, ListNode* prev, ListNode* next)
+    LM_ListNode(T* element, LM_ListNode* prev, LM_ListNode* next)
         : element(element), prev(prev), next(next) {
     };
 };
 
 template <class T>
-class LinkedList {
+class LM_LinkedList {
 private:
     size_t length;
     bool inUse;
-    ListNode<T>* head;
-    ListNode<T>* tail;
-    ListNode<T>* curr;
+    LM_ListNode<T>* head;
+    LM_ListNode<T>* tail;
+    LM_ListNode<T>* curr;
 public:
-    LinkedList();
-    ~LinkedList();
+    LM_LinkedList();
+    ~LM_LinkedList();
     T* getCurrent();
     T* First() const;
     T* Last() const;
@@ -41,7 +41,7 @@ public:
 };
 
 template <class T>
-LinkedList<T>::LinkedList() {
+LM_LinkedList<T>::LM_LinkedList() {
     length = 0;
     inUse = false;
     head = nullptr;
@@ -51,33 +51,33 @@ LinkedList<T>::LinkedList() {
 
 
 template <class T>
-LinkedList<T>::~LinkedList() {
+LM_LinkedList<T>::~LM_LinkedList() {
     Clear();
 }
 
 template<class T>
-T* LinkedList<T>::getCurrent() {
+T* LM_LinkedList<T>::getCurrent() {
     return curr->element;
 }
 
 template<class T>
-T* LinkedList<T>::First() const {
+T* LM_LinkedList<T>::First() const {
     return head->element;
 }
 
 template<class T>
-T* LinkedList<T>::Last() const {
+T* LM_LinkedList<T>::Last() const {
     return tail->element;
 }
 
 template<class T>
-size_t LinkedList<T>::getLength() {
+size_t LM_LinkedList<T>::getLength() {
     return length;
 }
 
 template <class T>
-void LinkedList<T>::Append(T* element) {
-    ListNode<T>* node = new ListNode<T>(element, tail, nullptr);
+void LM_LinkedList<T>::Append(T* element) {
+    LM_ListNode<T>* node = new LM_ListNode<T>(element, tail, nullptr);
 
     if (length == 0)
         curr = tail = head = node;
@@ -91,7 +91,7 @@ void LinkedList<T>::Append(T* element) {
 }
 
 template <class T>
-bool LinkedList<T>::Search(T* elem) {
+bool LM_LinkedList<T>::Search(T* elem) {
     //TODO: Check if this works fine
     if (length == 0)
         return false;
@@ -104,7 +104,7 @@ bool LinkedList<T>::Search(T* elem) {
 }
 
 template <class T>
-bool LinkedList<T>::next() {
+bool LM_LinkedList<T>::next() {
     if (length == 0)
         return false;
 
@@ -116,13 +116,13 @@ bool LinkedList<T>::next() {
 }
 
 template <class T>
-bool LinkedList<T>::moveToStart() {
+bool LM_LinkedList<T>::moveToStart() {
     curr = head;
     return length != 0;
 }
 
 template<class T>
-bool LinkedList<T>::prev() {
+bool LM_LinkedList<T>::prev() {
     if (length == 0)
         return false;
 
@@ -134,11 +134,11 @@ bool LinkedList<T>::prev() {
 }
 
 template <class T>
-void LinkedList<T>::DeleteCurrent() {
+void LM_LinkedList<T>::DeleteCurrent() {
     if (length == 0)
         return;
     length--;
-    ListNode<T>* temp = curr;
+    LM_ListNode<T>* temp = curr;
 
     if (temp->prev != nullptr)
         temp->prev->next = temp->next;
@@ -158,10 +158,10 @@ void LinkedList<T>::DeleteCurrent() {
 }
 
 template <class T>
-void LinkedList<T>::Clear() {
+void LM_LinkedList<T>::Clear() {
     if (length == 0)
         return;
-    ListNode<T>* temp = head;
+    LM_ListNode<T>* temp = head;
 
     while (temp != nullptr) {
         head = head->next;
@@ -176,7 +176,7 @@ void LinkedList<T>::Clear() {
 }
 
 template <class T>
-void LinkedList<T>::setInUse() {
+void LM_LinkedList<T>::setInUse() {
     while (inUse) {
         vTaskDelay(100);
     }
@@ -184,6 +184,6 @@ void LinkedList<T>::setInUse() {
 }
 
 template <class T>
-void LinkedList<T>::releaseInUse() {
+void LM_LinkedList<T>::releaseInUse() {
     inUse = false;
 }

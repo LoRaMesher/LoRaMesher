@@ -946,7 +946,7 @@ private:
      */
     struct listConfiguration {
         sequencePacketConfig* config;
-        LinkedList<packetQueue<uint8_t>>* list;
+        LM_LinkedList<packetQueue<uint8_t>>* list;
     };
 
     /**
@@ -963,7 +963,7 @@ private:
      * @param seq_id sequence id
      * @param source source address
      */
-    void resetTimeout(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
+    void resetTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
 
     /**
      * @brief If executed it will reset the number of timeouts to 0 and reset the timeout
@@ -992,7 +992,7 @@ private:
      * @param queue Queue where to find and delete the element
      * @param listConfig Element that needs to be found in the queue
      */
-    void findAndClearLinkedList(LinkedList<listConfiguration>* queue, listConfiguration* listConfig);
+    void findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue, listConfiguration* listConfig);
 
     /**
      * @brief With a sequence id and a linkedList, it will find the first sequence inside a queue that have the sequence id
@@ -1002,7 +1002,7 @@ private:
      * @param source Source of the list
      * @return listConfiguration*
      */
-    listConfiguration* findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
+    listConfiguration* findSequenceList(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
 
     /**
      * @brief Find the packet queue inside the list of packet queues
@@ -1011,7 +1011,7 @@ private:
      * @param num Number of the sequence of the packet queue
      * @return packetQueue<uint8_t>*
      */
-    packetQueue<uint8_t>* findPacketQueue(LinkedList<packetQueue<uint8_t>>* queue, uint8_t num);
+    packetQueue<uint8_t>* findPacketQueue(LM_LinkedList<packetQueue<uint8_t>>* queue, uint8_t num);
 
     /**
      * @brief Queue Waiting Sending Packets (Q_WSP)
@@ -1019,13 +1019,13 @@ private:
      * then there is another linked list with all the packets of the sequence)
      *
      */
-    LinkedList<listConfiguration>* q_WSP = new LinkedList<listConfiguration>();
+    LM_LinkedList<listConfiguration>* q_WSP = new LM_LinkedList<listConfiguration>();
 
     /**
      * @brief Queue Waiting Received Packet (Q_WRP)
      *
      */
-    LinkedList<listConfiguration>* q_WRP = new LinkedList<listConfiguration>();
+    LM_LinkedList<listConfiguration>* q_WRP = new LM_LinkedList<listConfiguration>();
 
 };
 

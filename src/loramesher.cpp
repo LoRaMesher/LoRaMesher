@@ -248,8 +248,8 @@ void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
 }
 
 void LoraMesher::sendPackets() {
-    //Wait an initial 0.5 second
-    vTaskDelay(500 / portTICK_PERIOD_MS);
+    //Wait an initial 4 seconds
+    vTaskDelay(4000 / portTICK_PERIOD_MS);
 
     for (;;) {
         /* Wait for the notification of receivingRoutine and enter blocking */
@@ -295,8 +295,8 @@ void LoraMesher::sendPackets() {
 }
 
 void LoraMesher::sendHelloPacket() {
-    //Wait an initial 1 second
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    //Wait an initial 2 second
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     for (;;) {
 
@@ -403,7 +403,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     uint16_t numOfPackets = payloadSize / maxPayloadSize + (payloadSize % maxPayloadSize > 0);
 
     //Create a new Linked list to store the packetQueues and the payload
-    LinkedList<packetQueue<uint8_t>>* packetList = new LinkedList<packetQueue<uint8_t>>();
+    LM_LinkedList<packetQueue<uint8_t>>* packetList = new LM_LinkedList<packetQueue<uint8_t>>();
 
     //Add the SYNC configuration packet
     packetList->Append(getStartSequencePacketQueue(dst, seq_id, numOfPackets));
@@ -1068,7 +1068,7 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
     //Create the pair of configuration
     listConfiguration* listConfig = new listConfiguration();
     listConfig->config = new sequencePacketConfig(seq_id, source, seq_num);
-    listConfig->list = new LinkedList<packetQueue<uint8_t>>();
+    listConfig->list = new LM_LinkedList<packetQueue<uint8_t>>();
 
     resetTimeout(listConfig->config);
 
@@ -1079,7 +1079,7 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
 
 }
 
-void LoraMesher::resetTimeout(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
+void LoraMesher::resetTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
     listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
     if (config == nullptr) {
         Log.error(F("NOT FOUND the sequence packet config in reset timeout with Id: %d" CR), seq_id);
@@ -1110,7 +1110,7 @@ void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
     delete listConfig;
 }
 
-void LoraMesher::findAndClearLinkedList(LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
+void LoraMesher::findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
     queue->setInUse();
 
     auto current = queue->getCurrent();
@@ -1127,7 +1127,7 @@ void LoraMesher::findAndClearLinkedList(LinkedList<listConfiguration>* queue, li
     queue->releaseInUse();
 }
 
-LoraMesher::listConfiguration* LoraMesher::findSequenceList(LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
+LoraMesher::listConfiguration* LoraMesher::findSequenceList(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
     queue->setInUse();
     queue->moveToStart();
 
@@ -1149,7 +1149,7 @@ LoraMesher::listConfiguration* LoraMesher::findSequenceList(LinkedList<listConfi
 
 }
 
-LoraMesher::packetQueue<uint8_t>* LoraMesher::findPacketQueue(LinkedList<packetQueue<uint8_t>>* queue, uint8_t num) {
+LoraMesher::packetQueue<uint8_t>* LoraMesher::findPacketQueue(LM_LinkedList<packetQueue<uint8_t>>* queue, uint8_t num) {
     queue->setInUse();
     queue->moveToStart();
 
