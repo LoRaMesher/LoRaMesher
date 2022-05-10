@@ -225,7 +225,7 @@ public:
      */
     template <typename T>
     static void deletePacket(userPacket<T>* p) {
-        Log.trace(F("Deleting user packet" CR));
+        Log.traceln(F("Deleting user packet"));
         free(p);
     }
 
@@ -518,7 +518,7 @@ private:
      */
     template <typename T>
     static void deletePacket(packet<T>* p) {
-        Log.trace(F("Deleting packet" CR));
+        Log.traceln(F("Deleting packet"));
         free(p);
     }
 
@@ -581,7 +581,7 @@ private:
      */
     template <typename T>
     static void deletePacketQueue(packetQueue<T>* pq) {
-        Log.trace(F("Deleting packet queue" CR));
+        Log.traceln(F("Deleting packet queue"));
         delete pq;
     }
 
@@ -837,20 +837,20 @@ private:
      */
     template <typename T>
     void printPacket(packet<T>* p, bool received) {
-        Log.verbose(F("-----------------------------------------\n"));
-        Log.verbose(F("Current Packet: %s\n"), received ? "Received" : "Created");
-        Log.verbose(F("Destination: %X\n"), p->dst);
-        Log.verbose(F("Source: %X\n"), p->src);
-        Log.verbose(F("Type: %d\n"), p->type);
-        Log.verbose(F("----Packet of size %d bytes----\n"), getPacketLength(p));
+        Log.verboseln(F("-----------------------------------------"));
+        Log.verboseln(F("Current Packet: %s"), received ? "Received" : "Created");
+        Log.verboseln(F("Destination: %X"), p->dst);
+        Log.verboseln(F("Source: %X"), p->src);
+        Log.verboseln(F("Type: %d"), p->type);
+        Log.verboseln(F("----Packet of size %d bytes----"), getPacketLength(p));
         switch (p->type) {
             case HELLO_P:
                 for (int i = 0; i < getPayloadLength((packet<networkNode>*) p); i++)
-                    Log.verbose(F("%d ->(%u) Address: %X - Metric: %d" CR), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
+                    Log.verboseln(F("%d ->(%u) Address: %X - Metric: %d"), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
 
         }
 
-        Log.verbose(F("-----------------------------------------\n"));
+        Log.verboseln(F("-----------------------------------------"));
     }
 
     /**
