@@ -44,11 +44,11 @@ void LoraMesher::initializeLoRa() {
     Log.traceln(F("LoRa module initialization..."));
 
     // TODO: Optimize memory, this could lead to heap fragmentation
-    Log.verboseln(F("Initializing Radiolib"));
+    Log.verboseln(F("Initializing RadioLib"));
     Module* mod = new Module(LORA_CS, LORA_IRQ, LORA_RST);
     radio = new SX1276(mod);
     if (radio == NULL) {
-        Log.errorln(F("Radiolib not initialized properly"));
+        Log.errorln(F("RadioLib not initialized properly"));
     }
 
     // Set up the radio parameters
@@ -168,7 +168,7 @@ void LoraMesher::receivingRoutine() {
         if (TWres == pdPASS) {
             packetSize = radio->getPacketLength();
             if (packetSize == 0)
-                Log.warning(F("Empty packet received"));
+                Log.warningln(F("Empty packet received"));
 
             else {
                 packet<uint8_t>* rx = createEmptyPacket(packetSize);
@@ -179,7 +179,7 @@ void LoraMesher::receivingRoutine() {
                 Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
 
                 if (packetSize > MAXPACKETSIZE) {
-                    Log.warning(F("Received packet with size greater than MAX Packet Size"));
+                    Log.warningln(F("Received packet with size greater than MAX Packet Size"));
                     packetSize = MAXPACKETSIZE;
                 }
 
@@ -663,7 +663,7 @@ LoraMesher::packet<uint8_t>* LoraMesher::createPacket(uint8_t* payload, uint8_t 
     int packetLength = sizeof(packet<uint8_t>) + payloadSize + extraSize;
 
     if (packetLength > MAXPACKETSIZE) {
-        Log.warning(F("Trying to create a packet greater than MAXPACKETSIZE"));
+        Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
         // return nullptr;
     }
 
@@ -689,7 +689,7 @@ LoraMesher::packet<uint8_t>* LoraMesher::createPacket(uint8_t* payload, uint8_t 
 
 LoraMesher::packet<uint8_t>* LoraMesher::createEmptyPacket(size_t packetSize) {
     if (packetSize > MAXPACKETSIZE) {
-        Log.warning(F("Trying to create a packet greater than MAXPACKETSIZE"));
+        Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
         packetSize = MAXPACKETSIZE;
     }
 
