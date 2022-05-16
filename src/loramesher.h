@@ -50,10 +50,10 @@
 
 //Definition Times in secods
 #define DEFAULT_TIMEOUT 60
-#define HELLO_PACKETS_DELAY 300
-#define SEND_PACKETS_DELAY 60
+#define HELLO_PACKETS_DELAY 120
+#define SEND_PACKETS_DELAY 30
 
-//Maximum times that a sequence of packets reach timeout
+//Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
 
 class LoraMesher {
@@ -410,6 +410,8 @@ private:
         uint16_t dst;
         uint16_t src;
         uint8_t type;
+        //TODO: REMOVE THIS ID
+        uint8_t id;
         uint8_t payloadSize = 0;
         T payload[];
     };

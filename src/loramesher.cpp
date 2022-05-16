@@ -70,7 +70,6 @@ void LoraMesher::initializeLoRa() {
     delay(1000);
 }
 
-int helloCounter = 0;
 void LoraMesher::initializeScheduler(void (*func)(void*)) {
     Log.verboseln(F("Setting up Schedulers"));
     int res = xTaskCreate(
@@ -231,39 +230,39 @@ void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
     radio->clearDio0Action();
 
     //Blocking transmit, it is necessary due to deleting the packet after sending it. 
-    int res = radio->transmit((uint8_t*) p, getPacketLength(p));
+    int resT = radio->transmit((uint8_t*) p, getPacketLength(p));
 
-    if (res != 0) {
-        Log.errorln(F("Transmit gave error: %d"), res);
+    radio->setDio0Action(onReceive);
+    int res = radio->startReceive();
+
+    if (resT != 0) {
+        Log.errorln(F("Transmit gave error: %d"), resT);
         return;
     }
 
-    Log.verboseln(F("Packet send"));
-
-    radio->setDio0Action(onReceive);
-    res = radio->startReceive();
-    if (res != 0)
+    if (res != 0) {
         Log.errorln(F("Receiving on end of packet transmission gave error: %d"), res);
+        return;
+    }
 
+    printHeaderPacket(p, "send");
 }
 
 void LoraMesher::sendPackets() {
     //Wait an initial 4 seconds
     vTaskDelay(4000 / portTICK_PERIOD_MS);
+    int sendCounter = 0;
 
     for (;;) {
         /* Wait for the notification of receivingRoutine and enter blocking */
         Log.verboseln("Size of Send Packets Queue: %d", ToSendPackets->Size());
 
-        //Set a random delay, to avoid some collisions. Between 1 and 4 seconds
-        // vTaskDelay((rand() % 4 + 1) * 1000 / portTICK_PERIOD_MS);
-
         packetQueue<packet<uint8_t>>* tx = ToSendPackets->Pop<packet<uint8_t>>();
 
         if (tx != nullptr) {
-            Log.verboseln("Send nº %d", helloCounter);
+            Log.verboseln("Send nº %d", sendCounter);
 
-            helloCounter++;
+            tx->packet->id = sendCounter;
 
             //If the packet has a data packet and its destination is not broadcast add the via to the packet and forward the packet
             if (hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
@@ -280,11 +279,14 @@ void LoraMesher::sendPackets() {
                 }
             }
 
-            printHeaderPacket(tx->packet, "send");
+            //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
+            // vTaskDelay(radio->random(300000) / portTICK_PERIOD_MS);
 
             sendPacket(tx->packet);
 
             deletePacketQueueAndPacket(tx);
+
+            sendCounter++;
         }
 
         //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
@@ -370,12 +372,12 @@ void LoraMesher::printHeaderPacket(packet<uint8_t>* p, String title) {
         dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (p->payload);
         if (hasControlPacket(p->type)) {
             controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (dPacket->payload);
-            Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Type: %b Via: %X Seq_Id: %d Num: %d"), title, getPacketLength(p), p->src, p->dst, p->type, dPacket->via, cPacket->seq_id, cPacket->number);
+            Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X Seq_Id: %d Num: %d"), title, getPacketLength(p), p->src, p->dst, p->type, p->id, dPacket->via, cPacket->seq_id, cPacket->number);
         } else {
-            Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Type: %b Via: %X"), title, getPacketLength(p), p->src, p->dst, p->type, dPacket->via);
+            Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X"), title, getPacketLength(p), p->src, p->dst, p->id, p->type, dPacket->via);
         }
     } else
-        Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Type: %b "), title, getPacketLength(p), p->src, p->dst, p->type);
+        Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b "), title, getPacketLength(p), p->src, p->dst, p->id, p->type);
 
     Log.setShowLevel(true);
 }
