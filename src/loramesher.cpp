@@ -197,13 +197,8 @@ void LoraMesher::receivingRoutine() {
                     //Add the packet created into the ReceivedPackets List
                     packetQueue<uint8_t>* pq = createPacketQueue(rx, 0);
                     ReceivedPackets->Add(pq);
-
-                    Log.verboseln(F("Starting to listen again after receiving a packet"));
-                    res = radio->startReceive();
-                    if (res != 0) {
-                        Log.errorln(F("Receiving on end of listener gave error: %d"), res);
-                    }
                 }
+
                 if (receivedFlag) {
                     //Notify that there is a packets to be processed
                     TWres = xTaskNotifyFromISR(
@@ -211,6 +206,12 @@ void LoraMesher::receivingRoutine() {
                         0,
                         eSetValueWithoutOverwrite,
                         &TWres);
+                }
+
+                Log.verboseln(F("Starting to listen again after receiving a packet"));
+                res = radio->startReceive();
+                if (res != 0) {
+                    Log.errorln(F("Receiving on end of listener gave error: %d"), res);
                 }
             }
         }
@@ -246,6 +247,7 @@ bool LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
     }
 
     printHeaderPacket(p, "send");
+    return true;
 }
 
 void LoraMesher::sendPackets() {
