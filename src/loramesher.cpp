@@ -225,7 +225,7 @@ uint16_t LoraMesher::getLocalAddress() {
  *  Region Packet Service
 **/
 
-void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
+bool LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
     //Clear Dio0 Action
     radio->clearDio0Action();
 
@@ -237,12 +237,12 @@ void LoraMesher::sendPacket(LoraMesher::packet<uint8_t>* p) {
 
     if (resT != 0) {
         Log.errorln(F("Transmit gave error: %d"), resT);
-        return;
+        return false;
     }
 
     if (res != 0) {
         Log.errorln(F("Receiving on end of packet transmission gave error: %d"), res);
-        return;
+        return false;
     }
 
     printHeaderPacket(p, "send");
@@ -252,6 +252,7 @@ void LoraMesher::sendPackets() {
     //Wait an initial 4 seconds
     vTaskDelay(4000 / portTICK_PERIOD_MS);
     int sendCounter = 0;
+    uint8_t resendMessage = 0;
 
     for (;;) {
         /* Wait for the notification of receivingRoutine and enter blocking */
@@ -282,11 +283,24 @@ void LoraMesher::sendPackets() {
             //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
             // vTaskDelay(radio->random(300000) / portTICK_PERIOD_MS);
 
-            sendPacket(tx->packet);
+            //Send packet
+            bool hasSend = sendPacket(tx->packet);
+
+            //If the packet has not been send, add it to the queue and send it again
+            if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
+                tx->priority = MAX_PRIORITY;
+                ToSendPackets->Add((packetQueue<uint8_t>*) tx);
+
+                resendMessage++;
+
+                continue;
+            }
 
             deletePacketQueueAndPacket(tx);
 
             sendCounter++;
+
+            resendMessage = 0;
         }
 
         //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 

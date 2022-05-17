@@ -47,14 +47,16 @@
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
 #define DEFAULT_PRIORITY 20
+#define MAX_PRIORITY 40
 
 //Definition Times in secods
 #define DEFAULT_TIMEOUT 60
-#define HELLO_PACKETS_DELAY 120
-#define SEND_PACKETS_DELAY 30
+#define HELLO_PACKETS_DELAY 300
+#define SEND_PACKETS_DELAY 60
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
+#define MAX_RESEND_PACKET 3
 
 class LoraMesher {
 
@@ -728,9 +730,11 @@ private:
     /**
      * @brief Send a packet through Lora
      *
-     * @param p Packet
+     * @param p Packet to send
+     * @return true has been send correctly
+     * @return false has not been send
      */
-    void sendPacket(packet<uint8_t>* p);
+    bool sendPacket(packet<uint8_t>* p);
 
     /**
      * @brief Proccess that sends the data inside the FIFO
