@@ -199,6 +199,12 @@ void LoraMesher::receivingRoutine() {
                     ReceivedPackets->Add(pq);
                 }
 
+                Log.verboseln(F("Starting to listen again after receiving a packet"));
+                res = radio->startReceive();
+                if (res != 0) {
+                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
+                }
+
                 if (receivedFlag) {
                     //Notify that there is a packets to be processed
                     TWres = xTaskNotifyFromISR(
@@ -206,12 +212,6 @@ void LoraMesher::receivingRoutine() {
                         0,
                         eSetValueWithoutOverwrite,
                         &TWres);
-                }
-
-                Log.verboseln(F("Starting to listen again after receiving a packet"));
-                res = radio->startReceive();
-                if (res != 0) {
-                    Log.errorln(F("Receiving on end of listener gave error: %d"), res);
                 }
             }
         }
@@ -332,24 +332,27 @@ void LoraMesher::processPackets() {
         ulTaskNotifyTake(pdPASS, portMAX_DELAY);
 
         Log.verboseln("Size of Received Packets Queue: %d", ReceivedPackets->Size());
-        packetQueue<packet<uint8_t>>* rx = ReceivedPackets->Pop<packet<uint8_t>>();
 
-        if (rx != nullptr) {
-            printHeaderPacket(rx->packet, "received");
+        while (ReceivedPackets->Size() > 0) {
+            packetQueue<packet<uint8_t>>* rx = ReceivedPackets->Pop<packet<uint8_t>>();
 
-            uint8_t type = rx->packet->type;
+            if (rx != nullptr) {
+                printHeaderPacket(rx->packet, "received");
 
-            if ((type & HELLO_P) == HELLO_P) {
-                processRoute((packet<networkNode>*) rx->packet);
-                deletePacketQueueAndPacket(rx);
+                uint8_t type = rx->packet->type;
 
-            } else if (hasDataPacket(type))
-                processDataPacket((packetQueue<packet<dataPacket<uint8_t>>>*) rx);
+                if ((type & HELLO_P) == HELLO_P) {
+                    processRoute((packet<networkNode>*) rx->packet);
+                    deletePacketQueueAndPacket(rx);
 
-            else {
-                Log.verboseln(F("Packet not identified, deleting it"));
-                deletePacketQueueAndPacket(rx);
+                } else if (hasDataPacket(type))
+                    processDataPacket((packetQueue<packet<dataPacket<uint8_t>>>*) rx);
 
+                else {
+                    Log.verboseln(F("Packet not identified, deleting it"));
+                    deletePacketQueueAndPacket(rx);
+
+                }
             }
         }
     }
