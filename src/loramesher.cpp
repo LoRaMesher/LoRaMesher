@@ -80,14 +80,24 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
         6,
         &ReceivePacket_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Receiving routineeation gave error: %d"), res);
+        Log.errorln(F("Receiving routine creation gave error: %d"), res);
+    }
+    res = xTaskCreate(
+        [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
+        "Sending routine",
+        2048,
+        this,
+        5,
+        &SendData_TaskHandle);
+    if (res != pdPASS) {
+        Log.errorln(F("Sending Task creation gave error: %d"), res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
         "Hello routine",
         2048,
         this,
-        5,
+        4,
         &Hello_TaskHandle);
     if (res != pdPASS) {
         Log.errorln(F("Process Task creation gave error: %d"), res);
@@ -101,16 +111,6 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
         &ReceiveData_TaskHandle);
     if (res != pdPASS) {
         Log.errorln(F("Process Task creation gave error: %d"), res);
-    }
-    res = xTaskCreate(
-        [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
-        "Sending routine",
-        2048,
-        this,
-        4,
-        &SendData_TaskHandle);
-    if (res != pdPASS) {
-        Log.errorln(F("Sending Task creation gave error: %d"), res);
     }
     res = xTaskCreate(
         func,
@@ -199,12 +199,6 @@ void LoraMesher::receivingRoutine() {
                     ReceivedPackets->Add(pq);
                 }
 
-                Log.verboseln(F("Starting to listen again after receiving a packet"));
-                res = radio->startReceive();
-                if (res != 0) {
-                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
-                }
-
                 if (receivedFlag) {
                     //Notify that there is a packets to be processed
                     TWres = xTaskNotifyFromISR(
@@ -212,6 +206,11 @@ void LoraMesher::receivingRoutine() {
                         0,
                         eSetValueWithoutOverwrite,
                         &TWres);
+                }
+
+                res = radio->startReceive();
+                if (res != 0) {
+                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
                 }
             }
         }
@@ -256,6 +255,14 @@ void LoraMesher::sendPackets() {
     int sendCounter = 0;
     uint8_t resendMessage = 0;
 
+    //Random delay, to avoid some collisions. Between 0 and 4 seconds
+    TickType_t randomDelay = localAddress % 4000 / portTICK_PERIOD_MS;
+
+    // randomSeed(localAddress);
+
+    //Delay between different messages
+    TickType_t delayBetweenSend = SEND_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS;
+
     for (;;) {
         /* Wait for the notification of receivingRoutine and enter blocking */
         Log.verboseln("Size of Send Packets Queue: %d", ToSendPackets->Size());
@@ -283,7 +290,15 @@ void LoraMesher::sendPackets() {
             }
 
             //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
-            // vTaskDelay(radio->random(300000) / portTICK_PERIOD_MS);
+            vTaskDelay(randomDelay);
+
+            // uint32_t randd = random(4000);
+            // Log.noticeln(F("Rand %d" CR), randd);
+
+            // vTaskDelay(randd / portTICK_PERIOD_MS);
+
+            //Get a random delay from radio interferences. Between 0 and 1 seconds
+            // vTaskDelay(radio->random(1000) / portTICK_PERIOD_MS);
 
             //Send packet
             bool hasSend = sendPacket(tx->packet);
@@ -306,9 +321,7 @@ void LoraMesher::sendPackets() {
         }
 
         //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
-        //Wait for 10s to send the next packet
-        // vTaskDelay((rand() % 10 + 5) * 1000 / portTICK_PERIOD_MS);
-        vTaskDelay(SEND_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
+        vTaskDelay(delayBetweenSend);
     }
 }
 
@@ -715,6 +728,8 @@ LoraMesher::packet<uint8_t>* LoraMesher::createEmptyPacket(size_t packetSize) {
     }
 
     packet<uint8_t>* p = (packet<uint8_t>*) malloc(packetSize);
+
+    Log.traceln(F("Packet created with %d bytes"), packetSize);
 
     return p;
 
