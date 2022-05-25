@@ -49,7 +49,7 @@
 #define DEFAULT_PRIORITY 20
 #define MAX_PRIORITY 40
 
-//Definition Times in secods
+//Definition Times in seconds
 #define DEFAULT_TIMEOUT 60
 #define HELLO_PACKETS_DELAY 300
 #define SEND_PACKETS_DELAY 60
@@ -67,9 +67,9 @@ public:
     }
 
     /**
-     * @brief Initialize the Lora Mesher object
+     * @brief Initialize the LoraMesher object
      *
-     * @param receiverFunction Receiver function. It will be notified when data for the user is habailable.
+     * @param receiverFunction Receiver function. It will be notified when data for the user is available.
      * Example of usage:
      * @code
      * void processReceivedPackets(void* parameters) {
@@ -101,7 +101,7 @@ public:
     void init(void (*receiverFunction)(void*));
 
     /**
-     * @brief Destroy the Lora Mesher
+     * @brief Destroy the LoraMesher
      *
      */
     ~LoraMesher();
@@ -115,7 +115,7 @@ public:
     template <typename T>
     struct userPacket {
         /**
-         * @brief Destination address, normally it will be localadress or BROADCAST_ADDR
+         * @brief Destination address, normally it will be local address or BROADCAST_ADDR
          *
          */
         uint16_t dst;
@@ -297,11 +297,11 @@ public:
     /**
      * @brief Returns if address is inside the routing table
      *
-     * @param address Addres you want to check if is inside the routing table
+     * @param address Address you want to check if is inside the routing table
      * @return true If the address is inside the routing table
-     * @return false If the addres is not inside the routing table
+     * @return false If the address is not inside the routing table
      */
-    bool hasAddresRoutingTable(uint16_t address);
+    bool hasAddressRoutingTable(uint16_t address);
 
     /**
      * @brief Get the Next Hop address
@@ -322,7 +322,7 @@ public:
 private:
 
     /**
-     * @brief Construct a new Lora Mesher object
+     * @brief Construct a new LoraMesher object
      *
      */
     LoraMesher();
@@ -360,7 +360,7 @@ private:
 
     /**
      * @brief Receive Data task handle. It will process all the packets inside the received packets queue.
-     * It will be notifyied by the ReceivePacket_TaskHandle
+     * It will be notified by the ReceivePacket_TaskHandle
      *
      */
     TaskHandle_t ReceiveData_TaskHandle = nullptr;
@@ -373,7 +373,7 @@ private:
     TaskHandle_t SendData_TaskHandle = nullptr;
 
     /**
-     * @brief Received user data task handle. Every time the receivedata task handle found a data packet for the user it will be notified.
+     * @brief Received user data task handle. Every time the receive data task handle found a data packet for the user it will be notified.
      * This function is implemented by the user.
      *
      */
@@ -451,7 +451,7 @@ private:
      *
      * @tparam T
      * @param dst Destination
-     * @param src Source, normally local addres, use getLocalAddress()
+     * @param src Source, normally local address, use getLocalAddress()
      * @param type Type of packet
      * @param payload Payload of type T
      * @param payloadSize Length of the payload in bytes
