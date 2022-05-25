@@ -499,7 +499,7 @@ void LoraMesher::processDataPacket(LoraMesher::packetQueue<packet<dataPacket<uin
     } else if (packet->payload->via == localAddress) {
         Log.verboseln(F("Data Packet from %X for %X. Via is me"), packet->src, packet->dst);
 
-        if (hasAddresRoutingTable(packet->dst)) {
+        if (hasAddressRoutingTable(packet->dst)) {
             Log.verboseln(F("Data Packet forwarding it."));
             ToSendPackets->Add((packetQueue<uint8_t>*) pq);
             return;
@@ -602,7 +602,7 @@ int LoraMesher::routingTableSize() {
     return i;
 }
 
-bool LoraMesher::hasAddresRoutingTable(uint16_t address) {
+bool LoraMesher::hasAddressRoutingTable(uint16_t address) {
     int i = 0;
     while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0) {
         if (routingTable[i].networkNode.address == address)
