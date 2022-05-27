@@ -499,6 +499,7 @@ void LoraMesher::processDataPacket(LoraMesher::packetQueue<packet<dataPacket<uin
     } else if (packet->payload->via == localAddress) {
         Log.verboseln(F("Data Packet from %X for %X. Via is me"), packet->src, packet->dst);
 
+        //TODO: Check here and then in the send task? Only in the send task?
         if (hasAddressRoutingTable(packet->dst)) {
             Log.verboseln(F("Data Packet forwarding it."));
             ToSendPackets->Add((packetQueue<uint8_t>*) pq);
@@ -631,7 +632,7 @@ void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
     LoraMesher::networkNode* receivedNode = new networkNode();
     receivedNode->address = p->src;
     receivedNode->metric = 1;
-    processRoute(localAddress, receivedNode);
+    processRoute(p->src, receivedNode);
     delete receivedNode;
 
     for (size_t i = 0; i < getPayloadLength(p); i++) {
