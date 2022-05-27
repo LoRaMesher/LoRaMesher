@@ -1,14 +1,15 @@
+from calendar import c
 from enum import IntFlag
 from asyncio.windows_events import NULL
 import os
-from xmlrpc.client import Boolean
 import threading
 import time
-import json
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from datetime import timedelta
 from datetime import datetime
 import pandas as pd
-import random
+import numpy as np
 
 headerPacketSize = 6
 dataPacketSize = 2
@@ -65,6 +66,17 @@ class Packet:
         self.packetSize = packetSize
         self.isSend = isSend
 
+    def __eq__(self, other):
+        if isinstance(other, Packet):
+            selfTime = tryParseDateTime(self.time)
+            minTime = selfTime-timedelta(microseconds=200)
+            maxTime = selfTime+timedelta(microseconds=200)
+
+            othersTime = tryParseDateTime(other)
+            return minTime <= othersTime and maxTime >= othersTime and self.type == other.type and self.source == other.source and self.destination == other.destination and self.payloadSize == other.payloadSize and self.packetSize == other.packetSize
+
+        return False
+
     def addVia(self, via):
         self.via = via
 
@@ -79,6 +91,12 @@ class Packet:
         print(self.__dict__)
 
 
+class PError:
+    def __init__(self, deviceId, time):
+        self.deviceId = deviceId
+        self.time = time
+
+
 class Node:
     def __init__(self, fileName):
         self.fileName = fileName
@@ -89,6 +107,8 @@ class Node:
         self.txPackets = list()
 
         self.allPackets = list()
+
+        self.allErrors = list()
 
     def getInformation(self):
         self.getAddr()
@@ -101,7 +121,8 @@ class Node:
             "Addr": self.address,
             "rxPackets": self.rxPackets,
             "txPackets": self.txPackets,
-            "allPackets": self.allPackets
+            "allPackets": self.allPackets,
+            "PErrors": self.allErrors
         }
 
     def printInformation(self):
@@ -122,23 +143,24 @@ class Node:
 
         self.allPackets.append(p.__dict__)
 
-    def createPacketAndSave(self, line, id):
+    def createPacketAndSave(self, line, lineNum):
         lineList = LineList(line)
 
         date = tryParseDate(line[0])
-        if date == NULL:
-            print("Try parse date failed")
-            return False
-
         typeP = findType(lineList)
-        if typeP == NULL:
-            print("Try parse type failed")
-            return False
 
         isSend = findIsSend(lineList)
         size = findSize(lineList)
+        src = findSrc(lineList)
+        dst = findDst(lineList)
+        id = findId(lineList)
+
+        if NULL in (date, typeP):
+            printError(self.fileName, lineNum)
+            return False
+
         packet = Packet(id, self.address, date, typeP,
-                        findSrc(lineList), findDst(lineList), size - extraHeaderSize(typeP), size, str(isSend))
+                        src, dst, size - extraHeaderSize(typeP), size, str(isSend))
 
         if isDataPacket(typeP):
             packet.addVia(findVia(lineList))
@@ -150,9 +172,21 @@ class Node:
 
         return True
 
+    def createErrorAndSave(self, line):
+        date = tryParseDate(line[0])
+
+        pError = PError(self.address, date)
+        self.allErrors.append(pError.__dict__)
+
     def getPackets(self):
         i = 0
-        for line in open(self.fileName):
+        for index, line in enumerate(open(self.fileName, errors="ignore")):
+            try:
+                line = bytes(line, 'utf-8').decode('utf-8')
+
+            except:
+                continue
+
             listLine = line.split(" ")
 
             if 'Receiving LoRa packet' in line:
@@ -160,14 +194,29 @@ class Node:
                 continue
 
             if '> Packet ' in line:
-                if self.createPacketAndSave(listLine, i):
+                if self.createPacketAndSave(listLine, index):
                     i += 1
+
+            if '> E:' in line:
+                self.createErrorAndSave(listLine)
+
+
+def printError(fileName, lineNum):
+    print(F"Try parse failed at file {fileName}, line {lineNum}")
 
 
 def tryParseDate(date) -> str:
     try:
         s = datetime.strptime(date, '%H:%M:%S.%f').strftime('%H:%M:%S.%f')
         return s[:-3]
+    except:
+        return NULL
+
+
+def tryParseDateTime(date) -> datetime:
+    try:
+        s = datetime.strptime(date, '%H:%M:%S.%f')
+        return s
     except:
         return NULL
 
@@ -184,47 +233,83 @@ def periodStr(dateMinStr, dateMaxStr):
 
 
 def findIsSend(lineList) -> bool:
-    return (lineList.getindexdefault("send") != -1)
+    return (lineList.getIndexDefault("send") != -1)
+
+
+def findId(lineList) -> int:
+    try:
+        return int(lineList.getNextValue("Id:"), 10)
+    except:
+        return NULL
 
 
 def findType(lineList) -> int:
-    return int(lineList.getNextValue("Type:"), 2)
+    try:
+        return int(lineList.getNextValue("Type:"), 2)
+    except:
+        return NULL
 
 
 def findSize(lineList) -> int:
-    return int(lineList.getNextValue("Size:"), base=10)
+    try:
+        return int(lineList.getNextValue("Size:"), base=10)
+    except:
+        return NULL
 
 
 def findDst(lineList) -> hex:
-    return hex(int(lineList.getNextValue("Dst:"), base=16))
+    try:
+        return hex(int(lineList.getNextValue("Dst:"), base=16))
+    except:
+        return NULL
 
 
 def findSrc(lineList) -> hex:
-    return hex(int(lineList.getNextValue("Src:"), base=16))
+    try:
+        return hex(int(lineList.getNextValue("Src:"), base=16))
+    except:
+        return NULL
 
 
 def findVia(lineList) -> hex:
-    return hex(int(lineList.getNextValue("Via:"), base=16))
+    try:
+        return hex(int(lineList.getNextValue("Via:"), base=16))
+    except:
+        return NULL
 
 
 def findSeqId(lineList) -> int:
-    return int(lineList.getNextValue("Seq_Id:"), base=10)
+    try:
+        return int(lineList.getNextValue("Seq_Id:"), base=10)
+    except:
+        return NULL
 
 
 def findNum(lineList) -> int:
-    return int(lineList.getNextValue("Num:"), base=10)
+    try:
+        return int(lineList.getNextValue("Num:"), base=10)
+    except:
+        return NULL
 
 
 class LineList(list):
-    def getindexdefault(self, elem):
+    def getIndexDefault(self, elem):
         return self.index(elem) if elem in self else -1
 
     def getNextValue(self, elem):
-        index = self.getindexdefault(elem)
+        index = self.getIndexDefault(elem)
         if index == -1:
             return -1
 
         return self[index + 1] if index + 1 <= len(self) else -1
+
+
+def identifySamePacketAndSetSameId(allPackets):
+    for index, packet in enumerate(allPackets):
+        for packetI in allPackets[index:]:
+            if packet == packetI:
+                packet["id"] = packet["id"]
+                packetI["id"] = packet["id"]
 
 
 def init():
@@ -278,16 +363,92 @@ def printGeneralInfo():
 
     print(
         f"Number of packets sent: {num_all_sent}, Max possible Packets received: {numAllPacketsRx}, Actual: {num_all_received}. Loss: {lostPackets} packets \n" +
-        f"Number of bytes sent: {sizeOfAllSentInBytes}, Max possible Bytes received: {allBytesRx} bytes, Actual: {sizeOfAllReceivedInBytes} bytes. Loss: {lostBytes} bytes \n")
+        f"Number of bytes sent: {sizeOfAllSentInBytes}, Max possible Bytes received: {allBytesRx} bytes, Actual: {sizeOfAllReceivedInBytes} bytes. Loss: {lostBytes} bytes \n" +
+        f"Total Loss: {(num_all_received / numAllPacketsRx - 1) * 100} %")
 
 
-def saveCv(data):
-    df = pd.DataFrame(data)
+def saveCv():
+    allPackets = []
+    [allPackets.extend(node.allPackets) for node in nodes]
+
+    # identifySamePacketAndSetSameId(allPackets)
+
+    df = pd.DataFrame(allPackets)
     df.to_csv("data.csv")
 
 # def saveWithoutDuplicates(data):
     # df = df.drop_duplicates(
     #     subset=['id', 'time', 'source', 'destination', 'isSend'], keep='first', inplace=False)
+
+
+def showPlot():
+    allPackets = []
+    [allPackets.extend(node.allPackets) for node in nodes]
+
+    for packet in allPackets:
+        packet["time"] = tryParseDateTime(packet["time"])
+
+    allPackets.sort(key=lambda x: x["time"], reverse=False)
+
+    sendPackets = list(filter(lambda p: p["isSend"] == "True", allPackets))
+
+    receivedPackets = list(
+        filter(lambda p: p["isSend"] == "False", allPackets))
+
+    for index, packet in enumerate(sendPackets):
+        color = np.random.rand(3,)
+        plt.scatter(packet["time"], index, color=color, s=100)
+        previousTime = packet["time"]
+        margin = 0
+        numReceiveds = 0
+        for packetI in receivedPackets:
+            if packet["id"] == packetI["id"] and packet["source"] == packetI["source"]:
+                maxTime = previousTime+timedelta(microseconds=100)
+                if previousTime <= packetI["time"] or maxTime >= packetI["time"]:
+                    margin += 1
+                else:
+                    previousTime = packetI["time"]
+                    margin = 0
+
+                plt.scatter(packetI["time"], index + margin * 0.5, color=color)
+                plt.text(packetI["time"], index + margin *
+                         0.5 + 0.1, packetI["deviceId"])
+
+                numReceiveds += 1
+
+        plt.text(packet["time"], index-0.7,
+                 "SId: " + packet["deviceId"] + " NºR: " + str(numReceiveds) + " T: " + str(packet["type"]))
+
+    allErrors = []
+    [allErrors.extend(node.allErrors) for node in nodes]
+
+    for pError in allErrors:
+        pError["time"] = tryParseDateTime(pError["time"])
+
+    allErrors.sort(key=lambda x: x["time"], reverse=False)
+
+    if(len(allErrors) > 0):
+        previousTime = allErrors[0]["time"]
+        margin = 0
+        for index, pError in enumerate(allErrors):
+            maxTime = previousTime+timedelta(microseconds=200)
+            if previousTime <= pError["time"] or maxTime >= pError["time"]:
+                margin += 1
+            else:
+                previousTime = pError["time"]
+                margin = 0
+            plt.scatter(pError["time"], index +
+                        margin * 0.5, color=(1.0, 0.0, 0.0))
+
+            plt.text(pError["time"], index-0.7 + margin * 0.5,
+                     "SId: " + pError["deviceId"])
+
+    plt.gcf().autofmt_xdate()
+
+    myFmt = mdates.DateFormatter('%H:%M:%S.%f')
+    plt.gca().xaxis.set_major_formatter(myFmt)
+
+    plt.show()
 
 
 if __name__ == '__main__':
@@ -305,16 +466,11 @@ if __name__ == '__main__':
         for trs in threads:
             trs.join()
 
-        allPackets = []
-        [allPackets.extend(node.allPackets) for node in nodes]
-
-# save in a CV
-
-        # saveCv(allPackets)
-
-# End save in a CVx
+        saveCv()
 
         printGeneralInfo()
+
+        showPlot()
 
         while True:
             time.sleep(1)
