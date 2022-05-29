@@ -50,10 +50,9 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define DEFAULT_TIMEOUT 60
-#define HELLO_PACKETS_DELAY 300
-#define SEND_PACKETS_DELAY 60
-#define RT_TIMEOUT HELLO_PACKETS_DELAY*3
+#define HELLO_PACKETS_DELAY 50
+#define SEND_PACKETS_DELAY 30
+#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
@@ -266,7 +265,7 @@ public:
          * @brief Timeout of the route
          *
          */
-        unsigned long timeout = 0;
+        uint32_t timeout = 0;
 
         /**
          * @brief Next hop to send the message
@@ -698,6 +697,13 @@ private:
      *
      */
     void manageTimeoutRoutingTable();
+
+    /**
+     * @brief Reset the timeout of the given node
+     *
+     * @param node node to be reset the timeout
+     */
+    void resetTimeoutRoutingNode(routableNode* node);
 
     /**
      * @brief Process the data packet

@@ -122,16 +122,16 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     if (res != pdPASS) {
         Log.errorln(F("Receive User Task creation gave error: %d"), res);
     }
-    // res = xTaskCreate(
-    //     [](void* o) { static_cast<LoraMesher*>(o)->packetManager(); },
-    //     "Packet Manager routine",
-    //     4096,
-    //     this,
-    //     2,
-    //     &PacketManager_TaskHandle);
-    // if (res != pdPASS) {
-    //     Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
-    // }
+    res = xTaskCreate(
+        [](void* o) { static_cast<LoraMesher*>(o)->packetManager(); },
+        "Packet Manager routine",
+        4096,
+        this,
+        2,
+        &PacketManager_TaskHandle);
+    if (res != pdPASS) {
+        Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
+    }
 }
 
 #if defined(ESP8266) || defined(ESP32)
@@ -380,7 +380,7 @@ void LoraMesher::packetManager() {
 
 
 
-        vTaskDelay(DEFAULT_TIMEOUT / portTICK_PERIOD_MS);
+        vTaskDelay(DEFAULT_TIMEOUT * 1000 / portTICK_PERIOD_MS);
     }
 
 }
@@ -643,8 +643,14 @@ void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
                 if (node->metric < rNode->networkNode.metric) {
                     rNode->networkNode.metric = node->metric;
                     rNode->via = via;
+                    resetTimeoutRoutingNode(rNode);
                     Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
+                } else if (node->metric == rNode->networkNode.metric) {
+                    //Reset the timeout, only when the metric is the same as the actual route.
+                    resetTimeoutRoutingNode(rNode);
                 }
+
+
                 break;
             }
 
@@ -671,8 +677,9 @@ void LoraMesher::addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t v
     rNode->networkNode.address = node->address;
     rNode->networkNode.metric = node->metric;
     rNode->via = via;
-    //TODO: Check this timeout. maybe * 1000 or, seconds to ticks transformation
-    rNode->timeout = micros() + RT_TIMEOUT;
+
+    //Reset the timeout of the node
+    resetTimeoutRoutingNode(rNode);
 
     routingTableList->setInUse();
 
@@ -758,8 +765,37 @@ void LoraMesher::printRoutingTable() {
 }
 
 void LoraMesher::manageTimeoutRoutingTable() {
+    Log.verboseln(F("Checking routes timeout %d" CR));
 
+    routingTableList->setInUse();
 
+    if (!routingTableList->moveToStart()) {
+        routingTableList->releaseInUse();
+        return;
+    }
+
+    for (int i = 0; i < routingTableSize(); i++) {
+        routableNode* node = routingTableList->getCurrent();
+        if (node->timeout < millis()) {
+            Log.verboseln(F("Route Timeout time routes timeout %d" CR), node->timeout);
+            Log.traceln(F("Route timeout %X via %X" CR), node->networkNode.address, node->via);
+
+            delete node;
+            routingTableList->DeleteCurrent();
+        }
+
+        if (!routingTableList->next())
+            break;
+    }
+
+    routingTableList->releaseInUse();
+
+    printRoutingTable();
+
+}
+
+void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
+    node->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
 
 /**
@@ -1306,7 +1342,7 @@ void LoraMesher::managerReceivedQueue() {
         auto configPacket = current->config;
 
         //If Config packet have reached timeout
-        if (configPacket->timeout <= micros()) {
+        if (configPacket->timeout < millis()) {
             //Increment number of timeouts
             configPacket->numberOfTimeouts++;
 
@@ -1315,6 +1351,7 @@ void LoraMesher::managerReceivedQueue() {
                 Log.errorln(F("MAX TIMEOUTS reached from Waiting Received Queue, erasing Id: %d"), configPacket->seq_id);
                 clearLinkedList(current);
                 q_WRP->DeleteCurrent();
+                //TODO: q_WRP->next()
                 continue;
             }
 
@@ -1339,7 +1376,7 @@ void LoraMesher::managerSendQueue() {
 void LoraMesher::addTimeoutTime(sequencePacketConfig* configPacket) {
     //TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
     //TODO: This timeout should be a little variable depending on the duty cycle. 
-    configPacket->timeout = micros() + (DEFAULT_TIMEOUT * 1000) / portTICK_PERIOD_MS;
+    configPacket->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
 
 uint8_t LoraMesher::getSequenceId() {
