@@ -123,14 +123,14 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
         Log.errorln(F("Receive User Task creation gave error: %d"), res);
     }
     // res = xTaskCreate(
-    //   [](void* o) { static_cast<LoraMesher*>(o)->packetManager(); },
-    //   "Packet Manager routine",
-    //   4096,
-    //   this,
-    //   2,
-    //   &PacketManager_TaskHandle);
+    //     [](void* o) { static_cast<LoraMesher*>(o)->packetManager(); },
+    //     "Packet Manager routine",
+    //     4096,
+    //     this,
+    //     2,
+    //     &PacketManager_TaskHandle);
     // if (res != pdPASS) {
-    //   Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
+    //     Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
     // }
 }
 
@@ -371,6 +371,20 @@ void LoraMesher::processPackets() {
     }
 }
 
+
+void LoraMesher::packetManager() {
+    for (;;) {
+        manageTimeoutRoutingTable();
+        // managerReceivedQueue();
+        // managerSendQueue();
+
+
+
+        vTaskDelay(DEFAULT_TIMEOUT / portTICK_PERIOD_MS);
+    }
+
+}
+
 uint8_t LoraMesher::getMaximumPayloadLength(uint8_t type) {
     return MAXPACKETSIZE - getExtraLengthToPayload(type) - sizeof(packet<uint8_t>);
 }
@@ -521,7 +535,7 @@ void LoraMesher::processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>
     controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (p->payload->payload);
 
     //By default, delete the packet queue at the finish of this function
-    bool deleteQueuepacket = true;
+    bool deleteQueuePacket = true;
 
     if ((p->type & DATA_P) == DATA_P) {
         Log.verboseln(F("Data Packet received"));
@@ -534,7 +548,7 @@ void LoraMesher::processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>
         //Add and notify the user of this packet
         notifyUserReceivedPacket(pqUser);
 
-        deleteQueuepacket = false;
+        deleteQueuePacket = false;
 
     } else if ((p->type & ACK_P) == ACK_P) {
         Log.verboseln(F("ACK Packet received"));
@@ -559,7 +573,7 @@ void LoraMesher::processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>
         Log.verboseln(F("Large payload Packet received"));
         processLargePayloadPacket(pq);
 
-        deleteQueuepacket = false;
+        deleteQueuePacket = false;
 
     }
 
@@ -569,7 +583,7 @@ void LoraMesher::processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>
         sendAckPacket(p->src, cPacket->seq_id, cPacket->number);
     }
 
-    if (deleteQueuepacket)
+    if (deleteQueuePacket)
         //Delete packet queue
         deletePacketQueueAndPacket(pq);
 }
@@ -595,36 +609,6 @@ void LoraMesher::notifyUserReceivedPacket(LoraMesher::packetQueue<userPacket<uin
  *  Region Routing Table
 **/
 
-int LoraMesher::routingTableSize() {
-    int i = 0;
-    while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0)
-        i++;
-
-    return i;
-}
-
-bool LoraMesher::hasAddressRoutingTable(uint16_t address) {
-    int i = 0;
-    while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0) {
-        if (routingTable[i].networkNode.address == address)
-            return true;
-        i++;
-    }
-
-    return false;
-}
-
-uint16_t LoraMesher::getNextHop(uint16_t dst) {
-    int i = 0;
-    while (i < RTMAXSIZE && routingTable[i].networkNode.address != 0) {
-        if (routingTable[i].networkNode.address == dst)
-            return routingTable[i].via;
-        i++;
-    }
-
-    return 0;
-}
-
 void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
     Log.verboseln(F("HELLO packet from %X with size %d"), p->src, p->payloadSize);
     printPacket(p, true);
@@ -647,42 +631,134 @@ void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
 void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
     if (node->address != localAddress) {
         bool knownAddr = false;
-        for (int i = 0; i < routingTableSize(); i++) {
-            if (routingTable[i].networkNode.address != 0 && node->address == routingTable[i].networkNode.address) {
+
+        routingTableList->setInUse();
+        if (!routingTableList->moveToStart()) {
+            routingTableList->releaseInUse();
+            return;
+        }
+
+        do {
+            routableNode* rNode = routingTableList->getCurrent();
+            if (rNode->networkNode.address == node->address) {
                 knownAddr = true;
-                if (node->metric < routingTable[i].networkNode.metric) {
-                    routingTable[i].networkNode.metric = node->metric;
-                    routingTable[i].via = via;
+                if (node->metric < rNode->networkNode.metric) {
+                    rNode->networkNode.metric = node->metric;
+                    rNode->via = via;
                     Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
                 }
                 break;
             }
-        }
+
+        } while (routingTableList->next());
+
+        routingTableList->releaseInUse();
+
         if (!knownAddr)
             addNodeToRoutingTable(node, via);
+
     }
 }
 
 void LoraMesher::addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t via) {
-    for (int i = 0; i < RTMAXSIZE; i++) {
-        if (routingTable[i].networkNode.address == 0) {
-            routingTable[i].networkNode.address = node->address;
-            routingTable[i].networkNode.metric = node->metric;
-            routingTable[i].timeout = micros() + routeTimeout;
-            routingTable[i].via = via;
-            Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
-            break;
-        }
+    if (routingTableList->getLength() >= RTMAXSIZE) {
+        Log.warningln(F("Routing table max size reached, not adding route and deleting it" CR));
+        return;
     }
+
+    routableNode* rNode = new routableNode();
+    rNode->networkNode.address = node->address;
+    rNode->networkNode.metric = node->metric;
+    rNode->via = via;
+    //TODO: Check this timeout. maybe * 1000 or, seconds to ticks transformation
+    rNode->timeout = micros() + RT_TIMEOUT;
+
+    routingTableList->setInUse();
+
+    routingTableList->Append(rNode);
+
+    routingTableList->releaseInUse();
+
+    Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
+}
+
+
+int LoraMesher::routingTableSize() {
+    return routingTableList->getLength();
+
+}
+
+bool LoraMesher::hasAddressRoutingTable(uint16_t address) {
+    routingTableList->setInUse();
+    if (!routingTableList->moveToStart()) {
+        routingTableList->releaseInUse();
+        return false;
+    }
+
+    do {
+        routableNode* node = routingTableList->getCurrent();
+
+        if (node->networkNode.address == address) {
+            routingTableList->releaseInUse();
+            return true;
+        }
+
+    } while (routingTableList->next());
+
+    routingTableList->releaseInUse();
+    return false;
+
+}
+
+uint16_t LoraMesher::getNextHop(uint16_t dst) {
+    routingTableList->setInUse();
+    if (!routingTableList->moveToStart()) {
+        routingTableList->releaseInUse();
+        return 0;
+    }
+
+    do {
+        routableNode* node = routingTableList->getCurrent();
+
+        if (node->networkNode.address == dst) {
+            routingTableList->releaseInUse();
+            return node->via;
+        }
+
+    } while (routingTableList->next());
+
+    routingTableList->releaseInUse();
+    return 0;
 }
 
 void LoraMesher::printRoutingTable() {
     Log.verboseln(F("Current routing table:"));
-    for (int i = 0; i < routingTableSize(); i++)
-        Log.verboseln(F("%d - %X via %X metric %d"), i,
-            routingTable[i].networkNode.address,
-            routingTable[i].via,
-            routingTable[i].networkNode.metric);
+
+    routingTableList->setInUse();
+    if (!routingTableList->moveToStart()) {
+        routingTableList->releaseInUse();
+        return;
+    }
+
+    size_t position = 0;
+
+    do {
+        routableNode* node = routingTableList->getCurrent();
+
+        Log.verboseln(F("%d - %X via %X metric %d"), position,
+            node->networkNode.address,
+            node->via,
+            node->networkNode.metric);
+
+        position++;
+    } while (routingTableList->next());
+
+    routingTableList->releaseInUse();
+}
+
+void LoraMesher::manageTimeoutRoutingTable() {
+
+
 }
 
 /**
@@ -776,14 +852,24 @@ LoraMesher::userPacket<uint8_t>* LoraMesher::createUserPacket(uint16_t dst, uint
 }
 
 LoraMesher::packet<uint8_t>* LoraMesher::createRoutingPacket() {
+    routingTableList->setInUse();
+
     int routingSize = routingTableSize();
     size_t routingSizeInBytes = routingSize * sizeof(LoraMesher::networkNode);
 
     networkNode* payload = new networkNode[routingSize];
 
-    for (int i = 0; i < routingSize; i++)
-        payload[i] = routingTable[i].networkNode;
+    routingTableList->moveToStart();
 
+    for (int i = 0; i < routingSize; i++) {
+        routableNode* currentNode = routingTableList->getCurrent();
+        payload[i] = currentNode->networkNode;
+
+        if (!routingTableList->next())
+            break;
+    }
+
+    routingTableList->releaseInUse();
 
     packet<uint8_t>* networkPacket = createPacket(BROADCAST_ADDR, localAddress, HELLO_P, (uint8_t*) payload, routingSizeInBytes);
     delete[]payload;
@@ -1040,8 +1126,10 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     auto list = listConfig->list;
 
     list->setInUse();
-    if (!list->moveToStart())
+    if (!list->moveToStart()) {
+        list->releaseInUse();
         return;
+    }
 
     size_t payloadSize = 0;
     size_t number = 1;
@@ -1168,7 +1256,7 @@ LoraMesher::listConfiguration* LoraMesher::findSequenceList(LM_LinkedList<listCo
     queue->moveToStart();
 
     for (int i = 0; i < queue->getLength(); i++) {
-        auto current = queue->getCurrent();
+        listConfiguration* current = queue->getCurrent();
 
         if (current->config->seq_id == seq_id && current->config->source == source) {
             queue->releaseInUse();
@@ -1190,7 +1278,7 @@ LoraMesher::packetQueue<uint8_t>* LoraMesher::findPacketQueue(LM_LinkedList<pack
     queue->moveToStart();
 
     for (int i = 0; i < queue->getLength(); i++) {
-        auto current = queue->getCurrent();
+        packetQueue<uint8_t>* current = queue->getCurrent();
 
         if (current->number == num) {
             queue->releaseInUse();
@@ -1204,16 +1292,6 @@ LoraMesher::packetQueue<uint8_t>* LoraMesher::findPacketQueue(LM_LinkedList<pack
     queue->releaseInUse();
 
     return nullptr;
-
-}
-
-void LoraMesher::packetManager() {
-    for (;;) {
-        managerReceivedQueue();
-        managerSendQueue();
-
-        vTaskDelay(DEFAULT_TIMEOUT / portTICK_PERIOD_MS);
-    }
 
 }
 
@@ -1274,24 +1352,6 @@ uint8_t LoraMesher::getSequenceId() {
 
     return id;
 }
-
-
-// void LoraMesher::sendStartSequencePackets(uint16_t destination, uint8_t seq_id, uint16_t num_packets) {
-//   uint8_t type = SYNC_P | NEED_ACK_P | XL_DATA_P;
-
-//   //Create the packet
-//   packet<uint8_t>* p = createPacket(destination, getLocalAddress(), type, (uint8_t*) 0, 0);
-
-//   dataPacket<uint8_t>* dPacket = (dataPacket<uint8_t>*) (&p->payload);
-//   controlPacket<uint8_t>* cPacket = (controlPacket<uint8_t>*) (&dPacket->payload);
-
-//   //Add the sequence id and the number of packets of the sequence
-//   cPacket->seq_id = seq_id;
-//   cPacket->number = num_packets;
-
-//   //Add the packet to the send queue
-//   setPackedForSend(p, DEFAULT_PRIORITY);
-// }
 
 /**
  * End Large and Reliable payloads

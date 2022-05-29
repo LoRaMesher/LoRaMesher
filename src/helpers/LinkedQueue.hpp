@@ -28,6 +28,7 @@ public:
     T* getCurrent();
     T* First() const;
     T* Last() const;
+    T* operator[](int);
     size_t getLength();
     void Append(T*);
     bool Search(T*);
@@ -70,6 +71,22 @@ T* LM_LinkedList<T>::Last() const {
     return tail->element;
 }
 
+template <class T>
+T* LM_LinkedList<T>::operator[](int position) {
+    if (position < length && moveToStart()) {
+        int i = 0;
+        do {
+            if (i == position) {
+                return curr->element;
+            }
+
+            i++;
+        } while (next());
+    }
+
+    return NULL;
+}
+
 template<class T>
 size_t LM_LinkedList<T>::getLength() {
     return length;
@@ -92,15 +109,14 @@ void LM_LinkedList<T>::Append(T* element) {
 
 template <class T>
 bool LM_LinkedList<T>::Search(T* elem) {
-    //TODO: Check if this works fine
-    if (length == 0)
-        return false;
-    if (moveToStart())
+    if (moveToStart()) {
         do {
             if (curr->element == elem)
                 return true;
         } while (next());
-        return false;
+    }
+
+    return false;
 }
 
 template <class T>

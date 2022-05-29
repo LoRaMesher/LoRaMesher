@@ -53,6 +53,7 @@
 #define DEFAULT_TIMEOUT 60
 #define HELLO_PACKETS_DELAY 300
 #define SEND_PACKETS_DELAY 60
+#define RT_TIMEOUT HELLO_PACKETS_DELAY*3
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
@@ -276,10 +277,10 @@ public:
 #pragma pack(pop)
 
     /**
-     * @brief Routing table array
+     * @brief Routing table List
      *
      */
-    routableNode routingTable[RTMAXSIZE];
+    LM_LinkedList<routableNode>* routingTableList = new LM_LinkedList<routableNode>();
 
     /**
      * @brief Prints the actual routing table in the log
@@ -691,6 +692,12 @@ private:
      * @param p Packet of type networkNode
      */
     void processRoute(packet<networkNode>* p);
+
+    /**
+     * @brief Checks all the routing entries for a route timeout and remove the entry.
+     *
+     */
+    void manageTimeoutRoutingTable();
 
     /**
      * @brief Process the data packet
