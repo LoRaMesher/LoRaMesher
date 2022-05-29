@@ -633,13 +633,11 @@ void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
         bool knownAddr = false;
 
         routingTableList->setInUse();
-        if (!routingTableList->moveToStart()) {
-            routingTableList->releaseInUse();
-            return;
-        }
+        routingTableList->moveToStart();
 
-        do {
+        for (int i = 0; i < routingTableList->getLength(); i++) {
             routableNode* rNode = routingTableList->getCurrent();
+
             if (rNode->networkNode.address == node->address) {
                 knownAddr = true;
                 if (node->metric < rNode->networkNode.metric) {
@@ -650,7 +648,10 @@ void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
                 break;
             }
 
-        } while (routingTableList->next());
+            if (!routingTableList->next())
+                break;
+
+        }
 
         routingTableList->releaseInUse();
 
