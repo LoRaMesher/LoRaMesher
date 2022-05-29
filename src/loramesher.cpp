@@ -777,7 +777,6 @@ void LoraMesher::manageTimeoutRoutingTable() {
     for (int i = 0; i < routingTableSize(); i++) {
         routableNode* node = routingTableList->getCurrent();
         if (node->timeout < millis()) {
-            Log.verboseln(F("Route Timeout time routes timeout %d" CR), node->timeout);
             Log.traceln(F("Route timeout %X via %X" CR), node->networkNode.address, node->via);
 
             delete node;
