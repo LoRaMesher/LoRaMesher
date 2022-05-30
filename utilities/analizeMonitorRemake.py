@@ -129,10 +129,14 @@ class Node:
         print(self.json)
 
     def getAddr(self):
-
         for line in open(self.fileName):
             if 'WiFi MAC' in line:
                 self.address = line[-5:-1]
+                return
+
+            if '> Packet send' in line and 'Type: 100' in line:
+                lineList = LineList(line.split(" "))
+                self.address = lineList.getNextValue("Src:")[2:]
                 return
 
     def addPacketToLists(self, p, isSend):
