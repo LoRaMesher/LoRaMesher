@@ -39,6 +39,7 @@ public:
     void Clear();
     void setInUse();
     void releaseInUse();
+    void each(void (*func)(T*));
 };
 
 template <class T>
@@ -202,4 +203,17 @@ void LM_LinkedList<T>::setInUse() {
 template <class T>
 void LM_LinkedList<T>::releaseInUse() {
     inUse = false;
+}
+
+template <class T>
+void LM_LinkedList<T>::each(void (*func)(T*)) {
+    setInUse();
+
+    if (moveToStart()) {
+        do {
+            func(curr->element);
+        } while (next());
+    }
+
+    releaseInUse();
 }

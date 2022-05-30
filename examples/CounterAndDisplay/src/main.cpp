@@ -3,7 +3,10 @@
 #include "display.h"
 #include "WString.h"
 
-#define BOARD_LED 4
+//Using LILYGO TTGO T-BEAM v1.1 
+#define BOARD_LED   4
+#define LED_ON      LOW
+#define LED_OFF     HIGH
 
 LoraMesher& radio = LoraMesher::getInstance();
 
@@ -23,9 +26,9 @@ dataPacket* helloPacket = new dataPacket;
 void led_Flash(uint16_t flashes, uint16_t delaymS) {
     uint16_t index;
     for (index = 1; index <= flashes; index++) {
-        digitalWrite(BOARD_LED, HIGH);
+        digitalWrite(BOARD_LED, LED_ON);
         vTaskDelay(delaymS / portTICK_PERIOD_MS);
-        digitalWrite(BOARD_LED, LOW);
+        digitalWrite(BOARD_LED, LED_OFF);
         vTaskDelay(delaymS / portTICK_PERIOD_MS);
     }
 }
@@ -37,10 +40,10 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  */
 void printPacket(dataPacket* data, uint16_t sourceAddress) {
     char text[32];
-    snprintf(text, 32, ("%X-> %d" CR), sourceAddress, data->counter[0]);
+    snprintf(text, 32, ("%X-> %d"), sourceAddress, data->counter[0]);
 
     Screen.changeLineThree(String(text));
-    Log.verbose(F("Received data nº %d" CR), data->counter[0]);
+    Log.verboseln(F("Received data nº %d"), data->counter[0]);
 }
 
 /**
@@ -49,7 +52,7 @@ void printPacket(dataPacket* data, uint16_t sourceAddress) {
  * @param packet
  */
 void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
-    Log.trace(F("Packet arrived from %X with size %d bytes" CR), packet->src, packet->payloadSize);
+    Log.traceln(F("Packet arrived from %X with size %d bytes"), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
@@ -57,22 +60,22 @@ void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
 
     printPacket(&dPacket[0], packet->src);
 
-    Log.trace(F("---- Payload ---- Payload length in dataP: %d " CR), payloadLength);
+    Log.traceln(F("---- Payload ---- Payload length in dataP: %d "), payloadLength);
     Log.setShowLevel(false);
 
     for (size_t i = 0; i < payloadLength; i++) {
-        Log.verbose(F("Received data nº %d" CR), i);
+        Log.verbose(F("Received data nº %d"), i);
         Log.verbose(F("%d -- "), i);
 
         for (size_t j = 0; j < 35; j++) {
             Log.verbose(F("%d, "), dPacket[i].counter[j]);
 
         }
-        Log.verbose(F("" CR));
+        Log.verbose(F(""));
     }
 
     Log.setShowLevel(true);
-    Log.trace(F("---- Payload Done ---- " CR));
+    Log.traceln(F("---- Payload Done ---- "));
 
 }
 
@@ -88,8 +91,8 @@ void processReceivedPackets(void*) {
 
         //Iterate through all the packets inside the Received User Packets FiFo
         while (radio.getReceivedQueueSize() > 0) {
-            Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.trace(F("Fifo receiveUserData size: %d" CR), radio.getReceivedQueueSize() > 0);
+            Log.traceln(F("ReceivedUserData_TaskHandle notify received"));
+            Log.traceln(F("Fifo receiveUserData size: %d"), radio.getReceivedQueueSize() > 0);
 
             //Get the first element inside the Received User Packets FiFo
             LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
@@ -105,14 +108,14 @@ void processReceivedPackets(void*) {
 }
 
 /**
- * @brief Initialize the LoRa Mesher
+ * @brief Initialize LoRaMesher
  *
  */
 void setupLoraMesher() {
     //Create a loramesher with a processReceivedPackets function
     radio.init(processReceivedPackets);
 
-    Log.verbose("Lora initialized" CR);
+    Log.verboseln("Lora initialized");
 }
 
 /**
@@ -126,19 +129,30 @@ void printAddressDisplay() {
     Screen.changeLineOne(String(addrStr));
 }
 
-
+/**
+ * @brief Print the routing table into the display
+ *
+ */
 void printRoutingTableToDisplay() {
+
+    //Set the routing table list that is being used and cannot be accessed (Remember to release use after usage)
+    radio.routingTableList->setInUse();
+
+    Screen.changeSizeRouting(radio.routingTableSize());
+
     char text[15];
     for (int i = 0; i < radio.routingTableSize(); i++) {
-        LoraMesher::networkNode node = radio.routingTable[i].networkNode;
-        snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, radio.routingTable[i].via);
+        LoraMesher::routableNode* rNode = (*radio.routingTableList)[i];
+        LoraMesher::networkNode node = rNode->networkNode;
+        snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, rNode->via);
         Screen.changeRoutingText(text, i);
     }
 
-    Screen.changeSizeRouting(radio.routingTableSize());
+    //Release routing table list usage.
+    radio.routingTableList->releaseInUse();
+
     Screen.changeLineFour();
 }
-
 
 /**
  * @brief Every 20 seconds it will send a counter to a position of the dataTable
@@ -149,16 +163,16 @@ void sendLoRaMessage(void*) {
 
     for (;;) {
         if (radio.routingTableSize() == 0) {
-            vTaskDelay(20000 / portTICK_PERIOD_MS);
+            vTaskDelay(120000 / portTICK_PERIOD_MS);
             continue;
         }
 
         if (radio.routingTableSize() <= dataTablePosition)
             dataTablePosition = 0;
 
-        uint16_t addr = radio.routingTable[dataTablePosition].networkNode.address;
+        uint16_t addr = (*radio.routingTableList)[dataTablePosition]->networkNode.address;
 
-        Log.trace(F("Send data packet nº %d to %X (%d)" CR), dataCounter, addr, dataTablePosition);
+        Log.traceln(F("Send data packet nº %d to %X (%d)"), dataCounter, addr, dataTablePosition);
 
         dataTablePosition++;
 
@@ -175,7 +189,7 @@ void sendLoRaMessage(void*) {
         printRoutingTableToDisplay();
 
         //Wait 20 seconds to send the next packet
-        vTaskDelay(20000 / portTICK_PERIOD_MS);
+        vTaskDelay(120000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -193,7 +207,7 @@ void createSendMessages() {
         1,
         &sendLoRaMessage_Handle);
     if (res != pdPASS) {
-        Log.error(F("Send LoRa Message task creation gave error: %d" CR), res);
+        Log.errorln(F("Send LoRa Message task creation gave error: %d"), res);
         vTaskDelete(sendLoRaMessage_Handle);
     }
 }
@@ -203,7 +217,7 @@ void setup() {
     pinMode(BOARD_LED, OUTPUT); //setup pin as output for indicator LED
 
     Screen.initDisplay();
-    Log.verbose("Board Init" CR);
+    Log.verboseln("Board Init");
 
 
     led_Flash(2, 125);          //two quick LED flashes to indicate program start
