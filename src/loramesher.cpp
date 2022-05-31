@@ -378,8 +378,6 @@ void LoraMesher::packetManager() {
         // managerReceivedQueue();
         // managerSendQueue();
 
-
-
         vTaskDelay(DEFAULT_TIMEOUT * 1000 / portTICK_PERIOD_MS);
     }
 
@@ -743,6 +741,7 @@ void LoraMesher::printRoutingTable() {
     Log.verboseln(F("Current routing table:"));
 
     routingTableList->setInUse();
+
     if (!routingTableList->moveToStart()) {
         routingTableList->releaseInUse();
         return;
@@ -794,6 +793,8 @@ void LoraMesher::manageTimeoutRoutingTable() {
 }
 
 void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
+    //TODO: timeout*metric, the timeout should depend on the hops that a packet should do.
+    //TODO: As further, more time to timeout
     node->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
 
@@ -807,6 +808,7 @@ void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
 **/
 
 LoraMesher::packet<uint8_t>* LoraMesher::createPacket(uint8_t* payload, uint8_t payloadSize, uint8_t extraSize) {
+    //Packet length = size of the packet + size of the payload + extraSize before payload
     int packetLength = sizeof(packet<uint8_t>) + payloadSize + extraSize;
 
     if (packetLength > MAXPACKETSIZE) {
@@ -814,7 +816,6 @@ LoraMesher::packet<uint8_t>* LoraMesher::createPacket(uint8_t* payload, uint8_t 
         // return nullptr;
     }
 
-    //Packet length = size of the packet + size of the payload + extraSize before payload
 
     packet<uint8_t>* p = (packet<uint8_t>*) malloc(packetLength);
 
