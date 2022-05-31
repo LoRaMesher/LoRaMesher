@@ -860,7 +860,7 @@ LoraMesher::packet<uint8_t>* LoraMesher::copyPacket(packet<uint8_t>* p) {
 }
 
 LoraMesher::userPacket<uint8_t>* LoraMesher::convertPacket(packet<uint8_t>* p) {
-    auto uPacket = createUserPacket(p->dst, p->src, getPayload(p), getPayloadLength(p));
+    userPacket<uint8_t>* uPacket = createUserPacket(p->dst, p->src, getPayload(p), getPayloadLength(p));
     deletePacket(p);
 
     return uPacket;
@@ -1159,7 +1159,7 @@ void LoraMesher::processLargePayloadPacket(packetQueue<packet<dataPacket<uint8_t
 void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     Log.verboseln(F("Joining packets seq_Id: %d Src: %X"), listConfig->config->seq_id, listConfig->config->source);
 
-    auto list = listConfig->list;
+    LM_LinkedList<packetQueue<uint8_t>>* list = listConfig->list;
 
     list->setInUse();
     if (!list->moveToStart()) {
@@ -1171,7 +1171,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     size_t number = 1;
 
     do {
-        auto currentP = (packet<dataPacket<controlPacket<uint8_t>>>*) list->getCurrent()->packet;
+        packet<dataPacket<controlPacket<uint8_t>>>* currentP = (packet<dataPacket<controlPacket<uint8_t>>>*) list->getCurrent()->packet;
 
         if (number != (currentP->payload->payload->number))
             //TODO: ORDER THE PACKETS if they are not ordered?
@@ -1184,7 +1184,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     //Move to start again
     list->moveToStart();
 
-    auto currentP = (packet<dataPacket<controlPacket<uint8_t>>>*) list->getCurrent()->packet;
+    packet<dataPacket<controlPacket<uint8_t>>>* currentP = (packet<dataPacket<controlPacket<uint8_t>>>*) list->getCurrent()->packet;
 
     uint32_t userPacketLength = sizeof(userPacket<uint8_t>);
 
@@ -1255,7 +1255,7 @@ void LoraMesher::resetTimeout(sequencePacketConfig* configPacket) {
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
-    auto list = listConfig->list;
+    LM_LinkedList<packetQueue<uint8_t>>* list = listConfig->list;
     list->setInUse();
     Log.traceln(F("Clearing list configuration Seq_Id: %d Src: %X"), listConfig->config->seq_id, listConfig->config->source);
 
@@ -1273,7 +1273,8 @@ void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
 void LoraMesher::findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
     queue->setInUse();
 
-    auto current = queue->getCurrent();
+    listConfiguration* current = queue->getCurrent();
+
     //Find list config inside the queue, if not find error
     if (current != listConfig && !queue->Search(listConfig)) {
         Log.errorln(F("Not found list config"));
@@ -1336,9 +1337,10 @@ void LoraMesher::managerReceivedQueue() {
     q_WRP->moveToStart();
 
     for (int i = 0; i < q_WRP->getLength(); i++) {
-        auto current = q_WRP->getCurrent();
+        listConfiguration* current = q_WRP->getCurrent();
+
         //Get Config packet
-        auto configPacket = current->config;
+        sequencePacketConfig* configPacket = current->config;
 
         //If Config packet have reached timeout
         if (configPacket->timeout < millis()) {
