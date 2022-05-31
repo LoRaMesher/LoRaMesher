@@ -253,6 +253,7 @@ void LoraMesher::sendPackets() {
     //Wait an initial 4 seconds
     vTaskDelay(4000 / portTICK_PERIOD_MS);
     int sendCounter = 0;
+    int sendId = 0;
     uint8_t resendMessage = 0;
 
     //Random delay, to avoid some collisions. Between 0 and 4 seconds
@@ -272,7 +273,10 @@ void LoraMesher::sendPackets() {
         if (tx != nullptr) {
             Log.verboseln("Send nº %d", sendCounter);
 
-            tx->packet->id = sendCounter;
+            if (tx->packet->src == localAddress) {
+                tx->packet->id = sendId;
+                sendId++;
+            }
 
             //If the packet has a data packet and its destination is not broadcast add the via to the packet and forward the packet
             if (hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
@@ -292,30 +296,23 @@ void LoraMesher::sendPackets() {
             //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
             vTaskDelay(randomDelay);
 
-            // uint32_t randd = random(4000);
-            // Log.noticeln(F("Rand %d" CR), randd);
-
-            // vTaskDelay(randd / portTICK_PERIOD_MS);
-
-            //Get a random delay from radio interferences. Between 0 and 1 seconds
-            // vTaskDelay(radio->random(1000) / portTICK_PERIOD_MS);
-
             //Send packet
             bool hasSend = sendPacket(tx->packet);
 
-            //If the packet has not been send, add it to the queue and send it again
-            if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
-                tx->priority = MAX_PRIORITY;
-                ToSendPackets->Add((packetQueue<uint8_t>*) tx);
+            sendCounter++;
 
-                resendMessage++;
 
-                continue;
-            }
+            //TODO: If the packet has not been send, add it to the queue and send it again
+            // if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
+            //     tx->priority = MAX_PRIORITY;
+            //     ToSendPackets->Add((packetQueue<uint8_t>*) tx);
+
+            //     resendMessage++;
+
+            //     continue;
+            // }
 
             deletePacketQueueAndPacket(tx);
-
-            sendCounter++;
 
             resendMessage = 0;
         }
