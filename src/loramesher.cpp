@@ -257,7 +257,7 @@ void LoraMesher::sendPackets() {
     uint8_t resendMessage = 0;
 
     //Random delay, to avoid some collisions. Between 0 and 4 seconds
-    TickType_t randomDelay = localAddress % 4000 / portTICK_PERIOD_MS;
+    TickType_t randomDelay = (localAddress % 4000) / portTICK_PERIOD_MS;
 
     // randomSeed(localAddress);
 
