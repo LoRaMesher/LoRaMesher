@@ -1011,7 +1011,7 @@ private:
      *
      * @param configPacket config packet to be modified
      */
-    void addTimeoutTime(sequencePacketConfig* configPacket);
+    void addTimeout(sequencePacketConfig* configPacket);
 
     /**
      * @brief Clear the Linked List deleting all the elements inside

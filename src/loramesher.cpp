@@ -371,12 +371,11 @@ void LoraMesher::processPackets() {
 void LoraMesher::packetManager() {
     for (;;) {
         manageTimeoutRoutingTable();
-        // managerReceivedQueue();
-        // managerSendQueue();
+        managerReceivedQueue();
+        managerSendQueue();
 
         vTaskDelay(DEFAULT_TIMEOUT * 1000 / portTICK_PERIOD_MS);
     }
-
 }
 
 uint8_t LoraMesher::getMaximumPayloadLength(uint8_t type) {
@@ -772,8 +771,6 @@ void LoraMesher::manageTimeoutRoutingTable() {
 }
 
 void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
-    //TODO: timeout*metric, the timeout should depend on the hops that a packet should do.
-    //TODO: As further, more time to timeout
     node->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
 
@@ -1231,7 +1228,7 @@ void LoraMesher::resetTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t s
 
 void LoraMesher::resetTimeout(sequencePacketConfig* configPacket) {
     configPacket->numberOfTimeouts = 0;
-    addTimeoutTime(configPacket);
+    addTimeout(configPacket);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
@@ -1314,50 +1311,84 @@ LoraMesher::packetQueue<uint8_t>* LoraMesher::findPacketQueue(LM_LinkedList<pack
 
 void LoraMesher::managerReceivedQueue() {
     q_WRP->setInUse();
-    q_WRP->moveToStart();
 
-    for (int i = 0; i < q_WRP->getLength(); i++) {
-        listConfiguration* current = q_WRP->getCurrent();
+    if (q_WRP->moveToStart()) {
+        do {
+            listConfiguration* current = q_WRP->getCurrent();
 
-        //Get Config packet
-        sequencePacketConfig* configPacket = current->config;
+            //Get Config packet
+            sequencePacketConfig* configPacket = current->config;
 
-        //If Config packet have reached timeout
-        if (configPacket->timeout < millis()) {
-            //Increment number of timeouts
-            configPacket->numberOfTimeouts++;
+            //If Config packet have reached timeout
+            if (configPacket->timeout < millis()) {
+                //Increment number of timeouts
+                configPacket->numberOfTimeouts++;
 
-            //If number of timeouts is greater than Max timeouts, erase it
-            if (configPacket->numberOfTimeouts > MAX_TIMEOUTS) {
-                Log.errorln(F("MAX TIMEOUTS reached from Waiting Received Queue, erasing Id: %d"), configPacket->seq_id);
-                clearLinkedList(current);
-                q_WRP->DeleteCurrent();
-                //TODO: q_WRP->next()
-                continue;
+                //If number of timeouts is greater than Max timeouts, erase it
+                if (configPacket->numberOfTimeouts > MAX_TIMEOUTS) {
+                    Log.errorln(F("MAX TIMEOUTS reached from Waiting Received Queue, erasing Id: %d"), configPacket->seq_id);
+                    clearLinkedList(current);
+                    q_WRP->DeleteCurrent();
+                    continue;
+                }
+
+                addTimeout(configPacket);
+
+                //Send last ACK
+                sendAckPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck);
             }
-
-            addTimeoutTime(configPacket);
-
-
-            //Repeat the configPacket ACK
-            sendAckPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck);
-        }
-
-        //TODO: Check for nullptrs?
-        if (!q_WRP->next())
-            break;
+        } while (q_WRP->next());
     }
+
     q_WRP->releaseInUse();
 }
 
 void LoraMesher::managerSendQueue() {
-    //TODO: Same as before but with the q_WSP
+    q_WSP->setInUse();
+
+    if (q_WSP->moveToStart()) {
+        do {
+            listConfiguration* current = q_WSP->getCurrent();
+
+            //Get Config packet
+            sequencePacketConfig* configPacket = current->config;
+
+            //If Config packet have reached timeout
+            if (configPacket->timeout < millis()) {
+                //Increment number of timeouts
+                configPacket->numberOfTimeouts++;
+
+                //If number of timeouts is greater than Max timeouts, erase it
+                if (configPacket->numberOfTimeouts > MAX_TIMEOUTS) {
+                    Log.errorln(F("MAX TIMEOUTS reached from Waiting Send Queue, erasing Id: %d"), configPacket->seq_id);
+                    clearLinkedList(current);
+                    q_WSP->DeleteCurrent();
+                    continue;
+                }
+
+                addTimeout(configPacket);
+
+                //Repeat the configPacket ACK
+                if (configPacket->firstAckReceived == 0)
+                    //Send the first packet of the sequence (SYNC packet)
+                    sendPacketSequence(configPacket->source, configPacket->seq_id, 0);
+            }
+        } while (q_WSP->next());
+    }
+
+    q_WSP->releaseInUse();
 }
 
-void LoraMesher::addTimeoutTime(sequencePacketConfig* configPacket) {
+void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     //TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
     //TODO: This timeout should be a little variable depending on the duty cycle. 
     //TODO: Account for how many hops the packet needs to do
+    // uint8_t hops = getNumberOfHops(configPacket->source);
+    // if (hops = 0) {
+    //     Log.errorln(F("Find next hop in add timeout" CR));
+    //     configPacket->timeout = 0;
+    //     return;
+    // }
 
     configPacket->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
@@ -1368,10 +1399,7 @@ uint8_t LoraMesher::getSequenceId() {
         return 255;
     }
 
-    uint8_t id = sequence_id;
-    sequence_id++;
-
-    return id;
+    return sequence_id++;
 }
 
 /**
