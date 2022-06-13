@@ -282,15 +282,14 @@ void LoraMesher::sendPackets() {
             if (hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
                 uint16_t nextHop = getNextHop(tx->packet->dst);
 
-                if (nextHop != 0) {
-                    ((LoraMesher::dataPacket<uint8_t>*) (tx->packet->payload))->via = nextHop;
-
-                } else {
+                //Next hop not found
+                if (nextHop == 0) {
                     Log.errorln(F("NextHop Not found from %X, destination %X, via %X"), tx->packet->src, tx->packet->dst, nextHop);
                     deletePacketQueueAndPacket(tx);
                     continue;
-
                 }
+
+                ((LoraMesher::dataPacket<uint8_t>*) (tx->packet->payload))->via = nextHop;
             }
 
             //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
@@ -625,41 +624,44 @@ void LoraMesher::processRoute(LoraMesher::packet<networkNode>* p) {
 
 void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
     if (node->address != localAddress) {
-        bool knownAddr = false;
+        routableNode* rNode = findNode(node->address);
 
-        routingTableList->setInUse();
-        routingTableList->moveToStart();
-
-        for (int i = 0; i < routingTableList->getLength(); i++) {
-            routableNode* rNode = routingTableList->getCurrent();
-
-            if (rNode->networkNode.address == node->address) {
-                knownAddr = true;
-                if (node->metric < rNode->networkNode.metric) {
-                    rNode->networkNode.metric = node->metric;
-                    rNode->via = via;
-                    resetTimeoutRoutingNode(rNode);
-                    Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
-                } else if (node->metric == rNode->networkNode.metric) {
-                    //Reset the timeout, only when the metric is the same as the actual route.
-                    resetTimeoutRoutingNode(rNode);
-                }
-
-
-                break;
-            }
-
-            if (!routingTableList->next())
-                break;
-
+        //If nullptr the node is not inside the routing table, then add it
+        if (rNode == nullptr) {
+            addNodeToRoutingTable(node, via);
+            return;
         }
 
-        routingTableList->releaseInUse();
-
-        if (!knownAddr)
-            addNodeToRoutingTable(node, via);
-
+        //Update the metric and restart timeout if needed
+        if (node->metric < rNode->networkNode.metric) {
+            rNode->networkNode.metric = node->metric;
+            rNode->via = via;
+            resetTimeoutRoutingNode(rNode);
+            Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
+        } else if (node->metric == rNode->networkNode.metric) {
+            //Reset the timeout, only when the metric is the same as the actual route.
+            resetTimeoutRoutingNode(rNode);
+        }
     }
+}
+
+LoraMesher::routableNode* LoraMesher::findNode(uint16_t address) {
+    routingTableList->setInUse();
+
+    if (routingTableList->moveToStart()) {
+        do {
+            routableNode* node = routingTableList->getCurrent();
+
+            if (node->networkNode.address == address) {
+                routingTableList->releaseInUse();
+                return node;
+            }
+
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+    return nullptr;
 }
 
 void LoraMesher::addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t via) {
@@ -692,46 +694,26 @@ int LoraMesher::routingTableSize() {
 }
 
 bool LoraMesher::hasAddressRoutingTable(uint16_t address) {
-    routingTableList->setInUse();
-    if (!routingTableList->moveToStart()) {
-        routingTableList->releaseInUse();
-        return false;
-    }
-
-    do {
-        routableNode* node = routingTableList->getCurrent();
-
-        if (node->networkNode.address == address) {
-            routingTableList->releaseInUse();
-            return true;
-        }
-
-    } while (routingTableList->next());
-
-    routingTableList->releaseInUse();
-    return false;
-
+    routableNode* node = findNode(address);
+    return node != nullptr;
 }
 
 uint16_t LoraMesher::getNextHop(uint16_t dst) {
-    routingTableList->setInUse();
-    if (!routingTableList->moveToStart()) {
-        routingTableList->releaseInUse();
+    routableNode* node = findNode(dst);
+
+    if (node == nullptr)
         return 0;
-    }
 
-    do {
-        routableNode* node = routingTableList->getCurrent();
+    return node->via;
+}
 
-        if (node->networkNode.address == dst) {
-            routingTableList->releaseInUse();
-            return node->via;
-        }
+uint8_t LoraMesher::getNumberOfHops(uint16_t address) {
+    routableNode* node = findNode(address);
 
-    } while (routingTableList->next());
+    if (node == nullptr)
+        return 0;
 
-    routingTableList->releaseInUse();
-    return 0;
+    return node->networkNode.metric;
 }
 
 void LoraMesher::printRoutingTable() {
@@ -1375,6 +1357,8 @@ void LoraMesher::managerSendQueue() {
 void LoraMesher::addTimeoutTime(sequencePacketConfig* configPacket) {
     //TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
     //TODO: This timeout should be a little variable depending on the duty cycle. 
+    //TODO: Account for how many hops the packet needs to do
+
     configPacket->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
 

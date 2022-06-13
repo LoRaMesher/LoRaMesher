@@ -318,6 +318,21 @@ public:
      */
     uint16_t getLocalAddress();
 
+    /**
+     * @brief Get the Number Of Hops of the address inside the routing table
+     *
+     * @param address Address of the number of hops you want to know
+     * @return uint8_t Number of Hops or 0 if address not found in routing table.
+     */
+    uint8_t getNumberOfHops(uint16_t address);
+
+    /**
+     * @brief Find the node that contains the address
+     *
+     * @param address address to be found
+     * @return routableNode* pointer to the routableNode or nullptr
+     */
+    routableNode* findNode(uint16_t address);
 
 private:
 
