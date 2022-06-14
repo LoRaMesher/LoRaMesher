@@ -50,7 +50,7 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 50
+#define HELLO_PACKETS_DELAY 120
 #define SEND_PACKETS_DELAY 30
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
 

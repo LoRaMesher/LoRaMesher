@@ -720,23 +720,20 @@ void LoraMesher::printRoutingTable() {
 
     routingTableList->setInUse();
 
-    if (!routingTableList->moveToStart()) {
-        routingTableList->releaseInUse();
-        return;
+    if (routingTableList->moveToStart()) {
+        size_t position = 0;
+
+        do {
+            routableNode* node = routingTableList->getCurrent();
+
+            Log.verboseln(F("%d - %X via %X metric %d"), position,
+                node->networkNode.address,
+                node->via,
+                node->networkNode.metric);
+
+            position++;
+        } while (routingTableList->next());
     }
-
-    size_t position = 0;
-
-    do {
-        routableNode* node = routingTableList->getCurrent();
-
-        Log.verboseln(F("%d - %X via %X metric %d"), position,
-            node->networkNode.address,
-            node->via,
-            node->networkNode.metric);
-
-        position++;
-    } while (routingTableList->next());
 
     routingTableList->releaseInUse();
 }
@@ -746,22 +743,18 @@ void LoraMesher::manageTimeoutRoutingTable() {
 
     routingTableList->setInUse();
 
-    if (!routingTableList->moveToStart()) {
-        routingTableList->releaseInUse();
-        return;
-    }
+    if (routingTableList->moveToStart()) {
+        do {
+            routableNode* node = routingTableList->getCurrent();
 
-    for (int i = 0; i < routingTableSize(); i++) {
-        routableNode* node = routingTableList->getCurrent();
-        if (node->timeout < millis()) {
-            Log.traceln(F("Route timeout %X via %X" CR), node->networkNode.address, node->via);
+            if (node->timeout < millis()) {
+                Log.traceln(F("Route timeout %X via %X" CR), node->networkNode.address, node->via);
 
-            delete node;
-            routingTableList->DeleteCurrent();
-        }
+                delete node;
+                routingTableList->DeleteCurrent();
+            }
 
-        if (!routingTableList->next())
-            break;
+        } while (routingTableList->next());
     }
 
     routingTableList->releaseInUse();
@@ -872,14 +865,14 @@ LoraMesher::packet<uint8_t>* LoraMesher::createRoutingPacket() {
 
     networkNode* payload = new networkNode[routingSize];
 
-    routingTableList->moveToStart();
+    if (routingTableList->moveToStart()) {
+        for (int i = 0; i < routingSize; i++) {
+            routableNode* currentNode = routingTableList->getCurrent();
+            payload[i] = currentNode->networkNode;
 
-    for (int i = 0; i < routingSize; i++) {
-        routableNode* currentNode = routingTableList->getCurrent();
-        payload[i] = currentNode->networkNode;
-
-        if (!routingTableList->next())
-            break;
+            if (!routingTableList->next())
+                break;
+        }
     }
 
     routingTableList->releaseInUse();
@@ -1267,18 +1260,17 @@ void LoraMesher::findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue,
 
 LoraMesher::listConfiguration* LoraMesher::findSequenceList(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
     queue->setInUse();
-    queue->moveToStart();
 
-    for (int i = 0; i < queue->getLength(); i++) {
-        listConfiguration* current = queue->getCurrent();
+    if (queue->moveToStart()) {
+        do {
+            listConfiguration* current = queue->getCurrent();
 
-        if (current->config->seq_id == seq_id && current->config->source == source) {
-            queue->releaseInUse();
-            return current;
-        }
+            if (current->config->seq_id == seq_id && current->config->source == source) {
+                queue->releaseInUse();
+                return current;
+            }
 
-        if (!queue->next())
-            break;
+        } while (queue->next());
     }
 
     queue->releaseInUse();
@@ -1289,18 +1281,17 @@ LoraMesher::listConfiguration* LoraMesher::findSequenceList(LM_LinkedList<listCo
 
 LoraMesher::packetQueue<uint8_t>* LoraMesher::findPacketQueue(LM_LinkedList<packetQueue<uint8_t>>* queue, uint8_t num) {
     queue->setInUse();
-    queue->moveToStart();
 
-    for (int i = 0; i < queue->getLength(); i++) {
-        packetQueue<uint8_t>* current = queue->getCurrent();
+    if (queue->moveToStart()) {
+        do {
+            packetQueue<uint8_t>* current = queue->getCurrent();
 
-        if (current->number == num) {
-            queue->releaseInUse();
-            return current;
-        }
+            if (current->number == num) {
+                queue->releaseInUse();
+                return current;
+            }
 
-        if (!queue->next())
-            break;
+        } while (queue->next());
     }
 
     queue->releaseInUse();
