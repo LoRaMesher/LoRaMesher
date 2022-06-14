@@ -896,17 +896,6 @@ private:
     void printHeaderPacket(packet<uint8_t>* p, String title);
 
     /**
-     * @brief Send a packet of the sequence_id and sequence_num
-     *
-     * @param destination Destination to send the packet
-     * @param seq_id sequence_id of the packet
-     * @param seq_num number of the packet inside the sequence id
-     * @return true If has been send
-     * @return false If not
-     */
-    bool sendPacketSequence(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
-
-    /**
      * @brief Process a large payload packet
      *
      * @param pq PacketQueue packet queue to be processed
@@ -982,6 +971,27 @@ private:
         sequencePacketConfig* config;
         LM_LinkedList<packetQueue<uint8_t>>* list;
     };
+
+    /**
+     * @brief Send a packet of the sequence_id and sequence_num
+     *
+     * @param destination Destination to send the packet
+     * @param seq_id sequence_id of the packet
+     * @param seq_num number of the packet inside the sequence id
+     * @return true If has been send
+     * @return false If not
+     */
+    bool sendPacketSequence(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
+
+    /**
+     * @brief Send a packet of the sequence of the specific list configuration and sequence_num
+     *
+     * @param lstConfig List configuration
+     * @param seq_num number of the packet inside the sequence id
+     * @return true If has been send
+     * @return false If not
+     */
+    bool sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_num);
 
     /**
      * @brief Join all the packets inside the list configuration and notify the user
