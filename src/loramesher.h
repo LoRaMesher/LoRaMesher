@@ -954,11 +954,12 @@ private:
         uint8_t seq_id; //Sequence Id
         uint16_t source; //Source Address
 
-        uint16_t number; //Number of packets of the sequence
+        uint16_t number{0}; //Number of packets of the sequence
         uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
         uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
         unsigned long timeout{0};; //Timeout of the sequence
-        uint32_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
+        uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
+        uint32_t RTT{0}; //Round Trip time
 
         sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number) : seq_id(seq_id), source(source), number(number) {};
     };
@@ -981,7 +982,7 @@ private:
      * @return true If has been send
      * @return false If not
      */
-    bool sendPacketSequence(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
+    void processLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
 
     /**
      * @brief Send a packet of the sequence of the specific list configuration and sequence_num
@@ -1007,7 +1008,7 @@ private:
      * @param seq_id sequence id
      * @param source source address
      */
-    void resetTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
+    void addTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
 
     /**
      * @brief If executed it will reset the number of timeouts to 0 and reset the timeout
