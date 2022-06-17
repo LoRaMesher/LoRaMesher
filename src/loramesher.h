@@ -1,5 +1,7 @@
-#ifndef __LORAMESHER__
-#define __LORAMESHER__
+#ifndef _LORAMESHER_H
+#define _LORAMESHER_H
+
+#include <ArduinoLog.h>
 
 // LoRa libraries
 #include "RadioLib.h"
@@ -7,56 +9,16 @@
 // WiFi libraries
 #include <WiFi.h>
 
+// Logger
+#include <ArduinoLog.h>
+//#define DISABLE_LOGGING
+
+//Actual LoRaMesher Libraries
+#include "BuildOptions.h"
+
 #include "helpers/LinkedQueue.hpp"
 
-// Logger
-//#define DISABLE_LOGGING
-#include <ArduinoLog.h>
-
-// LoRa band definition
-// 433E6 for Asia
-// 866E6 for Europe
-// 915E6 for North America
-#define BAND 868.0F
-#define BANDWIDTH 125.0F
-#define LORASF 7U // Spreading factor 6-12 (default 7)
-
-// Comment this line if you want to remove the crc for each packet
-#define ADDCRC_PAYLOAD
-
-// Routing table max size
-#define RTMAXSIZE 256
-
-//MAX packet size per packet
-//If exceed it will be automatically separated through multiple packets 
-//In bytes (226 bytes [UE max allowed with SF7 and 125khz])
-//MAX payload size for hello packets = MAXPACKETSIZE - 6 bytes of header
-//MAX payload size for data packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via
-//MAX payload size for reliable and large packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via - 3 of control packet
-#define MAXPACKETSIZE 222
-
-// Packet types
-#define NEED_ACK_P 0b00000001
-#define DATA_P     0b00000010
-#define HELLO_P    0b00000100
-#define ACK_P      0b00001000
-#define XL_DATA_P  0b00010000
-#define LOST_P     0b00100000
-#define SYNC_P     0b01000000
-
-// Packet configuration
-#define BROADCAST_ADDR 0xFFFF
-#define DEFAULT_PRIORITY 20
-#define MAX_PRIORITY 40
-
-//Definition Times in seconds
-#define HELLO_PACKETS_DELAY 120
-#define SEND_PACKETS_DELAY 30
-#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
-
-//Maximum times that a sequence of packets reach the timeout
-#define MAX_TIMEOUTS 3
-#define MAX_RESEND_PACKET 3
+#include "packets/PacketService.h"
 
 class LoraMesher {
 
@@ -77,10 +39,10 @@ public:
      *          //Wait for the notification of processReceivedPackets and enter blocking
      *          ulTaskNotifyTake(pdPASS, portMAX_DELAY);
      *
-     *          // Get the receivedUserPackets and get all the elements
+     *          // Get the receivedAppPackets and get all the elements
      *          while (radio.getReceivedQueueSize() > 0) {
      *              //Get the first element inside the Received User Packets FiFo
-     *              LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+     *              LoraMesher::AppPacket<DataPacket>* packet = radio.getNextAppPacket<DataPacket>();
      *
      *              //Do something with the packet, ex: print(packetReceived);
      *
@@ -105,40 +67,6 @@ public:
      *
      */
     ~LoraMesher();
-
-#pragma pack(push, 1)
-    /**
-     * @brief User packet, it is used to send the packet to the user
-     *
-     * @tparam T
-     */
-    template <typename T>
-    struct userPacket {
-        /**
-         * @brief Destination address, normally it will be local address or BROADCAST_ADDR
-         *
-         */
-        uint16_t dst;
-
-        /**
-         * @brief Source Address
-         *
-         */
-        uint16_t src;
-
-        /**
-         * @brief Payload Size in bytes
-         *
-         */
-        uint32_t payloadSize = 0;
-
-        /**
-         * @brief Payload Array
-         *
-         */
-        T payload[];
-    };
-#pragma pack(pop)
 
     /**
      * @brief Create a Packet And Send it
@@ -192,31 +120,19 @@ public:
     size_t getReceivedQueueSize();
 
     /**
-      * @brief Get the Next User Packet
+      * @brief Get the Next Application Packet
       *
       * @tparam T Type to be converted
-      * @return userPacket<T>*
+      * @return AppPacket<T>*
       */
     template<typename T>
-    userPacket<T>* getNextUserPacket() {
-        packetQueue<userPacket<T>>* pq = ReceivedUserPackets->Pop<userPacket<T>>();
-        userPacket<T>* packet = pq->packet;
+    AppPacket<T>* getNextAppPacket() {
+        packetQueue<AppPacket<T>>* pq = ReceivedAppPackets->Pop<AppPacket<T>>();
+        AppPacket<T>* packet = pq->packet;
 
         deletePacketQueue(pq);
 
         return packet;
-    }
-
-    /**
-     * @brief Get the payload length in number of T
-     *
-     * @tparam T Type to be converted
-     * @param p user packet
-     * @return size_t size in number of T
-     */
-    template <typename T>
-    size_t getPayloadLength(userPacket<T>* p) {
-        return p->payloadSize / sizeof(T);
     }
 
     /**
@@ -226,9 +142,8 @@ public:
      * @param p Packet to delete
      */
     template <typename T>
-    static void deletePacket(userPacket<T>* p) {
-        Log.traceln(F("Deleting user packet"));
-        free(p);
+    static void deletePacket(AppPacket<T>* p) {
+        delete p;
     }
 
 #pragma pack(push, 1)
@@ -421,114 +336,6 @@ private:
      */
     void processPackets();
 
-#pragma pack(push, 1)
-    template <typename T>
-    struct packet {
-        uint16_t dst;
-        uint16_t src;
-        uint8_t type;
-        //TODO: REMOVE THIS ID
-        uint8_t id;
-        uint8_t payloadSize = 0;
-        T payload[];
-    };
-
-    template <typename T>
-    struct dataPacket {
-        uint16_t via;
-        T payload[];
-    };
-
-    template <typename T>
-    struct controlPacket {
-        uint8_t seq_id;
-        uint16_t number;
-        T payload[];
-    };
-
-#pragma pack(pop)
-
-
-    /**
-     * @brief Get the Payload of the packet
-     *
-     * @tparam T type of the payload
-     * @param packet Packet that you want to get the payload
-     * @return T* pointer of the packet payload
-     */
-    template <typename T>
-    T* getPayload(packet<T>* packet) {
-        return (T*) ((unsigned long) packet->payload + getExtraLengthToPayload(packet->type));
-    }
-
-    /**
-     * @brief Create a Packet<T>
-     *
-     * @tparam T
-     * @param dst Destination
-     * @param src Source, normally local address, use getLocalAddress()
-     * @param type Type of packet
-     * @param payload Payload of type T
-     * @param payloadSize Length of the payload in bytes
-     * @return struct packet<uint8_t>*
-     */
-    template <typename T>
-    struct packet<uint8_t>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
-        uint8_t extraSize = getExtraLengthToPayload(type);
-
-        packet<uint8_t>* p = createPacket((uint8_t*) payload, payloadSize, extraSize);
-        p->dst = dst;
-        p->type = type;
-        p->src = src;
-
-        return p;
-    }
-
-    /**
-     * @brief Create a User Packet
-     *
-     * @param dst destination address
-     * @param src source address
-     * @param payload payload array
-     * @param payloadSize payload size in bytes
-     * @return struct userPacket<uint8_t>*
-     */
-    struct userPacket<uint8_t>* createUserPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize);
-
-    /**
-     * @brief given a Packet<uint8_t> it will be converted to a userPacket
-     *
-     * @param p packet of type packet<uint8_t>
-     * @return struct userPacket<uint8_t>*
-     */
-    struct userPacket<uint8_t>* convertPacket(packet<uint8_t>* p);
-
-    /**
-     * @brief Create a Packet<uint8_t>
-     *
-     * @param payload Payload
-     * @param payloadSize Length of the payload in bytes
-     * @param extraSize Indicates the function that it need to allocate extra space before the payload
-     * @return struct packet<uint8_t>*
-     */
-    struct packet<uint8_t>* createPacket(uint8_t* payload, uint8_t payloadSize, uint8_t extraSize);
-
-    /**
-     * @brief Create an Empty Packet
-     *
-     * @param packetSize Packet size in bytes
-     * @return struct packet<uint8_t>*
-     */
-    struct packet<uint8_t>* createEmptyPacket(size_t packetSize);
-
-    /**
-     * @brief Copy a packet
-     *
-     * @param p packet to be copied
-     * @return struct packet<uint8_t>*
-     */
-    struct packet<uint8_t>* copyPacket(packet<uint8_t>* p);
-
     /**
      * @brief Delete the packet from memory
      *
@@ -536,9 +343,8 @@ private:
      * @param p Packet to delete
      */
     template <typename T>
-    static void deletePacket(packet<T>* p) {
-        Log.traceln(F("Deleting packet"));
-        free(p);
+    static void deletePacket(Packet<T>* p) {
+        delete p;
     }
 
     /**
@@ -549,22 +355,10 @@ private:
      * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
      */
     template <typename T>
-    void setPackedForSend(packet<T>* p, uint8_t priority) {
+    void setPackedForSend(Packet<T>* p, uint8_t priority) {
         packetQueue<uint8_t>* send = createPacketQueue(p, priority);
         ToSendPackets->Add(send);
         //TODO: Using vTaskDelay to kill the packet inside LoraMesher
-    }
-
-    /**
-     * @brief Get the payload in number of elements
-     *
-     * @tparam T
-     * @param p
-     * @return size_t
-     */
-    template<typename T>
-    size_t getPayloadLength(packet<T>* p) {
-        return (p->payloadSize - getExtraLengthToPayload(p->type)) / sizeof(T);
     }
 
     /**
@@ -588,7 +382,7 @@ private:
      */
     template <typename T>
     static void deletePacketQueueAndPacket(packetQueue<T>* pq) {
-        deletePacket((packet<T>*) pq->packet);
+        deletePacket((Packet<T>*) pq->packet);
         deletePacketQueue(pq);
     }
 
@@ -685,7 +479,7 @@ private:
         void Enable();
     };
 
-    PacketQueue* ReceivedUserPackets = new PacketQueue();
+    PacketQueue* ReceivedAppPackets = new PacketQueue();
 
     PacketQueue* ReceivedPackets = new PacketQueue();
 
@@ -705,7 +499,7 @@ private:
      *
      * @param p Packet of type networkNode
      */
-    void processRoute(packet<networkNode>* p);
+    void processRoute(Packet<networkNode>* p);
 
     /**
      * @brief Checks all the routing entries for a route timeout and remove the entry.
@@ -725,20 +519,20 @@ private:
      *
      * @param pq packet queue to be processed as data packet
      */
-    void processDataPacket(packetQueue<packet<dataPacket<uint8_t>>>* pq);
+    void processDataPacket(packetQueue<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Process the data packet that destination is this node
      *
      * @param pq packet queue to be processed as data packet
      */
-    void processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>* pq);
+    void processDataPacketForMe(packetQueue<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
      *
      */
-    void notifyUserReceivedPacket(packetQueue<userPacket<uint8_t>>* pq);
+    void notifyUserReceivedPacket(packetQueue<AppPacket<uint8_t>>* pq);
 
     /**
      * @brief Add node to the routing table
@@ -751,9 +545,9 @@ private:
     /**
      * @brief Create a Routing Packet adding the routing table to the payload
      *
-     * @return struct packet*
+     * @return Packet*
      */
-    struct packet<uint8_t>* createRoutingPacket();
+    Packet<uint8_t>* createRoutingPacket();
 
     /**
      * @brief Send a packet through Lora
@@ -762,7 +556,7 @@ private:
      * @return true has been send correctly
      * @return false has not been send
      */
-    bool sendPacket(packet<uint8_t>* p);
+    bool sendPacket(Packet<uint8_t>* p);
 
     /**
      * @brief Proccess that sends the data inside the FIFO
@@ -809,60 +603,6 @@ private:
     void sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
 
     /**
-     * @brief Get the Packet Length
-     *
-     * @tparam T
-     * @param p Packet of Type T
-     * @return size_t Packet size in bytes
-     */
-    template <typename T>
-    size_t getPacketLength(packet<T>* p) { return sizeof(LoraMesher::packet<T>) + p->payloadSize; }
-
-    /**
-     * @brief Get the number of bytes to the payload, between a Packet<T> and their real payload
-     *
-     * @param type type of the packet
-     * @return size_t number of bytes
-     */
-    uint8_t getExtraLengthToPayload(uint8_t type);
-
-    /**
-     * @brief Get the Maximum Payload Length with a MAXPACKETSIZE defined
-     *
-     * @param type
-     * @return uint8_t
-     */
-    uint8_t getMaximumPayloadLength(uint8_t type);
-
-    /**
-     * @brief Get the Packet Payload Length in bytes
-     *
-     * @tparam T Type of packets
-     * @param p packet to know the payload length in bytes
-     * @return size_t The payload length in bytes of the packet
-     */
-    template <typename T>
-    size_t getPacketPayloadLength(packet<T>* p) { return p->payloadSize - getExtraLengthToPayload(p->type); }
-
-    /**
-     * @brief Given a type returns if needs a data packet
-     *
-     * @param type type of the packet
-     * @return true True if needed
-     * @return false If not
-     */
-    bool hasDataPacket(uint8_t type);
-
-    /**
-     * @brief Given a type returns if needs a control packet
-     *
-     * @param type type of the packet
-     * @return true True if needed
-     * @return false If not
-     */
-    bool hasControlPacket(uint8_t type);
-
-    /**
      * @brief Print the packet in the Log verbose, if the type is not defined it will print the payload in Hexadecimals
      *
      * @tparam T
@@ -870,16 +610,16 @@ private:
      * @param received If true it will print received, else will print Created
      */
     template <typename T>
-    void printPacket(packet<T>* p, bool received) {
+    void printPacket(Packet<T>* p, bool received) {
         Log.verboseln(F("-----------------------------------------"));
         Log.verboseln(F("Current Packet: %s"), received ? "Received" : "Created");
         Log.verboseln(F("Destination: %X"), p->dst);
         Log.verboseln(F("Source: %X"), p->src);
         Log.verboseln(F("Type: %d"), p->type);
-        Log.verboseln(F("----Packet of size %d bytes----"), getPacketLength(p));
+        Log.verboseln(F("----Packet of size %d bytes----"), p->getPacketLength());
         switch (p->type) {
             case HELLO_P:
-                for (int i = 0; i < getPayloadLength((packet<networkNode>*) p); i++)
+                for (int i = 0; i < pS.getPayloadLength((Packet<networkNode>*) p); i++)
                     Log.verboseln(F("%d ->(%u) Address: %X - Metric: %d"), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
 
         }
@@ -893,14 +633,14 @@ private:
      * @param p packet to be printed
      * @param title Title to print the header
      */
-    void printHeaderPacket(packet<uint8_t>* p, String title);
+    void printHeaderPacket(Packet<uint8_t>* p, String title);
 
     /**
      * @brief Process a large payload packet
      *
      * @param pq PacketQueue packet queue to be processed
      */
-    void processLargePayloadPacket(packetQueue<packet<dataPacket<uint8_t>>>* pq);
+    void processLargePayloadPacket(packetQueue<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Process a received synchronization packet
