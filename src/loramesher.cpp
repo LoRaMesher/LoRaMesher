@@ -153,7 +153,6 @@ void LoraMesher::onReceive() {
 
 void LoraMesher::receivingRoutine() {
     BaseType_t TWres;
-    bool receivedFlag = false;
     size_t packetSize;
     int rssi, snr, res;
     for (;;) {
@@ -162,7 +161,6 @@ void LoraMesher::receivingRoutine() {
             ULONG_MAX,
             NULL,
             portMAX_DELAY);
-        receivedFlag = false;
 
         if (TWres == pdPASS) {
             packetSize = radio->getPacketLength();
@@ -191,16 +189,11 @@ void LoraMesher::receivingRoutine() {
                     Log.errorln(F("Packet with bad SNR, deleting it"));
                     deletePacket(rx);
                 } else {
-                    //Set the received flag to true
-                    receivedFlag = true;
-
                     //Add the packet created into the ReceivedPackets List
                     packetQueue<uint8_t>* pq = createPacketQueue(rx, 0);
                     ReceivedPackets->Add(pq);
-                }
 
-                if (receivedFlag) {
-                    //Notify that there is a packets to be processed
+                    //Notify that a packet needs to be process
                     TWres = xTaskNotifyFromISR(
                         ReceiveData_TaskHandle,
                         0,
