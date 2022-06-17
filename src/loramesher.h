@@ -974,6 +974,13 @@ private:
     };
 
     /**
+     * @brief Actualize the RTT field
+     *
+     * @param config configuration to be actualized
+     */
+    void actualizeRTT(listConfiguration* config);
+
+    /**
      * @brief Send a packet of the sequence_id and sequence_num
      *
      * @param destination Destination to send the packet

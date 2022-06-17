@@ -567,6 +567,7 @@ void LoraMesher::processDataPacketForMe(packetQueue<packet<dataPacket<uint8_t>>>
 
     //Need ack
     if ((p->type & NEED_ACK_P) == NEED_ACK_P) {
+        //TODO: All packets with this ack will ack?
         Log.verboseln(F("Previous packet need an ACK"));
         sendAckPacket(p->src, cPacket->seq_id, cPacket->number);
     }
@@ -1053,7 +1054,7 @@ bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_n
 void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
     if (config == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in add ack with Id: %d"), seq_id);
+        Log.errorln(F("NOT FOUND the sequence packet config in add ack with Seq_id: %d, Source: %d"), seq_id, source);
         return;
     }
 
@@ -1064,6 +1065,8 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
         findAndClearLinkedList(q_WSP, config);
         return;
     }
+
+    //TODO: Check correct number with lastAck?
 
     //Set has been received some ACK
     config->config->firstAckReceived = 1;
@@ -1086,7 +1089,7 @@ void LoraMesher::processLargePayloadPacket(packetQueue<packet<dataPacket<uint8_t
 
     listConfiguration* configList = findSequenceList(q_WRP, cPacket->seq_id, packet->src);
     if (configList == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in Process Large Payload ack with Id: %d"), cPacket->seq_id);
+        Log.errorln(F("NOT FOUND the sequence packet config in Process Large Payload with Seq_id: %d, Source: %d"), cPacket->seq_id, packet->src);
         deletePacketQueueAndPacket(pq);
         return;
     }
@@ -1100,6 +1103,8 @@ void LoraMesher::processLargePayloadPacket(packetQueue<packet<dataPacket<uint8_t
     }
 
     configList->config->lastAck++;
+
+    // actualizeRTT(configList);
 
     configList->list->setInUse();
     configList->list->Append((packetQueue<uint8_t>*) pq);
@@ -1202,12 +1207,14 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
 
 void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num) {
     //Find the list config
-    listConfiguration* listConfig = findSequenceList(q_WRP, seq_id, destination);
+    listConfiguration* listConfig = findSequenceList(q_WSP, seq_id, destination);
 
     if (listConfig == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in lost packet with Id: %d"), seq_id);
+        Log.errorln(F("NOT FOUND the sequence packet config in ost packet with Seq_id: %d, Source: %d"), seq_id, destination);
         return;
     }
+
+    //TODO: Check correct number with lastAck?
 
     //Send the packet sequence that has been lost
     if (sendPacketSequence(listConfig, seq_num)) {
@@ -1219,7 +1226,7 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
 void LoraMesher::addTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
     listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
     if (config == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in reset timeout with Id: %d"), seq_id);
+        Log.errorln(F("NOT FOUND the sequence packet config in add timeout with Seq_id: %d, Source: %d"), seq_id, source);
         return;
     }
 
@@ -1229,6 +1236,18 @@ void LoraMesher::addTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq
 void LoraMesher::resetTimeout(sequencePacketConfig* configPacket) {
     configPacket->numberOfTimeouts = 0;
     addTimeout(configPacket);
+}
+
+void LoraMesher::actualizeRTT(listConfiguration* config) {
+    uint32_t actualRTT = config->config->timeout - millis();
+    uint16_t numberOfPackets = config->config->lastAck;
+
+    if (config->config->RTT = 0) {
+        config->config->RTT = actualRTT;
+        return;
+    }
+
+    config->config->RTT = (actualRTT + config->config->RTT * numberOfPackets) / (numberOfPackets + 1);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
