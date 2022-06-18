@@ -25,7 +25,7 @@ public:
      */
     uint16_t via = 0;
 
-    RouteNode(uint16_t address_, uint8_t metric_, uint32_t timeout_, uint16_t via_) : networkNode(address_, metric_), timeout(timeout_), via(via_) {};
+    RouteNode(uint16_t address_, uint8_t metric_, uint16_t via_) : networkNode(address_, metric_), via(via_) {};
 };
 
 #endif

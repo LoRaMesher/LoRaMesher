@@ -14,7 +14,10 @@
 
 #include "packets/RoutePacket.h"
 
-#include "BuildOpt.h"
+#include "BuildOptions.h"
+
+#include "services/WiFiService.h"
+
 
 class RoutingTableService {
 public:
@@ -35,11 +38,10 @@ public:
     LM_LinkedList<RouteNode>* routingTableList = new LM_LinkedList<RouteNode>();
 
     /**
-     * @brief Returns the routing table size
+     * @brief Prints the actual routing table in the log
      *
-     * @return size_t
      */
-    size_t routingTableSize();
+    void printRoutingTable();
 
     /**
      * @brief Get the All Network Nodes that are inside the routing table
@@ -52,10 +54,41 @@ public:
      * @brief Find the node that contains the address
      *
      * @param address address to be found
-     * @return RouteNode* pointer to the routableNode or nullptr
+     * @return RouteNode* pointer to the RouteNode or nullptr
      */
     RouteNode* findNode(uint16_t address);
 
+    /**
+     * @brief Returns if address is inside the routing table
+     *
+     * @param address Address you want to check if is inside the routing table
+     * @return true If the address is inside the routing table
+     * @return false If the address is not inside the routing table
+     */
+    bool hasAddressRoutingTable(uint16_t address);
+
+    /**
+     * @brief Get the Next Hop address
+     *
+     * @param dst address of the next hop
+     * @return uint16_t address of the next hop
+     */
+    uint16_t getNextHop(uint16_t dst);
+
+    /**
+     * @brief Get the Number Of Hops of the address inside the routing table
+     *
+     * @param address Address of the number of hops you want to know
+     * @return uint8_t Number of Hops or 0 if address not found in routing table.
+     */
+    uint8_t getNumberOfHops(uint16_t address);
+
+    /**
+     * @brief Returns the routing table size
+     *
+     * @return size_t
+     */
+    size_t routingTableSize();
 
     /**
      * @brief Process the network packet
@@ -63,6 +96,13 @@ public:
      * @param p Route Packet
      */
     void processRoute(RoutePacket* p);
+
+
+    /**
+     * @brief Checks all the routing entries for a route timeout and remove the entry.
+     *
+     */
+    void manageTimeoutRoutingTable();
 
 private:
 
@@ -83,7 +123,6 @@ private:
      */
     void resetTimeoutRoutingNode(RouteNode* node);
 
-
     /**
      * @brief Add node to the routing table
      *
@@ -91,6 +130,7 @@ private:
      * @param via Address to next hop to reach the network node address
      */
     void addNodeToRoutingTable(NetworkNode* node, uint16_t via);
+
 };
 
 #endif

@@ -1,5 +1,9 @@
 #include "RoutingTableService.h"
 
+size_t RoutingTableService::routingTableSize() {
+    return routingTableList->getLength();
+}
+
 RouteNode* RoutingTableService::findNode(uint16_t address) {
     routingTableList->setInUse();
 
@@ -19,10 +23,31 @@ RouteNode* RoutingTableService::findNode(uint16_t address) {
     return nullptr;
 }
 
+bool RoutingTableService::hasAddressRoutingTable(uint16_t address) {
+    RouteNode* node = findNode(address);
+    return node != nullptr;
+}
+
+uint16_t RoutingTableService::getNextHop(uint16_t dst) {
+    RouteNode* node = findNode(dst);
+
+    if (node == nullptr)
+        return 0;
+
+    return node->via;
+}
+
+uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
+    RouteNode* node = findNode(address);
+
+    if (node == nullptr)
+        return 0;
+
+    return node->networkNode.metric;
+}
+
 void RoutingTableService::processRoute(RoutePacket* p) {
     Log.verboseln(F("Route packet from %X with size %d"), p->src, p->payloadSize);
-
-    // printPacket(p, true);
 
     NetworkNode* receivedNode = new NetworkNode(p->src, 1);
     processRoute(p->src, receivedNode);
@@ -34,35 +59,51 @@ void RoutingTableService::processRoute(RoutePacket* p) {
         processRoute(p->src, node);
     }
 
-    // printRoutingTable();
+    printRoutingTable();
 }
 
 void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
-    // if (node->address != localAddress) {
-    //     routableNode* rNode = findNode(node->address);
+    if (node->address != WifiServ.getLocalAddress()) {
 
-    //     //If nullptr the node is not inside the routing table, then add it
-    //     if (rNode == nullptr) {
-    //         addNodeToRoutingTable(node, via);
-    //         return;
-    //     }
+        RouteNode* rNode = findNode(node->address);
+        //If nullptr the node is not inside the routing table, then add it
+        if (rNode == nullptr) {
+            addNodeToRoutingTable(node, via);
+            return;
+        }
 
-    //     //Update the metric and restart timeout if needed
-    //     if (node->metric < rNode->networkNode.metric) {
-    //         rNode->networkNode.metric = node->metric;
-    //         rNode->via = via;
-    //         resetTimeoutRoutingNode(rNode);
-    //         Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
-    //     } else if (node->metric == rNode->networkNode.metric) {
-    //         //Reset the timeout, only when the metric is the same as the actual route.
-    //         resetTimeoutRoutingNode(rNode);
-    //     }
-    // }
+        //Update the metric and restart timeout if needed
+        if (node->metric < rNode->networkNode.metric) {
+            rNode->networkNode.metric = node->metric;
+            rNode->via = via;
+            resetTimeoutRoutingNode(rNode);
+            Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
+        } else if (node->metric == rNode->networkNode.metric) {
+            //Reset the timeout, only when the metric is the same as the actual route.
+            resetTimeoutRoutingNode(rNode);
+        }
+    }
 }
 
-size_t RoutingTableService::routingTableSize() {
-    return routingTableList->getLength();
+void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via) {
+    if (routingTableList->getLength() >= RTMAXSIZE) {
+        Log.warningln(F("Routing table max size reached, not adding route and deleting it"));
+        return;
+    }
+    RouteNode* rNode = new RouteNode(node->address, node->metric, via);
+
+    //Reset the timeout of the node
+    resetTimeoutRoutingNode(rNode);
+
+    routingTableList->setInUse();
+
+    routingTableList->Append(rNode);
+
+    routingTableList->releaseInUse();
+
+    Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
 }
+
 
 /**
  * @brief Get the All Network Nodes that are inside the routing table
@@ -91,28 +132,53 @@ NetworkNode* RoutingTableService::getAllNetworkNodes() {
     return payload;
 }
 
-// RoutePacket* RoutingTableService::createRoutingPacket() {
-//     routingTableList->setInUse();
+void RoutingTableService::resetTimeoutRoutingNode(RouteNode* node) {
+    node->timeout = millis() + DEFAULT_TIMEOUT * 1000;
+}
 
-//     int routingSize = routingTableSize();
+void RoutingTableService::printRoutingTable() {
+    Log.verboseln(F("Current routing table:"));
 
-//     NetworkNode* payload = new NetworkNode[routingSize];
+    routingTableList->setInUse();
 
-//     if (routingTableList->moveToStart()) {
-//         for (int i = 0; i < routingSize; i++) {
-//             RouteNode* currentNode = routingTableList->getCurrent();
-//             payload[i] = currentNode->networkNode;
+    if (routingTableList->moveToStart()) {
+        size_t position = 0;
 
-//             if (!routingTableList->next())
-//                 break;
-//         }
-//     }
+        do {
+            RouteNode* node = routingTableList->getCurrent();
 
-//     routingTableList->releaseInUse();
+            Log.verboseln(F("%d - %X via %X metric %d"), position,
+                node->networkNode.address,
+                node->via,
+                node->networkNode.metric);
 
-//     size_t routingSizeInBytes = routingSize * sizeof(NetworkNode);
+            position++;
+        } while (routingTableList->next());
+    }
 
-//     Packet<uint8_t>* networkPacket = pS.createPacket(BROADCAST_ADDR, localAddress, HELLO_P, (uint8_t*) payload, routingSizeInBytes);
-//     delete[]payload;
-//     return networkPacket;
-// }
+    routingTableList->releaseInUse();
+}
+
+void RoutingTableService::manageTimeoutRoutingTable() {
+    Log.verboseln(F("Checking routes timeout"));
+
+    routingTableList->setInUse();
+
+    if (routingTableList->moveToStart()) {
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            if (node->timeout < millis()) {
+                Log.warningln(F("Route timeout %X via %X"), node->networkNode.address, node->via);
+
+                delete node;
+                routingTableList->DeleteCurrent();
+            }
+
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+
+    printRoutingTable();
+}

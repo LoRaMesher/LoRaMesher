@@ -6,9 +6,6 @@
 // LoRa libraries
 #include "RadioLib.h"
 
-// WiFi libraries
-#include <WiFi.h>
-
 // Logger
 #include <ArduinoLog.h>
 //#define DISABLE_LOGGING
@@ -21,6 +18,8 @@
 #include "packets/PacketService.h"
 
 #include "routingTable/RoutingTableService.h"
+
+#include "services/WiFiService.h"
 
 class LoraMesher {
 
@@ -198,14 +197,6 @@ public:
      */
     LM_LinkedList<routableNode>* routingTableList = new LM_LinkedList<routableNode>();
 
-    Packet<uint8_t>* createRoutingPacket();
-
-    /**
-     * @brief Prints the actual routing table in the log
-     *
-     */
-    void printRoutingTable();
-
     /**
      * @brief Returns the routing table size
      *
@@ -214,44 +205,11 @@ public:
     int routingTableSize();
 
     /**
-     * @brief Returns if address is inside the routing table
-     *
-     * @param address Address you want to check if is inside the routing table
-     * @return true If the address is inside the routing table
-     * @return false If the address is not inside the routing table
-     */
-    bool hasAddressRoutingTable(uint16_t address);
-
-    /**
-     * @brief Get the Next Hop address
-     *
-     * @param dst address of the next hop
-     * @return uint16_t address of the next hop
-     */
-    uint16_t getNextHop(uint16_t dst);
-
-    /**
      * @brief Get the Local Address
      *
      * @return uint16_t Address
      */
     uint16_t getLocalAddress();
-
-    /**
-     * @brief Get the Number Of Hops of the address inside the routing table
-     *
-     * @param address Address of the number of hops you want to know
-     * @return uint8_t Number of Hops or 0 if address not found in routing table.
-     */
-    uint8_t getNumberOfHops(uint16_t address);
-
-    /**
-     * @brief Find the node that contains the address
-     *
-     * @param address address to be found
-     * @return routableNode* pointer to the routableNode or nullptr
-     */
-    routableNode* findNode(uint16_t address);
 
 private:
 
@@ -261,11 +219,7 @@ private:
      */
     LoraMesher();
 
-    /**
-     * @brief Local Address
-     *
-     */
-    uint16_t localAddress;
+    // RoutingTableService rTService = RoutingTableService::getInstance();
 
     /**
      * @brief Routable node timeout (µs)
@@ -323,8 +277,6 @@ private:
 
     void receivingRoutine();
 
-    void initializeLocalAddress();
-
     void initializeLoRa();
 
     void initializeScheduler(void (*func)(void*));
@@ -360,6 +312,7 @@ private:
      */
     template <typename T>
     void setPackedForSend(Packet<T>* p, uint8_t priority) {
+        Log.traceln(F("Adding packet to Q_SP"));
         packetQueue<uint8_t>* send = createPacketQueue(p, priority);
         ToSendPackets->Add(send);
         //TODO: Using vTaskDelay to kill the packet inside LoraMesher
@@ -489,28 +442,6 @@ private:
 
     PacketQueue* ToSendPackets = new PacketQueue();
 
-
-    /**
-     * @brief process the network node, adds the node in the routing table if can
-     *
-     * @param via via address
-     * @param node networkNode
-     */
-    void processRoute(uint16_t via, networkNode* node);
-
-    /**
-     * @brief Process the network packet
-     *
-     * @param p Packet of type networkNode
-     */
-    void processRoute(Packet<networkNode>* p);
-
-    /**
-     * @brief Checks all the routing entries for a route timeout and remove the entry.
-     *
-     */
-    void manageTimeoutRoutingTable();
-
     /**
      * @brief Reset the timeout of the given node
      *
@@ -537,14 +468,6 @@ private:
      *
      */
     void notifyUserReceivedPacket(packetQueue<AppPacket<uint8_t>>* pq);
-
-    /**
-     * @brief Add node to the routing table
-     *
-     * @param node Network node that includes the address and the metric
-     * @param via Address to next hop to reach the network node address
-     */
-    void addNodeToRoutingTable(networkNode* node, uint16_t via);
 
     /**
      * @brief Send a packet through Lora
@@ -598,31 +521,6 @@ private:
      * @param seq_num Number of the lost packet
      */
     void sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num);
-
-    /**
-     * @brief Print the packet in the Log verbose, if the type is not defined it will print the payload in Hexadecimals
-     *
-     * @tparam T
-     * @param p Packet of Type T
-     * @param received If true it will print received, else will print Created
-     */
-    template <typename T>
-    void printPacket(Packet<T>* p, bool received) {
-        Log.verboseln(F("-----------------------------------------"));
-        Log.verboseln(F("Current Packet: %s"), received ? "Received" : "Created");
-        Log.verboseln(F("Destination: %X"), p->dst);
-        Log.verboseln(F("Source: %X"), p->src);
-        Log.verboseln(F("Type: %d"), p->type);
-        Log.verboseln(F("----Packet of size %d bytes----"), p->getPacketLength());
-        switch (p->type) {
-            case HELLO_P:
-                for (int i = 0; i < pS.getPayloadLength((Packet<networkNode>*) p); i++)
-                    Log.verboseln(F("%d ->(%u) Address: %X - Metric: %d"), i, &p->payload[i], ((networkNode*) &p->payload[i])->address, ((networkNode*) &p->payload[i])->metric);
-
-        }
-
-        Log.verboseln(F("-----------------------------------------"));
-    }
 
     /**
      * @brief Prints the header of the packet without the payload

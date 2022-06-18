@@ -5,7 +5,6 @@ LoraMesher::LoraMesher() {}
 void LoraMesher::init(void (*func)(void*)) {
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     routeTimeout = 10000000;
-    initializeLocalAddress();
     initializeLoRa();
     initializeScheduler(func);
 
@@ -29,15 +28,6 @@ LoraMesher::~LoraMesher() {
 
     radio->clearDio0Action();
     radio->reset();
-}
-
-void LoraMesher::initializeLocalAddress() {
-    uint8_t WiFiMAC[6];
-
-    WiFi.macAddress(WiFiMAC);
-    localAddress = (WiFiMAC[4] << 8) | WiFiMAC[5];
-
-    Log.noticeln(F("Local LoRa address (from WiFi MAC): %X"), localAddress);
 }
 
 void LoraMesher::initializeLoRa() {
@@ -211,7 +201,7 @@ void LoraMesher::receivingRoutine() {
 }
 
 uint16_t LoraMesher::getLocalAddress() {
-    return this->localAddress;
+    return WifiServ.getLocalAddress();
 }
 
 /**
@@ -250,7 +240,7 @@ void LoraMesher::sendPackets() {
     uint8_t resendMessage = 0;
 
     //Random delay, to avoid some collisions. Between 0 and 4 seconds
-    TickType_t randomDelay = (localAddress % 4000) / portTICK_PERIOD_MS;
+    TickType_t randomDelay = (getLocalAddress() % 4000) / portTICK_PERIOD_MS;
 
     // randomSeed(localAddress);
 
@@ -266,12 +256,12 @@ void LoraMesher::sendPackets() {
         if (tx != nullptr) {
             Log.verboseln("Send nº %d", sendCounter);
 
-            if (tx->packet->src == localAddress)
+            if (tx->packet->src == getLocalAddress())
                 tx->packet->id = sendId++;
 
             //If the packet has a data packet and its destination is not broadcast add the via to the packet and forward the packet
             if (pS.hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
-                uint16_t nextHop = getNextHop(tx->packet->dst);
+                uint16_t nextHop = RoutingTableService::getInstance().getNextHop(tx->packet->dst);
 
                 //Next hop not found
                 if (nextHop == 0) {
@@ -317,44 +307,19 @@ void LoraMesher::sendHelloPacket() {
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     for (;;) {
+        NetworkNode* nodes = RoutingTableService::getInstance().getAllNetworkNodes();
 
-        // RoutingTableService rsInstance = RoutingTableService::getInstance();
+        Packet<uint8_t>* tx = pS.createRoutingPacket(getLocalAddress(), nodes, RoutingTableService::getInstance().routingTableSize());
 
-        Packet<uint8_t>* tx = createRoutingPacket();// pS.createRoutingPacket(localAddress, rsInstance.getAllNetworkNodes(), rsInstance.routingTableSize());
-
-        printPacket(tx, false);
+        delete[] nodes;
 
         setPackedForSend(tx, DEFAULT_PRIORITY + 1);
+
+        RoutingTableService::getInstance().printRoutingTable();
 
         //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
     }
-}
-
-Packet<uint8_t>* LoraMesher::createRoutingPacket() {
-    routingTableList->setInUse();
-
-    int routingSize = routingTableSize();
-
-    networkNode* payload = new networkNode[routingSize];
-
-    if (routingTableList->moveToStart()) {
-        for (int i = 0; i < routingSize; i++) {
-            routableNode* currentNode = routingTableList->getCurrent();
-            payload[i] = currentNode->networkNode;
-
-            if (!routingTableList->next())
-                break;
-        }
-    }
-
-    routingTableList->releaseInUse();
-
-    size_t routingSizeInBytes = routingSize * sizeof(networkNode);
-
-    Packet<uint8_t>* networkPacket = pS.createPacket(BROADCAST_ADDR, localAddress, HELLO_P, (uint8_t*) payload, routingSizeInBytes);
-    delete[]payload;
-    return networkPacket;
 }
 
 void LoraMesher::processPackets() {
@@ -373,7 +338,7 @@ void LoraMesher::processPackets() {
                 uint8_t type = rx->packet->type;
 
                 if ((type & HELLO_P) == HELLO_P) {
-                    processRoute((Packet<networkNode>*) rx->packet);
+                    RoutingTableService::getInstance().processRoute(reinterpret_cast<RoutePacket*>(rx->packet));
                     deletePacketQueueAndPacket(rx);
 
                 } else if (pS.hasDataPacket(type))
@@ -389,10 +354,9 @@ void LoraMesher::processPackets() {
     }
 }
 
-
 void LoraMesher::packetManager() {
     for (;;) {
-        manageTimeoutRoutingTable();
+        RoutingTableService::getInstance().manageTimeoutRoutingTable();
         managerReceivedQueue();
         managerSendQueue();
 
@@ -489,7 +453,7 @@ void LoraMesher::processDataPacket(LoraMesher::packetQueue<Packet<DataPacket<uin
 
     Log.traceln(F("Data packet from %X, destination %X, via %X"), packet->src, packet->dst, packet->payload->via);
 
-    if (packet->dst == localAddress) {
+    if (packet->dst == getLocalAddress()) {
         Log.verboseln(F("Data packet from %X for me"), packet->src);
         processDataPacketForMe(pq);
         return;
@@ -499,19 +463,9 @@ void LoraMesher::processDataPacket(LoraMesher::packetQueue<Packet<DataPacket<uin
         processDataPacketForMe(pq);
         return;
 
-    } else if (packet->payload->via == localAddress) {
-        Log.verboseln(F("Data Packet from %X for %X. Via is me"), packet->src, packet->dst);
-
-        //TODO: Check here and then in the send task? Only in the send task?
-        if (hasAddressRoutingTable(packet->dst)) {
-            Log.verboseln(F("Data Packet forwarding it."));
-            ToSendPackets->Add((packetQueue<uint8_t>*) pq);
-            return;
-        }
-
-        Log.verboseln(F("Data Packet destination not reachable, deleting it."));
-        deletePacketQueueAndPacket(pq);
-
+    } else if (packet->payload->via == getLocalAddress()) {
+        Log.verboseln(F("Data Packet from %X for %X. Via is me. Forwarding it"), packet->src, packet->dst);
+        ToSendPackets->Add((packetQueue<uint8_t>*) pq);
         return;
     }
 
@@ -596,163 +550,8 @@ void LoraMesher::notifyUserReceivedPacket(LoraMesher::packetQueue<AppPacket<uint
  *  Region Routing Table
 **/
 
-void LoraMesher::processRoute(Packet<networkNode>* p) {
-    Log.verboseln(F("HELLO packet from %X with size %d"), p->src, p->payloadSize);
-    printPacket(p, true);
-
-    LoraMesher::networkNode* receivedNode = new networkNode();
-    receivedNode->address = p->src;
-    receivedNode->metric = 1;
-    processRoute(p->src, receivedNode);
-    delete receivedNode;
-
-    for (size_t i = 0; i < pS.getPayloadLength(p); i++) {
-        LoraMesher::networkNode* node = &p->payload[i];
-        node->metric++;
-        processRoute(p->src, node);
-    }
-
-    printRoutingTable();
-}
-
-void LoraMesher::processRoute(uint16_t via, LoraMesher::networkNode* node) {
-    if (node->address != localAddress) {
-        routableNode* rNode = findNode(node->address);
-
-        //If nullptr the node is not inside the routing table, then add it
-        if (rNode == nullptr) {
-            addNodeToRoutingTable(node, via);
-            return;
-        }
-
-        //Update the metric and restart timeout if needed
-        if (node->metric < rNode->networkNode.metric) {
-            rNode->networkNode.metric = node->metric;
-            rNode->via = via;
-            resetTimeoutRoutingNode(rNode);
-            Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
-        } else if (node->metric == rNode->networkNode.metric) {
-            //Reset the timeout, only when the metric is the same as the actual route.
-            resetTimeoutRoutingNode(rNode);
-        }
-    }
-}
-
-LoraMesher::routableNode* LoraMesher::findNode(uint16_t address) {
-    routingTableList->setInUse();
-
-    if (routingTableList->moveToStart()) {
-        do {
-            routableNode* node = routingTableList->getCurrent();
-
-            if (node->networkNode.address == address) {
-                routingTableList->releaseInUse();
-                return node;
-            }
-
-        } while (routingTableList->next());
-    }
-
-    routingTableList->releaseInUse();
-    return nullptr;
-}
-
-void LoraMesher::addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t via) {
-    if (routingTableList->getLength() >= RTMAXSIZE) {
-        Log.warningln(F("Routing table max size reached, not adding route and deleting it"));
-        return;
-    }
-
-    routableNode* rNode = new routableNode();
-    rNode->networkNode.address = node->address;
-    rNode->networkNode.metric = node->metric;
-    rNode->via = via;
-
-    //Reset the timeout of the node
-    resetTimeoutRoutingNode(rNode);
-
-    routingTableList->setInUse();
-
-    routingTableList->Append(rNode);
-
-    routingTableList->releaseInUse();
-
-    Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
-}
-
 int LoraMesher::routingTableSize() {
-    return routingTableList->getLength();
-}
-
-bool LoraMesher::hasAddressRoutingTable(uint16_t address) {
-    routableNode* node = findNode(address);
-    return node != nullptr;
-}
-
-uint16_t LoraMesher::getNextHop(uint16_t dst) {
-    routableNode* node = findNode(dst);
-
-    if (node == nullptr)
-        return 0;
-
-    return node->via;
-}
-
-uint8_t LoraMesher::getNumberOfHops(uint16_t address) {
-    routableNode* node = findNode(address);
-
-    if (node == nullptr)
-        return 0;
-
-    return node->networkNode.metric;
-}
-
-void LoraMesher::printRoutingTable() {
-    Log.verboseln(F("Current routing table:"));
-
-    routingTableList->setInUse();
-
-    if (routingTableList->moveToStart()) {
-        size_t position = 0;
-
-        do {
-            routableNode* node = routingTableList->getCurrent();
-
-            Log.verboseln(F("%d - %X via %X metric %d"), position,
-                node->networkNode.address,
-                node->via,
-                node->networkNode.metric);
-
-            position++;
-        } while (routingTableList->next());
-    }
-
-    routingTableList->releaseInUse();
-}
-
-void LoraMesher::manageTimeoutRoutingTable() {
-    Log.verboseln(F("Checking routes timeout"));
-
-    routingTableList->setInUse();
-
-    if (routingTableList->moveToStart()) {
-        do {
-            routableNode* node = routingTableList->getCurrent();
-
-            if (node->timeout < millis()) {
-                Log.warningln(F("Route timeout %X via %X"), node->networkNode.address, node->via);
-
-                delete node;
-                routingTableList->DeleteCurrent();
-            }
-
-        } while (routingTableList->next());
-    }
-
-    routingTableList->releaseInUse();
-
-    printRoutingTable();
-
+    return RoutingTableService::getInstance().routingTableSize();
 }
 
 void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
@@ -761,17 +560,6 @@ void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
 
 /**
  *  End Region Routing Table
-**/
-
-
-/**
- *  Region Packet
-**/
-
-
-
-/**
- *  End Region Packet
 **/
 
 
