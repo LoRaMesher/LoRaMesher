@@ -4,16 +4,14 @@
 #include <ArduinoLog.h>
 
 #include "BuildOptions.h"
-#include "PacketEx.h"
+#include "PacketHeader.h"
 
 #pragma pack(1)
 template <typename T>
-class Packet : public PacketX<T> {
+class Packet final : public PacketHeader {
 public:
 
-    uint16_t via() {
-        return this->payload[sizeof(uint16_t)];
-    }
+    T payload[];
 
     /**
      * @brief Get the Packet Length
@@ -22,9 +20,16 @@ public:
      * @param p Packet of Type T
      * @return size_t Packet size in bytes
      */
-    size_t getPacketLength() { return sizeof(this) + this->payloadSize; }
+    size_t getPacketLength() { return sizeof(Packet<T>) + this->payloadSize; }
 
-    uint32_t getExtraToPayload() { return sizeof(uint16_t); }
+    /**
+     * @brief Get the Payload Length in number of T
+     *
+     * @return size_t
+     */
+    size_t getPayloadLength() { return this->payloadSize / sizeof(T); }
+
+    T* getPayload() { return (T*) (&this + sizeof(Packet)); }
 };
 #pragma pack()
 

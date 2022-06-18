@@ -318,12 +318,43 @@ void LoraMesher::sendHelloPacket() {
 
     for (;;) {
 
-        Packet<uint8_t>* tx = createRoutingPacket();
+        // RoutingTableService rsInstance = RoutingTableService::getInstance();
+
+        Packet<uint8_t>* tx = createRoutingPacket();// pS.createRoutingPacket(localAddress, rsInstance.getAllNetworkNodes(), rsInstance.routingTableSize());
+
+        printPacket(tx, false);
+
         setPackedForSend(tx, DEFAULT_PRIORITY + 1);
 
         //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
     }
+}
+
+Packet<uint8_t>* LoraMesher::createRoutingPacket() {
+    routingTableList->setInUse();
+
+    int routingSize = routingTableSize();
+
+    networkNode* payload = new networkNode[routingSize];
+
+    if (routingTableList->moveToStart()) {
+        for (int i = 0; i < routingSize; i++) {
+            routableNode* currentNode = routingTableList->getCurrent();
+            payload[i] = currentNode->networkNode;
+
+            if (!routingTableList->next())
+                break;
+        }
+    }
+
+    routingTableList->releaseInUse();
+
+    size_t routingSizeInBytes = routingSize * sizeof(networkNode);
+
+    Packet<uint8_t>* networkPacket = pS.createPacket(BROADCAST_ADDR, localAddress, HELLO_P, (uint8_t*) payload, routingSizeInBytes);
+    delete[]payload;
+    return networkPacket;
 }
 
 void LoraMesher::processPackets() {
@@ -371,7 +402,7 @@ void LoraMesher::packetManager() {
 
 void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     Log.setShowLevel(false);
-    Log.traceln(F("%d"), p->getExtraToPayload());
+    // Log.traceln(F("%d"), p->getPayloadLength());
     if (pS.hasDataPacket(p->type)) {
         DataPacket<uint8_t>* dPacket = (DataPacket<uint8_t>*) (p->payload);
         if (pS.hasControlPacket(p->type)) {
@@ -649,10 +680,8 @@ void LoraMesher::addNodeToRoutingTable(LoraMesher::networkNode* node, uint16_t v
     Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
 }
 
-
 int LoraMesher::routingTableSize() {
     return routingTableList->getLength();
-
 }
 
 bool LoraMesher::hasAddressRoutingTable(uint16_t address) {
@@ -739,30 +768,6 @@ void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
  *  Region Packet
 **/
 
-Packet<uint8_t>* LoraMesher::createRoutingPacket() {
-    routingTableList->setInUse();
-
-    int routingSize = routingTableSize();
-    size_t routingSizeInBytes = routingSize * sizeof(LoraMesher::networkNode);
-
-    networkNode* payload = new networkNode[routingSize];
-
-    if (routingTableList->moveToStart()) {
-        for (int i = 0; i < routingSize; i++) {
-            routableNode* currentNode = routingTableList->getCurrent();
-            payload[i] = currentNode->networkNode;
-
-            if (!routingTableList->next())
-                break;
-        }
-    }
-
-    routingTableList->releaseInUse();
-
-    Packet<uint8_t>* networkPacket = pS.createPacket(BROADCAST_ADDR, localAddress, HELLO_P, (uint8_t*) payload, routingSizeInBytes);
-    delete[]payload;
-    return networkPacket;
-}
 
 
 /**

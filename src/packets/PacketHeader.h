@@ -1,11 +1,10 @@
-#ifndef _LORAMESHER_PACKETX_H
-#define _LORAMESHER_PACKETX_H
+#ifndef _LORAMESHER_PACKET_HEADER_H
+#define _LORAMESHER_PACKET_HEADER_H
 
 #include "ArduinoLog.h"
 
 #pragma pack(1)
-template<class T>
-class PacketX {
+class PacketHeader {
 public:
     uint16_t dst;
     uint16_t src;
@@ -13,7 +12,6 @@ public:
     //TODO: REMOVE THIS ID
     uint8_t id;
     uint8_t payloadSize = 0;
-    T payload[];
 
     // /**
     //  * @brief Delete function for Packets
@@ -25,7 +23,9 @@ public:
         free(p);
     }
 
-    uint32_t getExtraToPayload() { return 0; }
+    size_t getPayloadLength() { return this->payloadSize; }
+
+    // virtual uint8_t* getPayload() { return (uint8_t*) (&this->payloadSize + sizeof(payloadSize)); }
 };
 #pragma pop()
 

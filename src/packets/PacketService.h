@@ -5,6 +5,7 @@
 #include "ControlPacket.h"
 #include "DataPacket.h"
 #include "AppPacket.h"
+#include "RoutePacket.h"
 
 class PacketService {
 public:
@@ -47,6 +48,16 @@ public:
      * @return Packet<uint8_t>*
      */
     Packet<uint8_t>* copyPacket(Packet<uint8_t>* p);
+
+    /**
+     * @brief Create a Routing Packet object
+     *
+     * @param localAddress localAddress of the node
+     * @param nodes list of NetworkNodes
+     * @param numOfNodes Number of nodes
+     * @return Packet<uint8_t>*
+     */
+    Packet<uint8_t>* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes);
 
     /**
      * @brief Create a Application Packet

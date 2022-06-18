@@ -20,6 +20,8 @@
 
 #include "packets/PacketService.h"
 
+#include "routingTable/RoutingTableService.h"
+
 class LoraMesher {
 
 public:
@@ -195,6 +197,8 @@ public:
      *
      */
     LM_LinkedList<routableNode>* routingTableList = new LM_LinkedList<routableNode>();
+
+    Packet<uint8_t>* createRoutingPacket();
 
     /**
      * @brief Prints the actual routing table in the log
@@ -541,13 +545,6 @@ private:
      * @param via Address to next hop to reach the network node address
      */
     void addNodeToRoutingTable(networkNode* node, uint16_t via);
-
-    /**
-     * @brief Create a Routing Packet adding the routing table to the payload
-     *
-     * @return Packet*
-     */
-    Packet<uint8_t>* createRoutingPacket();
 
     /**
      * @brief Send a packet through Lora

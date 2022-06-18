@@ -113,3 +113,11 @@ bool PacketService::hasDataPacket(uint8_t type) {
 bool PacketService::hasControlPacket(uint8_t type) {
     return !((HELLO_P & type) == HELLO_P || (DATA_P & type) == DATA_P);
 }
+
+Packet<uint8_t>* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes) {
+    size_t routingSizeInBytes = numOfNodes * sizeof(NetworkNode);
+
+    Packet<uint8_t>* networkPacket = createPacket(BROADCAST_ADDR, localAddress, HELLO_P, (uint8_t*) nodes, routingSizeInBytes);
+
+    return networkPacket;
+}
