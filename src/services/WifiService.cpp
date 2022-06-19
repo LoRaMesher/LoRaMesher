@@ -1,6 +1,6 @@
 #include "WiFiService.h"
 
-WiFiService::WiFiService() {
+void WiFiService::init() {
     uint8_t WiFiMAC[6];
 
     WiFi.macAddress(WiFiMAC);
@@ -13,4 +13,4 @@ uint16_t WiFiService::getLocalAddress() {
     return localAddress;
 }
 
-WiFiService WifiServ;
+uint16_t WiFiService::localAddress;

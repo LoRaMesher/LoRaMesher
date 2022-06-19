@@ -1,7 +1,5 @@
 #include "PacketService.h"
 
-PacketService pS = PacketService();
-
 Packet<uint8_t>* PacketService::createPacket(uint8_t* payload, uint8_t payloadSize, uint8_t extraSize) {
     //Packet length = size of the packet + size of the payload + extraSize before payload
     int packetLength = sizeof(Packet<uint8_t>) + payloadSize + extraSize;

@@ -1,10 +1,13 @@
 #ifndef _LORAMESHER_PACKET_H
 #define _LORAMESHER_PACKET_H
 
+#include <Arduino.h>
+
 #include <ArduinoLog.h>
 
 #include "BuildOptions.h"
 #include "PacketHeader.h"
+
 
 #pragma pack(1)
 template <typename T>

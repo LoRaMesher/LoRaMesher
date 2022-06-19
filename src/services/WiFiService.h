@@ -10,9 +10,18 @@
 
 class WiFiService {
 public:
-    WiFiService();
+    /**
+     * @brief Initialize the WiFi Service
+     *
+     */
+    static void init();
 
-    uint16_t getLocalAddress();
+    /**
+     * @brief Get the Local Address
+     *
+     * @return uint16_t Local Address
+     */
+    static uint16_t getLocalAddress();
 
 private:
 
@@ -20,10 +29,8 @@ private:
      * @brief Local Address
      *
      */
-    uint16_t localAddress = 0;
+    static uint16_t localAddress;
 
 };
-
-extern WiFiService WifiServ;
 
 #endif

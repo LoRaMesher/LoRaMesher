@@ -13,11 +13,11 @@
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
-#include "helpers/LinkedQueue.hpp"
+#include "utilities/LinkedQueue.hpp"
 
-#include "packets/PacketService.h"
+#include "services/PacketService.h"
 
-#include "routingTable/RoutingTableService.h"
+#include "services/RoutingTableService.h"
 
 #include "services/WiFiService.h"
 

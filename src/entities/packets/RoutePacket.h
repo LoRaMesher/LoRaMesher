@@ -2,8 +2,9 @@
 #define _LORAMESHER_ROUTE_PACKET_H
 
 #include <Arduino.h>
+
 #include "PacketHeader.h"
-#include "routingTable/NetworkNode.h"
+#include "entities/routingTable/NetworkNode.h"
 
 #pragma pack(1)
 class RoutePacket final : public PacketHeader {

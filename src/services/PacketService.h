@@ -1,11 +1,11 @@
 #ifndef _LORAMESHER_PACKET_SERVICE_H
 #define _LORAMESHER_PACKET_SERVICE_H
 
-#include "Packet.h"
-#include "ControlPacket.h"
-#include "DataPacket.h"
-#include "AppPacket.h"
-#include "RoutePacket.h"
+#include "entities/packets/Packet.h"
+#include "entities/packets/ControlPacket.h"
+#include "entities/packets/DataPacket.h"
+#include "entities/packets/AppPacket.h"
+#include "entities/packets/RoutePacket.h"
 
 class PacketService {
 public:
@@ -22,7 +22,7 @@ public:
      * @return Packet<uint8_t>*
      */
     template <typename T>
-    Packet<uint8_t>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
+    static Packet<uint8_t>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
         uint8_t extraSize = getExtraLengthToPayload(type);
 
         Packet<uint8_t>* p = createPacket((uint8_t*) payload, payloadSize, extraSize);
@@ -39,7 +39,7 @@ public:
      * @param packetSize Packet size in bytes
      * @return Packet<uint8_t>*
      */
-    Packet<uint8_t>* createEmptyPacket(size_t packetSize);
+    static Packet<uint8_t>* createEmptyPacket(size_t packetSize);
 
     /**
      * @brief Copy a packet
@@ -47,7 +47,7 @@ public:
      * @param p packet to be copied
      * @return Packet<uint8_t>*
      */
-    Packet<uint8_t>* copyPacket(Packet<uint8_t>* p);
+    static Packet<uint8_t>* copyPacket(Packet<uint8_t>* p);
 
     /**
      * @brief Create a Routing Packet object
@@ -57,7 +57,7 @@ public:
      * @param numOfNodes Number of nodes
      * @return Packet<uint8_t>*
      */
-    Packet<uint8_t>* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes);
+    static Packet<uint8_t>* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes);
 
     /**
      * @brief Create a Application Packet
@@ -68,7 +68,7 @@ public:
      * @param payloadSize payload size in bytes
      * @return AppPacket<uint8_t>*
      */
-    AppPacket<uint8_t>* createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize);
+    static AppPacket<uint8_t>* createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize);
 
     /**
      * @brief given a Packet<uint8_t> it will be converted to a AppPacket
@@ -76,7 +76,7 @@ public:
      * @param p packet of type packet<uint8_t>
      * @return AppPacket<uint8_t>*
      */
-    AppPacket<uint8_t>* convertPacket(Packet<uint8_t>* p);
+    static AppPacket<uint8_t>* convertPacket(Packet<uint8_t>* p);
 
     /**
      * @brief Get the Packet Payload Length in bytes
@@ -86,7 +86,7 @@ public:
      * @return size_t The payload length in bytes of the packet
      */
     template <typename T>
-    size_t getPacketPayloadLength(Packet<T>* p) { return p->payloadSize - getExtraLengthToPayload(p->type); }
+    static size_t getPacketPayloadLength(Packet<T>* p) { return p->payloadSize - getExtraLengthToPayload(p->type); }
 
     /**
      * @brief Get the payload in number of elements
@@ -96,7 +96,7 @@ public:
      * @return size_t
      */
     template<typename T>
-    size_t getPayloadLength(Packet<T>* p) {
+    static size_t getPayloadLength(Packet<T>* p) {
         return (p->payloadSize - getExtraLengthToPayload(p->type)) / sizeof(T);
     }
 
@@ -108,7 +108,7 @@ public:
      * @return T* pointer of the packet payload
      */
     template <typename T>
-    T* getPayload(Packet<T>* packet) {
+    static T* getPayload(Packet<T>* packet) {
         return (T*) ((unsigned long) packet->payload + getExtraLengthToPayload(packet->type));
     }
 
@@ -118,7 +118,7 @@ public:
      * @param type
      * @return uint8_t
      */
-    uint8_t getMaximumPayloadLength(uint8_t type);
+    static uint8_t getMaximumPayloadLength(uint8_t type);
 
     /**
      * @brief Given a type returns if needs a data packet
@@ -127,7 +127,7 @@ public:
      * @return true True if needed
      * @return false If not
      */
-    bool hasDataPacket(uint8_t type);
+    static bool hasDataPacket(uint8_t type);
 
     /**
      * @brief Given a type returns if needs a control packet
@@ -136,7 +136,7 @@ public:
      * @return true True if needed
      * @return false If not
      */
-    bool hasControlPacket(uint8_t type);
+    static bool hasControlPacket(uint8_t type);
 
 private:
 
@@ -146,7 +146,7 @@ private:
      * @param type type of the packet
      * @return size_t number of bytes
      */
-    uint8_t getExtraLengthToPayload(uint8_t type);
+    static uint8_t getExtraLengthToPayload(uint8_t type);
 
     /**
      * @brief Create a Packet<uint8_t>
@@ -156,10 +156,8 @@ private:
      * @param extraSize Indicates the function that it need to allocate extra space before the payload
      * @return Packet<uint8_t>*
      */
-    Packet<uint8_t>* createPacket(uint8_t* payload, uint8_t payloadSize, uint8_t extraSize);
+    static Packet<uint8_t>* createPacket(uint8_t* payload, uint8_t payloadSize, uint8_t extraSize);
 
 };
-
-extern PacketService pS;
 
 #endif

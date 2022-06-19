@@ -63,7 +63,7 @@ void RoutingTableService::processRoute(RoutePacket* p) {
 }
 
 void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
-    if (node->address != WifiServ.getLocalAddress()) {
+    if (node->address != WiFiService::getLocalAddress()) {
 
         RouteNode* rNode = findNode(node->address);
         //If nullptr the node is not inside the routing table, then add it
@@ -104,12 +104,6 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
     Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
 }
 
-
-/**
- * @brief Get the All Network Nodes that are inside the routing table
- *
- * @return NetworkNode* All the nodes in a list.
- */
 NetworkNode* RoutingTableService::getAllNetworkNodes() {
     routingTableList->setInUse();
 
@@ -182,3 +176,5 @@ void RoutingTableService::manageTimeoutRoutingTable() {
 
     printRoutingTable();
 }
+
+LM_LinkedList<RouteNode>* RoutingTableService::routingTableList = new LM_LinkedList<RouteNode>();
