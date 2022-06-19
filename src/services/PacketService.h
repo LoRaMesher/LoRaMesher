@@ -11,6 +11,14 @@ class PacketService {
 public:
 
     /**
+     * @brief Reinterpret cast from a Packet<uint8_t>* to a DataPacket<uint8_t>*
+     * 
+     * @param p packet to be reinterpret
+     * @return DataPacket<uint8_t>* 
+     */
+    static DataPacket<uint8_t>* dataPacket(Packet<uint8_t>* p);
+
+    /**
      * @brief Create a Packet<T>
      *
      * @tparam T

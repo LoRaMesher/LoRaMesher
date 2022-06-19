@@ -119,3 +119,7 @@ Packet<uint8_t>* PacketService::createRoutingPacket(uint16_t localAddress, Netwo
 
     return networkPacket;
 }
+
+DataPacket<uint8_t>* PacketService::dataPacket(Packet<uint8_t>* p) {
+    return reinterpret_cast<DataPacket<uint8_t>*>(p);
+}

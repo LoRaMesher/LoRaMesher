@@ -3,11 +3,12 @@
 
 #include <Arduino.h>
 
+#include "RouteDataPacket.h"
+
 #pragma pack(1)
 template <class T>
-class DataPacket {
+class DataPacket final : public RouteDataPacket {
 public:
-    uint16_t via;
     T payload[];
 };
 #pragma pop()

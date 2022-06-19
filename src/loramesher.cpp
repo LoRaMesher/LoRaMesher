@@ -556,10 +556,6 @@ int LoraMesher::routingTableSize() {
     return RoutingTableService::routingTableSize();
 }
 
-void LoraMesher::resetTimeoutRoutingNode(routableNode* node) {
-    node->timeout = millis() + DEFAULT_TIMEOUT * 1000;
-}
-
 /**
  *  End Region Routing Table
 **/
