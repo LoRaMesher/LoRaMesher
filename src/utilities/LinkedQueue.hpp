@@ -31,6 +31,7 @@ public:
     T* operator[](int);
     size_t getLength();
     void Append(T*);
+    void addCurrent(T*);
     T* Pop();
     bool Search(T*);
     void DeleteCurrent();
@@ -109,11 +110,31 @@ void LM_LinkedList<T>::Append(T* element) {
 
 }
 
+template <class T>
+void LM_LinkedList<T>::addCurrent(T* element) {
+    if (length == 0) {
+        Append(element);
+        return;
+    }
+
+    LM_ListNode<T>* node = new LM_ListNode<T>(element, curr->prev, curr);
+
+    curr->prev = node;
+
+    if (curr == head) {
+        head = node;
+    }
+
+    length++;
+
+}
+
+
 template<class T>
 T* LM_LinkedList<T>::Pop() {
     moveToStart();
     T* element = getCurrent();
-    DeleteCurrent();
+    // DeleteCurrent();
     return element;
 }
 
