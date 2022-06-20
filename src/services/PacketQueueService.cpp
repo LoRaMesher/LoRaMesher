@@ -5,11 +5,7 @@ void PacketQueueService::addOrdered(LM_LinkedList<QueuePacket<uint8_t>>* list, Q
 
     if (list->moveToStart()) {
         do {
-            Log.verboseln("WTF");
             QueuePacket<uint8_t>* current = list->Last();
-            uint16_t prio = current->number;
-            Log.verboseln("WTF2");
-            Log.verboseln("%d", prio);
             if (current->priority < qp->priority) {
                 list->addCurrent(qp);
                 list->releaseInUse();
