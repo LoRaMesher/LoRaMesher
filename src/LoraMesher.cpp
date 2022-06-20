@@ -177,10 +177,12 @@ void LoraMesher::receivingRoutine() {
                 if (res != 0) {
                     Log.errorln(F("Reading packet data gave error: %d"), res);
                     deletePacket(rx);
-                } else if (snr <= 0) {
-                    Log.errorln(F("Packet with bad SNR, deleting it"));
-                    deletePacket(rx);
-                } else {
+                }
+                // else if (snr <= 0) {
+                //     Log.errorln(F("Packet with bad SNR, deleting it"));
+                //     deletePacket(rx);
+                // } 
+                else {
                     //Add the packet created into the ReceivedPackets List
                     packetQueue<uint8_t>* pq = createPacketQueue(rx, 0);
                     ReceivedPackets->Add(pq);
@@ -316,8 +318,6 @@ void LoraMesher::sendHelloPacket() {
         delete[] nodes;
 
         setPackedForSend(tx, DEFAULT_PRIORITY + 1);
-
-        RoutingTableService::printRoutingTable();
 
         //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
@@ -484,16 +484,11 @@ void LoraMesher::processDataPacketForMe(packetQueue<Packet<DataPacket<uint8_t>>>
 
     if ((p->type & DATA_P) == DATA_P) {
         Log.verboseln(F("Data Packet received"));
-        //Convert the packet queue into a packet queue user
-        packetQueue<AppPacket<uint8_t>>* pqUser = (packetQueue<AppPacket<uint8_t>>*) pq;
-
         //Convert the packet into a user packet
-        pqUser->packet = PacketService::convertPacket((Packet<uint8_t>*) p);
+        AppPacket<uint8_t>* appPacket = PacketService::convertPacket(reinterpret_cast<Packet<uint8_t>*>(p));
 
         //Add and notify the user of this packet
-        notifyUserReceivedPacket(pqUser);
-
-        deleteQueuePacket = false;
+        notifyUserReceivedPacket(appPacket);
 
     } else if ((p->type & ACK_P) == ACK_P) {
         Log.verboseln(F("ACK Packet received"));
@@ -531,9 +526,9 @@ void LoraMesher::processDataPacketForMe(packetQueue<Packet<DataPacket<uint8_t>>>
         deletePacketQueueAndPacket(pq);
 }
 
-void LoraMesher::notifyUserReceivedPacket(LoraMesher::packetQueue<AppPacket<uint8_t>>* pq) {
+void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
     //Add the packet inside the receivedUsers Queue
-    ReceivedAppPackets->Add((packetQueue<uint8_t>*) pq);
+    ReceivedAppPackets->Append(appPacket);
 
     //Notify the received user task handle
     xTaskNotifyFromISR(
@@ -566,7 +561,7 @@ int LoraMesher::routingTableSize() {
 **/
 
 size_t LoraMesher::getReceivedQueueSize() {
-    return ReceivedAppPackets->Size();
+    return ReceivedAppPackets->getLength();
 }
 
 void LoraMesher::PacketQueue::Enable() {
@@ -845,16 +840,16 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
         } while (list->next());
     }
 
-    //Change payload size to all payload size + size of the headers
-    p->payloadSize = payloadSize;
-
     list->releaseInUse();
+
+    //Set values to the AppPacket
+    p->payloadSize = payloadSize;
+    p->src = listConfig->config->source;
+    p->dst = getLocalAddress();
 
     findAndClearLinkedList(q_WRP, listConfig);
 
-    packetQueue<AppPacket<uint8_t>>* pq = (packetQueue<AppPacket<uint8_t>>*) createPacketQueue(p, DEFAULT_PRIORITY);
-
-    notifyUserReceivedPacket(pq);
+    notifyUserReceivedPacket(p);
 }
 
 void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq_num) {

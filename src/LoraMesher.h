@@ -19,6 +19,8 @@
 
 #include "services/RoutingTableService.h"
 
+#include "services/PacketQueueService.h"
+
 #include "services/WiFiService.h"
 
 class LoraMesher {
@@ -128,12 +130,8 @@ public:
       */
     template<typename T>
     AppPacket<T>* getNextAppPacket() {
-        packetQueue<AppPacket<T>>* pq = ReceivedAppPackets->Pop<AppPacket<T>>();
-        AppPacket<T>* packet = pq->packet;
-
-        deletePacketQueue(pq);
-
-        return packet;
+        AppPacket<T>* appPacket = reinterpret_cast<AppPacket<T>*>(ReceivedAppPackets->Pop());
+        return appPacket;
     }
 
     /**
@@ -386,7 +384,7 @@ private:
         void Enable();
     };
 
-    PacketQueue* ReceivedAppPackets = new PacketQueue();
+    LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = new LM_LinkedList<AppPacket<uint8_t>>();
 
     PacketQueue* ReceivedPackets = new PacketQueue();
 
@@ -409,8 +407,9 @@ private:
     /**
      * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
      *
+     * @param appPq App packet
      */
-    void notifyUserReceivedPacket(packetQueue<AppPacket<uint8_t>>* pq);
+    void notifyUserReceivedPacket(AppPacket<uint8_t>* appPq);
 
     /**
      * @brief Send a packet through Lora

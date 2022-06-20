@@ -134,7 +134,7 @@ template<class T>
 T* LM_LinkedList<T>::Pop() {
     moveToStart();
     T* element = getCurrent();
-    // DeleteCurrent();
+    DeleteCurrent();
     return element;
 }
 

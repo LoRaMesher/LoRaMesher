@@ -59,10 +59,7 @@ Packet<uint8_t>* PacketService::copyPacket(Packet<uint8_t>* p) {
 
 AppPacket<uint8_t>* PacketService::convertPacket(Packet<uint8_t>* p) {
     AppPacket<uint8_t>* uPacket = createAppPacket(p->dst, p->src, getPayload(p), getPayloadLength(p));
-    delete p;
-
     return uPacket;
-
 }
 
 AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize) {
