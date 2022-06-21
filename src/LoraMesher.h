@@ -167,7 +167,11 @@ private:
      */
     LoraMesher();
 
-    // RoutingTableService rTService = RoutingTableService::getInstance();
+    LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = new LM_LinkedList<AppPacket<uint8_t>>();
+
+    LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ReceivedPackets = new LM_LinkedList<QueuePacket<Packet<uint8_t>>>();
+
+    LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ToSendPackets = new LM_LinkedList<QueuePacket<Packet<uint8_t>>>();
 
     /**
      * @brief Routable node timeout (µs)
@@ -261,148 +265,32 @@ private:
     template <typename T>
     void setPackedForSend(Packet<T>* p, uint8_t priority) {
         Log.traceln(F("Adding packet to Q_SP"));
-        packetQueue<uint8_t>* send = createPacketQueue(p, priority);
-        ToSendPackets->Add(send);
+        QueuePacket<Packet<uint8_t>>* send = PacketQueueService::createQueuePacket(p, priority);
+        addOrdered(ToSendPackets, send);
         //TODO: Using vTaskDelay to kill the packet inside LoraMesher
     }
 
     /**
-     * @brief packetQueue template
+     * @brief Add the Queue packet into the list ordered
      *
-     * @tparam T
+     * @param list Linked list to add the QueuePacket
+     * @param qp Queue packet to be added
      */
-    template <typename T>
-    struct packetQueue {
-        uint16_t number{0};
-        uint8_t priority = DEFAULT_PRIORITY;
-        T* packet;
-        packetQueue<T>* next;
-    };
-
-    /**
-     * @brief It will delete the packet queue and the packet inside it
-     *
-     * @tparam T Type of the packet queue
-     * @param pq packet queue to be deleted
-     */
-    template <typename T>
-    static void deletePacketQueueAndPacket(packetQueue<T>* pq) {
-        deletePacket((Packet<T>*) pq->packet);
-        deletePacketQueue(pq);
-    }
-
-    /**
-     * @brief It will delete the packet queue
-     *
-     * @tparam T Type of packetQueue
-     * @param pq Packet queue to be deleted
-     */
-    template <typename T>
-    static void deletePacketQueue(packetQueue<T>* pq) {
-        Log.traceln(F("Deleting packet queue"));
-        delete pq;
-    }
-
-    /**
-     * @brief Create a Packet Queue element
-     *
-     * @tparam T type of the packet queue
-     * @tparam I type of the packet
-     * @param p packet
-     * @param priority priority inside the queue
-     * @param number Number of the sequence
-     * @return packetQueue<T>*
-     */
-    template <typename T>
-    packetQueue<uint8_t>* createPacketQueue(T* p, uint8_t priority, uint16_t number = 0) {
-        packetQueue<uint8_t>* pq = new packetQueue<uint8_t>();
-        pq->priority = priority;
-        pq->packet = (uint8_t*) p;
-        pq->next = nullptr;
-        pq->number = number;
-        return pq;
-    }
-
-    class PacketQueue {
-    public:
-        /**
-         * @brief Add pq in order of priority
-         *
-         * @param pq
-         */
-        void Add(packetQueue<uint8_t>* pq);
-
-        /**
-         * @brief Get the first packetQueue of the list and deletes it from the list
-         *
-         * @tparam T
-         * @return packetQueue<T>*
-         */
-        template <typename T>
-        packetQueue<T>* Pop() {
-            WaitAndDisable();
-
-            if (first == nullptr) {
-                Enable();
-                return nullptr;
-            }
-
-            packetQueue<T>* firstCp = (packetQueue<T>*) first;
-            first = first->next;
-
-            Enable();
-            return firstCp;
-        }
-
-        /**
-         * @brief Returns the size of the queue
-         *
-         * @return size_t
-         */
-        size_t Size();
-
-        /**
-         * @brief Clear the packetQueueFifo, deleting all the packets inside too.
-         *
-         */
-        void Clear();
-
-    private:
-        bool* enabled = new bool(true);
-        packetQueue<uint8_t>* first = nullptr;
-
-        /**
-         * @brief Wait for the enabled flag to be true, set it to false then
-         *
-         */
-        void WaitAndDisable();
-
-        /**
-         * @brief Set the enabled flag to true
-         *
-         */
-        void Enable();
-    };
-
-    LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = new LM_LinkedList<AppPacket<uint8_t>>();
-
-    PacketQueue* ReceivedPackets = new PacketQueue();
-
-    PacketQueue* ToSendPackets = new PacketQueue();
+    static void addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp);
 
     /**
      * @brief Process the data packet
      *
      * @param pq packet queue to be processed as data packet
      */
-    void processDataPacket(packetQueue<Packet<DataPacket<uint8_t>>>* pq);
+    void processDataPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Process the data packet that destination is this node
      *
      * @param pq packet queue to be processed as data packet
      */
-    void processDataPacketForMe(packetQueue<Packet<DataPacket<uint8_t>>>* pq);
+    void processDataPacketForMe(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
@@ -442,9 +330,9 @@ private:
      * @param destination destination address
      * @param seq_id Sequence Id
      * @param num_packets Number of packets of the sequence
-     * @return packetQueue<uint8_t>*
+     * @return QueuePacket<Packet<uint8_t>>*
      */
-    packetQueue<uint8_t>* getStartSequencePacketQueue(uint16_t destination, uint8_t seq_id, uint16_t num_packets);
+    QueuePacket<Packet<uint8_t>>* getStartSequencePacketQueue(uint16_t destination, uint8_t seq_id, uint16_t num_packets);
 
     /**
      * @brief Sends an ACK packet to the destination
@@ -477,7 +365,7 @@ private:
      *
      * @param pq PacketQueue packet queue to be processed
      */
-    void processLargePayloadPacket(packetQueue<Packet<DataPacket<uint8_t>>>* pq);
+    void processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Process a received synchronization packet
@@ -547,7 +435,7 @@ private:
      */
     struct listConfiguration {
         sequencePacketConfig* config;
-        LM_LinkedList<packetQueue<uint8_t>>* list;
+        LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list;
     };
 
     /**
@@ -638,9 +526,9 @@ private:
      *
      * @param queue Queue to find the packet queue
      * @param num Number of the sequence of the packet queue
-     * @return packetQueue<uint8_t>*
+     * @return QueuePacket<Packet<uint8_t>>*
      */
-    packetQueue<uint8_t>* findPacketQueue(LM_LinkedList<packetQueue<uint8_t>>* queue, uint8_t num);
+    QueuePacket<Packet<uint8_t>>* findPacketQueue(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* queue, uint8_t num);
 
     /**
      * @brief Queue Waiting Sending Packets (Q_WSP)

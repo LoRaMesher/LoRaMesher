@@ -15,29 +15,18 @@ class PacketQueueService {
 public:
 
     /**
-     * @brief Add the Queue packet into the list ordered
-     *
-     * @param list Linked list to add the QueuePacket
-     * @param qp Queue packet to be added
-     */
-    static void addOrdered(LM_LinkedList<QueuePacket<uint8_t>>* list, QueuePacket<uint8_t>* qp);
-
-    /**
      * @brief Create a Queue Packet element
      *
-     * @tparam T type of the queue packet
-     * @tparam I type of the packet
      * @param p packet
      * @param priority priority inside the queue
      * @param number Number of the sequence
      * @return QueuePacket<uint8_t>*
      */
-    template <typename T>
-    static QueuePacket<uint8_t>* createQueuePacket(T* p, uint8_t priority, uint16_t number = 0) {
-        QueuePacket<uint8_t>* qp = new QueuePacket<uint8_t>();
+    static QueuePacket<Packet<uint8_t>>* createQueuePacket(Packet<uint8_t>* p, uint8_t priority, uint16_t number = 0) {
+        QueuePacket<Packet<uint8_t>>* qp = new QueuePacket<Packet<uint8_t>>();
         qp->priority = priority;
         qp->number = number;
-        qp->packet = reinterpret_cast<uint8_t*>(p);
+        qp->packet = p;
         return qp;
     }
 
@@ -48,7 +37,7 @@ public:
      * @param pq packet queue to be deleted
      */
     static void deleteQueuePacketAndPacket(QueuePacket<Packet<uint8_t>>* pq) {
-        free(pq->packet);
+        delete pq->packet;
 
         Log.traceln(F("Deleting packet queue"));
         delete pq;

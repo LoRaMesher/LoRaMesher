@@ -31,8 +31,8 @@ public:
     T* operator[](int);
     size_t getLength();
     void Append(T*);
-    void addCurrent(T*);
     T* Pop();
+    void addCurrent(T*);
     bool Search(T*);
     void DeleteCurrent();
     bool next();
@@ -61,17 +61,17 @@ LM_LinkedList<T>::~LM_LinkedList() {
 
 template<class T>
 T* LM_LinkedList<T>::getCurrent() {
-    return curr->element;
+    return curr ? curr->element : nullptr;
 }
 
 template<class T>
 T* LM_LinkedList<T>::First() const {
-    return head->element;
+    return head ? head->element : nullptr;
 }
 
 template<class T>
 T* LM_LinkedList<T>::Last() const {
-    return tail->element;
+    return tail ? tail->element : nullptr;
 }
 
 template <class T>
@@ -128,7 +128,6 @@ void LM_LinkedList<T>::addCurrent(T* element) {
     length++;
 
 }
-
 
 template<class T>
 T* LM_LinkedList<T>::Pop() {
