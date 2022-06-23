@@ -32,7 +32,7 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  * @param data
  */
 void printPacket(dataPacket data) {
-    Log.verboseln(F("Hello Counter received nº %X" CR), data.counter);
+    Log.verboseln(F("Hello Counter received nº %X"), data.counter);
 }
 
 /**
@@ -41,7 +41,7 @@ void printPacket(dataPacket data) {
  * @param packet
  */
 void printDataPacket(AppPacket<dataPacket>* packet) {
-    Log.traceln(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
+    Log.traceln(F("Packet arrived from %X with size %d"), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
@@ -65,8 +65,8 @@ void processReceivedPackets(void*) {
 
         //Iterate through all the packets inside the Received User Packets FiFo
         while (radio.getReceivedQueueSize() > 0) {
-            Log.traceln(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.traceln(F("Fifo receiveUserData size: %d" CR), radio.getReceivedQueueSize() > 0);
+            Log.traceln(F("ReceivedUserData_TaskHandle notify received"));
+            Log.traceln(F("Fifo receiveUserData size: %d"), radio.getReceivedQueueSize() > 0);
 
             //Get the first element inside the Received User Packets FiFo
             AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
@@ -104,7 +104,7 @@ void setup() {
 
 void loop() {
     for (;;) {
-        Log.traceln(F("Send packet %d" CR), dataCounter);
+        Log.traceln(F("Send packet %d"), dataCounter);
 
         helloPacket->counter = dataCounter++;
 
