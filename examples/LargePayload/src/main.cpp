@@ -136,7 +136,7 @@ void printAddressDisplay() {
 void printRoutingTableToDisplay() {
 
     //Set the routing table list that is being used and cannot be accessed (Remember to release use after usage)
-    LM_LinkedList<RouteNode>* routingTableList = RoutingTableService::getInstance().routingTableList;
+    LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
 
     routingTableList->setInUse();
 
@@ -174,7 +174,7 @@ void sendLoRaMessage(void*) {
         if (radio.routingTableSize() <= dataTablePosition)
             dataTablePosition = 0;
 
-        LM_LinkedList<RouteNode>* routingTableList = RoutingTableService::getInstance().routingTableList;
+        LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
 
         uint16_t addr = (*routingTableList)[dataTablePosition]->networkNode.address;
 

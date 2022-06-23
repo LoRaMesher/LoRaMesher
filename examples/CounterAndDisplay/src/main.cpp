@@ -51,12 +51,12 @@ void printPacket(dataPacket* data, uint16_t sourceAddress) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
+void printDataPacket(AppPacket<dataPacket>* packet) {
     Log.traceln(F("Packet arrived from %X with size %d bytes"), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
-    size_t payloadLength = radio.getPayloadLength(packet);
+    size_t payloadLength = packet->getPayloadLength();
 
     printPacket(&dPacket[0], packet->src);
 
@@ -95,7 +95,7 @@ void processReceivedPackets(void*) {
             Log.traceln(F("Fifo receiveUserData size: %d"), radio.getReceivedQueueSize() > 0);
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+            AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
             printDataPacket(packet);
@@ -136,20 +136,22 @@ void printAddressDisplay() {
 void printRoutingTableToDisplay() {
 
     //Set the routing table list that is being used and cannot be accessed (Remember to release use after usage)
-    radio.routingTableList->setInUse();
+    LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
+
+    routingTableList->setInUse();
 
     Screen.changeSizeRouting(radio.routingTableSize());
 
     char text[15];
     for (int i = 0; i < radio.routingTableSize(); i++) {
-        LoraMesher::routableNode* rNode = (*radio.routingTableList)[i];
-        LoraMesher::networkNode node = rNode->networkNode;
+        RouteNode* rNode = (*routingTableList)[i];
+        NetworkNode node = rNode->networkNode;
         snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, rNode->via);
         Screen.changeRoutingText(text, i);
     }
 
     //Release routing table list usage.
-    radio.routingTableList->releaseInUse();
+    routingTableList->releaseInUse();
 
     Screen.changeLineFour();
 }
@@ -170,7 +172,9 @@ void sendLoRaMessage(void*) {
         if (radio.routingTableSize() <= dataTablePosition)
             dataTablePosition = 0;
 
-        uint16_t addr = (*radio.routingTableList)[dataTablePosition]->networkNode.address;
+        LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
+
+        uint16_t addr = (*routingTableList)[dataTablePosition]->networkNode.address;
 
         Log.traceln(F("Send data packet nº %d to %X (%d)"), dataCounter, addr, dataTablePosition);
 

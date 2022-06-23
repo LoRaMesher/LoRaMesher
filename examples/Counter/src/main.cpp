@@ -40,12 +40,12 @@ void printPacket(dataPacket data) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
+void printDataPacket(AppPacket<dataPacket>* packet) {
     Log.traceln(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
-    size_t payloadLength = radio.getPayloadLength(packet);
+    size_t payloadLength = packet->getPayloadLength();
 
     for (size_t i = 0; i < payloadLength; i++) {
         //Print the packet
@@ -69,7 +69,7 @@ void processReceivedPackets(void*) {
             Log.traceln(F("Fifo receiveUserData size: %d" CR), radio.getReceivedQueueSize() > 0);
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+            AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
             printDataPacket(packet);
