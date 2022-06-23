@@ -72,6 +72,12 @@ public:
     ~LoraMesher();
 
     /**
+     * @brief Routing table List
+     *
+     */
+    LM_LinkedList<RouteNode>* routingTableList() { return RoutingTableService::routingTableList; }
+
+    /**
      * @brief Create a Packet And Send it
      *
      * @tparam T
@@ -89,7 +95,7 @@ public:
         size_t payloadSizeInBytes = payloadSize * sizeof(T);
 
         //Create the packet and set it to the send queue
-        setPackedForSend(createPacket(dst, getLocalAddress(), DATA_P, payload, payloadSizeInBytes), DEFAULT_PRIORITY);
+        setPackedForSend(PacketService::createPacket(dst, getLocalAddress(), DATA_P, payload, payloadSizeInBytes), DEFAULT_PRIORITY);
     }
 
     /**
@@ -152,12 +158,83 @@ public:
      */
     int routingTableSize();
 
+
     /**
      * @brief Get the Local Address
      *
      * @return uint16_t Address
      */
     uint16_t getLocalAddress();
+
+    /**
+     * @brief Get the Received Data Packets Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedDataPacketsNum() { return receivedDataPacketsNum; }
+
+    /**
+     * @brief Get the Send Packets Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getSendPacketsNum() { return sendPacketsNum; }
+
+    /**
+     * @brief Get the Received Hello Packets Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedHelloPacketsNum() { return receivedHelloPacketsNum; }
+
+    /**
+     * @brief Get the Sent Hello Packets Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getSentHelloPacketsNum() { return sentHelloPacketsNum; }
+
+    /**
+     * @brief Get the Received Broadcast Packets Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedBroadcastPacketsNum() { return receivedBroadcastPacketsNum; }
+
+    /**
+     * @brief Get the Received Broadcast Packets Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getForwardedPacketsNum() { return forwardedPacketsNum; }
+
+    /**
+     * @brief Get the Data Packets For Me Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getDataPacketsForMeNum() { return dataPacketForMeNum; }
+
+    /**
+     * @brief Get the Received I Am Via Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedIAmViaNum() { return receivedIAmViaNum; }
+
+    /**
+     * @brief Get the Destiny Unreachable Num
+     *
+     * @return uint32_t
+     */
+    uint32_t getDestinyUnreachableNum() { return sendPacketDestinyUnreachableNum; }
+
+    /**
+     * @brief Get the Received Not For Me
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedNotForMe() { return receivedPacketNotForMeNum; }
 
 private:
 
@@ -237,11 +314,56 @@ private:
 
     void packetManager();
 
+
     /**
-     * @brief Function that process the packets inside Received Packets
-     * Task executed every time that a packet arrive.
+     * @brief Region Monitoring variables
      *
      */
+
+    uint32_t receivedDataPacketsNum = 0;
+    void incReceivedDataPackets() { receivedDataPacketsNum++; }//minetwork -> incReceivedPackets();
+
+    uint32_t sendPacketsNum = 0;
+    void incSendPackets() { sendPacketsNum++; }//
+
+    uint32_t receivedHelloPacketsNum = 0;
+    void incRecHelloPackets() { receivedHelloPacketsNum++; }//
+
+    uint32_t sentHelloPacketsNum = 0;
+    void incSentHelloPackets() { sentHelloPacketsNum++; }//
+
+    uint32_t receivedBroadcastPacketsNum = 0;
+    void incReceivedBroadcast() { receivedBroadcastPacketsNum++; }//
+
+    uint32_t forwardedPacketsNum = 0;
+    void incForwardedPackets() { forwardedPacketsNum++; }//
+
+    uint32_t dataPacketForMeNum = 0;
+    void incDataPacketForMe() { dataPacketForMeNum++; }//
+
+    uint32_t receivedIAmViaNum = 0;
+    void incReceivedIAmVia() { receivedIAmViaNum++; }//
+
+    uint32_t sendPacketDestinyUnreachableNum = 0;
+    void incDestinyUnreachable() { sendPacketDestinyUnreachableNum++; }//
+
+    uint32_t receivedPacketNotForMeNum = 0;
+    void incReceivedNotForMe() { receivedPacketNotForMeNum++; }
+
+
+    /**
+     * @brief End region Monitoring variables
+     *
+     */
+
+
+
+
+     /**
+      * @brief Function that process the packets inside Received Packets
+      * Task executed every time that a packet arrive.
+      *
+      */
     void processPackets();
 
     /**

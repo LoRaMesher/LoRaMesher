@@ -272,10 +272,14 @@ void LoraMesher::sendPackets() {
                 if (nextHop == 0) {
                     Log.errorln(F("NextHop Not found from %X, destination %X"), tx->packet->src, tx->packet->dst);
                     PacketQueueService::deleteQueuePacketAndPacket(tx);
+                    incDestinyUnreachable();
                     continue;
                 }
 
                 ((DataPacket<uint8_t>*) (tx->packet->payload))->via = nextHop;
+
+                if (tx->packet->src != getLocalAddress())
+                    incForwardedPackets();
             }
 
             //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
@@ -286,6 +290,9 @@ void LoraMesher::sendPackets() {
 
             sendCounter++;
 
+            if (hasSend) {
+                incSendPackets();
+            }
 
             //TODO: If the packet has not been send, add it to the queue and send it again
             // if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
@@ -313,6 +320,8 @@ void LoraMesher::sendHelloPacket() {
 
     for (;;) {
         Log.traceln(F("Creating Routing Packet"));
+
+        incSentHelloPackets();
 
         NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
 
@@ -343,6 +352,7 @@ void LoraMesher::processPackets() {
                 uint8_t type = rx->packet->type;
 
                 if ((type & HELLO_P) == HELLO_P) {
+                    incRecHelloPackets();
                     RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet));
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
@@ -351,6 +361,7 @@ void LoraMesher::processPackets() {
 
                 else {
                     Log.verboseln(F("Packet not identified, deleting it"));
+                    incReceivedNotForMe();
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
                 }
@@ -456,25 +467,32 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
 void LoraMesher::processDataPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq) {
     Packet<DataPacket<uint8_t>>* packet = pq->packet;
 
+    incReceivedDataPackets();
+
     Log.traceln(F("Data packet from %X, destination %X, via %X"), packet->src, packet->dst, packet->payload->via);
 
     if (packet->dst == getLocalAddress()) {
         Log.verboseln(F("Data packet from %X for me"), packet->src);
+        incDataPacketForMe();
+
         processDataPacketForMe(pq);
         return;
 
     } else if (packet->dst == BROADCAST_ADDR) {
         Log.verboseln(F("Data packet from %X BROADCAST"), packet->src);
+        incReceivedBroadcast();
         processDataPacketForMe(pq);
         return;
 
     } else if (packet->payload->via == getLocalAddress()) {
         Log.verboseln(F("Data Packet from %X for %X. Via is me. Forwarding it"), packet->src, packet->dst);
+        incReceivedIAmVia();
         addOrdered(ToSendPackets, reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
         return;
     }
 
     Log.verboseln(F("Packet not for me, deleting it"));
+    incReceivedNotForMe();
     PacketQueueService::deleteQueuePacketAndPacket(pq);
 }
 
@@ -657,7 +675,7 @@ bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_n
 
     //Add the packet to the send queue
     setPackedForSend(p, DEFAULT_PRIORITY);
-    
+
     return true;
 }
 
