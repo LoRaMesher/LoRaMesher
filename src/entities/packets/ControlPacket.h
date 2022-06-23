@@ -11,6 +11,6 @@ public:
     uint16_t number;
     T payload[];
 };
-#pragma pop()
+#pragma pack(pop)
 
 #endif

@@ -13,6 +13,6 @@ public:
 
     size_t getPayloadLength() { return this->payloadSize / sizeof(NetworkNode); }
 };
-#pragma pop()
+#pragma pack(pop)
 
 #endif

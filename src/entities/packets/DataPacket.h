@@ -11,6 +11,6 @@ class DataPacket final : public RouteDataPacket {
 public:
     T payload[];
 };
-#pragma pop()
+#pragma pack(pop)
 
 #endif
