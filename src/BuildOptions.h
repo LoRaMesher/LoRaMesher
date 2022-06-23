@@ -38,8 +38,8 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 30
-#define SEND_PACKETS_DELAY 10
+#define HELLO_PACKETS_DELAY 180
+#define SEND_PACKETS_DELAY 60
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
 
 //Maximum times that a sequence of packets reach the timeout
