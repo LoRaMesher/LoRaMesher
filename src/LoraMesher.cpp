@@ -44,7 +44,6 @@ void LoraMesher::initializeLoRa() {
 
     // Set up the radio parameters
     Log.verboseln(F("Initializing radio"));
-    //TODO: Configure 
     int res = radio->begin(BAND, BANDWIDTH, LORASF, 7U, SYNC_WORD, 10);
     if (res != 0) {
         Log.errorln(F("Radio module gave error: %d"), res);
@@ -553,11 +552,10 @@ void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
     ReceivedAppPackets->Append(appPacket);
 
     //Notify the received user task handle
-    xTaskNotifyFromISR(
+    xTaskNotify(
         ReceivedUserData_TaskHandle,
         0,
-        eSetValueWithoutOverwrite,
-        NULL);
+        eSetValueWithoutOverwrite);
 }
 
 /**
