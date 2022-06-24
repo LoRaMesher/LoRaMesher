@@ -10,6 +10,6 @@ class RouteDataPacket {//: public PacketHeader {
 public:
     uint16_t via;
 };
-#pragma pack(pop)
+#pragma pack()
 
 #endif

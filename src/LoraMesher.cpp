@@ -44,7 +44,8 @@ void LoraMesher::initializeLoRa() {
 
     // Set up the radio parameters
     Log.verboseln(F("Initializing radio"));
-    int res = radio->begin(BAND, BANDWIDTH, LORASF, 7U, 18U, 10);
+    //TODO: Configure 
+    int res = radio->begin(BAND, BANDWIDTH, LORASF, 7U, SYNC_WORD, 10);
     if (res != 0) {
         Log.errorln(F("Radio module gave error: %d"), res);
     }

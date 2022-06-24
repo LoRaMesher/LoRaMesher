@@ -29,6 +29,6 @@ public:
 
     // virtual uint8_t* getPayload() { return (uint8_t*) (&this->payloadSize + sizeof(payloadSize)); }
 };
-#pragma pack(pop)
+#pragma pack()
 
 #endif

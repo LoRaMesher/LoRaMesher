@@ -45,6 +45,6 @@ public:
     }
 
 };
-#pragma pack(pop)
+#pragma pack()
 
 #endif

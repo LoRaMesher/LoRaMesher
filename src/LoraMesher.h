@@ -45,7 +45,7 @@ public:
      *          // Get the receivedAppPackets and get all the elements
      *          while (radio.getReceivedQueueSize() > 0) {
      *              //Get the first element inside the Received User Packets FiFo
-     *              LoraMesher::AppPacket<DataPacket>* packet = radio.getNextAppPacket<DataPacket>();
+     *              AppPacket<DataPacket>* packet = radio.getNextAppPacket<DataPacket>();
      *
      *              //Do something with the packet, ex: print(packetReceived);
      *

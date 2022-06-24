@@ -9,6 +9,9 @@
 #define BANDWIDTH 125.0F
 #define LORASF 7U // Spreading factor 6-12 (default 7)
 
+//Syncronization Word that identifies the mesh network
+#define SYNC_WORD 19U
+
 // Comment this line if you want to remove the crc for each packet
 #define ADDCRC_PAYLOAD
 
