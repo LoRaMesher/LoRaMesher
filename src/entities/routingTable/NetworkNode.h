@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+#pragma pack(1)
+
 class NetworkNode {
 public:
     /**
@@ -21,5 +23,7 @@ public:
 
     NetworkNode(uint16_t address_, uint8_t metric_) : address(address_), metric(metric_) {};
 };
+
+#pragma pack()
 
 #endif

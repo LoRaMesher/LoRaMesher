@@ -18,10 +18,10 @@ template <class T>
 class LM_LinkedList {
 private:
     size_t length;
-    bool inUse;
     LM_ListNode<T>* head;
     LM_ListNode<T>* tail;
     LM_ListNode<T>* curr;
+    SemaphoreHandle_t xSemaphore;
 public:
     LM_LinkedList();
     ~LM_LinkedList();
@@ -47,16 +47,23 @@ public:
 template <class T>
 LM_LinkedList<T>::LM_LinkedList() {
     length = 0;
-    inUse = false;
     head = nullptr;
     tail = nullptr;
     curr = nullptr;
+
+    /* Attempt to create a semaphore. */
+    xSemaphore = xSemaphoreCreateMutex();
+
+    if (xSemaphore == NULL) {
+        Log.errorln("Semaphore in Linked List not created");
+    }
 }
 
 
 template <class T>
 LM_LinkedList<T>::~LM_LinkedList() {
     Clear();
+    vSemaphoreDelete(xSemaphore);
 }
 
 template<class T>
@@ -117,7 +124,15 @@ void LM_LinkedList<T>::addCurrent(T* element) {
         return;
     }
 
+    if (curr->prev == nullptr) {
+
+    }
+
     LM_ListNode<T>* node = new LM_ListNode<T>(element, curr->prev, curr);
+
+    if (curr->prev != nullptr) {
+        curr->prev->next = node;
+    }
 
     curr->prev = node;
 
@@ -223,15 +238,14 @@ void LM_LinkedList<T>::Clear() {
 
 template <class T>
 void LM_LinkedList<T>::setInUse() {
-    while (inUse) {
-        vTaskDelay(100);
+    while (xSemaphoreTake(xSemaphore, (TickType_t) 10) != pdTRUE) {
+        Log.warningln("List in Use Alert");
     }
-    inUse = true;
 }
 
 template <class T>
 void LM_LinkedList<T>::releaseInUse() {
-    inUse = false;
+    xSemaphoreGive(xSemaphore);
 }
 
 template <class T>

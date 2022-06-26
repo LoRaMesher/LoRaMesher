@@ -44,7 +44,7 @@ void LoraMesher::initializeLoRa() {
 
     // Set up the radio parameters
     Log.verboseln(F("Initializing radio"));
-    int res = radio->begin(BAND, BANDWIDTH, LORASF, 7U, SYNC_WORD, 10);
+    int res = radio->begin(BAND, BANDWIDTH, LORASF, CODING_RATE, SYNC_WORD, 10, PREAMBLE_LENGTH);
     if (res != 0) {
         Log.errorln(F("Radio module gave error: %d"), res);
     }
@@ -238,8 +238,6 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
 }
 
 void LoraMesher::sendPackets() {
-    //Wait an initial 4 seconds
-    vTaskDelay(4000 / portTICK_PERIOD_MS);
     int sendCounter = 0;
     uint8_t sendId = 0;
     uint8_t resendMessage = 0;
@@ -247,70 +245,87 @@ void LoraMesher::sendPackets() {
     //Random delay, to avoid some collisions. Between 0 and 4 seconds
     TickType_t randomDelay = (getLocalAddress() % 4000) / portTICK_PERIOD_MS;
 
-    // randomSeed(localAddress);
-
     //Delay between different messages
-    TickType_t delayBetweenSend = SEND_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS;
+    TickType_t delayBetweenSend = 0;
+
+    const uint8_t dutyCycleEvery = (100 - DUTY_CYCLE) / portTICK_PERIOD_MS;
+
+    uint32_t timeOnAir = 0;
 
     for (;;) {
-        /* Wait for the notification of receivingRoutine and enter blocking */
-        Log.verboseln("Size of Send Packets Queue: %d", ToSendPackets->getLength());
 
-        QueuePacket<Packet<uint8_t>>* tx = ToSendPackets->Pop();
+        /* Wait for the notification of new packet has to be sent and enter blocking */
+        ulTaskNotifyTake(pdPASS, 30000 / portTICK_PERIOD_MS);
 
-        if (tx != nullptr) {
-            Log.verboseln("Send nº %d", sendCounter);
+        while (ToSendPackets->getLength() > 0) {
+            ToSendPackets->setInUse();
 
-            if (tx->packet->src == getLocalAddress())
-                tx->packet->id = sendId++;
+            Log.verboseln("Size of Send Packets Queue: %d", ToSendPackets->getLength());
 
-            //If the packet has a data packet and its destination is not broadcast add the via to the packet and forward the packet
-            if (PacketService::hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
-                uint16_t nextHop = RoutingTableService::getNextHop(tx->packet->dst);
+            QueuePacket<Packet<uint8_t>>* tx = ToSendPackets->Pop();
 
-                //Next hop not found
-                if (nextHop == 0) {
-                    Log.errorln(F("NextHop Not found from %X, destination %X"), tx->packet->src, tx->packet->dst);
-                    PacketQueueService::deleteQueuePacketAndPacket(tx);
-                    incDestinyUnreachable();
-                    continue;
+            ToSendPackets->releaseInUse();
+
+            if (tx) {
+                Log.verboseln("Send nº %d", sendCounter);
+
+                if (tx->packet->src == getLocalAddress())
+                    tx->packet->id = sendId++;
+
+                //If the packet has a data packet and its destination is not broadcast add the via to the packet and forward the packet
+                if (PacketService::hasDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
+                    uint16_t nextHop = RoutingTableService::getNextHop(tx->packet->dst);
+
+                    //Next hop not found
+                    if (nextHop == 0) {
+                        Log.errorln(F("NextHop Not found from %X, destination %X"), tx->packet->src, tx->packet->dst);
+                        PacketQueueService::deleteQueuePacketAndPacket(tx);
+                        incDestinyUnreachable();
+                        continue;
+                    }
+
+                    ((DataPacket<uint8_t>*) (tx->packet->payload))->via = nextHop;
+
+                    if (tx->packet->src != getLocalAddress())
+                        incForwardedPackets();
                 }
 
-                ((DataPacket<uint8_t>*) (tx->packet->payload))->via = nextHop;
+                //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
+                vTaskDelay(randomDelay);
 
-                if (tx->packet->src != getLocalAddress())
-                    incForwardedPackets();
+                //Send packet
+                bool hasSend = sendPacket(tx->packet);
+
+                sendCounter++;
+
+                if (hasSend) {
+                    incSendPackets();
+                }
+
+                //TODO: If the packet has not been send, add it to the queue and send it again
+                // if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
+                //     tx->priority = MAX_PRIORITY;
+                //     ToSendPackets->Add((packetQueue<uint8_t>*) tx);
+
+                //     resendMessage++;
+
+                //     continue;
+                // }
+
+
+                resendMessage = 0;
+
+                timeOnAir = radio->getTimeOnAir(tx->packet->getPacketLength()) / 1000;
+
+                delayBetweenSend = timeOnAir * dutyCycleEvery;
+
+                Log.verboseln("TimeOnAir %d ms, next message in %d ms", timeOnAir, delayBetweenSend);
+
+                PacketQueueService::deleteQueuePacketAndPacket(tx);
+
+                vTaskDelay(delayBetweenSend);
             }
-
-            //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
-            vTaskDelay(randomDelay);
-
-            //Send packet
-            bool hasSend = sendPacket(tx->packet);
-
-            sendCounter++;
-
-            if (hasSend) {
-                incSendPackets();
-            }
-
-            //TODO: If the packet has not been send, add it to the queue and send it again
-            // if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
-            //     tx->priority = MAX_PRIORITY;
-            //     ToSendPackets->Add((packetQueue<uint8_t>*) tx);
-
-            //     resendMessage++;
-
-            //     continue;
-            // }
-
-            PacketQueueService::deleteQueuePacketAndPacket(tx);
-
-            resendMessage = 0;
         }
-
-        //TODO: This should be regulated about what time we can send a packet, in order to accomplish the regulations 
-        vTaskDelay(delayBetweenSend);
     }
 }
 
@@ -346,7 +361,7 @@ void LoraMesher::processPackets() {
         while (ReceivedPackets->getLength() > 0) {
             QueuePacket<Packet<uint8_t>>* rx = ReceivedPackets->Pop();
 
-            if (rx != nullptr) {
+            if (rx) {
                 printHeaderPacket(rx->packet, "received");
 
                 uint8_t type = rx->packet->type;
@@ -487,7 +502,7 @@ void LoraMesher::processDataPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq)
     } else if (packet->payload->via == getLocalAddress()) {
         Log.verboseln(F("Data Packet from %X for %X. Via is me. Forwarding it"), packet->src, packet->dst);
         incReceivedIAmVia();
-        addOrdered(ToSendPackets, reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
+        addToSendOrderedAndNotify(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
         return;
     }
 
@@ -502,6 +517,8 @@ void LoraMesher::processDataPacketForMe(QueuePacket<Packet<DataPacket<uint8_t>>>
 
     //By default, delete the packet queue at the finish of this function
     bool deleteQueuePacket = true;
+
+    bool needAck = (p->type & NEED_ACK_P) == NEED_ACK_P;
 
     if ((p->type & DATA_P) == DATA_P) {
         Log.verboseln(F("Data Packet received"));
@@ -530,13 +547,12 @@ void LoraMesher::processDataPacketForMe(QueuePacket<Packet<DataPacket<uint8_t>>>
     } else if ((p->type & XL_DATA_P) == XL_DATA_P) {
         Log.verboseln(F("Large payload Packet received"));
         processLargePayloadPacket(pq);
-
+        needAck = false;
         deleteQueuePacket = false;
-
     }
 
     //Need ack
-    if ((p->type & NEED_ACK_P) == NEED_ACK_P) {
+    if (needAck) {
         //TODO: All packets with this ack will ack?
         Log.verboseln(F("Previous packet need an ACK"));
         sendAckPacket(p->src, cPacket->seq_id, cPacket->number);
@@ -548,14 +564,17 @@ void LoraMesher::processDataPacketForMe(QueuePacket<Packet<DataPacket<uint8_t>>>
 }
 
 void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
+    ReceivedAppPackets->setInUse();
     //Add the packet inside the receivedUsers Queue
     ReceivedAppPackets->Append(appPacket);
+
+    ReceivedAppPackets->releaseInUse();
 
     //Notify the received user task handle
     xTaskNotify(
         ReceivedUserData_TaskHandle,
         0,
-        eSetValueWithoutOverwrite);
+        eSetValueWithOverwrite);
 }
 
 /**
@@ -582,6 +601,14 @@ int LoraMesher::routingTableSize() {
 
 size_t LoraMesher::getReceivedQueueSize() {
     return ReceivedAppPackets->getLength();
+}
+
+void LoraMesher::addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp) {
+    addOrdered(ToSendPackets, qp);
+    Log.traceln(F("Added packet to Q_SP, notifying sender task"));
+
+    //Notify the sendData task handle
+    xTaskNotify(SendData_TaskHandle, 0, eSetValueWithOverwrite);
 }
 
 void LoraMesher::addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp) {
@@ -669,6 +696,11 @@ bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_n
         return false;
     }
 
+    if (lstConfig->config->lastAck > seq_num) {
+        Log.errorln(F("Trying to send packet sequence previously acknowledged Seq_id: %d, Num: %d"), lstConfig->config->seq_id, seq_num);
+        return false;
+    }
+
     //Create the packet
     Packet<uint8_t>* p = PacketService::copyPacket(pq->packet);
 
@@ -710,7 +742,7 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     sendPacketSequence(config, seq_num + 1);
 }
 
-void LoraMesher::processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq) {
+bool LoraMesher::processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq) {
     Packet<DataPacket<uint8_t>>* packet = pq->packet;
     ControlPacket<uint8_t>* cPacket = (ControlPacket<uint8_t>*) (packet->payload->payload);
 
@@ -718,7 +750,7 @@ void LoraMesher::processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t
     if (configList == nullptr) {
         Log.errorln(F("NOT FOUND the sequence packet config in Process Large Payload with Seq_id: %d, Source: %d"), cPacket->seq_id, packet->src);
         PacketQueueService::deleteQueuePacketAndPacket(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
-        return;
+        return false;
     }
 
     if (configList->config->lastAck + 1 != cPacket->number) {
@@ -726,7 +758,7 @@ void LoraMesher::processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t
         sendLostPacket(packet->src, cPacket->seq_id, configList->config->lastAck + 1);
 
         PacketQueueService::deleteQueuePacketAndPacket(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
-        return;
+        return false;
     }
 
     configList->config->lastAck++;
@@ -737,13 +769,17 @@ void LoraMesher::processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t
     configList->list->Append(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
     configList->list->releaseInUse();
 
+    //Send ACK
+    sendAckPacket(packet->src, cPacket->seq_id, cPacket->number);
+
     //All packets has been arrived, join them and send to the user
     if (configList->config->lastAck == configList->config->number) {
         joinPacketsAndNotifyUser(configList);
-        return;
+        return true;
     }
 
     resetTimeout(configList->config);
+    return true;
 }
 
 void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
@@ -806,6 +842,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     p->src = listConfig->config->source;
     p->dst = getLocalAddress();
 
+    //TODO: When finished, clear everything? Or maintain the config until timeout?
     findAndClearLinkedList(q_WRP, listConfig);
 
     notifyUserReceivedPacket(p);
@@ -840,8 +877,6 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
         Log.errorln(F("NOT FOUND the sequence packet config in ost packet with Seq_id: %d, Source: %d"), seq_id, destination);
         return;
     }
-
-    //TODO: Check correct number with lastAck?
 
     //Send the packet sequence that has been lost
     if (sendPacketSequence(listConfig, seq_num)) {
@@ -981,8 +1016,10 @@ void LoraMesher::managerReceivedQueue() {
 
                 addTimeout(configPacket);
 
-                //Send Last ACK + 1 (Request this packet)
-                sendLostPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck + 1);
+                if (configPacket->lastAck != 0) {
+                    //Send Last ACK + 1 (Request this packet)
+                    sendLostPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck + 1);
+                }
             }
         } while (q_WRP->next());
     }
@@ -1051,7 +1088,10 @@ uint8_t LoraMesher::getSequenceId() {
         return 255;
     }
 
-    return sequence_id++;
+    uint8_t seqId = sequence_id;
+    sequence_id++;
+
+    return seqId;
 }
 
 /**

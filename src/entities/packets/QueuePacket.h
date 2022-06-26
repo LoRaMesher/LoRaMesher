@@ -11,8 +11,8 @@
 template <typename T>
 class QueuePacket {
 public:
-    uint16_t number;
-    uint8_t priority;
+    uint16_t number = 0;
+    uint8_t priority = 0;
     T* packet;
 };
 

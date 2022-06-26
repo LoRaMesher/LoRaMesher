@@ -8,6 +8,9 @@
 #define BAND 868.0F
 #define BANDWIDTH 125.0F
 #define LORASF 7U // Spreading factor 6-12 (default 7)
+#define CODING_RATE 7U
+#define PREAMBLE_LENGTH 8U
+#define DUTY_CYCLE 1 //In %
 
 //Syncronization Word that identifies the mesh network
 #define SYNC_WORD 19U
@@ -41,8 +44,7 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 180
-#define SEND_PACKETS_DELAY 60
+#define HELLO_PACKETS_DELAY 120
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
 
 //Maximum times that a sequence of packets reach the timeout

@@ -136,7 +136,9 @@ public:
       */
     template<typename T>
     AppPacket<T>* getNextAppPacket() {
+        ReceivedAppPackets->setInUse();
         AppPacket<T>* appPacket = reinterpret_cast<AppPacket<T>*>(ReceivedAppPackets->Pop());
+        ReceivedAppPackets->releaseInUse();
         return appPacket;
     }
 
@@ -388,9 +390,17 @@ private:
     void setPackedForSend(Packet<T>* p, uint8_t priority) {
         Log.traceln(F("Adding packet to Q_SP"));
         QueuePacket<Packet<uint8_t>>* send = PacketQueueService::createQueuePacket(p, priority);
-        addOrdered(ToSendPackets, send);
+        Log.traceln(F("Created packet to Q_SP"));
+        addToSendOrderedAndNotify(send);
         //TODO: Using vTaskDelay to kill the packet inside LoraMesher
     }
+
+    /**
+     * @brief Add the Queue packet into the ToSendPackets and notify the SendData Task Handle
+     *
+     * @param qp
+     */
+    void addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp);
 
     /**
      * @brief Add the Queue packet into the list ordered
@@ -398,7 +408,7 @@ private:
      * @param list Linked list to add the QueuePacket
      * @param qp Queue packet to be added
      */
-    static void addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp);
+    void addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp);
 
     /**
      * @brief Process the data packet
@@ -481,13 +491,15 @@ private:
      * @param title Title to print the header
      */
     void printHeaderPacket(Packet<uint8_t>* p, String title);
-
+    
     /**
      * @brief Process a large payload packet
-     *
+     * 
      * @param pq PacketQueue packet queue to be processed
+     * @return true if processed correctly
+     * @return false if not processed correctly
      */
-    void processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
+    bool processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
 
     /**
      * @brief Process a received synchronization packet
