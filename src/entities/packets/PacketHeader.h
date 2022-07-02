@@ -15,19 +15,30 @@ public:
     uint8_t id;
     uint8_t payloadSize = 0;
 
-    // /**
-    //  * @brief Delete function for Packets
-    //  *
-    //  * @param p Packet to be deleted
-    //  */
-    void operator delete(void* p) {
-        Log.traceln(F("Deleting packet"));
-        free(p);
-    }
-
+    /**
+     * @brief Get the Payload Length in bytes
+     *
+     * @return size_t
+     */
     size_t getPayloadLength() { return this->payloadSize; }
 
-    // virtual uint8_t* getPayload() { return (uint8_t*) (&this->payloadSize + sizeof(payloadSize)); }
+    /**
+     * @brief Get the Packet Length in bytes
+     *
+     * @return size_t in bytes
+     */
+    size_t getPacketLength() { return sizeof(PacketHeader) + getPayloadLength(); }
+
+    /**
+     * @brief Delete function for Packets
+     *
+     * @param p Packet to be deleted
+     */
+    void operator delete(void* p) {
+        Log.traceln(F("Deleting Header packet"));
+        free(p);
+    }
+    
 };
 #pragma pack()
 

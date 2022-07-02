@@ -32,13 +32,14 @@ public:
      */
     size_t getPayloadLength() { return this->payloadSize / sizeof(T); }
 
+
     T* getPayload() { return (T*) (&this + sizeof(Packet)); }
 
-    // /**
-    //  * @brief Delete function for Packets
-    //  *
-    //  * @param p Packet to be deleted
-    //  */
+    /**
+     * @brief Delete function for Packets
+     *
+     * @param p Packet to be deleted
+     */
     void operator delete(void* p) {
         Log.traceln(F("Deleting packet"));
         free(p);
