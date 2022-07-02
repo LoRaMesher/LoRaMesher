@@ -146,7 +146,9 @@ public:
      */
     static bool hasControlPacket(uint8_t type);
 
+#ifndef LM_GOD_MODE
 private:
+#endif
 
     /**
      * @brief Get the number of bytes to the payload, between a Packet<T> and their real payload
