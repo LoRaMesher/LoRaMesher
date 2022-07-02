@@ -1,11 +1,13 @@
 {
     "name": "LoRaMesher",
     "version": "0.0.3",
-    "description": "A mesh network for LoRa",
-    "keywords": "lora, mesh, network",
+    "description": "A mesh network for LoRa. The LoRaMesher library implements a distance-vector routing protocol for communicating messages among LoRa nodes.",
+    "keywords": "lora, mesh, network, arduino, esp32, routing",
     "authors": [
         {
-            "name": "Joan Miquel Solé"
+            "name": "Joan Miquel Solé",
+            "url": "https://www.github.com/Jaimi5",
+            "maintainer": true
         },
         {
             "name": "Roger Pueyo"
