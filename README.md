@@ -76,7 +76,7 @@ void processReceivedPackets(void*) {
             Log.trace(F("Queue receiveUserData size: %d" CR), radio.getReceivedQueueSize());
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+            AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
             printDataPacket(packet);
@@ -96,28 +96,30 @@ There are some important things we need to be aware of:
 3. Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
 4. All the packets are stored inside a private queue.
 5. There is a function to get the size of the queue `radio.getReceivedQueueSize()`.
-6. You can get the first element with `radio.getNextUserPacket<T>()` where T is the type of your data. 
+6. You can get the first element with `radio.getNextAppPacket<T>()` where T is the type of your data. 
 7. IMPORTANT!!! Every time you call Pop, you need to be sure to call `radio.deletePacket(packet)`. It will free the memory that has been allocated for the packet. If not executed it can cause memory leaks and out of memory errors.
 
 ### User data packet
 
-In this section we will show you what there are inside a `userPacket`.
+In this section we will show you what there are inside a `AppPacket`.
 ```
-struct userPacket {
-    uint16_t dst; //Destination address, in this case it should be or local address or BROADCAST_ADDR
+class AppPacket {
+    uint16_t dst; //Destination address, normally it will be local address or BROADCAST_ADDR
     uint16_t src; //Source address
     uint32_t payloadSize = 0; //Payload size in bytes
     T payload[]; //Payload
+
+    size_t getPayloadLength() { return this->payloadSize / sizeof(T); }
 };
 ```
 
-Functionalities to use after getting the packet with `LoraMesher::userPacket<T>* userPacket = radio.getNextUserPacket<T>()`:
-1. `radio.getPayloadLength(userPacket)` it will get you the payload size in number of T
-2. `radio.deletePacket(userPacket)` it will release the memory allocated for this packet.
+Functionalities to use after getting the packet with `AppPacket<T>* packet = radio.getNextAppPacket<T>()`:
+1. `packet->getPayloadLength()` it will get you the payload size in number of T
+2. `radio.deletePacket(packet)` it will release the memory allocated for this packet.
 
 ### Send data packet function
 
-In this section we will present how you can create and send packets. in this example we will use the `dataPacket` data structure.
+In this section we will present how you can create and send packets. in this example we will use the `AppPacket` data structure.
 
 ```
   void loop() {
@@ -157,10 +159,10 @@ void printPacket(dataPacket data) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
+void printDataPacket(AppPacket<dataPacket>* packet) {
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
-    size_t payloadLength = radio.getPayloadLength(packet);
+    size_t payloadLength = packet->getPayloadLength();
 
     for (size_t i = 0; i < payloadLength; i++) {
         //Print the packet
@@ -171,5 +173,5 @@ void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
 
 1. After receiving the packet in the `processReceivedPackets()` function, we call the `printDataPacket()` function.
 2. We need to get the payload of the packet using `packet->payload`.
-3. We iterate through the `radio.getPayloadLength(packet)`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
+3. We iterate through the `packet->getPayloadLength()`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
 4. Get the payload and call the `printPacket(dPacket[i])` function, that will print the counter received.
