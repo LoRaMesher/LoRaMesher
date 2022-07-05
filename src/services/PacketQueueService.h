@@ -90,7 +90,7 @@ public:
      */
     template <typename T>
     static void deleteQueuePacketAndPacket(QueuePacket<T>* pq) {
-        deleteQueuePacketAndPacket((QueuePacket<Packet<uint8_t>>*)(pq));
+        deleteQueuePacketAndPacket(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
     }
 
 };

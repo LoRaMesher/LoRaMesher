@@ -9,7 +9,7 @@ Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
         packetSize = MAXPACKETSIZE;
     }
 
-    Packet<uint8_t>* p = (Packet<uint8_t>*) malloc(packetSize);
+    Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(malloc(packetSize));
 
     Log.traceln(F("Packet created with %d bytes"), packetSize);
 
@@ -27,11 +27,11 @@ AppPacket<uint8_t>* PacketService::convertPacket(DataPacket* p) {
 AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize) {
     int packetLength = sizeof(AppPacket<uint8_t>) + payloadSize;
 
-    AppPacket<uint8_t>* p = (AppPacket<uint8_t>*) malloc(packetLength);
+    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(malloc(packetLength));
 
     if (p) {
         //Copy the payload into the packet
-        memcpy((void*) ((unsigned long) p->payload), payload, payloadSize);
+        memcpy(p->payload, payload, payloadSize);
     } else {
         Log.errorln(F("User Packet not allocated"));
         return nullptr;
@@ -59,7 +59,7 @@ bool PacketService::isControlPacket(uint8_t type) {
 RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes) {
     size_t routingSizeInBytes = numOfNodes * sizeof(NetworkNode);
 
-    RoutePacket* routePacket = createPacket<RoutePacket>((uint8_t*) nodes, routingSizeInBytes);
+    RoutePacket* routePacket = createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
     routePacket->dst = BROADCAST_ADDR;
     routePacket->src = localAddress;
     routePacket->type = HELLO_P;
@@ -69,7 +69,7 @@ RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNo
 }
 
 DataPacket* PacketService::dataPacket(Packet<uint8_t>* p) {
-    return (DataPacket*) (p);
+    return reinterpret_cast<DataPacket*>(p);
 }
 
 ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
@@ -83,7 +83,7 @@ ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, ui
 }
 
 ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t seq_id, uint16_t num_packets) {
-    ControlPacket* packet = createPacket<ControlPacket>((uint8_t*) 0, 0);
+    ControlPacket* packet = createPacket<ControlPacket>(0, 0);
     packet->dst = dst;
     packet->src = src;
     packet->type = type;

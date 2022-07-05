@@ -95,10 +95,10 @@ public:
         size_t payloadSizeInBytes = payloadSize * sizeof(T);
 
         //Create a data packet with the payload
-        DataPacket* dPacket = PacketService::createDataPacket(dst, getLocalAddress(), DATA_P, (uint8_t*) payload, payloadSizeInBytes);
+        DataPacket* dPacket = PacketService::createDataPacket(dst, getLocalAddress(), DATA_P, reinterpret_cast<uint8_t*>(payload), payloadSizeInBytes);
 
         //Create the packet and set it to the send queue
-        setPackedForSend((Packet<uint8_t>*)(dPacket), DEFAULT_PRIORITY);
+        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(dPacket), DEFAULT_PRIORITY);
     }
 
     /**
@@ -121,7 +121,7 @@ public:
      */
     template <typename T>
     void sendReliable(uint16_t dst, T* payload, uint32_t payloadSize) {
-        sendReliablePacket(dst, (uint8_t*) payload, sizeof(T) * payloadSize);
+        sendReliablePacket(dst, reinterpret_cast<uint8_t*>(payload), sizeof(T) * payloadSize);
     }
 
     /**
@@ -140,7 +140,7 @@ public:
     template<typename T>
     AppPacket<T>* getNextAppPacket() {
         ReceivedAppPackets->setInUse();
-        AppPacket<T>* appPacket = (AppPacket<T>*)(ReceivedAppPackets->Pop());
+        AppPacket<T>* appPacket = reinterpret_cast<AppPacket<T>*>(ReceivedAppPackets->Pop());
         ReceivedAppPackets->releaseInUse();
         return appPacket;
     }

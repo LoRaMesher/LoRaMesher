@@ -72,7 +72,7 @@ public:
      */
     template<class T>
     static Packet<uint8_t>* copyPacket(T* p, size_t packetLength) {
-        Packet<uint8_t>* cpPacket = (Packet<uint8_t>*) malloc(packetLength);
+        Packet<uint8_t>* cpPacket = static_cast<Packet<uint8_t>*>(malloc(packetLength));
 
         if (cpPacket) {
             memcpy(cpPacket, p, packetLength);
@@ -176,11 +176,11 @@ private:
             return nullptr;
         }
 
-        T* p = (T*) malloc(packetLength);
+        T* p = static_cast<T*>(malloc(packetLength));
 
         if (p) {
             //Copy the payload into the packet
-            memcpy((void*) ((unsigned long) p + (sizeof(T))), payload, payloadSize);
+            memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
         } else {
             Log.errorln(F("packet not allocated"));
             return nullptr;

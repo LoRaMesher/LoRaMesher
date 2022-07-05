@@ -172,7 +172,7 @@ void LoraMesher::receivingRoutine() {
                     packetSize = MAXPACKETSIZE;
                 }
 
-                res = radio->readData((uint8_t*) rx, packetSize);
+                res = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
 
                 if (res != 0) {
                     Log.errorln(F("Reading packet data gave error: %d"), res);
@@ -219,7 +219,7 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
     radio->clearDio0Action();
 
     //Blocking transmit, it is necessary due to deleting the packet after sending it. 
-    int resT = radio->transmit((uint8_t*) p, p->getPacketLength());
+    int resT = radio->transmit(reinterpret_cast<uint8_t*>(p), p->getPacketLength());
 
     radio->setDio0Action(onReceive);
     int res = radio->startReceive();
@@ -285,7 +285,7 @@ void LoraMesher::sendPackets() {
                         continue;
                     }
 
-                    ((DataPacket*) (tx->packet))->via = nextHop;
+                    (reinterpret_cast<DataPacket*>(tx->packet))->via = nextHop;
 
                     if (tx->packet->src != getLocalAddress())
                         incForwardedPackets();
@@ -343,7 +343,7 @@ void LoraMesher::sendHelloPacket() {
 
         delete[] nodes;
 
-        setPackedForSend((Packet<uint8_t>*)(tx), DEFAULT_PRIORITY + 1);
+        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 1);
 
         //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
@@ -367,11 +367,11 @@ void LoraMesher::processPackets() {
 
                 if ((type & HELLO_P) == HELLO_P) {
                     incRecHelloPackets();
-                    RoutingTableService::processRoute((RoutePacket*) (rx->packet));
+                    RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet));
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
                 } else if (PacketService::isDataPacket(type))
-                    processDataPacket((QueuePacket<DataPacket>*)(rx));
+                    processDataPacket(reinterpret_cast<QueuePacket<DataPacket>*>(rx));
 
                 else {
                     Log.verboseln(F("Packet not identified, deleting it"));
@@ -398,9 +398,9 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     // Log.traceln(F("%d"), p->getPayloadLength());
     //TODO: REFACTOR THIS, put it in the packet services
     if (PacketService::isDataPacket(p->type)) {
-        DataPacket* dPacket = (DataPacket*) (p);
+        DataPacket* dPacket = reinterpret_cast<DataPacket*>(p);
         if (PacketService::isControlPacket(p->type)) {
-            ControlPacket* cPacket = (ControlPacket*) (dPacket);
+            ControlPacket* cPacket = reinterpret_cast<ControlPacket*>(dPacket);
             Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X Seq_Id: %d Num: %d"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via, cPacket->seq_id, cPacket->number);
         } else {
             Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via);
@@ -440,7 +440,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
 
     for (uint16_t i = 1; i <= numOfPackets; i++) {
         //Get the position of the payload
-        uint8_t* payloadToSend = (uint8_t*) ((unsigned long) payload + ((i - 1) * maxPayloadSize));
+        uint8_t* payloadToSend = reinterpret_cast<uint8_t*>((unsigned long) payload + ((i - 1) * maxPayloadSize));
 
         //Get the payload Size in bytes
         size_t payloadSizeToSend = maxPayloadSize;
@@ -497,7 +497,7 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
     } else if (packet->via == getLocalAddress()) {
         Log.verboseln(F("Data Packet from %X for %X. Via is me. Forwarding it"), packet->src, packet->dst);
         incReceivedIAmVia();
-        addToSendOrderedAndNotify((QueuePacket<Packet<uint8_t>>*)(pq));
+        addToSendOrderedAndNotify(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
         return;
     }
 
@@ -508,7 +508,7 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
 
 void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
     DataPacket* p = pq->packet;
-    ControlPacket* cPacket = (ControlPacket*) (p);
+    ControlPacket* cPacket = reinterpret_cast<ControlPacket*>(p);
 
     //By default, delete the packet queue at the finish of this function
     bool deleteQueuePacket = true;
@@ -541,7 +541,7 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
 
     } else if ((p->type & XL_DATA_P) == XL_DATA_P) {
         Log.verboseln(F("Large payload Packet received"));
-        processLargePayloadPacket((QueuePacket<ControlPacket>*)(pq));
+        processLargePayloadPacket(reinterpret_cast<QueuePacket<ControlPacket>*>(pq));
         needAck = false;
         deleteQueuePacket = false;
     }
@@ -631,7 +631,7 @@ void LoraMesher::sendAckPacket(uint16_t destination, uint8_t seq_id, uint16_t se
     //Create the packet
     ControlPacket* cPacket = PacketService::createEmptyControlPacket(destination, getLocalAddress(), type, seq_id, seq_num);
 
-    setPackedForSend((Packet<uint8_t>*)(cPacket), DEFAULT_PRIORITY + 1);
+    setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(cPacket), DEFAULT_PRIORITY + 1);
 }
 
 void LoraMesher::sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t seq_num) {
@@ -640,7 +640,7 @@ void LoraMesher::sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t s
     //Create the packet
     ControlPacket* cPacket = PacketService::createEmptyControlPacket(destination, getLocalAddress(), type, seq_id, seq_num);
 
-    setPackedForSend((Packet<uint8_t>*)(cPacket), DEFAULT_PRIORITY);
+    setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(cPacket), DEFAULT_PRIORITY);
 }
 
 bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_num) {
@@ -748,11 +748,12 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
         return;
     }
 
+    //TODO: getPacketPayloadLength could be done when adding the packets inside the list
     size_t payloadSize = 0;
     size_t number = 1;
 
     do {
-        ControlPacket* currentP = (ControlPacket*) list->getCurrent()->packet;
+        ControlPacket* currentP = reinterpret_cast<ControlPacket*>(list->getCurrent()->packet);
 
         if (number != (currentP->number))
             //TODO: ORDER THE PACKETS if they are not ordered?
@@ -765,14 +766,14 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     //Move to start again
     list->moveToStart();
 
-    ControlPacket* currentP = (ControlPacket*) list->getCurrent()->packet;
+    ControlPacket* currentP = list->getCurrent()->packet;
 
     uint32_t appPacketLength = sizeof(AppPacket<uint8_t>);
 
     //Packet length = size of the packet + size of the payload
     uint32_t packetLength = appPacketLength + payloadSize;
 
-    AppPacket<uint8_t>* p = (AppPacket<uint8_t>*) malloc(packetLength);
+    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(malloc(packetLength));
 
     Log.verboseln(F("Large Packet Packet length: %d Payload Size: %d"), packetLength, payloadSize);
 
@@ -781,11 +782,11 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
         unsigned long actualPayloadSizeDst = appPacketLength;
 
         do {
-            currentP = (ControlPacket*) list->getCurrent()->packet;
+            currentP = list->getCurrent()->packet;
 
             size_t actualPayloadSizeSrc = PacketService::getPacketPayloadLength(currentP);
 
-            memcpy((void*) ((unsigned long) p + (actualPayloadSizeDst)), currentP->payload, actualPayloadSizeSrc);
+            memcpy(reinterpret_cast<void*>((unsigned long) p + (actualPayloadSizeDst)), currentP->payload, actualPayloadSizeSrc);
             actualPayloadSizeDst += actualPayloadSizeSrc;
         } while (list->next());
     }
