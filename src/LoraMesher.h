@@ -404,14 +404,6 @@ private:
     void addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp);
 
     /**
-     * @brief Add the Queue packet into the list ordered
-     *
-     * @param list Linked list to add the QueuePacket
-     * @param qp Queue packet to be added
-     */
-    void addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp);
-
-    /**
      * @brief Process the data packet
      *
      * @param pq packet queue to be processed as data packet

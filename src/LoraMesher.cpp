@@ -306,7 +306,7 @@ void LoraMesher::sendPackets() {
                 //TODO: If the packet has not been send, add it to the queue and send it again
                 if (!hasSend && resendMessage < MAX_RESEND_PACKET) {
                     tx->priority = MAX_PRIORITY;
-                    addOrdered(ToSendPackets, tx);
+                    PacketQueueService::addOrdered(ToSendPackets, tx);
 
                     resendMessage++;
                     continue;
@@ -599,29 +599,11 @@ size_t LoraMesher::getReceivedQueueSize() {
 }
 
 void LoraMesher::addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp) {
-    addOrdered(ToSendPackets, qp);
+    PacketQueueService::addOrdered(ToSendPackets, qp);
     Log.traceln(F("Added packet to Q_SP, notifying sender task"));
 
     //Notify the sendData task handle
     xTaskNotify(SendData_TaskHandle, 0, eSetValueWithOverwrite);
-}
-
-void LoraMesher::addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp) {
-    list->setInUse();
-    if (list->moveToStart()) {
-        do {
-            QueuePacket<Packet<uint8_t>>* current = list->getCurrent();
-            if (current->priority < qp->priority) {
-                list->addCurrent(qp);
-                list->releaseInUse();
-                return;
-            }
-        } while (list->next());
-    }
-
-    list->Append(qp);
-
-    list->releaseInUse();
 }
 
 /**

@@ -62,9 +62,16 @@ public:
     }
 
     /**
+     * @brief Add the Queue packet into the list ordered
+     *
+     * @param list Linked list to add the QueuePacket
+     * @param qp Queue packet to be added
+     */
+    static void addOrdered(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list, QueuePacket<Packet<uint8_t>>* qp);
+
+    /**
      * @brief It will delete the packet queue and the packet inside it
      *
-     * @tparam T Type of the packet queue
      * @param pq packet queue to be deleted
      */
     static void deleteQueuePacketAndPacket(QueuePacket<Packet<uint8_t>>* pq) {
@@ -75,6 +82,12 @@ public:
         delete pq;
     }
 
+    /**
+     * @brief It will delete the packet queue and the packet inside it
+     *
+     * @tparam T Type of the packet queue
+     * @param pq packet queue to be deleted
+     */
     template <typename T>
     static void deleteQueuePacketAndPacket(QueuePacket<T>* pq) {
         deleteQueuePacketAndPacket((QueuePacket<Packet<uint8_t>>*)(pq));
