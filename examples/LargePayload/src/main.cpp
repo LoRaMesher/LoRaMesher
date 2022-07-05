@@ -1,10 +1,13 @@
 #include <Arduino.h>
-#include "loramesher.h"
+#include "LoraMesher.h"
 #include "display.h"
-#include "WString.h"
 
-#define BOARD_LED 4
-#define DATA_NUM 60
+//Using LILYGO TTGO T-BEAM v1.1 
+#define BOARD_LED   4
+#define LED_ON      LOW
+#define LED_OFF     HIGH
+
+#define DATA_NUM 6
 
 LoraMesher& radio = LoraMesher::getInstance();
 
@@ -24,9 +27,9 @@ dataPacket helloPackets[DATA_NUM];
 void led_Flash(uint16_t flashes, uint16_t delaymS) {
     uint16_t index;
     for (index = 1; index <= flashes; index++) {
-        digitalWrite(BOARD_LED, HIGH);
+        digitalWrite(BOARD_LED, LED_OFF);
         vTaskDelay(delaymS / portTICK_PERIOD_MS);
-        digitalWrite(BOARD_LED, LOW);
+        digitalWrite(BOARD_LED, LED_ON);
         vTaskDelay(delaymS / portTICK_PERIOD_MS);
     }
 }
@@ -41,7 +44,7 @@ void printPacket(dataPacket* data, uint16_t sourceAddress) {
     snprintf(text, 32, ("%X-> %d" CR), sourceAddress, data->counter[0]);
 
     Screen.changeLineThree(String(text));
-    Log.verbose(F("Received data nº %d" CR), data->counter[0]);
+    Log.verboseln(F("Received data nº %d"), data->counter[0]);
 }
 
 /**
@@ -49,14 +52,14 @@ void printPacket(dataPacket* data, uint16_t sourceAddress) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
-    Log.trace(F("Packet arrived from %X with size %d bytes" CR), packet->src, packet->payloadSize);
+void printDataPacket(AppPacket<dataPacket>* packet) {
+    Log.traceln(F("Packet arrived from %X with size %d bytes"), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
-    size_t payloadLength = radio.getPayloadLength(packet);
+    size_t payloadLength = packet->getPayloadLength();
 
-    Log.trace(F("---- Payload ---- Payload length in dataP: %d " CR), payloadLength);
+    Log.traceln(F("---- Payload ---- Payload length in dataP: %d "), payloadLength);
     Log.setShowLevel(false);
 
     for (size_t i = 0; i < payloadLength; i++) {
@@ -71,7 +74,7 @@ void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
     }
 
     Log.setShowLevel(true);
-    Log.trace(F("---- Payload Done ---- " CR));
+    Log.traceln(F("---- Payload Done ---- "));
 
 }
 
@@ -87,11 +90,11 @@ void processReceivedPackets(void*) {
 
         //Iterate through all the packets inside the Received User Packets FiFo
         while (radio.getReceivedQueueSize() > 0) {
-            Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.trace(F("Queue receiveUserData size: %d" CR), radio.getReceivedQueueSize());
+            Log.traceln(F("ReceivedUserData_TaskHandle notify received"));
+            Log.traceln(F("Queue receiveUserData size: %d"), radio.getReceivedQueueSize());
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+            AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
             printDataPacket(packet);
@@ -104,14 +107,14 @@ void processReceivedPackets(void*) {
 }
 
 /**
- * @brief Initialize the LoRa Mesher
+ * @brief Initialize LoRaMesher
  *
  */
 void setupLoraMesher() {
     //Create a loramesher with a processReceivedPackets function
     radio.init(processReceivedPackets);
 
-    Log.verbose("Lora initialized" CR);
+    Log.verboseln("LoRaMesher initialized");
 }
 
 /**
@@ -125,16 +128,30 @@ void printAddressDisplay() {
     Screen.changeLineOne(String(addrStr));
 }
 
-
+/**
+ * @brief Print the routing table into the display
+ *
+ */
 void printRoutingTableToDisplay() {
+
+    //Set the routing table list that is being used and cannot be accessed (Remember to release use after usage)
+    LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
+
+    routingTableList->setInUse();
+
+    Screen.changeSizeRouting(radio.routingTableSize());
+
     char text[15];
     for (int i = 0; i < radio.routingTableSize(); i++) {
-        LoraMesher::networkNode node = radio.routingTable[i].networkNode;
-        snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, radio.routingTable[i].via);
+        RouteNode* rNode = (*routingTableList)[i];
+        NetworkNode node = rNode->networkNode;
+        snprintf(text, 15, ("|%X(%d)->%X"), node.address, node.metric, rNode->via);
         Screen.changeRoutingText(text, i);
     }
 
-    Screen.changeSizeRouting(radio.routingTableSize());
+    //Release routing table list usage.
+    routingTableList->releaseInUse();
+
     Screen.changeLineFour();
 }
 
@@ -156,9 +173,11 @@ void sendLoRaMessage(void*) {
         if (radio.routingTableSize() <= dataTablePosition)
             dataTablePosition = 0;
 
-        uint16_t addr = radio.routingTable[dataTablePosition].networkNode.address;
+        LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
 
-        Log.trace(F("Send data packet nº %d to %X (%d)" CR), dataCounter, addr, dataTablePosition);
+        uint16_t addr = (*routingTableList)[dataTablePosition]->networkNode.address;
+
+        Log.traceln(F("Send data packet nº %d to %X (%d)"), dataCounter, addr, dataTablePosition);
 
         dataTablePosition++;
 
@@ -201,7 +220,7 @@ void createSendMessages() {
         1,
         &sendLoRaMessage_Handle);
     if (res != pdPASS) {
-        Log.error(F("Send LoRa Message task creation gave error: %d" CR), res);
+        Log.errorln(F("Send LoRa Message task creation gave error: %d"), res);
         vTaskDelete(sendLoRaMessage_Handle);
     }
 }
@@ -211,15 +230,15 @@ void setup() {
     pinMode(BOARD_LED, OUTPUT); //setup pin as output for indicator LED
 
     Screen.initDisplay();
-    Log.verbose("Board Init" CR);
 
+    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+    Log.verboseln("Board Init");
 
     led_Flash(2, 125);          //two quick LED flashes to indicate program start
     setupLoraMesher();
     printAddressDisplay();
 
     createSendMessages();
-
 }
 
 void loop() {

@@ -18,18 +18,21 @@ template <class T>
 class LM_LinkedList {
 private:
     size_t length;
-    bool inUse;
     LM_ListNode<T>* head;
     LM_ListNode<T>* tail;
     LM_ListNode<T>* curr;
+    SemaphoreHandle_t xSemaphore;
 public:
     LM_LinkedList();
     ~LM_LinkedList();
     T* getCurrent();
     T* First() const;
     T* Last() const;
+    T* operator[](int);
     size_t getLength();
     void Append(T*);
+    T* Pop();
+    void addCurrent(T*);
     bool Search(T*);
     void DeleteCurrent();
     bool next();
@@ -38,36 +41,60 @@ public:
     void Clear();
     void setInUse();
     void releaseInUse();
+    void each(void (*func)(T*));
 };
 
 template <class T>
 LM_LinkedList<T>::LM_LinkedList() {
     length = 0;
-    inUse = false;
     head = nullptr;
     tail = nullptr;
     curr = nullptr;
+
+    /* Attempt to create a semaphore. */
+    xSemaphore = xSemaphoreCreateMutex();
+
+    if (xSemaphore == NULL) {
+        Log.errorln("Semaphore in Linked List not created");
+    }
 }
 
 
 template <class T>
 LM_LinkedList<T>::~LM_LinkedList() {
     Clear();
+    vSemaphoreDelete(xSemaphore);
 }
 
 template<class T>
 T* LM_LinkedList<T>::getCurrent() {
-    return curr->element;
+    return curr ? curr->element : nullptr;
 }
 
 template<class T>
 T* LM_LinkedList<T>::First() const {
-    return head->element;
+    return head ? head->element : nullptr;
 }
 
 template<class T>
 T* LM_LinkedList<T>::Last() const {
-    return tail->element;
+    return tail ? tail->element : nullptr;
+}
+
+template <class T>
+T* LM_LinkedList<T>::operator[](int position) {
+    if (position < length && moveToStart()) {
+        int i = 0;
+        do {
+            if (i == position) {
+                return curr->element;
+            }
+
+            i++;
+        } while (next());
+    }
+
+    return NULL;
 }
 
 template<class T>
@@ -91,16 +118,50 @@ void LM_LinkedList<T>::Append(T* element) {
 }
 
 template <class T>
+void LM_LinkedList<T>::addCurrent(T* element) {
+    if (length == 0) {
+        Append(element);
+        return;
+    }
+
+    if (curr->prev == nullptr) {
+
+    }
+
+    LM_ListNode<T>* node = new LM_ListNode<T>(element, curr->prev, curr);
+
+    if (curr->prev != nullptr) {
+        curr->prev->next = node;
+    }
+
+    curr->prev = node;
+
+    if (curr == head) {
+        head = node;
+    }
+
+    length++;
+
+}
+
+template<class T>
+T* LM_LinkedList<T>::Pop() {
+    moveToStart();
+    T* element = getCurrent();
+    DeleteCurrent();
+    return element;
+}
+
+template <class T>
 bool LM_LinkedList<T>::Search(T* elem) {
-    //TODO: Check if this works fine
-    if (length == 0)
-        return false;
-    if (moveToStart())
+    if (moveToStart()) {
         do {
             if (curr->element == elem)
                 return true;
         } while (next());
-        return false;
+    }
+
+    return false;
 }
 
 template <class T>
@@ -177,13 +238,25 @@ void LM_LinkedList<T>::Clear() {
 
 template <class T>
 void LM_LinkedList<T>::setInUse() {
-    while (inUse) {
-        vTaskDelay(100);
+    while (xSemaphoreTake(xSemaphore, (TickType_t) 10) != pdTRUE) {
+        Log.warningln("List in Use Alert");
     }
-    inUse = true;
 }
 
 template <class T>
 void LM_LinkedList<T>::releaseInUse() {
-    inUse = false;
+    xSemaphoreGive(xSemaphore);
+}
+
+template <class T>
+void LM_LinkedList<T>::each(void (*func)(T*)) {
+    setInUse();
+
+    if (moveToStart()) {
+        do {
+            func(curr->element);
+        } while (next());
+    }
+
+    releaseInUse();
 }

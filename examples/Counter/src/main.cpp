@@ -1,7 +1,10 @@
 #include <Arduino.h>
 #include "loramesher.h"
 
-#define BOARD_LED 4
+//Using LILYGO TTGO T-BEAM v1.1 
+#define BOARD_LED   4
+#define LED_ON      LOW
+#define LED_OFF     HIGH
 
 LoraMesher& radio = LoraMesher::getInstance();
 
@@ -16,9 +19,9 @@ dataPacket* helloPacket = new dataPacket;
 void led_Flash(uint16_t flashes, uint16_t delaymS) {
     uint16_t index;
     for (index = 1; index <= flashes; index++) {
-        digitalWrite(BOARD_LED, HIGH);
+        digitalWrite(BOARD_LED, LED_ON);
         delay(delaymS);
-        digitalWrite(BOARD_LED, LOW);
+        digitalWrite(BOARD_LED, LED_OFF);
         delay(delaymS);
     }
 }
@@ -29,7 +32,7 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  * @param data
  */
 void printPacket(dataPacket data) {
-    Log.verbose(F("Hello Counter received nº %X" CR), data.counter);
+    Log.verboseln(F("Hello Counter received nº %X"), data.counter);
 }
 
 /**
@@ -37,12 +40,12 @@ void printPacket(dataPacket data) {
  *
  * @param packet
  */
-void printDataPacket(LoraMesher::userPacket<dataPacket>* packet) {
-    Log.trace(F("Packet arrived from %X with size %d" CR), packet->src, packet->payloadSize);
+void printDataPacket(AppPacket<dataPacket>* packet) {
+    Log.traceln(F("Packet arrived from %X with size %d"), packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
-    size_t payloadLength = radio.getPayloadLength(packet);
+    size_t payloadLength = packet->getPayloadLength();
 
     for (size_t i = 0; i < payloadLength; i++) {
         //Print the packet
@@ -62,11 +65,11 @@ void processReceivedPackets(void*) {
 
         //Iterate through all the packets inside the Received User Packets FiFo
         while (radio.getReceivedQueueSize() > 0) {
-            Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.trace(F("Fifo receiveUserData size: %d" CR), radio.getReceivedQueueSize() > 0);
+            Log.traceln(F("ReceivedUserData_TaskHandle notify received"));
+            Log.traceln(F("Fifo receiveUserData size: %d"), radio.getReceivedQueueSize() > 0);
 
             //Get the first element inside the Received User Packets FiFo
-            LoraMesher::userPacket<dataPacket>* packet = radio.getNextUserPacket<dataPacket>();
+            AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
             printDataPacket(packet);
@@ -77,6 +80,10 @@ void processReceivedPackets(void*) {
     }
 }
 
+/**
+ * @brief Initialize LoRaMesher
+ *
+ */
 void setupLoraMesher() {
     //Init the loramesher with a processReceivedPackets function
     radio.init(processReceivedPackets);
@@ -97,7 +104,8 @@ void setup() {
 
 void loop() {
     for (;;) {
-        // Log.trace(F("Send packet %d" CR), dataCounter);
+        Log.traceln(F("Send packet %d"), dataCounter);
+
         helloPacket->counter = dataCounter++;
 
         //Create packet and send it.
