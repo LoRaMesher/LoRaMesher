@@ -11,35 +11,48 @@ class PacketService {
 public:
 
     /**
-     * @brief Reinterpret cast from a Packet<uint8_t>* to a DataPacket<uint8_t>*
-     * 
+     * @brief Reinterpret cast from a Packet<uint8_t>* to a DataPacket*
+     *
      * @param p packet to be reinterpret
-     * @return DataPacket<uint8_t>* 
+     * @return DataPacket*
      */
-    static DataPacket<uint8_t>* dataPacket(Packet<uint8_t>* p);
+    static DataPacket* dataPacket(Packet<uint8_t>* p);
 
     /**
-     * @brief Create a Packet<T>
+     * @brief Create a Control Packet
      *
-     * @tparam T
-     * @param dst Destination
-     * @param src Source, normally local address, use getLocalAddress()
+     * @param dst Destination address
+     * @param src Source address
      * @param type Type of packet
-     * @param payload Payload of type T
-     * @param payloadSize Length of the payload in bytes
-     * @return Packet<uint8_t>*
+     * @param payload Pointer to the payload
+     * @param payloadSize Payload size
+     * @return ControlPacket*
      */
-    template <typename T>
-    static Packet<uint8_t>* createPacket(uint16_t dst, uint16_t src, uint8_t type, T* payload, uint8_t payloadSize) {
-        uint8_t extraSize = getExtraLengthToPayload(type);
+    static ControlPacket* createControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize);
 
-        Packet<uint8_t>* p = createPacket((uint8_t*) payload, payloadSize, extraSize);
-        p->dst = dst;
-        p->type = type;
-        p->src = src;
+    /**
+     * @brief Create a Empty Control Packet
+     *
+     * @param dst Destination address
+     * @param src Source address
+     * @param type Type of packet
+     * @param seq_id Sequence id of the packet
+     * @param num_packets Number of the packet
+     * @return ControlPacket*
+     */
+    static ControlPacket* createEmptyControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t seq_id, uint16_t num_packets);
 
-        return p;
-    }
+    /**
+     * @brief Create a Data Packet
+     *
+     * @param dst Destination address
+     * @param src Source address
+     * @param type Type of packet
+     * @param payload Pointer to the payload
+     * @param payloadSize Payload size
+     * @return DataPacket*
+     */
+    static DataPacket* createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize);
 
     /**
      * @brief Create an Empty Packet
@@ -52,10 +65,24 @@ public:
     /**
      * @brief Copy a packet
      *
-     * @param p packet to be copied
+     * @tparam T type of packet
+     * @param p packet
+     * @param packetLength all packet length
      * @return Packet<uint8_t>*
      */
-    static Packet<uint8_t>* copyPacket(Packet<uint8_t>* p);
+    template<class T>
+    static Packet<uint8_t>* copyPacket(T* p, size_t packetLength) {
+        Packet<uint8_t>* cpPacket = (Packet<uint8_t>*) malloc(packetLength);
+
+        if (cpPacket) {
+            memcpy(cpPacket, p, packetLength);
+        } else {
+            Log.errorln(F("Copy Packet not allocated"));
+            return nullptr;
+        }
+
+        return cpPacket;
+    }
 
     /**
      * @brief Create a Routing Packet object
@@ -63,9 +90,9 @@ public:
      * @param localAddress localAddress of the node
      * @param nodes list of NetworkNodes
      * @param numOfNodes Number of nodes
-     * @return Packet<uint8_t>*
+     * @return RoutePacket*
      */
-    static Packet<uint8_t>* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes);
+    static RoutePacket* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes);
 
     /**
      * @brief Create a Application Packet
@@ -79,54 +106,36 @@ public:
     static AppPacket<uint8_t>* createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize);
 
     /**
-     * @brief given a Packet<uint8_t> it will be converted to a AppPacket
+     * @brief given a DataPacket it will be converted to a AppPacket
      *
-     * @param p packet of type packet<uint8_t>
+     * @param p packet of type DataPacket
      * @return AppPacket<uint8_t>*
      */
-    static AppPacket<uint8_t>* convertPacket(Packet<uint8_t>* p);
+    static AppPacket<uint8_t>* convertPacket(DataPacket* p);
 
     /**
-     * @brief Get the Packet Payload Length in bytes
+     * @brief Get the Packet Payload Length
      *
-     * @tparam T Type of packets
-     * @param p packet to know the payload length in bytes
-     * @return size_t The payload length in bytes of the packet
+     * @param p Data packet
+     * @return size_t Size of the actual payload
      */
-    template <typename T>
-    static size_t getPacketPayloadLength(Packet<T>* p) { return p->payloadSize - getExtraLengthToPayload(p->type); }
+    static size_t getPacketPayloadLength(DataPacket* p) { return p->payloadSize + sizeof(DataPacket) - sizeof(PacketHeader); }
 
     /**
-     * @brief Get the payload in number of elements
+     * @brief Get the Packet Payload Length object
      *
-     * @tparam T
      * @param p
      * @return size_t
      */
-    template<typename T>
-    static size_t getPayloadLength(Packet<T>* p) {
-        return (p->payloadSize - getExtraLengthToPayload(p->type)) / sizeof(T);
-    }
+    static size_t getPacketPayloadLength(ControlPacket* p) { return p->payloadSize - (sizeof(ControlPacket) - sizeof(PacketHeader)); }
 
     /**
-     * @brief Get the Payload of the packet
-     *
-     * @tparam T type of the payload
-     * @param packet Packet that you want to get the payload
-     * @return T* pointer of the packet payload
-     */
-    template <typename T>
-    static T* getPayload(Packet<T>* packet) {
-        return (T*) ((unsigned long) packet->payload + getExtraLengthToPayload(packet->type));
-    }
-
-    /**
-     * @brief Get the Maximum Payload Length with a MAXPACKETSIZE defined
+     * @brief Get the Maximum Payload Length with a MAXPACKETSIZE defined for ControlPacket
      *
      * @param type
      * @return uint8_t
      */
-    static uint8_t getMaximumPayloadLength(uint8_t type);
+    static uint8_t getMaximumPayloadLengthControlPacket(uint8_t type);
 
     /**
      * @brief Given a type returns if needs a data packet
@@ -135,7 +144,7 @@ public:
      * @return true True if needed
      * @return false If not
      */
-    static bool hasDataPacket(uint8_t type);
+    static bool isDataPacket(uint8_t type);
 
     /**
      * @brief Given a type returns if needs a control packet
@@ -144,30 +153,43 @@ public:
      * @return true True if needed
      * @return false If not
      */
-    static bool hasControlPacket(uint8_t type);
+    static bool isControlPacket(uint8_t type);
 
 #ifndef LM_GOD_MODE
 private:
 #endif
 
     /**
-     * @brief Get the number of bytes to the payload, between a Packet<T> and their real payload
-     *
-     * @param type type of the packet
-     * @return size_t number of bytes
-     */
-    static uint8_t getExtraLengthToPayload(uint8_t type);
-
-    /**
-     * @brief Create a Packet<uint8_t>
+     * @brief Create a T*
      *
      * @param payload Payload
      * @param payloadSize Length of the payload in bytes
-     * @param extraSize Indicates the function that it need to allocate extra space before the payload
-     * @return Packet<uint8_t>*
+     * @return T*
      */
-    static Packet<uint8_t>* createPacket(uint8_t* payload, uint8_t payloadSize, uint8_t extraSize);
+    template<class T>
+    static T* createPacket(uint8_t* payload, uint8_t payloadSize) {
+        //Packet length = size of the packet + size of the payload
+        int packetLength = sizeof(T) + payloadSize;
 
+        if (packetLength > MAXPACKETSIZE) {
+            Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
+            return nullptr;
+        }
+
+        T* p = (T*) malloc(packetLength);
+
+        if (p) {
+            //Copy the payload into the packet
+            memcpy((void*) ((unsigned long) p + (sizeof(T))), payload, payloadSize);
+        } else {
+            Log.errorln(F("packet not allocated"));
+            return nullptr;
+        }
+
+        Log.traceln(F("Packet created with %d bytes"), packetLength);
+
+        return p;
+    };
 };
 
 #endif

@@ -15,19 +15,50 @@ class PacketQueueService {
 public:
 
     /**
-     * @brief Create a Queue Packet element
+     * @brief Create a Queue Packet
      *
-     * @param p packet
-     * @param priority priority inside the queue
-     * @param number Number of the sequence
-     * @return QueuePacket<uint8_t>*
+     * @tparam T Type of packet
+     * @param p Packet
+     * @param priority Priority of the packet
+     * @param number Number of the Packet
+     * @return QueuePacket<T>*
      */
-    static QueuePacket<Packet<uint8_t>>* createQueuePacket(Packet<uint8_t>* p, uint8_t priority, uint16_t number = 0) {
-        QueuePacket<Packet<uint8_t>>* qp = new QueuePacket<Packet<uint8_t>>();
+    template<class T>
+    static QueuePacket<T>* createQueuePacket(T* p, uint8_t priority, uint16_t number = 0) {
+        QueuePacket<T>* qp = new QueuePacket<T>();
         qp->priority = priority;
         qp->number = number;
         qp->packet = p;
         return qp;
+    }
+
+    /**
+     * @brief Find the element queue inside the specified list of queuePackets
+     *
+     * @tparam T Type of the queue
+     * @param queue Queue where to find
+     * @param num Number of the specific element
+     * @return QueuePacket<T>* QueueElement inside the list
+     */
+    template<class T>
+    static QueuePacket<T>* findPacketQueue(LM_LinkedList<QueuePacket<T>>* queue, uint8_t num) {
+        queue->setInUse();
+
+        if (queue->moveToStart()) {
+            do {
+                QueuePacket<T>* current = queue->getCurrent();
+
+                if (current->number == num) {
+                    queue->releaseInUse();
+                    return current;
+                }
+
+            } while (queue->next());
+        }
+
+        queue->releaseInUse();
+
+        return nullptr;
     }
 
     /**
@@ -37,7 +68,8 @@ public:
      * @param pq packet queue to be deleted
      */
     static void deleteQueuePacketAndPacket(QueuePacket<Packet<uint8_t>>* pq) {
-        delete pq->packet;
+        Log.traceln(F("Deleting packet"));
+        free(pq->packet);
 
         Log.traceln(F("Deleting packet queue"));
         delete pq;
@@ -45,7 +77,7 @@ public:
 
     template <typename T>
     static void deleteQueuePacketAndPacket(QueuePacket<T>* pq) {
-        deleteQueuePacketAndPacket(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
+        deleteQueuePacketAndPacket((QueuePacket<Packet<uint8_t>>*)(pq));
     }
 
 };

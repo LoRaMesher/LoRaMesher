@@ -94,8 +94,11 @@ public:
         //Get the size of the payload in bytes
         size_t payloadSizeInBytes = payloadSize * sizeof(T);
 
+        //Create a data packet with the payload
+        DataPacket* dPacket = PacketService::createDataPacket(dst, getLocalAddress(), DATA_P, (uint8_t*) payload, payloadSizeInBytes);
+
         //Create the packet and set it to the send queue
-        setPackedForSend(PacketService::createPacket(dst, getLocalAddress(), DATA_P, payload, payloadSizeInBytes), DEFAULT_PRIORITY);
+        setPackedForSend((Packet<uint8_t>*)(dPacket), DEFAULT_PRIORITY);
     }
 
     /**
@@ -137,7 +140,7 @@ public:
     template<typename T>
     AppPacket<T>* getNextAppPacket() {
         ReceivedAppPackets->setInUse();
-        AppPacket<T>* appPacket = reinterpret_cast<AppPacket<T>*>(ReceivedAppPackets->Pop());
+        AppPacket<T>* appPacket = (AppPacket<T>*)(ReceivedAppPackets->Pop());
         ReceivedAppPackets->releaseInUse();
         return appPacket;
     }
@@ -376,18 +379,16 @@ private:
      */
     template <typename T>
     static void deletePacket(Packet<T>* p) {
-        delete p;
+        free(p);
     }
 
     /**
      * @brief Sets the packet in a Fifo with priority and will send the packet when needed.
      *
-     * @tparam T
-     * @param p packet of type T
+     * @param p packet<uint8_t>*
      * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
      */
-    template <typename T>
-    void setPackedForSend(Packet<T>* p, uint8_t priority) {
+    void setPackedForSend(Packet<uint8_t>* p, uint8_t priority) {
         Log.traceln(F("Adding packet to Q_SP"));
         QueuePacket<Packet<uint8_t>>* send = PacketQueueService::createQueuePacket(p, priority);
         Log.traceln(F("Created packet to Q_SP"));
@@ -415,14 +416,14 @@ private:
      *
      * @param pq packet queue to be processed as data packet
      */
-    void processDataPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
+    void processDataPacket(QueuePacket<DataPacket>* pq);
 
     /**
      * @brief Process the data packet that destination is this node
      *
      * @param pq packet queue to be processed as data packet
      */
-    void processDataPacketForMe(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
+    void processDataPacketForMe(QueuePacket<DataPacket>* pq);
 
     /**
      * @brief Notifies the ReceivedUserData_TaskHandle that a packet has been arrived
@@ -462,9 +463,9 @@ private:
      * @param destination destination address
      * @param seq_id Sequence Id
      * @param num_packets Number of packets of the sequence
-     * @return QueuePacket<Packet<uint8_t>>*
+     * @return QueuePacket<ControlPacket>*
      */
-    QueuePacket<Packet<uint8_t>>* getStartSequencePacketQueue(uint16_t destination, uint8_t seq_id, uint16_t num_packets);
+    QueuePacket<ControlPacket>* getStartSequencePacketQueue(uint16_t destination, uint8_t seq_id, uint16_t num_packets);
 
     /**
      * @brief Sends an ACK packet to the destination
@@ -491,15 +492,15 @@ private:
      * @param title Title to print the header
      */
     void printHeaderPacket(Packet<uint8_t>* p, String title);
-    
+
     /**
      * @brief Process a large payload packet
-     * 
+     *
      * @param pq PacketQueue packet queue to be processed
      * @return true if processed correctly
      * @return false if not processed correctly
      */
-    bool processLargePayloadPacket(QueuePacket<Packet<DataPacket<uint8_t>>>* pq);
+    bool processLargePayloadPacket(QueuePacket<ControlPacket>* pq);
 
     /**
      * @brief Process a received synchronization packet
@@ -569,7 +570,7 @@ private:
      */
     struct listConfiguration {
         sequencePacketConfig* config;
-        LM_LinkedList<QueuePacket<Packet<uint8_t>>>* list;
+        LM_LinkedList<QueuePacket<ControlPacket>>* list;
     };
 
     /**
@@ -654,15 +655,6 @@ private:
      * @return listConfiguration*
      */
     listConfiguration* findSequenceList(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source);
-
-    /**
-     * @brief Find the packet queue inside the list of packet queues
-     *
-     * @param queue Queue to find the packet queue
-     * @param num Number of the sequence of the packet queue
-     * @return QueuePacket<Packet<uint8_t>>*
-     */
-    QueuePacket<Packet<uint8_t>>* findPacketQueue(LM_LinkedList<QueuePacket<Packet<uint8_t>>>* queue, uint8_t num);
 
     /**
      * @brief Queue Waiting Sending Packets (Q_WSP)

@@ -6,7 +6,7 @@
 #include "PacketHeader.h"
 
 #pragma pack(1)
-class RouteDataPacket {//: public PacketHeader {
+class RouteDataPacket : public PacketHeader {
 public:
     uint16_t via;
 };

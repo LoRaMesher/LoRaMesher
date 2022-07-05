@@ -6,10 +6,19 @@
 #include "RouteDataPacket.h"
 
 #pragma pack(1)
-template <class T>
 class DataPacket final : public RouteDataPacket {
 public:
-    T payload[];
+    uint8_t payload[];
+
+    /**
+     * @brief Delete function for Packets
+     *
+     * @param p Packet to be deleted
+     */
+    void operator delete(void* p) {
+        Log.traceln(F("Deleting Data packet"));
+        free(p);
+    }
 };
 #pragma pack()
 
