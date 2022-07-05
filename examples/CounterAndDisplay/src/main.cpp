@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include "loramesher.h"
 #include "display.h"
-#include "WString.h"
 
 //Using LILYGO TTGO T-BEAM v1.1 
 #define BOARD_LED   4
