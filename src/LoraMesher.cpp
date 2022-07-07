@@ -8,7 +8,7 @@ void LoraMesher::init(void (*func)(void*)) {
     WiFiService::init();
     initializeLoRa();
     initializeScheduler(func);
-
+    recalculateMaxTimeOnAir();
 
     delay(1000);
     Log.verboseln(F("Initialization DONE, starting receiving packets..."));
@@ -126,11 +126,11 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
     }
 }
 
+
 #if defined(ESP8266) || defined(ESP32)
 ICACHE_RAM_ATTR
 #endif
 void LoraMesher::onReceive() {
-
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     xHigherPriorityTaskWoken = xTaskNotifyFromISR(
@@ -155,6 +155,24 @@ void LoraMesher::receivingRoutine() {
             portMAX_DELAY);
 
         if (TWres == pdPASS) {
+            uint16_t flags = radio->getIRQFlags();
+            if ((flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DETECTED) == RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DETECTED) {
+                preambleReceivedWhenSending = 1;
+                Log.warningln(F("Preamble detected"));
+                res = radio->startReceive();
+                if (res != 0) {
+                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
+                }
+                continue;
+            } else if ((flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DONE) == RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DONE) {
+                preambleReceivedWhenSending = 2;
+                Log.verboseln(F("Preamble done"));
+                res = radio->startReceive();
+                if (res != 0) {
+                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
+                }
+                continue;
+            }
             packetSize = radio->getPacketLength();
             if (packetSize == 0)
                 Log.warningln(F("Empty packet received"));
@@ -183,6 +201,8 @@ void LoraMesher::receivingRoutine() {
                 //     deletePacket(rx);
                 // } 
                 else {
+                    preambleReceivedWhenSending = 1;
+
                     //Create a Packet Queue element containing the Packet
                     QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0);
 
@@ -214,7 +234,28 @@ uint16_t LoraMesher::getLocalAddress() {
  *  Region Packet Service
 **/
 
+void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
+    //Random delay, to avoid some collisions. Between 0 and 100
+    uint32_t randomDelay = random(1, 10 * repeatedDetectPreambles) * maxTimeOnAir;
+
+    Log.verboseln(F("RandomDelay %d ms"), randomDelay);
+
+    //Set a random delay, to avoid some collisions.
+    vTaskDelay(randomDelay / portTICK_PERIOD_MS);
+    preambleReceivedWhenSending = 0;
+
+    radio->startChannelScan();
+    do {
+        vTaskDelay(20 / portTICK_PERIOD_MS);
+    } while (preambleReceivedWhenSending == 0);
+
+    if (preambleReceivedWhenSending == 1)
+        waitBeforeSend(repeatedDetectPreambles++);
+}
+
 bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
+    waitBeforeSend(1);
+
     //Clear Dio0 Action
     radio->clearDio0Action();
 
@@ -243,15 +284,9 @@ void LoraMesher::sendPackets() {
     uint8_t sendId = 0;
     uint8_t resendMessage = 0;
 
-    //Random delay, to avoid some collisions. Between 0 and 4 seconds
-    TickType_t randomDelay = (getLocalAddress() % 4000) / portTICK_PERIOD_MS;
-
-    //Delay between different messages
-    TickType_t delayBetweenSend = 0;
+    randomSeed(getLocalAddress());
 
     const uint8_t dutyCycleEvery = (100 - DUTY_CYCLE) / portTICK_PERIOD_MS;
-
-    uint32_t timeOnAir = 0;
 
     for (;;) {
 
@@ -259,6 +294,7 @@ void LoraMesher::sendPackets() {
         ulTaskNotifyTake(pdPASS, 30000 / portTICK_PERIOD_MS);
 
         while (ToSendPackets->getLength() > 0) {
+
             ToSendPackets->setInUse();
 
             Log.verboseln("Size of Send Packets Queue: %d", ToSendPackets->getLength());
@@ -291,9 +327,6 @@ void LoraMesher::sendPackets() {
                         incForwardedPackets();
                 }
 
-                //Set a random delay, to avoid some collisions. Between 0 and 4 seconds
-                vTaskDelay(randomDelay);
-
                 //Send packet
                 bool hasSend = sendPacket(tx->packet);
 
@@ -314,9 +347,9 @@ void LoraMesher::sendPackets() {
 
                 resendMessage = 0;
 
-                timeOnAir = radio->getTimeOnAir(tx->packet->getPacketLength()) / 1000;
+                uint32_t timeOnAir = radio->getTimeOnAir(tx->packet->getPacketLength()) / 1000;
 
-                delayBetweenSend = timeOnAir * dutyCycleEvery;
+                TickType_t delayBetweenSend = timeOnAir * dutyCycleEvery;
 
                 Log.verboseln("TimeOnAir %d ms, next message in %d ms", timeOnAir, delayBetweenSend);
 
@@ -570,6 +603,11 @@ void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
         ReceivedUserData_TaskHandle,
         0,
         eSetValueWithOverwrite);
+}
+
+void LoraMesher::recalculateMaxTimeOnAir() {
+    maxTimeOnAir = radio->getTimeOnAir(MAXPACKETSIZE) / 1000;
+    Log.verboseln(F("Max Time on Air changed %d ms"), maxTimeOnAir);
 }
 
 /**

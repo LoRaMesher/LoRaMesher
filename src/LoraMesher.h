@@ -662,6 +662,31 @@ private:
      */
     LM_LinkedList<listConfiguration>* q_WRP = new LM_LinkedList<listConfiguration>();
 
+    /**
+     * @brief Max time on air for a given configuration in ms
+     *
+     */
+    uint32_t maxTimeOnAir = 0;
+
+    /**
+     * @brief Flag used when trying to send to detect a packet preamble.
+     *
+     */
+    uint8_t preambleReceivedWhenSending = 0;
+
+    /**
+     * @brief Wait before sending function
+     *
+     * @param repeatedDetectPreambles Number of repeated detected preambles
+     */
+    void waitBeforeSend(uint8_t repeatedDetectPreambles);
+
+    /**
+     * @brief Max Time on air for a given configuration, Used for time slots
+     *
+     */
+    void recalculateMaxTimeOnAir();
+
 };
 
 #endif
