@@ -47,9 +47,6 @@
 #define HELLO_PACKETS_DELAY 300
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
 
-//Define Delay before send in ms, for Channel Activity Detection (CAD)
-#define DELAY_BEFORE_SEND 100
-
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
 #define MAX_RESEND_PACKET 3

@@ -195,12 +195,7 @@ void LoraMesher::receivingRoutine() {
                 if (res != 0) {
                     Log.errorln(F("Reading packet data gave error: %d"), res);
                     deletePacket(rx);
-                }
-                // else if (snr <= 0) {
-                //     Log.errorln(F("Packet with bad SNR, deleting it"));
-                //     deletePacket(rx);
-                // } 
-                else {
+                } else {
                     preambleReceivedWhenSending = 1;
 
                     //Create a Packet Queue element containing the Packet
