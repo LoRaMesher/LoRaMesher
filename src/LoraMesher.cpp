@@ -9,13 +9,17 @@ void LoraMesher::init(void (*func)(void*)) {
     initializeLoRa();
     initializeScheduler(func);
     recalculateMaxTimeOnAir();
-    Log.verboseln(F("Initialization DONE, starting receiving packets..."));
-    int res = radio->startReceive();
-    if (res != 0)
-        Log.errorln(F("Receiving on constructor gave error: %d"), res);
+
+    start();
 }
 
 void LoraMesher::standby() {
+    //Get actual priority
+    UBaseType_t prevPriority = uxTaskPriorityGet(NULL);
+
+    //Set max priority
+    vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
+
     int res = radio->standby();
     if (res != 0)
         Log.errorln(F("Standby gave error: %d"), res);
@@ -28,9 +32,18 @@ void LoraMesher::standby() {
 
     //TODO: remove when receivedUserData is responsible to the user
     vTaskSuspend(ReceivedUserData_TaskHandle);
+
+    //Set previous priority
+    vTaskPrioritySet(NULL, prevPriority);
 }
 
-void LoraMesher::resume() {
+void LoraMesher::start() {
+    //Get actual priority
+    UBaseType_t prevPriority = uxTaskPriorityGet(NULL);
+
+    //Set max priority
+    vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
+
     vTaskResume(ReceivePacket_TaskHandle);
     vTaskResume(Hello_TaskHandle);
     vTaskResume(ReceiveData_TaskHandle);
@@ -43,6 +56,9 @@ void LoraMesher::resume() {
     int res = radio->startReceive();
     if (res != 0)
         Log.errorln(F("Starting gave error: %d"), res);
+
+    //Set previous priority
+    vTaskPrioritySet(NULL, prevPriority);
 }
 
 LoraMesher::~LoraMesher() {
@@ -168,6 +184,8 @@ void LoraMesher::onReceive() {
 }
 
 void LoraMesher::receivingRoutine() {
+    vTaskSuspend(NULL);
+
     BaseType_t TWres;
     size_t packetSize;
     int rssi, snr, res;
@@ -299,6 +317,8 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
 }
 
 void LoraMesher::sendPackets() {
+    vTaskSuspend(NULL);
+
     int sendCounter = 0;
     uint8_t sendId = 0;
     uint8_t resendMessage = 0;
@@ -381,6 +401,8 @@ void LoraMesher::sendPackets() {
 }
 
 void LoraMesher::sendHelloPacket() {
+    vTaskSuspend(NULL);
+
     //Wait an initial 2 second
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
@@ -403,6 +425,8 @@ void LoraMesher::sendHelloPacket() {
 }
 
 void LoraMesher::processPackets() {
+    vTaskSuspend(NULL);
+
     for (;;) {
         /* Wait for the notification of receivingRoutine and enter blocking */
         ulTaskNotifyTake(pdPASS, portMAX_DELAY);
@@ -436,6 +460,8 @@ void LoraMesher::processPackets() {
 }
 
 void LoraMesher::packetManager() {
+    vTaskSuspend(NULL);
+
     for (;;) {
         RoutingTableService::manageTimeoutRoutingTable();
         managerReceivedQueue();
