@@ -9,12 +9,40 @@ void LoraMesher::init(void (*func)(void*)) {
     initializeLoRa();
     initializeScheduler(func);
     recalculateMaxTimeOnAir();
-
-    delay(1000);
     Log.verboseln(F("Initialization DONE, starting receiving packets..."));
     int res = radio->startReceive();
     if (res != 0)
         Log.errorln(F("Receiving on constructor gave error: %d"), res);
+}
+
+void LoraMesher::standby() {
+    int res = radio->standby();
+    if (res != 0)
+        Log.errorln(F("Standby gave error: %d"), res);
+
+    vTaskSuspend(ReceivePacket_TaskHandle);
+    vTaskSuspend(Hello_TaskHandle);
+    vTaskSuspend(ReceiveData_TaskHandle);
+    vTaskSuspend(SendData_TaskHandle);
+    vTaskSuspend(PacketManager_TaskHandle);
+
+    //TODO: remove when receivedUserData is responsible to the user
+    vTaskSuspend(ReceivedUserData_TaskHandle);
+}
+
+void LoraMesher::resume() {
+    vTaskResume(ReceivePacket_TaskHandle);
+    vTaskResume(Hello_TaskHandle);
+    vTaskResume(ReceiveData_TaskHandle);
+    vTaskResume(SendData_TaskHandle);
+    vTaskResume(PacketManager_TaskHandle);
+
+    //TODO: remove when receivedUserData is responsible to the user
+    vTaskResume(ReceivedUserData_TaskHandle);
+
+    int res = radio->startReceive();
+    if (res != 0)
+        Log.errorln(F("Starting gave error: %d"), res);
 }
 
 LoraMesher::~LoraMesher() {
@@ -23,6 +51,7 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(ReceiveData_TaskHandle);
     vTaskDelete(SendData_TaskHandle);
     vTaskDelete(ReceivedUserData_TaskHandle);
+    vTaskDelete(PacketManager_TaskHandle);
 
     ToSendPackets->Clear();
     ReceivedPackets->Clear();
@@ -33,9 +62,6 @@ LoraMesher::~LoraMesher() {
 }
 
 void LoraMesher::initializeLoRa() {
-    Log.traceln(F("LoRa module initialization..."));
-
-    // TODO: Optimize memory, this could lead to heap fragmentation
     Log.verboseln(F("Initializing RadioLib"));
     Module* mod = new Module(LORA_CS, LORA_IRQ, LORA_RST);
     radio = new SX1276(mod);
@@ -58,8 +84,6 @@ void LoraMesher::initializeLoRa() {
     radio->setDio0Action(onReceive);
 
     Log.traceln(F("LoRa module initialization DONE"));
-
-    delay(1000);
 }
 
 void LoraMesher::initializeScheduler(void (*func)(void*)) {

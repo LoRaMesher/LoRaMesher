@@ -66,6 +66,19 @@ public:
     void init(void (*receiverFunction)(void*));
 
     /**
+     * @brief Resume LoRaMesher. After calling standby you can resume the LoRaMesher.
+     * After resume LoRaMesher it will create and send a Routing Message. Do not abuse this function, it will prevent the duty cycle to function as intended.
+     *
+     */
+    void resume();
+
+    /**
+     * @brief Standby LoRaMesher. Including tasks and reception and send packets.
+     *
+     */
+    void standby();
+
+    /**
      * @brief Destroy the LoraMesher
      *
      */
