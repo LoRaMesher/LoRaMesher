@@ -5,18 +5,19 @@
 // 433E6 for Asia
 // 866E6 for Europe
 // 915E6 for North America
-#define BAND 868.0F
-#define BANDWIDTH 125.0F
-#define LORASF 7U // Spreading factor 6-12 (default 7)
-#define CODING_RATE 7U
-#define PREAMBLE_LENGTH 8U
-#define DUTY_CYCLE 1 //In %
+#define LM_BAND 868.0F
+#define LM_BANDWIDTH 125.0F
+#define LM_LORASF 7U // Spreading factor 6-12 (default 7)
+#define LM_CODING_RATE 7U
+#define LM_PREAMBLE_LENGTH 8U
+#define LM_POWER 10
+#define LM_DUTY_CYCLE 1 //In %
 
 //Syncronization Word that identifies the mesh network
-#define SYNC_WORD 19U
+#define LM_SYNC_WORD 19U
 
 // Comment this line if you want to remove the crc for each packet
-#define ADDCRC_PAYLOAD
+#define LM_ADDCRC_PAYLOAD
 
 // Routing table max size
 #define RTMAXSIZE 256

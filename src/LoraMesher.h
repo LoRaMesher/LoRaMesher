@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_H
 #define _LORAMESHER_H
 
-#include <ArduinoLog.h>
-
 // LoRa libraries
 #include "RadioLib.h"
 
@@ -30,6 +28,67 @@ public:
         static LoraMesher instance;
         return instance;
     }
+
+    /**
+     * @brief LoRaMesh initialization method.
+     *
+     * @param freq Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
+     * @param bw LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
+     * @param sf LoRa spreading factor. Allowed values range from 6 to 12.
+     * @param cr LoRa coding rate denominator. Allowed values range from 5 to 8.
+     * @param syncWord LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
+     * @param power Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
+     * @param preambleLength Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number.
+     * Allowed values range from 6 to 65535.
+     *
+     * Example of usage:
+     * @code
+     * void processReceivedPackets(void* parameters) {
+     *      for (;;) {
+     *          //Wait for the notification of processReceivedPackets and enter blocking
+     *          ulTaskNotifyTake(pdPASS, portMAX_DELAY);
+     *
+     *          // Get the receivedAppPackets and get all the elements
+     *          while (radio.getReceivedQueueSize() > 0) {
+     *              //Get the first element inside the Received User Packets FiFo
+     *              AppPacket<DataPacket>* packet = radio.getNextAppPacket<DataPacket>();
+     *
+     *              //Do something with the packet, ex: print(packetReceived);
+     *
+     *              //Then delete the packet
+     *              radio.deletePacket(packet);
+     *          }
+     *      }
+     * }
+     * @endcode
+     *
+     *
+     *   Then initialize:
+     * @code
+     *   LoraMesher radio = LoraMesher::getInstance();
+     *   radio.begin();
+     *   radio.start();
+     * @endcode
+     *
+     *   Then for receiving app packets:
+     * @code
+     *   TaskHandle_t receiveLoRaMessage_Handle = NULL;
+     *   int res = xTaskCreate(
+     *       processReceivedPackets,
+     *       "Receive User routine",
+     *       4096,
+     *       (void*) 1,
+     *       2,
+     *       &receiveLoRaMessage_Handle);
+     *   if (res != pdPASS) {
+     *       Log.errorln(F("Receive User Task creation gave error: %d"), res);
+     *   }
+     *
+     *   radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
+     *
+     * @ref RadioLib reference begin code
+     */
+    void begin(float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
 
     /**
      * @brief Initialize the LoraMesher object
@@ -63,6 +122,7 @@ public:
      *   radio.init(processReceivedPackets);
      * @endcode
      */
+    [[deprecated("Use begin(...) instead. Will be deleted permanently in v0.0.6.")]]
     void init(void (*receiverFunction)(void*));
 
     /**
@@ -83,6 +143,50 @@ public:
      *
      */
     ~LoraMesher();
+
+    /**
+     * @brief Set the Frequency. Allowed values range from 137.0 MHz to 525.0 MHz.
+     *
+     * @param freq Frequency to be set in MHz
+     */
+    void setFrequency(float freq) { radio->setFrequency(freq); recalculateMaxTimeOnAir(); }
+
+    /**
+     * @brief Sets LoRa bandwidth. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
+     *
+     * @param bw LoRa bandwidth to be set in kHz.
+     */
+    void setBandwidth(float bw) { radio->setBandwidth(bw); recalculateMaxTimeOnAir(); }
+
+    /**
+     * @brief Sets LoRa spreading factor. Allowed values range from 6 to 12.
+     *
+     * @param sf LoRa spreading factor to be set.
+     */
+    void setSpreadingFactor(uint8_t sf) { radio->setSpreadingFactor(sf); recalculateMaxTimeOnAir(); }
+
+    /**
+     * @brief Sets LoRa coding rate denominator. Allowed values range from 5 to 8.
+     *
+     * @param cr LoRa coding rate denominator to be set.
+     */
+    void setCodingRate(uint8_t cr) { radio->setCodingRate(cr); recalculateMaxTimeOnAir(); }
+
+    /**
+     * @brief Sets transmission output power. Allowed values range from -3 to 15 dBm (RFO pin) or +2 to +17 dBm (PA_BOOST pin).
+     * High power +20 dBm operation is also supported, on the PA_BOOST pin.
+     *
+     * @param power Transmission output power in dBm.
+     * @param useRfo Whether to use the RFO (true) or the PA_BOOST (false) pin for the RF output. Defaults to PA_BOOST.
+     */
+    void setOutputPower(int8_t power, bool useRfo = false) { radio->setOutputPower(power, useRfo); }
+
+    /**
+     * @brief Set the Receive App Data Task Handle, every time a received packet for this node is detected, this task will be notified.
+     *
+     * @param ReceiveAppDataTaskHandle Task handle which will be notified every time a packet for the application is detected.
+     */
+    void setReceiveAppDataTaskHandle(TaskHandle_t ReceiveAppDataTaskHandle) { ReceiveAppData_TaskHandle = ReceiveAppDataTaskHandle; }
 
     /**
      * @brief Routing table List
@@ -254,6 +358,14 @@ public:
      */
     uint32_t getReceivedNotForMe() { return receivedPacketNotForMeNum; }
 
+protected:
+    float _freq = 0;
+    float _bw = 0;
+    uint8_t _sf = 0;
+    uint8_t _cr = 0;
+    float _br = 0;
+    bool _crcOn = true; // default value used in FSK mode
+
 private:
 
     /**
@@ -269,16 +381,16 @@ private:
     LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ToSendPackets = new LM_LinkedList<QueuePacket<Packet<uint8_t>>>();
 
     /**
-     * @brief Routable node timeout (µs)
-     *
-     */
-    unsigned long routeTimeout;
-
-    /**
      * @brief RadioLib module
      *
      */
     SX1276* radio;
+
+    /**
+     * @brief RadioLib Generic Module
+     *
+     */
+    Module* genericModule;
 
     /**
      * @brief Hello task handle. It will send a hello packet every HELLO_PACKETS_DELAY s
@@ -308,11 +420,11 @@ private:
     TaskHandle_t SendData_TaskHandle = nullptr;
 
     /**
-     * @brief Received user data task handle. Every time the receive data task handle found a data packet for the user it will be notified.
-     * This function is implemented by the user.
+     * @brief Receive App data task handle. Every time that a packet is received and is for this node, this task will be notified.
+     * This task is implemented by the user.
      *
      */
-    TaskHandle_t ReceivedUserData_TaskHandle = nullptr;
+    TaskHandle_t ReceiveAppData_TaskHandle = nullptr;
 
     /**
      * @brief Packet manager task handle. This manages all the routing table and large and reliable payloads, checking for timeouts and resending messages.
@@ -324,9 +436,13 @@ private:
 
     void receivingRoutine();
 
-    void initializeLoRa();
+    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength);
 
-    void initializeScheduler(void (*func)(void*));
+    void initializeSchedulers();
+
+    //TODO: Change message
+    [[deprecated("Create task and add it to the LoRaMesher using the function setReceiveAppDataTaskHandle(...). Will be deleted permanently in v0.0.6.")]]
+    void initializeReceivedUserDataTask(void (*func)(void*));
 
     void sendHelloPacket();
 

@@ -2,12 +2,23 @@
 
 LoraMesher::LoraMesher() {}
 
+void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
+    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+    WiFiService::init();
+    initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength);
+    initializeSchedulers();
+    recalculateMaxTimeOnAir();
+}
+
 void LoraMesher::init(void (*func)(void*)) {
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
-    routeTimeout = 10000000;
     WiFiService::init();
-    initializeLoRa();
-    initializeScheduler(func);
+    initializeLoRa(LM_BAND, LM_BANDWIDTH, LM_LORASF, LM_CODING_RATE, LM_SYNC_WORD, LM_POWER, LM_PREAMBLE_LENGTH);
+    initializeSchedulers();
+
+    //TODO: remove when receivedUserData is responsible to the user
+    initializeReceivedUserDataTask(func);
+
     recalculateMaxTimeOnAir();
 
     start();
@@ -31,7 +42,8 @@ void LoraMesher::standby() {
     vTaskSuspend(PacketManager_TaskHandle);
 
     //TODO: remove when receivedUserData is responsible to the user
-    vTaskSuspend(ReceivedUserData_TaskHandle);
+    if (ReceiveAppData_TaskHandle)
+        vTaskSuspend(ReceiveAppData_TaskHandle);
 
     //Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
@@ -51,7 +63,8 @@ void LoraMesher::start() {
     vTaskResume(PacketManager_TaskHandle);
 
     //TODO: remove when receivedUserData is responsible to the user
-    vTaskResume(ReceivedUserData_TaskHandle);
+    if (ReceiveAppData_TaskHandle)
+        vTaskResume(ReceiveAppData_TaskHandle);
 
     int res = radio->startReceive();
     if (res != 0)
@@ -66,8 +79,11 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(Hello_TaskHandle);
     vTaskDelete(ReceiveData_TaskHandle);
     vTaskDelete(SendData_TaskHandle);
-    vTaskDelete(ReceivedUserData_TaskHandle);
     vTaskDelete(PacketManager_TaskHandle);
+
+    //TODO: remove when receivedUserData is responsible to the user
+    if (ReceiveAppData_TaskHandle)
+        vTaskDelete(ReceiveAppData_TaskHandle);
 
     ToSendPackets->Clear();
     ReceivedPackets->Clear();
@@ -75,24 +91,27 @@ LoraMesher::~LoraMesher() {
 
     radio->clearDio0Action();
     radio->reset();
+
+    delete radio;
+    delete genericModule;
 }
 
-void LoraMesher::initializeLoRa() {
+void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
     Log.verboseln(F("Initializing RadioLib"));
-    Module* mod = new Module(LORA_CS, LORA_IRQ, LORA_RST);
-    radio = new SX1276(mod);
+    genericModule = new Module(LORA_CS, LORA_IRQ, LORA_RST);
+    radio = new SX1276(genericModule);
     if (radio == NULL) {
         Log.errorln(F("RadioLib not initialized properly"));
     }
 
     // Set up the radio parameters
     Log.verboseln(F("Initializing radio"));
-    int res = radio->begin(BAND, BANDWIDTH, LORASF, CODING_RATE, SYNC_WORD, 10, PREAMBLE_LENGTH);
+    int res = radio->begin(freq, bw, sf, cr, syncWord, power, preambleLength);
     if (res != 0) {
         Log.errorln(F("Radio module gave error: %d"), res);
     }
 
-#ifdef ADDCRC_PAYLOAD
+#ifdef LM_ADDCRC_PAYLOAD
     radio->setCRC(true);
 #endif
 
@@ -102,7 +121,7 @@ void LoraMesher::initializeLoRa() {
     Log.traceln(F("LoRa module initialization DONE"));
 }
 
-void LoraMesher::initializeScheduler(void (*func)(void*)) {
+void LoraMesher::initializeSchedulers() {
     Log.verboseln(F("Setting up Schedulers"));
     int res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
@@ -145,16 +164,6 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
         Log.errorln(F("Process Task creation gave error: %d"), res);
     }
     res = xTaskCreate(
-        func,
-        "Receive User routine",
-        4096,
-        this,
-        2,
-        &ReceivedUserData_TaskHandle);
-    if (res != pdPASS) {
-        Log.errorln(F("Receive User Task creation gave error: %d"), res);
-    }
-    res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->packetManager(); },
         "Packet Manager routine",
         4096,
@@ -163,6 +172,19 @@ void LoraMesher::initializeScheduler(void (*func)(void*)) {
         &PacketManager_TaskHandle);
     if (res != pdPASS) {
         Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
+    }
+}
+
+void LoraMesher::initializeReceivedUserDataTask(void (*func)(void*)) {
+    int res = xTaskCreate(
+        func,
+        "Receive User routine",
+        4096,
+        this,
+        2,
+        &ReceiveAppData_TaskHandle);
+    if (res != pdPASS) {
+        Log.errorln(F("Receive User Task creation gave error: %d"), res);
     }
 }
 
@@ -325,7 +347,7 @@ void LoraMesher::sendPackets() {
 
     randomSeed(getLocalAddress());
 
-    const uint8_t dutyCycleEvery = (100 - DUTY_CYCLE) / portTICK_PERIOD_MS;
+    const uint8_t dutyCycleEvery = (100 - LM_DUTY_CYCLE) / portTICK_PERIOD_MS;
 
     for (;;) {
 
@@ -637,17 +659,21 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
 }
 
 void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
-    ReceivedAppPackets->setInUse();
-    //Add the packet inside the receivedUsers Queue
-    ReceivedAppPackets->Append(appPacket);
+    if (ReceiveAppData_TaskHandle) {
+        ReceivedAppPackets->setInUse();
+        //Add the packet inside the receivedUsers Queue
+        ReceivedAppPackets->Append(appPacket);
 
-    ReceivedAppPackets->releaseInUse();
+        ReceivedAppPackets->releaseInUse();
 
-    //Notify the received user task handle
-    xTaskNotify(
-        ReceivedUserData_TaskHandle,
-        0,
-        eSetValueWithOverwrite);
+        //Notify the received user task handle
+        xTaskNotify(
+            ReceiveAppData_TaskHandle,
+            0,
+            eSetValueWithOverwrite);
+
+    } else
+        deletePacket(appPacket);
 }
 
 void LoraMesher::recalculateMaxTimeOnAir() {
