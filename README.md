@@ -50,15 +50,27 @@ Serial.println("initBoard");
 //Get the LoraMesher instance
 LoraMesher& radio = LoraMesher::getInstance();
 
-//Initialize the LoraMesher with a processReceivedPackets function
-radio.init(processReceivedPackets);
+//Initialize the LoraMesher. You can specify the LoRa parameters here or later with their respective functions
+radio.begin();
+
+//After initializing you need to start the radio with
+radio.start();
+
+//You can pause and reanude at any moment with
+radio.standby();
+//And then
+radio.start();
 ```
 
 We can see that, when starting a new instance of LoRaMesher, we need to pass through a function.
 
 ### Received packets function
 
-The function that gets a notification each time the library receives a packet for the user looks like this one:
+If your node needs to receive packets from other nodes you should follow the next steps:
+
+1. Create a function that will receive the packets:
+
+The function that gets a notification each time the library receives a packet for the app looks like this one:
 
 ```
 /**
@@ -91,13 +103,42 @@ void processReceivedPackets(void*) {
 
 There are some important things we need to be aware of:
 
-1. This function should have a `void*` in the parameters.
-2. The function should contain an endless loop.
-3. Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
-4. All the packets are stored inside a private queue.
-5. There is a function to get the size of the queue `radio.getReceivedQueueSize()`.
-6. You can get the first element with `radio.getNextAppPacket<T>()` where T is the type of your data. 
-7. IMPORTANT!!! Every time you call Pop, you need to be sure to call `radio.deletePacket(packet)`. It will free the memory that has been allocated for the packet. If not executed it can cause memory leaks and out of memory errors.
+- This function should have a `void*` in the parameters.
+- The function should contain an endless loop.
+- Inside the loop, it is mandatory to have the `ulTaskNotifyTake(pdPASS,portMAX_DELAY)` or equivalent. This function allows the library to notify the function to process pending packets.
+- All the packets are stored inside a private queue.
+- There is a function to get the size of the queue `radio.getReceivedQueueSize()`.
+- You can get the first element with `radio.getNextAppPacket<T>()` where T is the type of your data. 
+- IMPORTANT!!! Every time you call Pop, you need to be sure to call `radio.deletePacket(packet)`. It will free the memory that has been allocated for the packet. If not executed it can cause memory leaks and out of memory errors.
+
+2. Create a task containing this function:
+```
+TaskHandle_t receiveLoRaMessage_Handle = NULL;
+
+/**
+ * @brief Create a Receive Messages Task and add it to the LoRaMesher
+ *
+ */
+void createReceiveMessages() {
+    int res = xTaskCreate(
+        processReceivedPackets,
+        "Receive App Task",
+        4096,
+        (void*) 1,
+        2,
+        &receiveLoRaMessage_Handle);
+    if (res != pdPASS) {
+        Log.errorln(F("Receive App Task creation gave error: %d"), res);
+    }
+}
+
+```
+
+2. Add the receiveLoRaMessage_Handle to the LoRaMesher
+
+```
+radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
+```
 
 ### User data packet
 
@@ -127,6 +168,9 @@ In this section we will present how you can create and send packets. in this exa
 
         //Create packet and send it.
          radio.createPacketAndSend(BROADCAST_ADDR, helloPacket, 1);
+         
+         //Or if you want to send large and reliable payloads you can call this function too.
+         radio.sendReliable(dstAddr, helloPacket, 1);
 
         //Wait 10 seconds to send the next packet
         vTaskDelay(10000 / portTICK_PERIOD_MS);
