@@ -244,9 +244,16 @@ public:
     /**
      * @brief Returns the number of packets inside the received packets queue
      *
-     * @return size_t
+     * @return size_t Received Queue Size
      */
     size_t getReceivedQueueSize();
+
+    /**
+     * @brief Get the Send Queue Size. Packets that are waiting to be send.
+     *
+     * @return size_t Send Queue Size
+     */
+    size_t getSendQueueSize();
 
     /**
       * @brief Get the Next Application Packet
@@ -358,13 +365,6 @@ public:
      */
     uint32_t getReceivedNotForMe() { return receivedPacketNotForMeNum; }
 
-protected:
-    float _freq = 0;
-    float _bw = 0;
-    uint8_t _sf = 0;
-    uint8_t _cr = 0;
-    float _br = 0;
-    bool _crcOn = true; // default value used in FSK mode
 
 private:
 
@@ -455,49 +455,40 @@ private:
      */
 
     uint32_t receivedDataPacketsNum = 0;
-    void incReceivedDataPackets() { receivedDataPacketsNum++; }//minetwork -> incReceivedPackets();
+    void incReceivedDataPackets() { receivedDataPacketsNum++; }
 
     uint32_t sendPacketsNum = 0;
-    void incSendPackets() { sendPacketsNum++; }//
+    void incSendPackets() { sendPacketsNum++; }
 
     uint32_t receivedHelloPacketsNum = 0;
-    void incRecHelloPackets() { receivedHelloPacketsNum++; }//
+    void incRecHelloPackets() { receivedHelloPacketsNum++; }
 
     uint32_t sentHelloPacketsNum = 0;
-    void incSentHelloPackets() { sentHelloPacketsNum++; }//
+    void incSentHelloPackets() { sentHelloPacketsNum++; }
 
     uint32_t receivedBroadcastPacketsNum = 0;
-    void incReceivedBroadcast() { receivedBroadcastPacketsNum++; }//
+    void incReceivedBroadcast() { receivedBroadcastPacketsNum++; }
 
     uint32_t forwardedPacketsNum = 0;
-    void incForwardedPackets() { forwardedPacketsNum++; }//
+    void incForwardedPackets() { forwardedPacketsNum++; }
 
     uint32_t dataPacketForMeNum = 0;
-    void incDataPacketForMe() { dataPacketForMeNum++; }//
+    void incDataPacketForMe() { dataPacketForMeNum++; }
 
     uint32_t receivedIAmViaNum = 0;
-    void incReceivedIAmVia() { receivedIAmViaNum++; }//
+    void incReceivedIAmVia() { receivedIAmViaNum++; }
 
     uint32_t sendPacketDestinyUnreachableNum = 0;
-    void incDestinyUnreachable() { sendPacketDestinyUnreachableNum++; }//
+    void incDestinyUnreachable() { sendPacketDestinyUnreachableNum++; }
 
     uint32_t receivedPacketNotForMeNum = 0;
     void incReceivedNotForMe() { receivedPacketNotForMeNum++; }
 
-
     /**
-     * @brief End region Monitoring variables
+     * @brief Function that process the packets inside Received Packets
+     * Task executed every time that a packet arrive.
      *
      */
-
-
-
-
-     /**
-      * @brief Function that process the packets inside Received Packets
-      * Task executed every time that a packet arrive.
-      *
-      */
     void processPackets();
 
     /**

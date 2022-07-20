@@ -188,7 +188,6 @@ void LoraMesher::initializeReceivedUserDataTask(void (*func)(void*)) {
     }
 }
 
-
 #if defined(ESP8266) || defined(ESP32)
 ICACHE_RAM_ATTR
 #endif
@@ -705,6 +704,10 @@ int LoraMesher::routingTableSize() {
 
 size_t LoraMesher::getReceivedQueueSize() {
     return ReceivedAppPackets->getLength();
+}
+
+size_t LoraMesher::getSendQueueSize() {
+    return ToSendPackets->getLength();
 }
 
 void LoraMesher::addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp) {
