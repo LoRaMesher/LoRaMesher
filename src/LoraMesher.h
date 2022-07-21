@@ -21,9 +21,18 @@
 
 #include "services/WiFiService.h"
 
+/**
+ * @brief LoRaMesher Library
+ *
+ */
 class LoraMesher {
 
 public:
+    /**
+     * @brief Get the Instance of the LoRaMesher
+     *
+     * @return LoraMesher&
+     */
     static LoraMesher& getInstance() {
         static LoraMesher instance;
         return instance;
@@ -85,6 +94,8 @@ public:
      *   }
      *
      *   radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
+     *
+     * @endcode
      *
      * @ref RadioLib reference begin code
      */

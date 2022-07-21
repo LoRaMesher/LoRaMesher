@@ -5,6 +5,10 @@
 
 #include "NetworkNode.h"
 
+/**
+ * @brief Route Node
+ *
+ */
 class RouteNode {
 public:
     /**

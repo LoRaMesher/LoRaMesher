@@ -3,11 +3,6 @@
 
 #include <Arduino.h>
 
-/**
- * @brief packetQueue template
- *
- * @tparam T
- */
 template <typename T>
 class QueuePacket {
 public:

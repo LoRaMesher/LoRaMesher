@@ -41,10 +41,10 @@ dataPacket* helloPacket = new dataPacket;
 
 ### LoRaMesh Initialization
 
-To initialize the new implementation, LoRaMesher must be initialized with a function call. This function will be notified every time the microcontroller receives an incoming packet for the user.
+To initialize the new implementation, you can configure the LoRa parameters that the library will use. If your node needs to receive messages to the application, see Received packets function section.
 
 ```
-Serial.begin(115200); //This configuration can be changed
+Serial.begin(115200);
 Serial.println("initBoard");
 
 //Get the LoraMesher instance
@@ -56,13 +56,11 @@ radio.begin();
 //After initializing you need to start the radio with
 radio.start();
 
-//You can pause and reanude at any moment with
+//You can pause and resume at any moment with
 radio.standby();
 //And then
 radio.start();
 ```
-
-We can see that, when starting a new instance of LoRaMesher, we need to pass through a function.
 
 ### Received packets function
 

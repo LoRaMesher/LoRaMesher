@@ -5,6 +5,10 @@
 
 #pragma pack(1)
 
+/**
+ * @brief Network Node
+ * 
+ */
 class NetworkNode {
 public:
     /**
