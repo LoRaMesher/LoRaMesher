@@ -3,7 +3,7 @@
 LoraMesher::LoraMesher() {}
 
 void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
-    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+    Log.begin(LOG_LEVEL_WARNING, &Serial);
     WiFiService::init();
     initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength);
     initializeSchedulers();
@@ -194,14 +194,26 @@ ICACHE_RAM_ATTR
 void LoraMesher::onReceive() {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    xHigherPriorityTaskWoken = xTaskNotifyFromISR(
-        LoraMesher::getInstance().ReceivePacket_TaskHandle,
-        0,
-        eSetValueWithoutOverwrite,
-        &xHigherPriorityTaskWoken);
+    uint16_t flags = LoraMesher::getInstance().radio->getIRQFlags();
+    if ((flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_RX_DONE) != RADIOLIB_SX127X_CLEAR_IRQ_FLAG_RX_DONE) {
+        if ((flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DETECTED) != RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DETECTED &&
+            (flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DONE) == RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DONE) {
 
-    if (xHigherPriorityTaskWoken == pdTRUE)
-        portYIELD_FROM_ISR();
+            LoraMesher::getInstance().preambleReceivedWhenSending = 2;
+            Log.verboseln("Preamble done");
+            LoraMesher::getInstance().radio->startReceive();
+        }
+    } else {
+
+        xHigherPriorityTaskWoken = xTaskNotifyFromISR(
+            LoraMesher::getInstance().ReceivePacket_TaskHandle,
+            0,
+            eSetValueWithoutOverwrite,
+            &xHigherPriorityTaskWoken);
+
+        if (xHigherPriorityTaskWoken == pdTRUE)
+            portYIELD_FROM_ISR();
+    }
 }
 
 void LoraMesher::receivingRoutine() {
@@ -212,30 +224,14 @@ void LoraMesher::receivingRoutine() {
     int rssi, snr, res;
     for (;;) {
         TWres = xTaskNotifyWait(
+            pdTRUE,
             pdFALSE,
-            ULONG_MAX,
             NULL,
             portMAX_DELAY);
 
         if (TWres == pdPASS) {
-            uint16_t flags = radio->getIRQFlags();
-            if ((flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DETECTED) == RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DETECTED) {
-                preambleReceivedWhenSending = 1;
-                Log.warningln(F("Preamble detected"));
-                res = radio->startReceive();
-                if (res != 0) {
-                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
-                }
-                continue;
-            } else if ((flags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DONE) == RADIOLIB_SX127X_CLEAR_IRQ_FLAG_CAD_DONE) {
-                preambleReceivedWhenSending = 2;
-                Log.verboseln(F("Preamble done"));
-                res = radio->startReceive();
-                if (res != 0) {
-                    Log.errorln(F("Starting to listen in receiving routine gave error: %d"), res);
-                }
-                continue;
-            }
+            preambleReceivedWhenSending = 1;
+
             packetSize = radio->getPacketLength();
             if (packetSize == 0)
                 Log.warningln(F("Empty packet received"));
@@ -259,8 +255,6 @@ void LoraMesher::receivingRoutine() {
                     Log.errorln(F("Reading packet data gave error: %d"), res);
                     deletePacket(rx);
                 } else {
-                    preambleReceivedWhenSending = 1;
-
                     //Create a Packet Queue element containing the Packet
                     QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0);
 
@@ -302,6 +296,7 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
     preambleReceivedWhenSending = 0;
 
+    Log.verboseln(F("Starting scan"));
     radio->startChannelScan();
     do {
         vTaskDelay(20 / portTICK_PERIOD_MS);
