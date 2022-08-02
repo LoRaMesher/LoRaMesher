@@ -389,6 +389,8 @@ void LoraMesher::sendPackets() {
 
                 if (hasSend) {
                     incSendPackets();
+                    incSentPayloadBytes(PacketService::getPacketPayloadLengthWithoutControl(tx->packet));
+                    incSentControlBytes(PacketService::getControlLength(tx->packet));
                 }
 
                 //TODO: If the packet has not been send, add it to the queue and send it again
@@ -457,8 +459,12 @@ void LoraMesher::processPackets() {
 
                 uint8_t type = rx->packet->type;
 
-                if ((type & HELLO_P) == HELLO_P) {
+                incReceivedPayloadBytes(PacketService::getPacketPayloadLengthWithoutControl(rx->packet));
+                incReceivedControlBytes(PacketService::getControlLength(rx->packet));
+
+                if (PacketService::isHelloPacket(type)) {
                     incRecHelloPackets();
+
                     RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet));
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
@@ -492,9 +498,9 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     // Log.traceln(F("%d"), p->getPayloadLength());
     //TODO: REFACTOR THIS, put it in the packet services
     if (PacketService::isDataPacket(p->type)) {
-        DataPacket* dPacket = reinterpret_cast<DataPacket*>(p);
+        DataPacket* dPacket = PacketService::dataPacket(p);
         if (PacketService::isControlPacket(p->type)) {
-            ControlPacket* cPacket = reinterpret_cast<ControlPacket*>(dPacket);
+            ControlPacket* cPacket = PacketService::controlPacket(p);
             Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X Seq_Id: %d Num: %d"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via, cPacket->seq_id, cPacket->number);
         } else {
             Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via);
@@ -607,9 +613,9 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
     //By default, delete the packet queue at the finish of this function
     bool deleteQueuePacket = true;
 
-    bool needAck = (p->type & NEED_ACK_P) == NEED_ACK_P;
+    bool needAck = PacketService::isNeedAckPacket(p->type);
 
-    if ((p->type & DATA_P) == DATA_P) {
+    if (PacketService::isOnlyDataPacket(p->type)) {
         Log.verboseln(F("Data Packet received"));
         //Convert the packet into a user packet
         AppPacket<uint8_t>* appPacket = PacketService::convertPacket(p);
@@ -617,23 +623,24 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
         //Add and notify the user of this packet
         notifyUserReceivedPacket(appPacket);
 
-    } else if ((p->type & ACK_P) == ACK_P) {
+    } else if (PacketService::isAckPacket(p->type)) {
         Log.verboseln(F("ACK Packet received"));
         addAck(p->src, cPacket->seq_id, cPacket->number);
 
-    } else if ((p->type & LOST_P) == LOST_P) {
+    } else if (PacketService::isLostPacket(p->type)) {
         Log.verboseln(F("Lost Packet received"));
         processLostPacket(p->src, cPacket->seq_id, cPacket->number);
 
-    } else if ((p->type & SYNC_P) == SYNC_P) {
+    } else if (PacketService::isSyncPacket(p->type)) {
         Log.verboseln(F("Synchronization Packet received"));
         processSyncPacket(p->src, cPacket->seq_id, cPacket->number);
 
         //Change the number to send the ack to the correct one
-        //cPacket->number in SYNC_P specify the number of packets
-        cPacket->number = 0;
+        //cPacket->number in SYNC_P specify the number of packets and it needs to ACK the 0
+        sendAckPacket(p->src, cPacket->seq_id, 0);
+        needAck = false;
 
-    } else if ((p->type & XL_DATA_P) == XL_DATA_P) {
+    } else if (PacketService::isXLPacket(p->type)) {
         Log.verboseln(F("Large payload Packet received"));
         processLargePayloadPacket(reinterpret_cast<QueuePacket<ControlPacket>*>(pq));
         needAck = false;

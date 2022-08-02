@@ -31,13 +31,13 @@
 #define MAXPACKETSIZE 222
 
 // Packet types
-#define NEED_ACK_P 0b00000001
+#define NEED_ACK_P 0b00000011
 #define DATA_P     0b00000010
 #define HELLO_P    0b00000100
-#define ACK_P      0b00001000
-#define XL_DATA_P  0b00010000
-#define LOST_P     0b00100000
-#define SYNC_P     0b01000000
+#define ACK_P      0b00001010
+#define XL_DATA_P  0b00010010
+#define LOST_P     0b00100010
+#define SYNC_P     0b01000010
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF

@@ -19,6 +19,14 @@ public:
     static DataPacket* dataPacket(Packet<uint8_t>* p);
 
     /**
+     * @brief Reinterpret cast from a Packet<uint8_t>* to a ControlPacket*
+     *
+     * @param p packet to be reinterpret
+     * @return ControlPacket*
+     */
+    static ControlPacket* controlPacket(Packet<uint8_t>* p);
+
+    /**
      * @brief Create a Control Packet
      *
      * @param dst Destination address
@@ -114,6 +122,14 @@ public:
     static AppPacket<uint8_t>* convertPacket(DataPacket* p);
 
     /**
+     * @brief Get the Packet Payload Length in bytes
+     *
+     * @param p
+     * @return size_t
+     */
+    static size_t getPacketPayloadLength(Packet<uint8_t>* p);
+
+    /**
      * @brief Get the Packet Payload Length
      *
      * @param p Data packet
@@ -130,6 +146,31 @@ public:
     static size_t getPacketPayloadLength(ControlPacket* p) { return p->payloadSize - (sizeof(ControlPacket) - sizeof(PacketHeader)); }
 
     /**
+     * @brief Get the Packet Payload Length Without the Control packets payloads
+     *
+     * @param p Packet
+     * @return size_t Size of payload without the payload of the Control packets
+     */
+    static size_t getPacketPayloadLengthWithoutControl(Packet<uint8_t>* p);
+
+    /**
+     * @brief Get the Packet Header Length in bytes
+     *
+     * @param p
+     * @return size_t
+     */
+    static size_t getPacketHeaderLength(Packet<uint8_t>* p);
+
+    /**
+     * @brief Get the Control Length in bytes. Used to calculate the Overhead of all the packets.
+     * In this function includes the payload of the Routing Packets and other control packets, like sync, acks and lost.
+     *
+     * @param p
+     * @return size_t
+     */
+    static size_t getControlLength(Packet<uint8_t>* p);
+
+    /**
      * @brief Get the Maximum Payload Length with a MAXPACKETSIZE defined for ControlPacket
      *
      * @param type
@@ -138,7 +179,7 @@ public:
     static uint8_t getMaximumPayloadLengthControlPacket(uint8_t type);
 
     /**
-     * @brief Given a type returns if needs a data packet
+     * @brief Given a type returns if is a data packet
      *
      * @param type type of the packet
      * @return true True if needed
@@ -147,13 +188,87 @@ public:
     static bool isDataPacket(uint8_t type);
 
     /**
-     * @brief Given a type returns if needs a control packet
+     * @brief Given a type returns if is only a data packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isOnlyDataPacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is a control packet
      *
      * @param type type of the packet
      * @return true True if needed
      * @return false If not
      */
     static bool isControlPacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is a hello packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isHelloPacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is a NeedAck packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isNeedAckPacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is an Ack packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isAckPacket(uint8_t type);
+
+
+    /**
+     * @brief Given a type returns if is a Lost packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isLostPacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is a Sync packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isSyncPacket(uint8_t type);
+
+
+    /**
+     * @brief Given a type returns if is a XL packet
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isXLPacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is a Data Control Packet, It will include HELLO_P, ACKs, LOST_P and SYN_P
+     *
+     * @param type type of the packet
+     * @return true True if needed
+     * @return false If not
+     */
+    static bool isDataControlPacket(uint8_t type);
 
 #ifndef LM_GOD_MODE
 private:

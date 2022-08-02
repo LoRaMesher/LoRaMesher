@@ -376,6 +376,34 @@ public:
      */
     uint32_t getReceivedNotForMe() { return receivedPacketNotForMeNum; }
 
+    /**
+     * @brief Get the payload received bytes
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedPayloadBytes() { return receivedPayloadBytes; }
+
+    /**
+     * @brief Get the control received bytes
+     *
+     * @return uint32_t
+     */
+    uint32_t getReceivedControlBytes() { return receivedControlBytes; }
+
+    /**
+     * @brief Get the payload sent bytes
+     *
+     * @return uint32_t
+     */
+    uint32_t getSentPayloadBytes() { return sentPayloadBytes; }
+
+    /**
+     * @brief Get the control sent bytes
+     *
+     * @return uint32_t
+     */
+    uint32_t getSentControlBytes() { return sentControlBytes; }
+
 
 private:
 
@@ -494,6 +522,18 @@ private:
 
     uint32_t receivedPacketNotForMeNum = 0;
     void incReceivedNotForMe() { receivedPacketNotForMeNum++; }
+
+    uint32_t receivedPayloadBytes = 0;
+    void incReceivedPayloadBytes(uint32_t numBytes) { receivedPayloadBytes += numBytes; }
+
+    uint32_t receivedControlBytes = 0;
+    void incReceivedControlBytes(uint32_t numBytes) { receivedControlBytes += numBytes; }
+
+    uint32_t sentPayloadBytes = 0;
+    void incSentPayloadBytes(uint32_t numBytes) { sentPayloadBytes += numBytes; }
+
+    uint32_t sentControlBytes = 0;
+    void incSentControlBytes(uint32_t numBytes) { sentControlBytes += numBytes; }
 
     /**
      * @brief Function that process the packets inside Received Packets
