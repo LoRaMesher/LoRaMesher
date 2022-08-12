@@ -46,12 +46,14 @@ uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
     return node->networkNode.metric;
 }
 
-void RoutingTableService::processRoute(RoutePacket* p) {
+void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     Log.verboseln(F("Route packet from %X with size %d"), p->src, p->payloadSize);
 
     NetworkNode* receivedNode = new NetworkNode(p->src, 1);
     processRoute(p->src, receivedNode);
     delete receivedNode;
+
+    resetReceiveSNRRoutePacket(p->src, receivedSNR);
 
     for (size_t i = 0; i < p->getPayloadLength(); i++) {
         NetworkNode* node = &p->routeNodes[i];
@@ -60,6 +62,16 @@ void RoutingTableService::processRoute(RoutePacket* p) {
     }
 
     printRoutingTable();
+}
+
+void RoutingTableService::resetReceiveSNRRoutePacket(uint16_t src, int8_t receivedSNR) {
+    RouteNode* rNode = findNode(src);
+    if (rNode == nullptr)
+        return;
+
+    Log.verboseln("Reset Receive SNR from %X: %d", src, receivedSNR);
+
+    rNode->receivedSNR = receivedSNR;
 }
 
 void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {

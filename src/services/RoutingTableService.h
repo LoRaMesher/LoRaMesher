@@ -89,8 +89,30 @@ public:
      *
      * @param p Route Packet
      */
-    static void processRoute(RoutePacket* p);
 
+     /**
+      * @brief Process the network packet
+      *
+      * @param p Route Packet
+      * @param receivedSNR Received SNR
+      */
+    static void processRoute(RoutePacket* p, int8_t receivedSNR);
+
+    /**
+     * @brief Reset the SNR from the Route Node received
+     *
+     * @param src Source address
+     * @param receivedSNR Received SNR
+     */
+    static void resetReceiveSNRRoutePacket(uint16_t src, int8_t receivedSNR);
+
+    /**
+     * @brief Reset the SNR from the Route Node Sent
+     *
+     * @param src Source address
+     * @param sentSNR Sent SNR
+     */
+    static void resetSentSNRRoutePacket(uint16_t src, int8_t sentSNR);
 
     /**
      * @brief Checks all the routing entries for a route timeout and remove the entry.
@@ -109,6 +131,15 @@ private:
     static void processRoute(uint16_t via, NetworkNode* node);
 
     /**
+     * @brief process the network node, adds the node in the routing table if can
+     *
+     * @param rNode route node
+     * @param via via address
+     * @param node NetworkNode
+     */
+    static void processRoute(RouteNode* rNode, uint16_t via, NetworkNode* node);
+
+    /**
      * @brief Reset the timeout of the given node
      *
      * @param node node to be reset the timeout
@@ -121,6 +152,13 @@ private:
      * @param node Network node that includes the address and the metric
      * @param via Address to next hop to reach the network node address
      */
+
+     /**
+      * @brief Add node to the routing table
+      *
+      * @param node Network node that includes the address and the metric
+      * @param via Address to next hop to reach the network node address
+      */
     static void addNodeToRoutingTable(NetworkNode* node, uint16_t via);
 
 };

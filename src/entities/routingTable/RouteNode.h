@@ -29,6 +29,25 @@ public:
      */
     uint16_t via = 0;
 
+    /**
+     * @brief SNR from received packets. Only available nodes at 1 hop.
+     *
+     */
+    int8_t receivedSNR = 0;
+
+    /**
+     * @brief SNR from sent packets. Only available nodes at 1 hop.
+     *
+     */
+    int8_t sentSNR = 0;
+
+    /**
+     * @brief Construct a new Route Node object
+     *
+     * @param address_ Address
+     * @param metric_ Metric
+     * @param via_ Via
+     */
     RouteNode(uint16_t address_, uint8_t metric_, uint16_t via_) : networkNode(address_, metric_), via(via_) {};
 };
 

@@ -3,7 +3,7 @@
 LoraMesher::LoraMesher() {}
 
 void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
-    Log.begin(LOG_LEVEL_WARNING, &Serial);
+    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     WiFiService::init();
     initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength);
     initializeSchedulers();
@@ -221,7 +221,9 @@ void LoraMesher::receivingRoutine() {
 
     BaseType_t TWres;
     size_t packetSize;
-    int rssi, snr, res;
+    int8_t rssi, snr;
+    int16_t res;
+
     for (;;) {
         TWres = xTaskNotifyWait(
             pdTRUE,
@@ -239,8 +241,8 @@ void LoraMesher::receivingRoutine() {
             else {
                 Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
 
-                rssi = radio->getRSSI();
-                snr = radio->getSNR();
+                rssi = (int8_t) round(radio->getRSSI());
+                snr = (int8_t) round(radio->getSNR());
 
                 Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
 
@@ -256,7 +258,7 @@ void LoraMesher::receivingRoutine() {
                     deletePacket(rx);
                 } else {
                     //Create a Packet Queue element containing the Packet
-                    QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0);
+                    QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0, 0, rssi, snr);
 
                     //Add the Packet Queue element created into the ReceivedPackets List
                     ReceivedPackets->Append(pq);
@@ -465,7 +467,7 @@ void LoraMesher::processPackets() {
                 if (PacketService::isHelloPacket(type)) {
                     incRecHelloPackets();
 
-                    RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet));
+                    RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet), rx->snr);
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
                 } else if (PacketService::isDataPacket(type))

@@ -15,20 +15,24 @@ class PacketQueueService {
 public:
 
     /**
-     * @brief Create a Queue Packet
+     * @brief Create a Queue Packet object
      *
      * @tparam T Type of packet
      * @param p Packet
      * @param priority Priority of the packet
      * @param number Number of the Packet
+     * @param rssi RSSI of the packet received
+     * @param snr SNR of the packet received
      * @return QueuePacket<T>*
      */
     template<class T>
-    static QueuePacket<T>* createQueuePacket(T* p, uint8_t priority, uint16_t number = 0) {
+    static QueuePacket<T>* createQueuePacket(T* p, uint8_t priority, uint16_t number = 0, int8_t rssi = 0, int8_t snr = 0) {
         QueuePacket<T>* qp = new QueuePacket<T>();
         qp->priority = priority;
         qp->number = number;
         qp->packet = p;
+        qp->rssi = rssi;
+        qp->snr = snr;
         return qp;
     }
 
