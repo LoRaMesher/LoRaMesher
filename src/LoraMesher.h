@@ -104,41 +104,6 @@ public:
     void begin(float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
 
     /**
-     * @brief Initialize the LoraMesher object
-     *
-     * @param receiverFunction Receiver function. It will be notified when data for the user is available.
-     * Example of usage:
-     * @code
-     * void processReceivedPackets(void* parameters) {
-     *      for (;;) {
-     *          //Wait for the notification of processReceivedPackets and enter blocking
-     *          ulTaskNotifyTake(pdPASS, portMAX_DELAY);
-     *
-     *          // Get the receivedAppPackets and get all the elements
-     *          while (radio.getReceivedQueueSize() > 0) {
-     *              //Get the first element inside the Received User Packets FiFo
-     *              AppPacket<DataPacket>* packet = radio.getNextAppPacket<DataPacket>();
-     *
-     *              //Do something with the packet, ex: print(packetReceived);
-     *
-     *              //Then delete the packet
-     *              radio.deletePacket(packet);
-     *          }
-     *      }
-     * }
-     * @endcode
-     *
-     *
-     *   Then initialize:
-     * @code
-     *   LoraMesher radio = LoraMesher::getInstance();
-     *   radio.init(processReceivedPackets);
-     * @endcode
-     */
-    [[deprecated("Use begin(...) instead. Will be deleted permanently in v0.0.6.")]]
-    void init(void (*receiverFunction)(void*));
-
-    /**
      * @brief Start/Resume LoRaMesher. After calling begin(...) or standby() you can Start/resume the LoRaMesher.
      * After Start/Resume LoRaMesher it will create and send a Routing Message. Do not abuse this function, it will prevent the duty cycle to function as intended.
      *
@@ -501,14 +466,9 @@ private:
 
     void initializeSchedulers();
 
-    //TODO: Change message
-    [[deprecated("Create task and add it to the LoRaMesher using the function setReceiveAppDataTaskHandle(...). Will be deleted permanently in v0.0.6.")]]
-    void initializeReceivedUserDataTask(void (*func)(void*));
-
     void sendHelloPacket();
 
     void packetManager();
-
 
     /**
      * @brief Region Monitoring variables

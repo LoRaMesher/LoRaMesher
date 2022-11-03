@@ -10,20 +10,6 @@ void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syn
     recalculateMaxTimeOnAir();
 }
 
-void LoraMesher::init(void (*func)(void*)) {
-    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
-    WiFiService::init();
-    initializeLoRa(LM_BAND, LM_BANDWIDTH, LM_LORASF, LM_CODING_RATE, LM_SYNC_WORD, LM_POWER, LM_PREAMBLE_LENGTH);
-    initializeSchedulers();
-
-    //TODO: remove when receivedUserData is responsible to the user
-    initializeReceivedUserDataTask(func);
-
-    recalculateMaxTimeOnAir();
-
-    start();
-}
-
 void LoraMesher::standby() {
     //Get actual priority
     UBaseType_t prevPriority = uxTaskPriorityGet(NULL);
@@ -172,19 +158,6 @@ void LoraMesher::initializeSchedulers() {
         &PacketManager_TaskHandle);
     if (res != pdPASS) {
         Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
-    }
-}
-
-void LoraMesher::initializeReceivedUserDataTask(void (*func)(void*)) {
-    int res = xTaskCreate(
-        func,
-        "Receive User routine",
-        4096,
-        this,
-        2,
-        &ReceiveAppData_TaskHandle);
-    if (res != pdPASS) {
-        Log.errorln(F("Receive User Task creation gave error: %d"), res);
     }
 }
 
