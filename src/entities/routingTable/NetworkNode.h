@@ -7,7 +7,7 @@
 
 /**
  * @brief Network Node
- * 
+ *
  */
 class NetworkNode {
 public:
@@ -23,9 +23,15 @@ public:
      */
     uint8_t metric = 0;
 
+    /**
+     * @brief Role of the Node
+     *
+     */
+    uint8_t role = 0;
+
     NetworkNode() {};
 
-    NetworkNode(uint16_t address_, uint8_t metric_) : address(address_), metric(metric_) {};
+    NetworkNode(uint16_t address_, uint8_t metric_, uint8_t role_): address(address_), metric(metric_), role(role_) {};
 };
 
 #pragma pack()

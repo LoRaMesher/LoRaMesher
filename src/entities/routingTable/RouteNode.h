@@ -48,7 +48,7 @@ public:
      * @param metric_ Metric
      * @param via_ Via
      */
-    RouteNode(uint16_t address_, uint8_t metric_, uint16_t via_) : networkNode(address_, metric_), via(via_) {};
+    RouteNode(uint16_t address_, uint8_t metric_, uint8_t role_, uint16_t via_): networkNode(address_, metric_, role_), via(via_) {};
 };
 
 #endif

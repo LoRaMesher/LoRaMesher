@@ -7,12 +7,29 @@
 #include "entities/routingTable/NetworkNode.h"
 
 #pragma pack(1)
-class RoutePacket final : public PacketHeader {
+class RoutePacket final: public PacketHeader {
 public:
-    NetworkNode routeNodes[];
 
-    size_t getPayloadLength() { return this->payloadSize / sizeof(NetworkNode); }
+    /**
+     * @brief Node Role
+     *
+     */
+    uint8_t nodeRole = 0;
+
+    /**
+     * @brief Network nodes
+     *
+     */
+    NetworkNode networkNodes[];
+
+    /**
+     * @brief Get the Number of Network Nodes
+     *
+     * @return size_t Number of Network Nodes inside the packet
+     */
+    size_t getNetworkNodesSize() { return (this->payloadSize - (sizeof(RoutePacket) - sizeof(PacketHeader))) / sizeof(NetworkNode); }
 };
+
 #pragma pack()
 
 #endif

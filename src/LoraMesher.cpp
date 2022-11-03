@@ -203,7 +203,8 @@ void LoraMesher::onReceive() {
             Log.verboseln("Preamble done");
             LoraMesher::getInstance().radio->startReceive();
         }
-    } else {
+    }
+    else {
 
         xHigherPriorityTaskWoken = xTaskNotifyFromISR(
             LoraMesher::getInstance().ReceivePacket_TaskHandle,
@@ -256,7 +257,8 @@ void LoraMesher::receivingRoutine() {
                 if (res != 0) {
                     Log.errorln(F("Reading packet data gave error: %d"), res);
                     deletePacket(rx);
-                } else {
+                }
+                else {
                     //Create a Packet Queue element containing the Packet
                     QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0, 0, rssi, snr);
 
@@ -433,7 +435,8 @@ void LoraMesher::sendHelloPacket() {
 
         NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
 
-        RoutePacket* tx = PacketService::createRoutingPacket(getLocalAddress(), nodes, RoutingTableService::routingTableSize());
+        RoutePacket* tx = PacketService::createRoutingPacket(
+            getLocalAddress(), nodes, RoutingTableService::routingTableSize(), RoleService::getRole());
 
         delete[] nodes;
 
@@ -470,7 +473,8 @@ void LoraMesher::processPackets() {
                     RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet), rx->snr);
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
-                } else if (PacketService::isDataPacket(type))
+                }
+                else if (PacketService::isDataPacket(type))
                     processDataPacket(reinterpret_cast<QueuePacket<DataPacket>*>(rx));
 
                 else {
@@ -504,10 +508,12 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
         if (PacketService::isControlPacket(p->type)) {
             ControlPacket* cPacket = PacketService::controlPacket(p);
             Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X Seq_Id: %d Num: %d"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via, cPacket->seq_id, cPacket->number);
-        } else {
+        }
+        else {
             Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via);
         }
-    } else
+    }
+    else
         Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b "), title, p->getPacketLength(), p->src, p->dst, p->id, p->type);
 
     Log.setShowLevel(true);
@@ -590,13 +596,15 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
         processDataPacketForMe(pq);
         return;
 
-    } else if (packet->dst == BROADCAST_ADDR) {
+    }
+    else if (packet->dst == BROADCAST_ADDR) {
         Log.verboseln(F("Data packet from %X BROADCAST"), packet->src);
         incReceivedBroadcast();
         processDataPacketForMe(pq);
         return;
 
-    } else if (packet->via == getLocalAddress()) {
+    }
+    else if (packet->via == getLocalAddress()) {
         Log.verboseln(F("Data Packet from %X for %X. Via is me. Forwarding it"), packet->src, packet->dst);
         incReceivedIAmVia();
         addToSendOrderedAndNotify(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
@@ -625,15 +633,18 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
         //Add and notify the user of this packet
         notifyUserReceivedPacket(appPacket);
 
-    } else if (PacketService::isAckPacket(p->type)) {
+    }
+    else if (PacketService::isAckPacket(p->type)) {
         Log.verboseln(F("ACK Packet received"));
         addAck(p->src, cPacket->seq_id, cPacket->number);
 
-    } else if (PacketService::isLostPacket(p->type)) {
+    }
+    else if (PacketService::isLostPacket(p->type)) {
         Log.verboseln(F("Lost Packet received"));
         processLostPacket(p->src, cPacket->seq_id, cPacket->number);
 
-    } else if (PacketService::isSyncPacket(p->type)) {
+    }
+    else if (PacketService::isSyncPacket(p->type)) {
         Log.verboseln(F("Synchronization Packet received"));
         processSyncPacket(p->src, cPacket->seq_id, cPacket->number);
 
@@ -642,7 +653,8 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
         sendAckPacket(p->src, cPacket->seq_id, 0);
         needAck = false;
 
-    } else if (PacketService::isXLPacket(p->type)) {
+    }
+    else if (PacketService::isXLPacket(p->type)) {
         Log.verboseln(F("Large payload Packet received"));
         processLargePayloadPacket(reinterpret_cast<QueuePacket<ControlPacket>*>(pq));
         needAck = false;
@@ -675,7 +687,8 @@ void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
             0,
             eSetValueWithOverwrite);
 
-    } else
+    }
+    else
         deletePacket(appPacket);
 }
 

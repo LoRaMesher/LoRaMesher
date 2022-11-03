@@ -23,6 +23,27 @@ RouteNode* RoutingTableService::findNode(uint16_t address) {
     return nullptr;
 }
 
+RouteNode* RoutingTableService::getBestNodeByRole(uint8_t role) {
+    RouteNode* bestNode = nullptr;
+
+    routingTableList->setInUse();
+
+    if (routingTableList->moveToStart()) {
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            if ((node->networkNode.role & role) == role &&
+                (bestNode == nullptr || node->networkNode.metric > bestNode->networkNode.metric)) {
+                bestNode = node;
+            }
+
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+    return bestNode;
+}
+
 bool RoutingTableService::hasAddressRoutingTable(uint16_t address) {
     RouteNode* node = findNode(address);
     return node != nullptr;
@@ -49,14 +70,14 @@ uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
 void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     Log.verboseln(F("Route packet from %X with size %d"), p->src, p->payloadSize);
 
-    NetworkNode* receivedNode = new NetworkNode(p->src, 1);
+    NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
     processRoute(p->src, receivedNode);
     delete receivedNode;
 
     resetReceiveSNRRoutePacket(p->src, receivedSNR);
 
-    for (size_t i = 0; i < p->getPayloadLength(); i++) {
-        NetworkNode* node = &p->routeNodes[i];
+    for (size_t i = 0; i < p->getNetworkNodesSize(); i++) {
+        NetworkNode* node = &p->networkNodes[i];
         node->metric++;
         processRoute(p->src, node);
     }
@@ -90,10 +111,14 @@ void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
             rNode->via = via;
             resetTimeoutRoutingNode(rNode);
             Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
-        } else if (node->metric == rNode->networkNode.metric) {
+        }
+        else if (node->metric == rNode->networkNode.metric) {
             //Reset the timeout, only when the metric is the same as the actual route.
             resetTimeoutRoutingNode(rNode);
         }
+
+        //Update the Role all the cases
+        rNode->networkNode.role = node->role;
     }
 }
 
@@ -102,7 +127,7 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
         Log.warningln(F("Routing table max size reached, not adding route and deleting it"));
         return;
     }
-    RouteNode* rNode = new RouteNode(node->address, node->metric, via);
+    RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
 
     //Reset the timeout of the node
     resetTimeoutRoutingNode(rNode);
@@ -113,7 +138,7 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
 
     routingTableList->releaseInUse();
 
-    Log.verboseln(F("New route added: %X via %X metric %d"), node->address, via, node->metric);
+    Log.verboseln(F("New route added: %X via %X metric %d, role %b"), node->address, via, node->metric, node->role);
 }
 
 NetworkNode* RoutingTableService::getAllNetworkNodes() {
@@ -153,10 +178,11 @@ void RoutingTableService::printRoutingTable() {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
-            Log.verboseln(F("%d - %X via %X metric %d"), position,
+            Log.verboseln(F("%d - %X via %X metric %d Role %d"), position,
                 node->networkNode.address,
                 node->via,
-                node->networkNode.metric);
+                node->networkNode.metric,
+                node->networkNode.role);
 
             position++;
         } while (routingTableList->next());

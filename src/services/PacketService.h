@@ -6,6 +6,7 @@
 #include "entities/packets/DataPacket.h"
 #include "entities/packets/AppPacket.h"
 #include "entities/packets/RoutePacket.h"
+#include "services/RoleService.h"
 
 class PacketService {
 public:
@@ -84,7 +85,8 @@ public:
 
         if (cpPacket) {
             memcpy(cpPacket, p, packetLength);
-        } else {
+        }
+        else {
             Log.errorln(F("Copy Packet not allocated"));
             return nullptr;
         }
@@ -98,9 +100,10 @@ public:
      * @param localAddress localAddress of the node
      * @param nodes list of NetworkNodes
      * @param numOfNodes Number of nodes
+     * @param nodeRole Role of the node
      * @return RoutePacket*
      */
-    static RoutePacket* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes);
+    static RoutePacket* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole);
 
     /**
      * @brief Create a Application Packet
@@ -296,7 +299,8 @@ private:
         if (p) {
             //Copy the payload into the packet
             memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
-        } else {
+        }
+        else {
             Log.errorln(F("packet not allocated"));
             return nullptr;
         }

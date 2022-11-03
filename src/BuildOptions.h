@@ -45,11 +45,16 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 300
+#define HELLO_PACKETS_DELAY 60
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
 #define MAX_RESEND_PACKET 3
+
+//Role Types
+#define ROLE_DEFAULT 0b00000000
+#define ROLE_GATEWAY 0b00000001
+//Free Role Types from 0b00000010 to 0b10000000
 
 #endif

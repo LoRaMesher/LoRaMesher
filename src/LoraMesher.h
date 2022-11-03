@@ -21,6 +21,8 @@
 
 #include "services/WiFiService.h"
 
+#include "services/RoleService.h"
+
 /**
  * @brief LoRaMesher Library
  *
@@ -404,6 +406,26 @@ public:
      */
     uint32_t getSentControlBytes() { return sentControlBytes; }
 
+    /**
+     * @brief Defines that the node is a gateway
+     *
+     */
+    static void addGatewayRole() { RoleService::setRole(ROLE_GATEWAY); };
+
+    /**
+     * @brief Defines any type of Role
+     *
+     * @param role Role to be defined
+     */
+    static void addRole(uint8_t role) { RoleService::setRole(role); };
+
+    /**
+     * @brief Get the Best Node With Role
+     *
+     * @param role Role to be searched
+     * @return RouteNode* Route Node
+     */
+    static RouteNode* getBestNodeWithRole(uint8_t role) { return RoutingTableService::getBestNodeByRole(role); };
 
 private:
 
@@ -724,7 +746,7 @@ private:
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
         uint32_t RTT{0}; //Round Trip time
 
-        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number) : seq_id(seq_id), source(source), number(number) {};
+        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number): seq_id(seq_id), source(source), number(number) {};
     };
 
     /**

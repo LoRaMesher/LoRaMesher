@@ -1,8 +1,5 @@
 #include "PacketService.h"
 
-
-
-
 Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
     if (packetSize > MAXPACKETSIZE) {
         Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
@@ -32,7 +29,8 @@ AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, u
     if (p) {
         //Copy the payload into the packet
         memcpy(p->payload, payload, payloadSize);
-    } else {
+    }
+    else {
         Log.errorln(F("User Packet not allocated"));
         return nullptr;
     }
@@ -88,14 +86,15 @@ bool PacketService::isDataControlPacket(uint8_t type) {
     return (isHelloPacket(type) || isAckPacket(type) || isLostPacket(type) || isLostPacket(type));
 }
 
-RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes) {
+RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole) {
     size_t routingSizeInBytes = numOfNodes * sizeof(NetworkNode);
 
     RoutePacket* routePacket = createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
     routePacket->dst = BROADCAST_ADDR;
     routePacket->src = localAddress;
     routePacket->type = HELLO_P;
-    routePacket->payloadSize = routingSizeInBytes;
+    routePacket->payloadSize = routingSizeInBytes + sizeof(RoutePacket) - sizeof(PacketHeader);
+    routePacket->nodeRole = nodeRole;
 
     return routePacket;
 }
