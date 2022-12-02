@@ -885,7 +885,10 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
         return;
     }
 
-    //TODO: Check correct number with lastAck?
+    if (config->config->lastAck > seq_num) {
+        Log.errorln(F("ACK received that has been yet acknowledged Seq_id: %d, Num: %d"), config->config->seq_id, seq_num);
+        return;
+    }
 
     //Set has been received some ACK
     config->config->firstAckReceived = 1;
@@ -1037,6 +1040,8 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
         Log.errorln(F("NOT FOUND the sequence packet config in ost packet with Seq_id: %d, Source: %d"), seq_id, destination);
         return;
     }
+
+    //TODO: Check for duplicate consecutive lost packets, set a timeout to resend the lost packet.
 
     //Send the packet sequence that has been lost
     if (sendPacketSequence(listConfig, seq_num)) {
@@ -1213,14 +1218,14 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     //TODO: This timeout should be a little variable depending on the duty cycle. 
     //TODO: Account for how many hops the packet needs to do
     //TODO: Account for how many packets are inside the Q_SP
-    // uint8_t hops = getNumberOfHops(configPacket->source);
-    // if (hops = 0) {
-    //     Log.errorln(F("Find next hop in add timeout"));
-    //     configPacket->timeout = 0;
-    //     return;
-    // }
+    uint8_t hops = RoutingTableService::getNumberOfHops(configPacket->source);
+    if (hops = 0) {
+        Log.errorln(F("Find next hop in add timeout"));
+        configPacket->timeout = 0;
+        return;
+    }
 
-    configPacket->timeout = millis() + DEFAULT_TIMEOUT * 1000;
+    configPacket->timeout = millis() + DEFAULT_TIMEOUT * 1000 * hops;
 }
 
 uint8_t LoraMesher::getSequenceId() {
