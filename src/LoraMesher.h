@@ -378,11 +378,24 @@ public:
     static void addGatewayRole() { RoleService::setRole(ROLE_GATEWAY); };
 
     /**
+     * @brief Defines that the node is not a gateway
+     *
+     */
+    static void removeGatewayRole() { RoleService::removeRole(ROLE_GATEWAY); };
+
+    /**
      * @brief Defines any type of Role
      *
      * @param role Role to be defined
      */
     static void addRole(uint8_t role) { RoleService::setRole(role); };
+
+    /**
+     * @brief Get the Nearest Gateway object
+     *
+     * @return RouteNode*
+     */
+    static RouteNode* getClosestGateway() { return RoutingTableService::getBestNodeByRole(ROLE_GATEWAY); };
 
     /**
      * @brief Get the Best Node With Role

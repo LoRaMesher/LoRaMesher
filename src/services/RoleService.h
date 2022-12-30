@@ -22,6 +22,12 @@ public:
     static void setRole(uint8_t role);
 
     /**
+     * @brief Remove the Role object
+     * 
+     */
+    static void removeRole(uint8_t role);
+
+    /**
      * @brief Check if the node hast the role of the parameter
      *
      * @param role Role to be checked
