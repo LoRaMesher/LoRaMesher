@@ -438,7 +438,7 @@ void LoraMesher::sendPackets() {
             ToSendPackets->releaseInUse();
 
             if (tx) {
-                Log.verboseln("Send nº %d", sendCounter);
+                Log.verboseln("Send n. %d", sendCounter);
 
                 if (tx->packet->src == getLocalAddress())
                     tx->packet->id = sendId++;
@@ -456,9 +456,6 @@ void LoraMesher::sendPackets() {
                     }
 
                     (reinterpret_cast<DataPacket*>(tx->packet))->via = nextHop;
-
-                    if (tx->packet->src != getLocalAddress())
-                        incForwardedPackets();
                 }
 
                 //Send packet
@@ -470,6 +467,8 @@ void LoraMesher::sendPackets() {
                     incSendPackets();
                     incSentPayloadBytes(PacketService::getPacketPayloadLengthWithoutControl(tx->packet));
                     incSentControlBytes(PacketService::getControlLength(tx->packet));
+                    if (tx->packet->src != getLocalAddress())
+                        incForwardedPackets();
                 }
 
                 //TODO: If the packet has not been send, add it to the queue and send it again
@@ -575,10 +574,9 @@ void LoraMesher::packetManager() {
 }
 
 void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
-    Log.setShowLevel(false);
-    String log = F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b ");
+    String log = F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b");
     if (PacketService::isDataPacket(p->type)) {
-        log += F("Via: %X");
+        log += F(" Via: %X");
         if (PacketService::isControlPacket(p->type)) {
             log += F(" Seq_Id: %d Num: %d");
         }
@@ -588,8 +586,6 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
         (reinterpret_cast<DataPacket*>(p))->via,
         (reinterpret_cast<ControlPacket*>(p))->seq_id,
         (reinterpret_cast<ControlPacket*>(p))->number);
-
-    Log.setShowLevel(true);
 }
 
 void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
