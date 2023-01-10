@@ -70,7 +70,7 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(ReceiveData_TaskHandle);
     vTaskDelete(SendData_TaskHandle);
     vTaskDelete(PacketManager_TaskHandle);
-    vTaskDelete(PacketManager_TaskHandle);
+    vTaskDelete(ReceiveTimeout_TaskHandle);
 
     ToSendPackets->Clear();
     ReceivedPackets->Clear();
