@@ -576,20 +576,18 @@ void LoraMesher::packetManager() {
 
 void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     Log.setShowLevel(false);
-    // Log.traceln(F("%d"), p->getPayloadLength());
-    //TODO: REFACTOR THIS, put it in the packet services
+    String log = F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b ");
     if (PacketService::isDataPacket(p->type)) {
-        DataPacket* dPacket = PacketService::dataPacket(p);
+        log += F("Via: %X");
         if (PacketService::isControlPacket(p->type)) {
-            ControlPacket* cPacket = PacketService::controlPacket(p);
-            Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X Seq_Id: %d Num: %d"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via, cPacket->seq_id, cPacket->number);
-        }
-        else {
-            Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X"), title, p->getPacketLength(), p->src, p->dst, p->id, p->type, dPacket->via);
+            log += F(" Seq_Id: %d Num: %d");
         }
     }
-    else
-        Log.verboseln(F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b "), title, p->getPacketLength(), p->src, p->dst, p->id, p->type);
+
+    Log.verboseln(log.c_str(), title.c_str(), p->getPacketLength(), p->src, p->dst, p->id, p->type,
+        (reinterpret_cast<DataPacket*>(p))->via,
+        (reinterpret_cast<ControlPacket*>(p))->seq_id,
+        (reinterpret_cast<ControlPacket*>(p))->number);
 
     Log.setShowLevel(true);
 }
