@@ -42,10 +42,6 @@ AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, u
     return p;
 }
 
-uint8_t PacketService::getMaximumPayloadLengthControlPacket(uint8_t type) {
-    return MAXPACKETSIZE - sizeof(ControlPacket);
-}
-
 bool PacketService::isDataPacket(uint8_t type) {
     return (type & DATA_P) == DATA_P;
 }
@@ -84,6 +80,16 @@ bool PacketService::isXLPacket(uint8_t type) {
 
 bool PacketService::isDataControlPacket(uint8_t type) {
     return (isHelloPacket(type) || isAckPacket(type) || isLostPacket(type) || isLostPacket(type));
+}
+
+uint8_t PacketService::getExtraLengthToPayload(uint8_t type) {
+    if (isDataPacket(type))
+        return sizeof(DataPacket) - sizeof(PacketHeader);
+
+    if (isControlPacket(type))
+        return sizeof(ControlPacket) - sizeof(PacketHeader);
+
+    return 0;
 }
 
 RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole) {
@@ -140,23 +146,11 @@ DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t 
 }
 
 size_t PacketService::getPacketPayloadLength(Packet<uint8_t>* p) {
-    if (isControlPacket(p->type))
-        return getPacketPayloadLength(controlPacket(p));
-
-    if (isDataPacket(p->type))
-        return getPacketPayloadLength(dataPacket(p));
-
-    return p->payloadSize;
+    return p->payloadSize - getPacketHeaderLength(p);
 }
 
 size_t PacketService::getPacketHeaderLength(Packet<uint8_t>* p) {
-    if (isControlPacket(p->type))
-        return sizeof(ControlPacket);
-
-    if (isDataPacket(p->type))
-        return sizeof(DataPacket);
-
-    return sizeof(PacketHeader);
+    return getExtraLengthToPayload(p->type) + sizeof(PacketHeader);
 }
 
 size_t PacketService::getControlLength(Packet<uint8_t>* p) {
@@ -164,6 +158,10 @@ size_t PacketService::getControlLength(Packet<uint8_t>* p) {
         return p->getPacketLength();
 
     return getPacketHeaderLength(p);
+}
+
+uint8_t PacketService::getMaximumPayloadLength(uint8_t type) {
+    return MAXPACKETSIZE - getExtraLengthToPayload(type);
 }
 
 size_t PacketService::getPacketPayloadLengthWithoutControl(Packet<uint8_t>* p) {

@@ -604,7 +604,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     uint8_t type = NEED_ACK_P | XL_DATA_P;
 
     //Max payload size per packet
-    size_t maxPayloadSize = PacketService::getMaximumPayloadLengthControlPacket(type);
+    size_t maxPayloadSize = PacketService::getMaximumPayloadLength(type);
 
     //Number of packets
     uint16_t numOfPackets = payloadSize / maxPayloadSize + (payloadSize % maxPayloadSize > 0);

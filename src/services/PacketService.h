@@ -174,12 +174,12 @@ public:
     static size_t getControlLength(Packet<uint8_t>* p);
 
     /**
-     * @brief Get the Maximum Payload Length with a MAXPACKETSIZE defined for ControlPacket
+     * @brief Get the Maximum Payload Length with a MAXPACKETSIZE
      *
      * @param type
      * @return uint8_t
      */
-    static uint8_t getMaximumPayloadLengthControlPacket(uint8_t type);
+    static uint8_t getMaximumPayloadLength(uint8_t type);
 
     /**
      * @brief Given a type returns if is a data packet
@@ -235,7 +235,6 @@ public:
      */
     static bool isAckPacket(uint8_t type);
 
-
     /**
      * @brief Given a type returns if is a Lost packet
      *
@@ -254,7 +253,6 @@ public:
      */
     static bool isSyncPacket(uint8_t type);
 
-
     /**
      * @brief Given a type returns if is a XL packet
      *
@@ -272,6 +270,14 @@ public:
      * @return false If not
      */
     static bool isDataControlPacket(uint8_t type);
+
+    /**
+     * @brief Get the Extra Length To Payload
+     *
+     * @param type type of the packet
+     * @return uin16_t extra length to payload
+     */
+    static uint8_t getExtraLengthToPayload(uint8_t type);
 
 #ifndef LM_GOD_MODE
 private:

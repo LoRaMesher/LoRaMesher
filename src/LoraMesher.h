@@ -405,7 +405,9 @@ public:
      */
     static RouteNode* getBestNodeWithRole(uint8_t role) { return RoutingTableService::getBestNodeByRole(role); };
 
+#ifndef LM_GOD_MODE
 private:
+#endif
 
     /**
      * @brief Construct a new LoraMesher object
