@@ -9,23 +9,25 @@
 //TODO: If is ControlPacket -> Is DataPacket.
 
 void testHasDataPacket() {
-    TEST_ASSERT_TRUE(PacketService::hasDataPacket(DATA_P | NEED_ACK_P | ACK_P | XL_DATA_P | LOST_P | SYNC_P));
+    TEST_ASSERT_TRUE(PacketService::isDataPacket(DATA_P | NEED_ACK_P | ACK_P | XL_DATA_P | LOST_P | SYNC_P));
 }
 
 void testHasNotDataPacket() {
-    TEST_ASSERT_FALSE(PacketService::hasDataPacket(HELLO_P));
+    TEST_ASSERT_FALSE(PacketService::isDataPacket(HELLO_P));
 }
 
 void testHasControlPacket() {
-    TEST_ASSERT_TRUE(PacketService::hasControlPacket(NEED_ACK_P | ACK_P | XL_DATA_P | LOST_P | SYNC_P));
+    TEST_ASSERT_TRUE(PacketService::isControlPacket(NEED_ACK_P | ACK_P | XL_DATA_P | LOST_P | SYNC_P));
 }
 
 void testHasNotControlPacket() {
-    TEST_ASSERT_FALSE(PacketService::hasDataPacket(HELLO_P | DATA_P));
+    TEST_ASSERT_FALSE(PacketService::isDataPacket(HELLO_P | DATA_P));
 }
 
 void testGetExtraLengthToPayloadDataPacket() {
-    TEST_ASSERT_EQUAL(2, PacketService::getExtraLengthToPayload(DATA_P));
+    uint8_t headerToPayloadLength = PacketService::getExtraLengthToPayload(DATA_P);
+    TEST_ASSERT_EQUAL(2, headerToPayloadLength);
+    TEST_ASSERT_EQUAL(sizeof(DataPacket) - sizeof(PacketHeader), headerToPayloadLength);
 }
 
 void testGetExtraLengthToPayloadControlPacketAndDataPacket() {
@@ -33,12 +35,12 @@ void testGetExtraLengthToPayloadControlPacketAndDataPacket() {
 }
 
 void testDataPacketLength() {
-    uint8_t dataPLen = sizeof(DataPacket<uint8_t>) + sizeof(PacketHeader);
+    uint8_t dataPLen = sizeof(DataPacket) + sizeof(PacketHeader);
     TEST_ASSERT_EQUAL(9, dataPLen);
 }
 
 void testControlPacketLength() {
-    uint8_t controlPLen = sizeof(ControlPacket<uint8_t>) + sizeof(PacketHeader);
+    uint8_t controlPLen = sizeof(ControlPacket) + sizeof(PacketHeader);
     TEST_ASSERT_EQUAL(10, controlPLen);
 }
 
