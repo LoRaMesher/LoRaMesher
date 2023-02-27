@@ -2,7 +2,7 @@
 
 LoraMesher::LoraMesher() {}
 
-void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module) {
+void LoraMesher::begin(uint8_t module, float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     WiFiService::init();
     initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength, module);
