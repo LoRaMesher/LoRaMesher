@@ -21,9 +21,6 @@ void LoraMesher::standby() {
     if (res != 0)
         Log.errorln(F("Standby gave error: %d"), res);
 
-    //Disable Interrupts
-    enableInterrupt = false;
-
     //Clear Dio Actions
     clearDioActions();
 
@@ -44,9 +41,6 @@ void LoraMesher::start() {
 
     //Set max priority
     vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
-
-    //Enable Interrupt
-    enableInterrupt = true;
 
     //Start Receiving
     startReceiving();
@@ -112,23 +106,23 @@ void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, ui
 void LoraMesher::setDioActionsForScanChannel() {
     // set the function that will be called
     // when LoRa preamble is detected
-    radio->setDioActionForScanning(onReceive);
+    clearDioActions();
+    // radio->setDioActionForScanning(onReceive);
 }
 
 void LoraMesher::setDioActionsForReceivePacket() {
+    clearDioActions();
+
     radio->setDioActionForReceiving(onReceive);
 }
 
 void LoraMesher::clearDioActions() {
-    Log.verboseln(F("Clearing callback function"));
     radio->clearDioActions();
 }
 
 //TODO: Retry start receiving if it fails
 int LoraMesher::startReceiving() {
     setDioActionsForReceivePacket();
-
-    enableInterrupt = true;
 
     int res = radio->startReceive();
     if (res != 0) {
@@ -138,6 +132,8 @@ int LoraMesher::startReceiving() {
 }
 
 int16_t LoraMesher::channelScan() {
+    clearDioActions();
+
     setDioActionsForScanChannel();
 
     return radio->scanChannel();
@@ -212,9 +208,6 @@ void LoraMesher::initializeSchedulers() {
 ICACHE_RAM_ATTR
 #endif
 void LoraMesher::onReceive(void) {
-    if (!LoraMesher::getInstance().enableInterrupt)
-        return;
-
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     xHigherPriorityTaskWoken = xTaskNotifyFromISR(
@@ -283,8 +276,6 @@ void LoraMesher::receivingRoutine() {
                 }
             }
 
-            enableInterrupt = true;
-
             startReceiving();
         }
     }
@@ -309,9 +300,6 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
 
     Log.verboseln(F("Starting scanning channel"));
 
-    // //Disable interrupts
-    // enableInterrupt = false;
-
     if (channelScan() == RADIOLIB_PREAMBLE_DETECTED) {
         startReceiving();
         Log.verboseln(F("Preamble detected while waiting"));
@@ -322,8 +310,7 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
 bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
     waitBeforeSend(1);
 
-    //Disable interrupts
-    enableInterrupt = false;
+    clearDioActions();
 
     //Blocking transmit, it is necessary due to deleting the packet after sending it. 
     int resT = radio->transmit(reinterpret_cast<uint8_t*>(p), p->getPacketLength());

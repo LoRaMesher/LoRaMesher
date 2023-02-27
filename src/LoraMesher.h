@@ -851,12 +851,6 @@ private:
     uint32_t maxTimeOnAir = 0;
 
     /**
-     * @brief Flag used to enable and disable interrupts
-     *
-     */
-    volatile bool enableInterrupt = true;
-
-    /**
      * @brief Wait before sending function
      *
      * @param repeatedDetectPreambles Number of repeated detected preambles
