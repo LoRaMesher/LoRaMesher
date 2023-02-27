@@ -45,6 +45,7 @@ public:
     /**
      * @brief LoRaMesh initialization method.
      *
+     * @param module Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
      * @param freq Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
      * @param bw LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
      * @param sf LoRa spreading factor. Allowed values range from 6 to 12.
@@ -53,7 +54,6 @@ public:
      * @param power Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
      * @param preambleLength Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number.
      * Allowed values range from 6 to 65535.
-     * @param module Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
      *
      * Example of usage:
      * @code
@@ -104,7 +104,7 @@ public:
      *
      * @ref RadioLib reference begin code
      */
-    void begin(float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH, uint8_t module = SX1276_MOD);
+    void begin(uint8_t module = SX1276_MOD, float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
 
     /**
      * @brief Start/Resume LoRaMesher. After calling begin(...) or standby() you can Start/resume the LoRaMesher.
