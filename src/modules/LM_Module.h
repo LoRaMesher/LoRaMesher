@@ -11,6 +11,7 @@ public:
 
     virtual int16_t receive(uint8_t* data, size_t len) = 0;
     virtual int16_t startReceive() = 0;
+    virtual int16_t scanChannel() = 0;
     virtual int16_t startChannelScan() = 0;
     virtual int16_t standby() = 0;
     virtual void reset() = 0;

@@ -12,6 +12,10 @@ int16_t LM_SX1276::startReceive() {
     return module->startReceive();
 }
 
+int16_t LM_SX1276::scanChannel() {
+    return module->scanChannel();
+}
+
 int16_t LM_SX1276::startChannelScan() {
     return module->startChannelScan();
 }
@@ -53,7 +57,6 @@ uint32_t LM_SX1276::getTimeOnAir(size_t length) {
 }
 
 void LM_SX1276::setDioActionForReceiving(void (*action)()) {
-    //TODO: Check for this
     module->setDio0Action(action);
 }
 
@@ -62,7 +65,6 @@ void LM_SX1276::setDioActionForReceivingTimeout(void(*action)()) {
 }
 
 void LM_SX1276::setDioActionForScanning(void (*action)()) {
-    //TODO: Check for this
     module->setDio1Action(action);
 }
 

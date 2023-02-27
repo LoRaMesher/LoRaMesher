@@ -13,6 +13,7 @@ public:
 
     int16_t receive(uint8_t* data, size_t len) override;
     int16_t startReceive() override;
+    int16_t scanChannel() override;
     int16_t startChannelScan() override;
     int16_t standby() override;
     void reset() override;
