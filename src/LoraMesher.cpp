@@ -2,10 +2,10 @@
 
 LoraMesher::LoraMesher() {}
 
-void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
+void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module) {
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     WiFiService::init();
-    initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength);
+    initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength, module);
     initializeSchedulers();
     recalculateMaxTimeOnAir();
 }
@@ -80,13 +80,21 @@ LoraMesher::~LoraMesher() {
     radio->reset();
 
     delete radio;
-    delete genericModule;
 }
 
-void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
+void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module) {
     Log.verboseln(F("Initializing RadioLib"));
-    genericModule = new Module(LORA_CS, LORA_IRQ, LORA_RST);
-    radio = new SX1276(genericModule);
+    switch (module) {
+        case SX1276_MOD:
+            Log.verboseln(F("Using SX1276 module"));
+            radio = new LM_SX1276();
+            break;
+        default:
+            Log.verboseln(F("Using SX1276 module"));
+            radio = new LM_SX1276();
+            break;
+    }
+
     if (radio == NULL) {
         Log.errorln(F("RadioLib not initialized properly"));
     }
@@ -108,22 +116,21 @@ void LoraMesher::setDioActionsForScanChannel() {
     // set the function that will be called
     // when LoRa preamble is not detected within CAD timeout period
     // or when a packet is received
-    radio->setDio0Action(onReceivingTimeout);
+    radio->setDioActionForScanningTimeout(onReceivingTimeout);
 
     // set the function that will be called
     // when LoRa preamble is detected
-    radio->setDio1Action(onReceive);
+    radio->setDioActionForScanning(onReceive);
 }
 
 void LoraMesher::setDioActionsForReceivePacket() {
-    radio->setDio0Action(onReceive);
-    radio->setDio1Action(onReceivingTimeout);
+    radio->setDioActionForReceiving(onReceive);
+    radio->setDioActionForReceivingTimeout(onReceivingTimeout);
 }
 
 void LoraMesher::clearDioActions() {
     Log.verboseln(F("Clearing callback function"));
-    radio->clearDio0Action();
-    radio->clearDio1Action();
+    radio->clearDioActions();
 }
 
 //TODO: Retry start receiving if it fails

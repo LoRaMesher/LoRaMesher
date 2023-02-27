@@ -11,6 +11,8 @@
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
+#include "modules/LM_modules.h"
+
 #include "utilities/LinkedQueue.hpp"
 
 #include "services/PacketService.h"
@@ -51,6 +53,7 @@ public:
      * @param power Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
      * @param preambleLength Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number.
      * Allowed values range from 6 to 65535.
+     * @param module Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
      *
      * Example of usage:
      * @code
@@ -101,7 +104,7 @@ public:
      *
      * @ref RadioLib reference begin code
      */
-    void begin(float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
+    void begin(float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH, uint8_t module = SX1276_MOD);
 
     /**
      * @brief Start/Resume LoRaMesher. After calling begin(...) or standby() you can Start/resume the LoRaMesher.
@@ -425,13 +428,7 @@ private:
      * @brief RadioLib module
      *
      */
-    SX1276* radio;
-
-    /**
-     * @brief RadioLib Generic Module
-     *
-     */
-    Module* genericModule;
+    LM_Module* radio;
 
     /**
      * @brief Hello task handle. It will send a hello packet every HELLO_PACKETS_DELAY s
@@ -497,7 +494,7 @@ private:
 
     void receivingTimeoutRoutine();
 
-    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength);
+    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module);
 
     void initializeSchedulers();
 
