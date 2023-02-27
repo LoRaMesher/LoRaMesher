@@ -80,6 +80,10 @@ void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, ui
             Log.verboseln(F("Using SX1276 module"));
             radio = new LM_SX1276();
             break;
+        case SX1262_MOD:
+            Log.verboseln(F("Using SX1262 module"));
+            radio = new LM_SX1262();
+            break;
         default:
             Log.verboseln(F("Using SX1276 module"));
             radio = new LM_SX1276();
