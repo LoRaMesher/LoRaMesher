@@ -47,5 +47,5 @@ private:
     * @brief RadioLib SX1272 Module
     *
     */
-    SX1276* module = new SX1276(new Module(LORA_CS, LORA_IRQ, LORA_RST));
+    SX1276* module = new SX1276(new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_IO1));
 };
