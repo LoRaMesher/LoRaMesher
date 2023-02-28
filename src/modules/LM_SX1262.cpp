@@ -31,7 +31,10 @@ void LM_SX1262::reset() {
 }
 
 int16_t LM_SX1262::setCRC(bool crc) {
-    return module->setCRC(crc);
+    if (crc)
+        return module->setCRC(2);
+    else
+        return module->setCRC(0);
 }
 
 size_t LM_SX1262::getPacketLength() {
