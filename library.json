@@ -18,7 +18,7 @@
     ],
     "dependencies": {
         "thijse/ArduinoLog": "https://github.com/thijse/Arduino-Log.git",
-        "jgromes/RadioLib": "https://github.com/jgromes/RadioLib"
+        "jgromes/RadioLib": "^5.6.0"
     },
     "frameworks": "arduino",
     "platforms": "*",
