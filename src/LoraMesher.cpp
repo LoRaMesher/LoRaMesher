@@ -225,6 +225,7 @@ void LoraMesher::onReceive(void) {
 }
 
 void LoraMesher::receivingRoutine() {
+    Log.verboseln("Receiving routine started");
     vTaskSuspend(NULL);
 
     BaseType_t TWres;
@@ -332,6 +333,7 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
 }
 
 void LoraMesher::sendPackets() {
+    Log.verboseln("Send routine started");
     vTaskSuspend(NULL);
 
     int sendCounter = 0;
@@ -417,6 +419,7 @@ void LoraMesher::sendPackets() {
 }
 
 void LoraMesher::sendHelloPacket() {
+    Log.verboseln("Send Hello Packet routine started");
     vTaskSuspend(NULL);
 
     //Wait an initial 2 second
@@ -442,6 +445,7 @@ void LoraMesher::sendHelloPacket() {
 }
 
 void LoraMesher::processPackets() {
+    Log.verboseln("Process routine started");
     vTaskSuspend(NULL);
 
     for (;;) {
@@ -482,6 +486,7 @@ void LoraMesher::processPackets() {
 }
 
 void LoraMesher::packetManager() {
+    Log.verboseln("Packet Manager routine started");
     vTaskSuspend(NULL);
 
     for (;;) {
