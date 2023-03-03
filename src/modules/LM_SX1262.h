@@ -4,6 +4,8 @@
 
 class LM_SX1262: public LM_Module {
 public:
+    LM_SX1262();
+
     int16_t begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord,
         int8_t power, int16_t preambleLength) override;
 
@@ -43,5 +45,5 @@ private:
     * @brief RadioLib SX1262 Module
     *
     */
-    SX1262* module = new SX1262(new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_IO1));
+    SX1262* module;
 };

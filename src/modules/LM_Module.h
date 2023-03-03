@@ -4,6 +4,8 @@
 
 #include <RadioLib.h>
 
+#include "BuildOptions.h"
+
 class LM_Module {
 public:
     virtual int16_t begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord,

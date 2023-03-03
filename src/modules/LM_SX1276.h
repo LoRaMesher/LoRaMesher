@@ -8,6 +8,8 @@
 
 class LM_SX1276: public LM_Module {
 public:
+    LM_SX1276();
+
     int16_t begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord,
         int8_t power, int16_t preambleLength) override;
 
@@ -47,5 +49,5 @@ private:
     * @brief RadioLib SX1272 Module
     *
     */
-    SX1276* module = new SX1276(new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_IO1));
+    SX1276* module;
 };
