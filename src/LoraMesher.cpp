@@ -2,10 +2,10 @@
 
 LoraMesher::LoraMesher() {}
 
-void LoraMesher::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
+void LoraMesher::begin(uint8_t module, float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
     Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     WiFiService::init();
-    initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength);
+    initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength, module);
     initializeSchedulers();
     recalculateMaxTimeOnAir();
 }
@@ -21,9 +21,6 @@ void LoraMesher::standby() {
     if (res != 0)
         Log.errorln(F("Standby gave error: %d"), res);
 
-    //Disable Interrupts
-    enableInterrupt = false;
-
     //Clear Dio Actions
     clearDioActions();
 
@@ -33,7 +30,6 @@ void LoraMesher::standby() {
     vTaskSuspend(ReceiveData_TaskHandle);
     vTaskSuspend(SendData_TaskHandle);
     vTaskSuspend(PacketManager_TaskHandle);
-    vTaskSuspend(ReceiveTimeout_TaskHandle);
 
     //Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
@@ -46,9 +42,6 @@ void LoraMesher::start() {
     //Set max priority
     vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
 
-    //Enable Interrupt
-    enableInterrupt = true;
-
     //Start Receiving
     startReceiving();
 
@@ -58,7 +51,6 @@ void LoraMesher::start() {
     vTaskResume(ReceiveData_TaskHandle);
     vTaskResume(SendData_TaskHandle);
     vTaskResume(PacketManager_TaskHandle);
-    vTaskResume(ReceiveTimeout_TaskHandle);
 
     //Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
@@ -70,7 +62,6 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(ReceiveData_TaskHandle);
     vTaskDelete(SendData_TaskHandle);
     vTaskDelete(PacketManager_TaskHandle);
-    vTaskDelete(ReceiveTimeout_TaskHandle);
 
     ToSendPackets->Clear();
     ReceivedPackets->Clear();
@@ -80,13 +71,25 @@ LoraMesher::~LoraMesher() {
     radio->reset();
 
     delete radio;
-    delete genericModule;
 }
 
-void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
+void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module) {
     Log.verboseln(F("Initializing RadioLib"));
-    genericModule = new Module(LORA_CS, LORA_IRQ, LORA_RST);
-    radio = new SX1276(genericModule);
+    switch (module) {
+        case SX1276_MOD:
+            Log.verboseln(F("Using SX1276 module"));
+            radio = new LM_SX1276();
+            break;
+        case SX1262_MOD:
+            Log.verboseln(F("Using SX1262 module"));
+            radio = new LM_SX1262();
+            break;
+        default:
+            Log.verboseln(F("Using SX1276 module"));
+            radio = new LM_SX1276();
+            break;
+    }
+
     if (radio == NULL) {
         Log.errorln(F("RadioLib not initialized properly"));
     }
@@ -106,24 +109,19 @@ void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, ui
 
 void LoraMesher::setDioActionsForScanChannel() {
     // set the function that will be called
-    // when LoRa preamble is not detected within CAD timeout period
-    // or when a packet is received
-    radio->setDio0Action(onReceivingTimeout);
-
-    // set the function that will be called
     // when LoRa preamble is detected
-    radio->setDio1Action(onReceive);
+    clearDioActions();
+    // radio->setDioActionForScanning(onReceive);
 }
 
 void LoraMesher::setDioActionsForReceivePacket() {
-    radio->setDio0Action(onReceive);
-    radio->setDio1Action(onReceivingTimeout);
+    clearDioActions();
+
+    radio->setDioActionForReceiving(onReceive);
 }
 
 void LoraMesher::clearDioActions() {
-    Log.verboseln(F("Clearing callback function"));
-    radio->clearDio0Action();
-    radio->clearDio1Action();
+    radio->clearDioActions();
 }
 
 //TODO: Retry start receiving if it fails
@@ -135,6 +133,14 @@ int LoraMesher::startReceiving() {
         Log.errorln(F("Starting receiving gave error: %d"), res);
     }
     return res;
+}
+
+int16_t LoraMesher::channelScan() {
+    clearDioActions();
+
+    setDioActionsForScanChannel();
+
+    return radio->scanChannel();
 }
 
 //TODO: Retry start channel scan if it fails
@@ -159,16 +165,6 @@ void LoraMesher::initializeSchedulers() {
         &ReceivePacket_TaskHandle);
     if (res != pdPASS) {
         Log.errorln(F("Receiving routine creation gave error: %d"), res);
-    }
-    res = xTaskCreate(
-        [](void* o) { static_cast<LoraMesher*>(o)->receivingTimeoutRoutine(); },
-        "Receiving timeout routine",
-        2048,
-        this,
-        6,
-        &ReceiveTimeout_TaskHandle);
-    if (res != pdPASS) {
-        Log.errorln(F("Receiving timeout routine creation gave error: %d"), res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
@@ -216,9 +212,6 @@ void LoraMesher::initializeSchedulers() {
 ICACHE_RAM_ATTR
 #endif
 void LoraMesher::onReceive(void) {
-    if (!LoraMesher::getInstance().enableInterrupt)
-        return;
-
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     xHigherPriorityTaskWoken = xTaskNotifyFromISR(
@@ -231,30 +224,8 @@ void LoraMesher::onReceive(void) {
         portYIELD_FROM_ISR();
 }
 
-// this function is called when no preamble
-// is detected within timeout period
-// IMPORTANT: this function MUST be 'void' type
-//            and MUST NOT have any arguments!
-#if defined(ESP8266) || defined(ESP32)
-ICACHE_RAM_ATTR
-#endif
-void LoraMesher::onReceivingTimeout(void) {
-    if (!LoraMesher::getInstance().enableInterrupt)
-        return;
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    xHigherPriorityTaskWoken = xTaskNotifyFromISR(
-        LoraMesher::getInstance().ReceiveTimeout_TaskHandle,
-        0,
-        eSetValueWithoutOverwrite,
-        &xHigherPriorityTaskWoken);
-
-    if (xHigherPriorityTaskWoken == pdTRUE)
-        portYIELD_FROM_ISR();
-}
-
 void LoraMesher::receivingRoutine() {
+    Log.verboseln("Receiving routine started");
     vTaskSuspend(NULL);
 
     BaseType_t TWres;
@@ -271,82 +242,46 @@ void LoraMesher::receivingRoutine() {
 
         if (TWres == pdPASS) {
             Log.verboseln(F("Preamble detected, starting reception... "));
-            state = RADIOLIB_ERR_NONE;
-            enableInterrupt = false;
 
-            if (scanChannelFlag == 1) {
-                scanChannelFlag == 2;
+            packetSize = radio->getPacketLength();
+            if (packetSize == 0)
+                Log.warningln(F("Empty packet received"));
+            else {
+                Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
 
-                state = radio->receive(0, RADIOLIB_SX127X_RXSINGLE);
-            }
+                rssi = (int8_t) round(radio->getRSSI());
+                snr = (int8_t) round(radio->getSNR());
 
-            if (state == RADIOLIB_ERR_NONE) {
-                packetSize = radio->getPacketLength();
-                if (packetSize == 0)
-                    Log.warningln(F("Empty packet received"));
+                Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
+
+                if (packetSize > MAXPACKETSIZE) {
+                    Log.warningln(F("Received packet with size greater than MAX Packet Size"));
+                    packetSize = MAXPACKETSIZE;
+                }
+
+                state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
+
+                if (state != 0) {
+                    Log.errorln(F("Reading packet data gave error: %d"), state);
+                    deletePacket(rx);
+                }
                 else {
-                    Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
+                    //Create a Packet Queue element containing the Packet
+                    QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0, 0, rssi, snr);
 
-                    rssi = (int8_t) round(radio->getRSSI());
-                    snr = (int8_t) round(radio->getSNR());
+                    //Add the Packet Queue element created into the ReceivedPackets List
+                    ReceivedPackets->Append(pq);
 
-                    Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
-
-                    if (packetSize > MAXPACKETSIZE) {
-                        Log.warningln(F("Received packet with size greater than MAX Packet Size"));
-                        packetSize = MAXPACKETSIZE;
-                    }
-
-                    state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
-
-                    if (state != 0) {
-                        Log.errorln(F("Reading packet data gave error: %d"), state);
-                        deletePacket(rx);
-                    }
-                    else {
-                        //Create a Packet Queue element containing the Packet
-                        QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0, 0, rssi, snr);
-
-                        //Add the Packet Queue element created into the ReceivedPackets List
-                        ReceivedPackets->Append(pq);
-
-                        //Notify that a packet needs to be process
-                        TWres = xTaskNotifyFromISR(
-                            ReceiveData_TaskHandle,
-                            0,
-                            eSetValueWithoutOverwrite,
-                            &TWres);
-                    }
+                    //Notify that a packet needs to be process
+                    TWres = xTaskNotifyFromISR(
+                        ReceiveData_TaskHandle,
+                        0,
+                        eSetValueWithoutOverwrite,
+                        &TWres);
                 }
             }
 
-            enableInterrupt = true;
-
             startReceiving();
-        }
-    }
-}
-
-void LoraMesher::receivingTimeoutRoutine() {
-    vTaskSuspend(NULL);
-
-    BaseType_t TWres;
-
-    for (;;) {
-        TWres = xTaskNotifyWait(
-            pdTRUE,
-            pdFALSE,
-            NULL,
-            portMAX_DELAY);
-
-        if (TWres == pdPASS) {
-            if (scanChannelFlag == 0)
-                continue;
-
-            Log.verboseln(F("Scanning channel timeout"));
-            //If timeout and was scanning the channel, set 
-            if (scanChannelFlag == 1)
-                scanChannelFlag = 3;
         }
     }
 }
@@ -368,36 +303,22 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     //Set a random delay, to avoid some collisions.
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
 
-    scanChannelFlag = 1;
-
     Log.verboseln(F("Starting scanning channel"));
-    startChannelScan();
 
-    while (scanChannelFlag == 1) {
-        vTaskDelay(10 / portTICK_PERIOD_MS);
-    }
-
-    //Found preamble
-    if (scanChannelFlag == 2) {
+    if (channelScan() == RADIOLIB_PREAMBLE_DETECTED) {
+        startReceiving();
         Log.verboseln(F("Preamble detected while waiting"));
         waitBeforeSend(repeatedDetectPreambles + 1);
-        return;
     }
-
-    scanChannelFlag = 0;
 }
 
 bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
     waitBeforeSend(1);
 
-    //Disable interrupts
-    enableInterrupt = false;
+    clearDioActions();
 
     //Blocking transmit, it is necessary due to deleting the packet after sending it. 
     int resT = radio->transmit(reinterpret_cast<uint8_t*>(p), p->getPacketLength());
-
-    //Enable interrupts
-    enableInterrupt = true;
 
     //Start receiving again after sending a packet
     startReceiving();
@@ -412,6 +333,7 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
 }
 
 void LoraMesher::sendPackets() {
+    Log.verboseln("Send routine started");
     vTaskSuspend(NULL);
 
     int sendCounter = 0;
@@ -497,6 +419,7 @@ void LoraMesher::sendPackets() {
 }
 
 void LoraMesher::sendHelloPacket() {
+    Log.verboseln("Send Hello Packet routine started");
     vTaskSuspend(NULL);
 
     //Wait an initial 2 second
@@ -522,6 +445,7 @@ void LoraMesher::sendHelloPacket() {
 }
 
 void LoraMesher::processPackets() {
+    Log.verboseln("Process routine started");
     vTaskSuspend(NULL);
 
     for (;;) {
@@ -562,6 +486,7 @@ void LoraMesher::processPackets() {
 }
 
 void LoraMesher::packetManager() {
+    Log.verboseln("Packet Manager routine started");
     vTaskSuspend(NULL);
 
     for (;;) {

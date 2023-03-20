@@ -1,34 +1,3 @@
-# LoRaMesher
-
-## See the [GitHub Pages](https://jaimi5.github.io/LoRaMesher) for more information
-
-## Introduction
-
-The LoRaMesher library implements a distance-vector routing protocol for communicating messages among LoRa nodes. For the interaction with the LoRa radio chip, we leverage RadioLib, a versatile communication library which supports different LoRa series modules.
-
-### Compatibility
-At this moment, LoRaMesher has been testes with the following modules:
-- SX1276
-- SX1262
-
-You can request another module to be added to the library by opening an issue.
-
-## Dependencies
-
-You can check `library.json` for more details. Basically, we use a modded version of [Radiolib](https://github.com/jgromes/RadioLib) that supports class methods as callbacks and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks.
-
-## Configure LoRaMesher with PlatformIO and Visual Studio Code
-
-1. Download Visual Studio Code.
-2. Download PlatformIO inside Visual Studio Code.
-3. Clone the LoraMesher repository.
-4. Go to PlatformIO Home, click on the Projects button, then on "Add Existing", and find the examples/beta-sample source in the files.
-5. Select the examples/beta-example project.
-6. Build the project with PlatformIO.
-7. Upload the project to the specified LoRa microcontroller. In our case, we use the TTGO T-Beam module.
-
-## LoRaMesher Example
-
 There is, in the source files of this first implementation, an example to test the new functionalities. This example is an implementation of a counter, sending a broadcast message every 10 seconds. To make it easier to understand, we will remove additional functions that are not necessary to make the microcontroller work with the LoRaMesher library.
 
 ### Defining the data type and the data counter

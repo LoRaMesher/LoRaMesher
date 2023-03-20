@@ -11,6 +11,8 @@
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
+#include "modules/LM_modules.h"
+
 #include "utilities/LinkedQueue.hpp"
 
 #include "services/PacketService.h"
@@ -43,6 +45,7 @@ public:
     /**
      * @brief LoRaMesh initialization method.
      *
+     * @param module Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
      * @param freq Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
      * @param bw LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
      * @param sf LoRa spreading factor. Allowed values range from 6 to 12.
@@ -101,7 +104,7 @@ public:
      *
      * @ref RadioLib reference begin code
      */
-    void begin(float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
+    void begin(uint8_t module = SX1276_MOD, float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
 
     /**
      * @brief Start/Resume LoRaMesher. After calling begin(...) or standby() you can Start/resume the LoRaMesher.
@@ -425,13 +428,7 @@ private:
      * @brief RadioLib module
      *
      */
-    SX1276* radio;
-
-    /**
-     * @brief RadioLib Generic Module
-     *
-     */
-    Module* genericModule;
+    LM_Module* radio;
 
     /**
      * @brief Hello task handle. It will send a hello packet every HELLO_PACKETS_DELAY s
@@ -445,12 +442,6 @@ private:
      *
      */
     TaskHandle_t ReceivePacket_TaskHandle = nullptr;
-
-    /**
-     * @brief Task Handle to process the timeout receiving routine
-     *
-     */
-    TaskHandle_t ReceiveTimeout_TaskHandle = nullptr;
 
     /**
      * @brief Receive Data task handle. It will process all the packets inside the received packets queue.
@@ -481,8 +472,6 @@ private:
 
     static void onReceive(void);
 
-    static void onReceivingTimeout(void);
-
     void setDioActionsForScanChannel();
 
     void setDioActionsForReceivePacket();
@@ -491,13 +480,18 @@ private:
 
     int startReceiving();
 
+    /**
+     * @brief Scan activity channel
+     *
+     * @return int RADIOLIB_PREAMBLE_DETECTED if activity detected or RADIOLIB_CHANNEL_FREE if not
+     */
+    int16_t channelScan();
+
     int startChannelScan();
 
     void receivingRoutine();
 
-    void receivingTimeoutRoutine();
-
-    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength);
+    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module);
 
     void initializeSchedulers();
 
@@ -855,21 +849,6 @@ private:
      *
      */
     uint32_t maxTimeOnAir = 0;
-
-    /**
-     * @brief State Flag used when trying to send to detect a packet preamble.
-     * Values: 0 - Not scanning the Channel.
-     *         1 - Scanning the Channel.
-     *         2 - Scanning the Channel and found a preamble.
-     *         3 - Scanning the Channel and not found a preamble.
-     */
-    volatile int scanChannelFlag = 0;
-
-    /**
-     * @brief Flag used to enable and disable interrupts
-     *
-     */
-    volatile bool enableInterrupt = true;
 
     /**
      * @brief Wait before sending function

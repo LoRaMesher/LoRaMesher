@@ -1,6 +1,27 @@
 #ifndef _LORAMESHER_BUILD_OPTIONS_H
 #define _LORAMESHER_BUILD_OPTIONS_H
 
+// Compatible modules
+#define SX1276_MOD 0
+#define SX1262_MOD 1
+
+// Set LoRa pins
+#ifndef LORA_CS
+#define LORA_CS 8
+#endif
+
+#ifndef LORA_IRQ
+#define LORA_IRQ 14
+#endif
+
+#ifndef LORA_RST
+#define LORA_RST 12
+#endif
+
+#ifndef LORA_IO1
+#define LORA_IO1 13
+#endif
+
 // LoRa band definition
 // 433E6 for Asia
 // 866E6 for Europe
