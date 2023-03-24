@@ -7,7 +7,7 @@
 The LoRaMesher library implements a distance-vector routing protocol for communicating messages among LoRa nodes. For the interaction with the LoRa radio chip, we leverage RadioLib, a versatile communication library which supports different LoRa series modules.
 
 ### Compatibility
-At this moment, LoRaMesher has been testes with the following modules:
+At this moment, LoRaMesher has been tested within the following modules:
 - SX1276
 - SX1262
 
@@ -15,7 +15,7 @@ You can request another module to be added to the library by opening an issue.
 
 ## Dependencies
 
-You can check `library.json` for more details. Basically, we use [Radiolib](https://github.com/jgromes/RadioLib) that implements the basic communication to the different LoRa modules and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks.
+You can check `library.json` for more details. Basically, we use [Radiolib](https://github.com/jgromes/RadioLib) that implements the low level communication to the different LoRa modules and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks.
 
 ## Configure LoRaMesher with PlatformIO and Visual Studio Code
 
