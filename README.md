@@ -15,7 +15,7 @@ You can request another module to be added to the library by opening an issue.
 
 ## Dependencies
 
-You can check `library.json` for more details. Basically, we use a modded version of [Radiolib](https://github.com/jgromes/RadioLib) that supports class methods as callbacks and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks.
+You can check `library.json` for more details. Basically, we use [Radiolib](https://github.com/jgromes/RadioLib) that implements the basic communication to the different LoRa modules and [FreeRTOS](https://freertos.org/index.html) for scheduling maintenance tasks.
 
 ## Configure LoRaMesher with PlatformIO and Visual Studio Code
 
