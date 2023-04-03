@@ -8,11 +8,11 @@
 #pragma pack(1)
 class PacketHeader {
 public:
-    uint16_t dst;
-    uint16_t src;
-    uint8_t type;
+    uint16_t dst = 0;
+    uint16_t src = 0;
+    uint8_t type = 0;
     //TODO: REMOVE THIS ID
-    uint8_t id;
+    uint8_t id = 0;
     uint8_t payloadSize = 0;
 
     /**

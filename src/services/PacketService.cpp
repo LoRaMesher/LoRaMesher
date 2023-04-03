@@ -169,3 +169,21 @@ size_t PacketService::getPacketPayloadLengthWithoutControl(Packet<uint8_t>* p) {
         return 0;
     return getPacketPayloadLength(p);
 }
+
+ControlPacket* PacketService::getPacketHeader(Packet<uint8_t>* p) {
+    ControlPacket* ctrlPacket = new ControlPacket();
+
+    if (isControlPacket(p->type)) {
+        ControlPacket* srcCtrPacket = (ControlPacket*) p;
+        memcpy(ctrlPacket, srcCtrPacket, sizeof(ControlPacket));
+        return ctrlPacket;
+    }
+    if(isDataPacket(p->type)) {
+        DataPacket* srcDataPacket = (DataPacket*) p;
+        memcpy(ctrlPacket, srcDataPacket, sizeof(DataPacket));
+        return ctrlPacket;
+    }
+
+    memcpy(ctrlPacket, p, sizeof(PacketHeader));
+    return ctrlPacket;
+}
