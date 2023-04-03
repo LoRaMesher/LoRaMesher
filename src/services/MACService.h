@@ -4,11 +4,11 @@
 #include <Arduino.h>
 
 // WiFi libraries
-#include <WiFi.h>
+// #include <WiFi.h>
 
 #include "ArduinoLog.h"
 
-class WiFiService {
+class MACService {
 public:
     /**
      * @brief Initialize the WiFi Service

@@ -97,7 +97,7 @@ void RoutingTableService::resetReceiveSNRRoutePacket(uint16_t src, int8_t receiv
 }
 
 void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
-    if (node->address != WiFiService::getLocalAddress()) {
+    if (node->address != MACService::getLocalAddress()) {
 
         RouteNode* rNode = findNode(node->address);
         //If nullptr the node is not inside the routing table, then add it
