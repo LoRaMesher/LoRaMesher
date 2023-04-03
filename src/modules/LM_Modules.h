@@ -7,3 +7,6 @@
 
 // SX1262_MOD
 #include "LM_SX1262.h"
+
+// RFM95_MOD
+#include "LM_RFM95.h"
