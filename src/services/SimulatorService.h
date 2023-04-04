@@ -26,4 +26,6 @@ public:
 
 private:
     bool isSimulating = false;
+
+    size_t numberStates = 0;
 };

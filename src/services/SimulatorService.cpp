@@ -15,6 +15,7 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
     }
 
     LM_State* state = new LM_State();
+    state->id = numberStates++;
     state->receivedQueueSize = receivedQueueSize;
     state->sentQueueSize = sentQueueSize;
     state->receivedUserQueueSize = receivedUserQueueSize;
@@ -22,6 +23,7 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
     state->q_WRPSize = q_WRPSize;
     state->q_WSPSize = q_WSPSize;
     state->type = type;
+    state->secondsSinceStart = millis() / 1000;
 
     if (packet == nullptr) {
         state->packetHeader = ControlPacket();
