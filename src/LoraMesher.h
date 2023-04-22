@@ -11,7 +11,7 @@
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
-#include "modules/LM_modules.h"
+#include "modules/LM_Modules.h"
 
 #include "utilities/LinkedQueue.hpp"
 
