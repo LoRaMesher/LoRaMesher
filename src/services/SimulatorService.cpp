@@ -24,6 +24,7 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
     state->q_WSPSize = q_WSPSize;
     state->type = type;
     state->secondsSinceStart = millis() / 1000;
+    state->freeMemoryAllocation = ESP.getFreeHeap();
 
     if (packet == nullptr) {
         state->packetHeader = ControlPacket();

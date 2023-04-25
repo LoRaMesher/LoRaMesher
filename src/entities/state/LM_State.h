@@ -22,6 +22,7 @@ public:
     size_t q_WSPSize = 0;
     size_t routingTableSize = 0;
     size_t secondsSinceStart = 0;
+    size_t freeMemoryAllocation = 0;
     // TODO: Clone all the routing table?
 
     ControlPacket packetHeader;
