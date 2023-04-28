@@ -27,7 +27,7 @@ public:
      *
      * @return size_t Number of Network Nodes inside the packet
      */
-    size_t getNetworkNodesSize() { return (this->payloadSize - (sizeof(RoutePacket) - sizeof(PacketHeader))) / sizeof(NetworkNode); }
+    size_t getNetworkNodesSize() { return (this->packetSize - sizeof(RoutePacket)) / sizeof(NetworkNode); }
 };
 
 #pragma pack()

@@ -13,21 +13,7 @@ public:
     uint8_t type;
     //TODO: REMOVE THIS ID
     uint8_t id;
-    uint8_t payloadSize = 0;
-
-    /**
-     * @brief Get the Payload Length in bytes
-     *
-     * @return size_t
-     */
-    size_t getPayloadLength() { return this->payloadSize; }
-
-    /**
-     * @brief Get the Packet Length in bytes
-     *
-     * @return size_t in bytes
-     */
-    size_t getPacketLength() { return sizeof(PacketHeader) + getPayloadLength(); }
+    uint8_t packetSize = 0;
 
     /**
      * @brief Delete function for Packets
@@ -38,7 +24,7 @@ public:
         Log.traceln(F("Deleting Header packet"));
         free(p);
     }
-    
+
 };
 #pragma pack()
 
