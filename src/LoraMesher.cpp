@@ -64,8 +64,11 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(PacketManager_TaskHandle);
 
     ToSendPackets->Clear();
+    delete ToSendPackets;
     ReceivedPackets->Clear();
+    delete ReceivedPackets;
     ReceivedAppPackets->Clear();
+    delete ReceivedAppPackets;
 
     clearDioActions();
     radio->reset();
@@ -389,6 +392,8 @@ void LoraMesher::sendPackets() {
                     (reinterpret_cast<DataPacket*>(tx->packet))->via = nextHop;
                 }
 
+                recordState(LM_StateType::STATE_TYPE_SENT, tx->packet);
+
                 //Send packet
                 bool hasSend = sendPacket(tx->packet);
 
@@ -471,6 +476,8 @@ void LoraMesher::processPackets() {
 
                 uint8_t type = rx->packet->type;
 
+                recordState(LM_StateType::STATE_TYPE_RECEIVED, rx->packet);
+
                 incReceivedPayloadBytes(PacketService::getPacketPayloadLengthWithoutControl(rx->packet));
                 incReceivedControlBytes(PacketService::getControlLength(rx->packet));
 
@@ -503,6 +510,9 @@ void LoraMesher::packetManager() {
         RoutingTableService::manageTimeoutRoutingTable();
         managerReceivedQueue();
         managerSendQueue();
+        
+        // Record the state for the simulation
+        recordState(LM_StateType::STATE_TYPE_MANAGER);
 
         if (q_WRP->getLength() != 0 || q_WSP->getLength() != 0) {
             vTaskDelay(randomDelay * 1000 / portTICK_PERIOD_MS);
@@ -719,6 +729,15 @@ void LoraMesher::recalculateMaxTimeOnAir() {
     Log.verboseln(F("Max Time on Air changed %d ms"), maxTimeOnAir);
 }
 
+void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
+    if (simulatorService == nullptr)
+        return;
+
+    simulatorService->addState(ReceivedPackets->getLength(), getSendQueueSize(),
+        getReceivedQueueSize(), routingTableSize(), q_WRP->getLength(), q_WSP->getLength(),
+        type, packet);
+}
+
 /**
  *  End Region Packet Service
 **/
@@ -728,7 +747,7 @@ void LoraMesher::recalculateMaxTimeOnAir() {
  *  Region Routing Table
 **/
 
-int LoraMesher::routingTableSize() {
+size_t LoraMesher::routingTableSize() {
     return RoutingTableService::routingTableSize();
 }
 

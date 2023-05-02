@@ -25,6 +25,8 @@
 
 #include "services/RoleService.h"
 
+#include "services/SimulatorService.h"
+
 /**
  * @brief LoRaMesher Library
  *
@@ -264,9 +266,9 @@ public:
     /**
      * @brief Returns the routing table size
      *
-     * @return int
+     * @return size_t Routing Table Size
      */
-    int routingTableSize();
+    size_t routingTableSize();
 
 
     /**
@@ -407,6 +409,19 @@ public:
      * @return RouteNode* Route Node
      */
     static RouteNode* getBestNodeWithRole(uint8_t role) { return RoutingTableService::getBestNodeByRole(role); };
+
+    /**
+     * @brief Set the Simulator Service object
+     *
+     * @param service Simulator Service
+     */
+    void setSimulatorService(SimulatorService* service) { simulatorService = service; }
+
+    /**
+     * @brief Remove the Simulator Service object
+     *
+     */
+    void removeSimulatorService() { simulatorService = nullptr; }
 
 #ifndef LM_GOD_MODE
 private:
@@ -883,6 +898,20 @@ private:
      *
      */
     bool hasReceivedMessage = false;
+
+     * @brief Get the Simulator Service object
+     *
+     * @return SimulatorService*
+     */
+    SimulatorService* simulatorService = nullptr;
+
+    /**
+     * @brief Record the state of the LoRaMesher
+     *
+     * @param type Type of the state
+     * @param packet Packet to be recorded
+     */
+    void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
 };
 
 #endif

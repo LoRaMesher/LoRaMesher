@@ -279,6 +279,14 @@ public:
      */
     static bool isDataControlPacket(uint8_t type);
 
+    /**
+     * @brief Get the Packet Header
+     * 
+     * @param p Get the packet headers without the payload to identify the packet and the payload size
+     * @return ControlPacket* 
+     */
+    static ControlPacket* getPacketHeader(Packet<uint8_t>* p);
+
 #ifndef LM_GOD_MODE
 private:
 #endif

@@ -8,8 +8,8 @@
 #pragma pack(1)
 class ControlPacket final: public RouteDataPacket {
 public:
-    uint8_t seq_id;
-    uint16_t number;
+    uint8_t seq_id = 0;
+    uint16_t number = 0;
     uint8_t payload[];
 
     /**
