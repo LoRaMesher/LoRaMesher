@@ -19,7 +19,7 @@ public:
      * @param p Packet of Type T
      * @return size_t Packet size in bytes
      */
-    size_t getPacketLength() { return sizeof(ControlPacket) + this->payloadSize; }
+    size_t getPacketLength() { return this->packetSize; }
 
     /**
      * @brief Delete function for Packets

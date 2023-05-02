@@ -11,7 +11,7 @@
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
-#include "modules/LM_modules.h"
+#include "modules/LM_Modules.h"
 
 #include "utilities/LinkedQueue.hpp"
 
@@ -746,8 +746,9 @@ private:
         uint16_t number{0}; //Number of packets of the sequence
         uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
         uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
-        unsigned long timeout{0};; //Timeout of the sequence
+        uint32_t timeout{0}; //Timeout of the sequence
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
+        uint32_t calculatingRTT{0}; // Calculating RTT
         uint32_t RTT{0}; //Round Trip time
 
         sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number): seq_id(seq_id), source(source), number(number) {};
@@ -767,7 +768,7 @@ private:
      *
      * @param config configuration to be actualized
      */
-    void actualizeRTT(listConfiguration* config);
+    void actualizeRTT(sequencePacketConfig* config);
 
     /**
      * @brief Send a packet of the sequence_id and sequence_num
@@ -873,12 +874,31 @@ private:
     void waitBeforeSend(uint8_t repeatedDetectPreambles);
 
     /**
+     * @brief Max propagation time for a given configuration in ms
+     * @return uint32_t Max propagation time
+     */
+    uint32_t getMaxPropagationTime();
+
+    /**
+     * @brief Get the Propagation Time With Random ms
+     * @param multiplayer Multiplayer of the random
+     *
+     * @return uint32_t Propagation time with random
+     */
+    uint32_t getPropagationTimeWithRandom(uint8_t multiplayer);
+
+    /**
      * @brief Max Time on air for a given configuration, Used for time slots
      *
      */
     void recalculateMaxTimeOnAir();
 
     /**
+     * @brief Has received a Message when scanning channels
+     *
+     */
+    bool hasReceivedMessage = false;
+
      * @brief Get the Simulator Service object
      *
      * @return SimulatorService*

@@ -138,7 +138,7 @@ public:
      * @param p Data packet
      * @return size_t Size of the actual payload
      */
-    static size_t getPacketPayloadLength(DataPacket* p) { return p->payloadSize + sizeof(DataPacket) - sizeof(PacketHeader); }
+    static size_t getPacketPayloadLength(DataPacket* p) { return p->packetSize - sizeof(DataPacket); }
 
     /**
      * @brief Get the Packet Payload Length object
@@ -146,7 +146,7 @@ public:
      * @param p
      * @return size_t
      */
-    static size_t getPacketPayloadLength(ControlPacket* p) { return p->payloadSize - (sizeof(ControlPacket) - sizeof(PacketHeader)); }
+    static size_t getPacketPayloadLength(ControlPacket* p) { return p->packetSize - sizeof(ControlPacket); }
 
     /**
      * @brief Get the Packet Payload Length Without the Control packets payloads
@@ -162,7 +162,15 @@ public:
      * @param p
      * @return size_t
      */
-    static size_t getPacketHeaderLength(Packet<uint8_t>* p);
+    static size_t getHeaderLength(Packet<uint8_t>* p);
+
+    /**
+     * @brief Get the Header Length
+     *
+     * @param type type of the packet
+     * @return uin16_t header length
+     */
+    static uint8_t getHeaderLength(uint8_t type);
 
     /**
      * @brief Get the Control Length in bytes. Used to calculate the Overhead of all the packets.
@@ -272,14 +280,6 @@ public:
     static bool isDataControlPacket(uint8_t type);
 
     /**
-     * @brief Get the Extra Length To Payload
-     *
-     * @param type type of the packet
-     * @return uin16_t extra length to payload
-     */
-    static uint8_t getExtraLengthToPayload(uint8_t type);
-
-    /**
      * @brief Get the Packet Header
      * 
      * @param p Get the packet headers without the payload to identify the packet and the payload size
@@ -300,15 +300,17 @@ private:
      */
     template<class T>
     static T* createPacket(uint8_t* payload, uint8_t payloadSize) {
-        //Packet length = size of the packet + size of the payload
-        int packetLength = sizeof(T) + payloadSize;
+        //Packet size = size of the header + size of the payload
+        int packetSize = sizeof(T) + payloadSize;
 
-        if (packetLength > MAXPACKETSIZE) {
+        if (packetSize > MAXPACKETSIZE) {
             Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
             return nullptr;
         }
 
-        T* p = static_cast<T*>(malloc(packetLength));
+        Log.verboseln(F("Creating packet with %d bytes"), packetSize);
+
+        T* p = static_cast<T*>(malloc(packetSize));
 
         if (p) {
             //Copy the payload into the packet
@@ -319,7 +321,7 @@ private:
             return nullptr;
         }
 
-        Log.traceln(F("Packet created with %d bytes"), packetLength);
+        Log.traceln(F("Packet created with %d bytes"), packetSize);
 
         return p;
     };
