@@ -36,23 +36,23 @@ void LoraMesher::standby() {
 }
 
 void LoraMesher::start() {
-    //Get actual priority
+    // Get actual priority
     UBaseType_t prevPriority = uxTaskPriorityGet(NULL);
 
-    //Set max priority
+    // Set max priority
     vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
 
-    //Start Receiving
-    startReceiving();
-
-    //Resume all tasks
+    // Resume all tasks
     vTaskResume(ReceivePacket_TaskHandle);
     vTaskResume(Hello_TaskHandle);
     vTaskResume(ReceiveData_TaskHandle);
     vTaskResume(SendData_TaskHandle);
     vTaskResume(PacketManager_TaskHandle);
 
-    //Set previous priority
+    // Start Receiving
+    startReceiving();
+
+    // Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
 }
 
@@ -1112,7 +1112,6 @@ LoraMesher::listConfiguration* LoraMesher::findSequenceList(LM_LinkedList<listCo
 
 }
 
-
 void LoraMesher::managerReceivedQueue() {
     Log.verboseln(F("Checking Q_WRP timeouts"));
 
@@ -1138,6 +1137,8 @@ void LoraMesher::managerReceivedQueue() {
                     q_WRP->DeleteCurrent();
                     continue;
                 }
+
+                // TODO: Reset the RTT calculation?
 
                 addTimeout(configPacket);
 
@@ -1179,6 +1180,8 @@ void LoraMesher::managerSendQueue() {
                     continue;
                 }
 
+                // TODO: Reset the RTT calculation?
+
                 addTimeout(configPacket);
 
                 //Repeat the configPacket ACK
@@ -1205,13 +1208,16 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     }
 
     uint32_t propagationTime = getPropagationTimeWithRandom(configPacket->numberOfTimeouts + 1);
+    uint32_t timeout = 0;
 
-    if (configPacket->RTT == 0) {
-        configPacket->timeout = millis() + DEFAULT_TIMEOUT * 1000 * hops;
-        return;
-    }
+    if (configPacket->RTT == 0)
+        timeout = millis() + DEFAULT_TIMEOUT * 1000 * hops;
+    else
+        timeout = millis() + (configPacket->RTT) + propagationTime;
 
-    configPacket->timeout = millis() + (configPacket->RTT) + propagationTime;
+    configPacket->timeout = timeout;
+
+    Log.verboseln(F("Timeout set to %d"), configPacket->timeout);
 }
 
 uint8_t LoraMesher::getSequenceId() {

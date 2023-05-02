@@ -731,7 +731,7 @@ private:
         uint16_t number{0}; //Number of packets of the sequence
         uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
         uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
-        unsigned long timeout{0}; //Timeout of the sequence
+        uint32_t timeout{0}; //Timeout of the sequence
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
         uint32_t calculatingRTT{0}; // Calculating RTT
         uint32_t RTT{0}; //Round Trip time
