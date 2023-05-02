@@ -899,7 +899,7 @@ private:
      */
     bool hasReceivedMessage = false;
 
-     * @brief Get the Simulator Service object
+    /** @brief Get the Simulator Service object
      *
      * @return SimulatorService*
      */
