@@ -118,8 +118,10 @@ void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
             resetTimeoutRoutingNode(rNode);
         }
 
-        //Update the Role all the cases
-        rNode->networkNode.role = node->role;
+        // Update the Role only if the node that sent the packet is the next hop
+        if (getNextHop(node->address) == via) {
+            rNode->networkNode.role = node->role;
+        }
     }
 }
 

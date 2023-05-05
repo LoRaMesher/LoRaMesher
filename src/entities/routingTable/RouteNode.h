@@ -42,6 +42,18 @@ public:
     int8_t sentSNR = 0;
 
     /**
+     * @brief SRTT, smoothed round-trip time (RFC 6298)
+     *
+     */
+    uint32_t SRTT = 0;
+
+    /**
+     * @brief RTTVAR, round-trip time variation (RFC 6298)
+     *
+     */
+    uint32_t RTTVAR = 0;
+
+    /**
      * @brief Construct a new Route Node object
      *
      * @param address_ Address

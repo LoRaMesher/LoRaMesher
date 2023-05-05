@@ -480,10 +480,17 @@ private:
     TaskHandle_t ReceiveAppData_TaskHandle = nullptr;
 
     /**
-     * @brief Packet manager task handle. This manages all the routing table and large and reliable payloads, checking for timeouts and resending messages.
+     * @brief Queue manager task handle. This task manages the queues inside LoRaMesher, checking for timeouts and resending messages.
      *
      */
-    TaskHandle_t PacketManager_TaskHandle = nullptr;
+    TaskHandle_t QueueManager_TaskHandle = nullptr;
+
+    /**
+     * @brief Routing table manager task handle. This manages the routing table, checking for timeouts and removing nodes.
+     *
+     */
+    TaskHandle_t RoutingTableManager_TaskHandle = nullptr;
+
 
     static void onReceive(void);
 
@@ -512,7 +519,9 @@ private:
 
     void sendHelloPacket();
 
-    void packetManager();
+    void routingTableManager();
+
+    void queueManager();
 
     /**
      * @brief Region Monitoring variables
@@ -599,6 +608,12 @@ private:
      * @param qp
      */
     void addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp);
+    
+    /**
+     * @brief Notify the QueueManager_TaskHandle that a new sequence has been started
+     * 
+     */
+    void notifyNewSequenceStarted();
 
     /**
      * @brief Process the data packet
@@ -749,9 +764,9 @@ private:
         uint32_t timeout{0}; //Timeout of the sequence
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
         uint32_t calculatingRTT{0}; // Calculating RTT
-        uint32_t RTT{0}; //Round Trip time
+        RouteNode* node; //Node of the routing table sequence
 
-        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number): seq_id(seq_id), source(source), number(number) {};
+        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node): seq_id(seq_id), source(source), number(number), node(node) {};
     };
 
     /**

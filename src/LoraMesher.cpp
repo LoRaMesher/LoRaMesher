@@ -29,7 +29,8 @@ void LoraMesher::standby() {
     vTaskSuspend(Hello_TaskHandle);
     vTaskSuspend(ReceiveData_TaskHandle);
     vTaskSuspend(SendData_TaskHandle);
-    vTaskSuspend(PacketManager_TaskHandle);
+    vTaskSuspend(RoutingTableManager_TaskHandle);
+    vTaskSuspend(QueueManager_TaskHandle);
 
     //Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
@@ -47,7 +48,8 @@ void LoraMesher::start() {
     vTaskResume(Hello_TaskHandle);
     vTaskResume(ReceiveData_TaskHandle);
     vTaskResume(SendData_TaskHandle);
-    vTaskResume(PacketManager_TaskHandle);
+    vTaskResume(RoutingTableManager_TaskHandle);
+    vTaskResume(QueueManager_TaskHandle);
 
     // Start Receiving
     startReceiving();
@@ -61,7 +63,8 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(Hello_TaskHandle);
     vTaskDelete(ReceiveData_TaskHandle);
     vTaskDelete(SendData_TaskHandle);
-    vTaskDelete(PacketManager_TaskHandle);
+    vTaskDelete(RoutingTableManager_TaskHandle);
+    vTaskDelete(QueueManager_TaskHandle);
 
     ToSendPackets->Clear();
     delete ToSendPackets;
@@ -200,14 +203,24 @@ void LoraMesher::initializeSchedulers() {
         Log.errorln(F("Process Task creation gave error: %d"), res);
     }
     res = xTaskCreate(
-        [](void* o) { static_cast<LoraMesher*>(o)->packetManager(); },
-        "Packet Manager routine",
+        [](void* o) { static_cast<LoraMesher*>(o)->routingTableManager(); },
+        "Routing Table Manager routine",
         4096,
         this,
         2,
-        &PacketManager_TaskHandle);
+        &RoutingTableManager_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Packet Manager Task creation gave error: %d"), res);
+        Log.errorln(F("Routing Table Manager Task creation gave error: %d"), res);
+    }
+    res = xTaskCreate(
+        [](void* o) { static_cast<LoraMesher*>(o)->queueManager(); },
+        "Queue Manager routine",
+        4096,
+        this,
+        2,
+        &QueueManager_TaskHandle);
+    if (res != pdPASS) {
+        Log.errorln(F("Queue Manager Task creation gave error: %d"), res);
     }
 }
 
@@ -300,6 +313,9 @@ uint16_t LoraMesher::getLocalAddress() {
 **/
 
 void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
+    if (repeatedDetectPreambles > MAX_TRY_BEFORE_SEND)
+        return;
+
     hasReceivedMessage = false;
 
     //Random delay, to avoid some collisions.
@@ -320,7 +336,7 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
 }
 
 uint32_t LoraMesher::getMaxPropagationTime() {
-    return maxTimeOnAir * 2 + 1000; //2 times the maxTimeOnAir + 1 second
+    return maxTimeOnAir;
 }
 
 bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
@@ -501,25 +517,48 @@ void LoraMesher::processPackets() {
     }
 }
 
-void LoraMesher::packetManager() {
-    Log.verboseln("Packet Manager routine started");
+void LoraMesher::routingTableManager() {
+    Log.verboseln("Routing Table Manager routine started");
     vTaskSuspend(NULL);
-    uint32_t randomDelay = getPropagationTimeWithRandom(1);
 
     for (;;) {
         RoutingTableService::manageTimeoutRoutingTable();
-        managerReceivedQueue();
-        managerSendQueue();
-        
+
         // Record the state for the simulation
         recordState(LM_StateType::STATE_TYPE_MANAGER);
 
-        if (q_WRP->getLength() != 0 || q_WSP->getLength() != 0) {
-            vTaskDelay(randomDelay * 1000 / portTICK_PERIOD_MS);
+        // if (q_WRP->getLength() != 0 || q_WSP->getLength() != 0) {
+        //     vTaskDelay(randomDelay * 1000 / portTICK_PERIOD_MS);
+        //     continue;
+        // }
+
+        vTaskDelay(DEFAULT_TIMEOUT * 1000 / portTICK_PERIOD_MS);
+    }
+}
+
+void LoraMesher::queueManager() {
+    Log.verboseln("Queue Manager routine started");
+    vTaskSuspend(NULL);
+
+    for (;;) {
+        if (ToSendPackets->getLength() == 0 && ReceivedPackets->getLength() == 0) {
+            Log.verboseln("No packets to send or received");
+
+            // Wait for the notification of send or receive reliable message and enter blocking
+            ulTaskNotifyTake(
+                pdTRUE,
+                portMAX_DELAY);
             continue;
         }
 
-        vTaskDelay(DEFAULT_TIMEOUT * 1000 / portTICK_PERIOD_MS);
+        managerReceivedQueue();
+        managerSendQueue();
+
+        // Record the state for the simulation
+        recordState(LM_StateType::STATE_TYPE_MANAGER);
+
+        // TODO: Calculate the min timeout for the queue manager, get the min timeout from the queues
+        vTaskDelay(MIN_TIMEOUT * 1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -590,9 +629,12 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
         packetList->Append(pq);
     }
 
+    // Get the Routing Table node of the destination
+    RouteNode* node = RoutingTableService::findNode(dst);
+
     //Create the pair of configuration
     listConfiguration* listConfig = new listConfiguration();
-    listConfig->config = new sequencePacketConfig(seq_id, dst, numOfPackets);
+    listConfig->config = new sequencePacketConfig(seq_id, dst, numOfPackets, node);
     listConfig->list = packetList;
 
     //Add dataList pair to the waiting send packets queue
@@ -601,10 +643,13 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     q_WSP->releaseInUse();
 
     // Set the RTT of the first packet of the sequence
-    listConfig->config->RTT = millis();
+    listConfig->config->calculatingRTT = millis();
 
     //Send the first packet of the sequence (SYNC packet)
     sendPacketSequence(listConfig, 0);
+
+    // Notify the queueManager that a new sequence has been started
+    notifyNewSequenceStarted();
 }
 
 
@@ -719,9 +764,10 @@ void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
 }
 
 uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
+    // TODO: Use the RTT or other congestion metrics to calculate the time, timeouts...
     uint32_t time = getMaxPropagationTime();
-    uint32_t randomTime = random(time, time * (multiplayer + routingTableSize()));
-    return time + randomTime;
+    uint32_t randomTime = random(time * 2, time * 2 + (multiplayer + routingTableSize()) * 100);
+    return randomTime;
 }
 
 void LoraMesher::recalculateMaxTimeOnAir() {
@@ -774,6 +820,11 @@ void LoraMesher::addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp) {
 
     //Notify the sendData task handle
     xTaskNotify(SendData_TaskHandle, 0, eSetValueWithOverwrite);
+}
+
+void LoraMesher::notifyNewSequenceStarted() {
+    //Notify the sendData task handle
+    xTaskNotify(QueueManager_TaskHandle, 0, eSetValueWithOverwrite);
 }
 
 /**
@@ -986,9 +1037,12 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
     listConfiguration* listConfig = findSequenceList(q_WRP, seq_id, source);
 
     if (listConfig == nullptr) {
+        // Get the Routing Table node of the destination
+        RouteNode* node = RoutingTableService::findNode(source);
+
         //Create the pair of configuration
         listConfig = new listConfiguration();
-        listConfig->config = new sequencePacketConfig(seq_id, source, seq_num);
+        listConfig->config = new sequencePacketConfig(seq_id, source, seq_num, node);
         listConfig->list = new LM_LinkedList<QueuePacket<ControlPacket>>();
 
         listConfig->config->firstAckReceived = 1;
@@ -1003,6 +1057,9 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
 
         // Reset the timeout
         addTimeout(listConfig->config);
+
+        // Notify the queueManager that a new sequence has been started
+        notifyNewSequenceStarted();
     }
 }
 
@@ -1048,31 +1105,22 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
 
     uint32_t actualRTT = millis() - config->calculatingRTT;
 
-    Log.verboseln(F("Updating RTT (%d ms) seq_Id: %d Src: %X"), actualRTT, config->seq_id, config->source);
+    RouteNode* node = config->node;
 
-    // if (config->RTT == 0)
-    //     config->RTT = actualRTT;
-
-    // config->RTT = config->RTT * 1 / 3 + actualRTT * 2 / 3;
-    config->RTT = actualRTT;
+    // First time RTT is calculated for this node (RFC 6298)
+    if (node->SRTT == 0) {
+        node->SRTT = actualRTT;
+        node->RTTVAR = actualRTT / 2;
+    }
+    else {
+        node->RTTVAR = (node->RTTVAR * 3 + (uint32_t) std::abs(((int) node->SRTT - (int) actualRTT))) / 4;
+        node->SRTT = (node->SRTT * 7 + actualRTT) / 8;
+    }
 
     config->calculatingRTT = millis();
 
-
-    //Set the first RTT received time
-    // config->config->calculatingRTT = millis();
-
-    // config->config->calculatingRTT = 1;
-
-    // uint32_t actualRTT = config->config->timeout - millis();
-    // uint16_t numberOfPackets = config->config->lastAck;
-
-    // if (config->config->RTT = 0) {
-    //     config->config->RTT = actualRTT;
-    //     return;
-    // }
-
-    // config->config->RTT = (actualRTT + config->config->RTT * numberOfPackets) / (numberOfPackets + 1);
+    Log.verboseln(F("Updating RTT (%d ms), SRTT (%d), RTTVAR (%d) seq_Id: %d Src: %X"),
+        actualRTT, node->SRTT, node->RTTVAR, config->seq_id, config->source);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
@@ -1219,24 +1267,29 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     //TODO: This timeout should be a little variable depending on the duty cycle. 
     //TODO: Account for how many hops the packet needs to do
     //TODO: Account for how many packets are inside the Q_SP
-    uint8_t hops = RoutingTableService::getNumberOfHops(configPacket->source);
+    uint8_t hops = configPacket->node->networkNode.metric;
     if (hops = 0) {
         Log.errorln(F("Find next hop in add timeout"));
         configPacket->timeout = 0;
         return;
     }
 
-    uint32_t propagationTime = getPropagationTimeWithRandom(configPacket->numberOfTimeouts + 1);
+    uint32_t maxTimeout = DEFAULT_TIMEOUT * 1000 * hops;
     uint32_t timeout = 0;
 
-    if (configPacket->RTT == 0)
-        timeout = millis() + DEFAULT_TIMEOUT * 1000 * hops;
-    else
-        timeout = millis() + (configPacket->RTT) + propagationTime;
+    if (configPacket->node->SRTT == 0)
+        timeout = millis() + maxTimeout;
+    else {
+        uint32_t calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
+        if (calculatedTimeout > maxTimeout)
+            timeout = millis() + maxTimeout;
+        else
+            timeout = millis() + (uint32_t) min((int) calculatedTimeout, MIN_TIMEOUT * 1000);
+    }
 
     configPacket->timeout = timeout;
 
-    Log.verboseln(F("Timeout set to %d"), configPacket->timeout);
+    Log.verboseln(F("Timeout set to %d s"), configPacket->timeout / 1000);
 }
 
 uint8_t LoraMesher::getSequenceId() {

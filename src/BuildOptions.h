@@ -66,12 +66,15 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 60
+#define HELLO_PACKETS_DELAY 120
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
+#define MIN_TIMEOUT 10 // Preview, need to be tested
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 3
 #define MAX_RESEND_PACKET 3
+#define MAX_TRY_BEFORE_SEND 5 // Before send there is a CSMA detection which, if a packet is detected on the channel, will wait a random time before send. And we need to have a maximum 
+
 
 //Role Types
 #define ROLE_DEFAULT 0b00000000
