@@ -541,7 +541,7 @@ void LoraMesher::queueManager() {
     vTaskSuspend(NULL);
 
     for (;;) {
-        if (ToSendPackets->getLength() == 0 && ReceivedPackets->getLength() == 0) {
+        if (q_WSP->getLength() == 0 && q_WRP->getLength() == 0) {
             Log.verboseln("No packets to send or received");
 
             // Wait for the notification of send or receive reliable message and enter blocking
@@ -645,6 +645,9 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     // Set the RTT of the first packet of the sequence
     listConfig->config->calculatingRTT = millis();
 
+    // Set the timeout of the first packet of the sequence
+    addTimeout(listConfig->config);
+
     //Send the first packet of the sequence (SYNC packet)
     sendPacketSequence(listConfig, 0);
 
@@ -719,11 +722,7 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
         Log.verboseln(F("Synchronization Packet received"));
         processSyncPacket(p->src, cPacket->seq_id, cPacket->number);
 
-        //Change the number to send the ack to the correct one
-        //cPacket->number in SYNC_P specify the number of packets and it needs to ACK the 0
-        sendAckPacket(p->src, cPacket->seq_id, 0);
         needAck = false;
-
     }
     else if (PacketService::isXLPacket(p->type)) {
         Log.verboseln(F("Large payload Packet received"));
@@ -766,7 +765,7 @@ void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
 uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
     // TODO: Use the RTT or other congestion metrics to calculate the time, timeouts...
     uint32_t time = getMaxPropagationTime();
-    uint32_t randomTime = random(time * 2, time * 2 + (multiplayer + routingTableSize()) * 100);
+    uint32_t randomTime = random(time * 2, time * 4 + (multiplayer + routingTableSize()) * 100);
     return randomTime;
 }
 
@@ -865,16 +864,17 @@ void LoraMesher::sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t s
 }
 
 bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_num) {
+    // Check if the sequence number requested is valid
+    if (lstConfig->config->lastAck > seq_num) {
+        Log.errorln(F("Trying to send packet sequence previously acknowledged Seq_id: %d, Num: %d"), lstConfig->config->seq_id, seq_num);
+        return false;
+    }
+
     //Get the packet queue with the sequence number
     QueuePacket<ControlPacket>* pq = PacketQueueService::findPacketQueue(lstConfig->list, seq_num);
 
     if (pq == nullptr) {
         Log.errorln(F("NOT FOUND the packet queue with Seq_id: %d, Num: %d"), lstConfig->config->seq_id, seq_num);
-        return false;
-    }
-
-    if (lstConfig->config->lastAck > seq_num) {
-        Log.errorln(F("Trying to send packet sequence previously acknowledged Seq_id: %d, Num: %d"), lstConfig->config->seq_id, seq_num);
         return false;
     }
 
@@ -954,14 +954,18 @@ bool LoraMesher::processLargePayloadPacket(QueuePacket<ControlPacket>* pq) {
     //Send ACK
     sendAckPacket(cPacket->src, cPacket->seq_id, cPacket->number);
 
+    // Recalculate the RTT
+    actualizeRTT(configList->config);
+
+    // Reset the timeouts
+    addTimeout(configList->config);
+
     //All packets has been arrived, join them and send to the user
     if (configList->config->lastAck == configList->config->number) {
         joinPacketsAndNotifyUser(configList);
         return true;
     }
 
-    actualizeRTT(configList->config);
-    addTimeout(configList->config);
     return true;
 }
 
@@ -1060,6 +1064,10 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
 
         // Notify the queueManager that a new sequence has been started
         notifyNewSequenceStarted();
+
+        //Change the number to send the ack to the correct one
+        //cPacket->number in SYNC_P specify the number of packets and it needs to ACK the 0
+        sendAckPacket(source, seq_id, 0);
     }
 }
 
@@ -1100,10 +1108,12 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     if (config->calculatingRTT == 0) {
         //Set the first RTT received time
         config->calculatingRTT = millis();
+        Log.verboseln(F("Starting to calculate RTT seq_Id: %d Src: %X"),
+            config->seq_id, config->source);
         return;
     }
 
-    uint32_t actualRTT = millis() - config->calculatingRTT;
+    unsigned long actualRTT = millis() - config->calculatingRTT;
 
     RouteNode* node = config->node;
 
@@ -1113,13 +1123,13 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
         node->RTTVAR = actualRTT / 2;
     }
     else {
-        node->RTTVAR = (node->RTTVAR * 3 + (uint32_t) std::abs(((int) node->SRTT - (int) actualRTT))) / 4;
+        node->RTTVAR = (node->RTTVAR * 3 + (unsigned long) std::abs(((int) node->SRTT - (int) actualRTT))) / 4;
         node->SRTT = (node->SRTT * 7 + actualRTT) / 8;
     }
 
     config->calculatingRTT = millis();
 
-    Log.verboseln(F("Updating RTT (%d ms), SRTT (%d), RTTVAR (%d) seq_Id: %d Src: %X"),
+    Log.verboseln(F("Updating RTT (%u ms), SRTT (%u), RTTVAR (%u) seq_Id: %d Src: %X"),
         actualRTT, node->SRTT, node->RTTVAR, config->seq_id, config->source);
 }
 
@@ -1195,7 +1205,8 @@ void LoraMesher::managerReceivedQueue() {
                 //Increment number of timeouts
                 configPacket->numberOfTimeouts++;
 
-                Log.warningln(F("Timeout reached from Waiting Received Queue, Seq_Id: %d, N.TimeOuts %d"), configPacket->seq_id, configPacket->numberOfTimeouts);
+                Log.warningln(F("Timeout reached from Waiting Received Queue, Src: %X, Seq_Id: %d, Num: %d, N.TimeOuts %d"),
+                    configPacket->source, configPacket->seq_id, configPacket->lastAck, configPacket->numberOfTimeouts);
 
                 //If number of timeouts is greater than Max timeouts, erase it
                 if (configPacket->numberOfTimeouts >= MAX_TIMEOUTS) {
@@ -1209,10 +1220,8 @@ void LoraMesher::managerReceivedQueue() {
 
                 addTimeout(configPacket);
 
-                if (configPacket->lastAck != 0) {
-                    //Send Last ACK + 1 (Request this packet)
-                    sendLostPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck + 1);
-                }
+                //Send Last ACK + 1 (Request this packet)
+                sendLostPacket(configPacket->source, configPacket->seq_id, configPacket->lastAck + 1);
             }
         } while (q_WRP->next());
     }
@@ -1237,7 +1246,8 @@ void LoraMesher::managerSendQueue() {
                 //Increment number of timeouts
                 configPacket->numberOfTimeouts++;
 
-                Log.warningln(F("Timeout reached from Waiting Send Queue, Seq_Id: %d, N.TimeOuts %d"), configPacket->seq_id, configPacket->numberOfTimeouts);
+                Log.warningln(F("Timeout reached from Waiting Send Queue, Src: %X, Seq_Id: %d, Num: %d, N.TimeOuts %d"),
+                    configPacket->source, configPacket->seq_id, configPacket->lastAck, configPacket->numberOfTimeouts);
 
                 //If number of timeouts is greater than Max timeouts, erase it
                 if (configPacket->numberOfTimeouts >= MAX_TIMEOUTS) {
@@ -1268,28 +1278,37 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     //TODO: Account for how many hops the packet needs to do
     //TODO: Account for how many packets are inside the Q_SP
     uint8_t hops = configPacket->node->networkNode.metric;
-    if (hops = 0) {
+    if (hops == 0) {
         Log.errorln(F("Find next hop in add timeout"));
         configPacket->timeout = 0;
         return;
     }
 
-    uint32_t maxTimeout = DEFAULT_TIMEOUT * 1000 * hops;
-    uint32_t timeout = 0;
+    unsigned long maxTimeout = DEFAULT_TIMEOUT * 1000 * hops;
+    unsigned long timeout = 0;
 
-    if (configPacket->node->SRTT == 0)
-        timeout = millis() + maxTimeout;
+
+    if (configPacket->node->SRTT == 0) {
+        // TODO: The default timeout should be enough smaller to prevent unnecessary timeouts.
+        // TODO: Testing the default value
+        timeout = 10000 * 4 + hops * 1000;
+    }
     else {
-        uint32_t calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
-        if (calculatedTimeout > maxTimeout)
-            timeout = millis() + maxTimeout;
-        else
-            timeout = millis() + (uint32_t) min((int) calculatedTimeout, MIN_TIMEOUT * 1000);
+        unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
+        if (calculatedTimeout > maxTimeout) {
+            timeout = maxTimeout;
+        }
+        else {
+            timeout = (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000);
+        }
     }
 
-    configPacket->timeout = timeout;
+    // TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
+    // timeout += getSendQueueSize() * MIN_TIMEOUT * 1000;
 
-    Log.verboseln(F("Timeout set to %d s"), configPacket->timeout / 1000);
+    configPacket->timeout = millis() + timeout;
+
+    Log.verboseln(F("Timeout set to %u s"), timeout / 1000);
 }
 
 uint8_t LoraMesher::getSequenceId() {

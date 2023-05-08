@@ -761,9 +761,9 @@ private:
         uint16_t number{0}; //Number of packets of the sequence
         uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
         uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
-        uint32_t timeout{0}; //Timeout of the sequence
+        unsigned long timeout{0}; //Timeout of the sequence
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
-        uint32_t calculatingRTT{0}; // Calculating RTT
+        unsigned long calculatingRTT{0}; // Calculating RTT
         RouteNode* node; //Node of the routing table sequence
 
         sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node): seq_id(seq_id), source(source), number(number), node(node) {};
