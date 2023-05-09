@@ -1272,7 +1272,17 @@ void LoraMesher::managerSendQueue() {
     q_WSP->releaseInUse();
 }
 
-void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
+unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) {
+    uint8_t hops = configPacket->node->networkNode.metric;
+    if (hops == 0) {
+        Log.errorln(F("Find next hop in add timeout"));
+        return 0;
+    }
+
+    return DEFAULT_TIMEOUT * 1000 * hops;
+}
+
+unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
     //TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
     //TODO: This timeout should be a little variable depending on the duty cycle. 
     //TODO: Account for how many hops the packet needs to do
@@ -1280,35 +1290,47 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
         Log.errorln(F("Find next hop in add timeout"));
-        configPacket->timeout = 0;
-        return;
+        return 0;
     }
 
-    unsigned long maxTimeout = DEFAULT_TIMEOUT * 1000 * hops;
-    unsigned long timeout = 0;
-
-
-    if (configPacket->node->SRTT == 0) {
+    if (configPacket->node->SRTT == 0)
         // TODO: The default timeout should be enough smaller to prevent unnecessary timeouts.
         // TODO: Testing the default value
-        timeout = 10000 * 4 + hops * 1000;
-    }
-    else {
-        unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
-        if (calculatedTimeout > maxTimeout) {
-            timeout = maxTimeout;
-        }
-        else {
-            timeout = (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000);
-        }
-    }
+        return 10000 * 4 + hops * 1000;
 
-    // TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
-    // timeout += getSendQueueSize() * MIN_TIMEOUT * 1000;
+    unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
+    unsigned long maxTimeout = getMaximumTimeout(configPacket);
+
+    if (calculatedTimeout > maxTimeout)
+        return  maxTimeout;
+
+    return (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000);
+}
+
+void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
+    unsigned long timeout = calculateTimeout(configPacket);
 
     configPacket->timeout = millis() + timeout;
+    configPacket->previousTimeout = timeout;
 
     Log.verboseln(F("Timeout set to %u s"), timeout / 1000);
+}
+
+void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
+    unsigned long timeout = calculateTimeout(configPacket);
+
+    if (timeout < configPacket->previousTimeout) {
+        timeout = configPacket->previousTimeout * 2;
+
+        unsigned long maxTimeout = getMaximumTimeout(configPacket);
+        if (timeout > maxTimeout)
+            timeout = maxTimeout;
+    }
+
+    configPacket->timeout = millis() + timeout;
+    configPacket->previousTimeout = timeout;
+
+    Log.verboseln(F("Timeout recalculated to %u s"), timeout / 1000);
 }
 
 uint8_t LoraMesher::getSequenceId() {

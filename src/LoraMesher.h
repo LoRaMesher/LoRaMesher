@@ -762,6 +762,7 @@ private:
         uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
         uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
         unsigned long timeout{0}; //Timeout of the sequence
+        unsigned long previousTimeout{0}; //Previous timeout of the sequence
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
         unsigned long calculatingRTT{0}; // Calculating RTT
         RouteNode* node; //Node of the routing table sequence
@@ -830,11 +831,34 @@ private:
     void resetTimeout(sequencePacketConfig* configPacket);
 
     /**
+     * @brief Get the Maximum Timeout object
+     *
+     * @param configPacket configuration packet to be calculated
+     * @return unsigned long maximum timeout
+     */
+    unsigned long getMaximumTimeout(sequencePacketConfig* configPacket);
+
+    /**
+     * @brief Calculate the timeout of the sequence
+     *
+     * @param configPacket configuration packet to be calculated
+     * @return unsigned long timeout
+     */
+    unsigned long calculateTimeout(sequencePacketConfig* configPacket);
+
+    /**
      * @brief Adds the micros() + default timeout to the config packet
      *
      * @param configPacket config packet to be modified
      */
     void addTimeout(sequencePacketConfig* configPacket);
+
+    /**
+     * @brief Recalculate the timeout after a timeout
+     *
+     * @param configPacket config packet to be modified
+     */
+    void recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket);
 
     /**
      * @brief Clear the Linked List deleting all the elements inside
