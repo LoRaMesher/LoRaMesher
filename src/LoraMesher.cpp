@@ -1318,14 +1318,22 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
     unsigned long timeout = calculateTimeout(configPacket);
+    unsigned long prevTimeout = configPacket->previousTimeout * 2;
 
-    if (timeout < configPacket->previousTimeout) {
-        timeout = configPacket->previousTimeout * 2;
+    if (prevTimeout > timeout)
+        timeout = prevTimeout;
 
-        unsigned long maxTimeout = getMaximumTimeout(configPacket);
-        if (timeout > maxTimeout)
-            timeout = maxTimeout;
-    }
+    unsigned long maxTimeout = getMaximumTimeout(configPacket);
+    if (timeout > maxTimeout)
+        timeout = maxTimeout;
+
+    // if (timeout < configPacket->previousTimeout) {
+    //     timeout = configPacket->previousTimeout * 2;
+
+    //     unsigned long maxTimeout = getMaximumTimeout(configPacket);
+    //     if (timeout > maxTimeout)
+    //         timeout = maxTimeout;
+    // }
 
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
