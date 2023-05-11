@@ -779,6 +779,13 @@ private:
         LM_LinkedList<QueuePacket<ControlPacket>>* list;
     };
 
+    enum QueueType {
+        WRP,
+        WSP
+    };
+
+    void managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueType type);
+
     /**
      * @brief Actualize the RTT field
      *
