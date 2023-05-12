@@ -522,6 +522,7 @@ void LoraMesher::routingTableManager() {
     vTaskSuspend(NULL);
 
     for (;;) {
+        // TODO: If the routing table removes a node, remove the nodes from the Q_WSP and Q_WRP
         RoutingTableService::manageTimeoutRoutingTable();
 
         // Record the state for the simulation
@@ -586,6 +587,14 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     if (dst == BROADCAST_ADDR)
         return;
 
+    // Get the Routing Table node of the destination
+    RouteNode* node = RoutingTableService::findNode(dst);
+
+    if (node == NULL) {
+        Log.verboseln("Destination not found in the routing table");
+        return;
+    }
+
     //Generate a sequence Id for this list of packets
     uint8_t seq_id = getSequenceId();
 
@@ -626,9 +635,6 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
         //Append the packet queue in the linked list
         packetList->Append(pq);
     }
-
-    // Get the Routing Table node of the destination
-    RouteNode* node = RoutingTableService::findNode(dst);
 
     //Create the pair of configuration
     listConfiguration* listConfig = new listConfiguration();
