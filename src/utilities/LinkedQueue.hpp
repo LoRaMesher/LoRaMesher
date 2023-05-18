@@ -26,6 +26,7 @@ private:
     SemaphoreHandle_t xSemaphore;
 public:
     LM_LinkedList();
+    LM_LinkedList(LM_LinkedList<T>& list);
     ~LM_LinkedList();
     T* getCurrent();
     T* First() const;
@@ -59,6 +60,32 @@ LM_LinkedList<T>::LM_LinkedList() {
     if (xSemaphore == NULL) {
         Log.errorln("Semaphore in Linked List not created");
     }
+}
+
+template<class T>
+inline LM_LinkedList<T>::LM_LinkedList(LM_LinkedList<T>& list) {
+    length = 0;
+    head = nullptr;
+    tail = nullptr;
+    curr = nullptr;
+
+    /* Attempt to create a semaphore. */
+    xSemaphore = xSemaphoreCreateMutex();
+
+    if (xSemaphore == NULL) {
+        Log.errorln("Semaphore in Linked List not created");
+    }
+
+
+    list.setInUse();
+
+    if (list.moveToStart()) {
+        do {
+            Append(list.getCurrent());
+        } while (list.next());
+    }
+
+    list.releaseInUse();
 }
 
 
@@ -235,7 +262,6 @@ void LM_LinkedList<T>::Clear() {
     head = curr = tail = nullptr;
 
     length = 0;
-
 }
 
 template <class T>

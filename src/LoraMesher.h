@@ -172,10 +172,10 @@ public:
     void setReceiveAppDataTaskHandle(TaskHandle_t ReceiveAppDataTaskHandle) { ReceiveAppData_TaskHandle = ReceiveAppDataTaskHandle; }
 
     /**
-     * @brief Routing table List
+     * @brief A copy of the routing table list. Remove it after using the list.
      *
      */
-    LM_LinkedList<RouteNode>* routingTableList() { return RoutingTableService::routingTableList; }
+    LM_LinkedList<RouteNode>* routingTableListCopy() { return new LM_LinkedList<RouteNode>(*RoutingTableService::routingTableList); }
 
     /**
      * @brief Create a Packet And Send it
@@ -608,10 +608,10 @@ private:
      * @param qp
      */
     void addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp);
-    
+
     /**
      * @brief Notify the QueueManager_TaskHandle that a new sequence has been started
-     * 
+     *
      */
     void notifyNewSequenceStarted();
 
@@ -767,7 +767,7 @@ private:
         unsigned long calculatingRTT{0}; // Calculating RTT
         RouteNode* node; //Node of the routing table sequence
 
-        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node): seq_id(seq_id), source(source), number(number), node(node) {};
+        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node) : seq_id(seq_id), source(source), number(number), node(node) {};
     };
 
     /**
