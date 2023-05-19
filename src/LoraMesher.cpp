@@ -1303,7 +1303,7 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
     unsigned long timeout = calculateTimeout(configPacket);
-    unsigned long prevTimeout = configPacket->previousTimeout * 2;
+    unsigned long prevTimeout = configPacket->previousTimeout * 2 + ToSendPackets->getLength() * 3000;
 
     if (prevTimeout > timeout)
         timeout = prevTimeout;
