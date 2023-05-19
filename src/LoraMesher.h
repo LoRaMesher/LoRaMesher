@@ -958,6 +958,16 @@ private:
      * @param packet Packet to be recorded
      */
     void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
+
+public:
+
+    /**
+     * @brief Returns if there are active connections, Q_WRP or Q_WSP or Queue ToSendPackets or Queue ReceivedPackets greater than 0
+     *
+     * @return true
+     * @return false
+     */
+    bool hasActiveConnections() { return q_WRP->getLength() > 0 || q_WSP->getLength() > 0 || ToSendPackets->getLength() > 0 || ReceivedPackets->getLength() > 0; };
 };
 
 #endif

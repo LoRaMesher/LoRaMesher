@@ -542,6 +542,9 @@ void LoraMesher::queueManager() {
     vTaskSuspend(NULL);
 
     for (;;) {
+        // Record the state for the simulation
+        recordState(LM_StateType::STATE_TYPE_MANAGER);
+
         if (q_WSP->getLength() == 0 && q_WRP->getLength() == 0) {
             Log.verboseln("No packets to send or received");
 
@@ -554,9 +557,6 @@ void LoraMesher::queueManager() {
 
         managerReceivedQueue();
         managerSendQueue();
-
-        // Record the state for the simulation
-        recordState(LM_StateType::STATE_TYPE_MANAGER);
 
         // TODO: Calculate the min timeout for the queue manager, get the min timeout from the queues
         vTaskDelay(MIN_TIMEOUT * 1000 / portTICK_PERIOD_MS);
