@@ -67,7 +67,7 @@
 
 //Definition Times in seconds
 #define HELLO_PACKETS_DELAY 120
-#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
+#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*5
 #define MIN_TIMEOUT 10 // Preview, need to be tested
 
 //Maximum times that a sequence of packets reach the timeout
