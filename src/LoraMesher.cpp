@@ -1048,6 +1048,11 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
         // Get the Routing Table node of the destination
         RouteNode* node = RoutingTableService::findNode(source);
 
+        if (node == nullptr) {
+            Log.errorln(F("Node not found in the routing table"));
+            return;
+        }
+
         //Create the pair of configuration
         listConfig = new listConfiguration();
         listConfig->config = new sequencePacketConfig(seq_id, source, seq_num, node);
@@ -1251,6 +1256,9 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
                         sendPacketSequence(current, 0);
                 }
             }
+
+            vTaskDelay(1);
+
         } while (queue->next());
     }
 
