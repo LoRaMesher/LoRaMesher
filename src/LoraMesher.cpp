@@ -923,7 +923,7 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     actualizeRTT(config->config);
 
     //Reset the timeouts
-    addTimeout(config->config);
+    resetTimeout(config->config);
 
     Log.verboseln(F("Sending next packet after receiving an ACK"));
 
@@ -962,7 +962,7 @@ bool LoraMesher::processLargePayloadPacket(QueuePacket<ControlPacket>* pq) {
     actualizeRTT(configList->config);
 
     // Reset the timeouts
-    addTimeout(configList->config);
+    resetTimeout(configList->config);
 
     //All packets has been arrived, join them and send to the user
     if (configList->config->lastAck == configList->config->number) {
@@ -1094,7 +1094,7 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
     //Send the packet sequence that has been lost
     if (sendPacketSequence(listConfig, seq_num)) {
         //Reset the timeout of this sequence packets inside the q_WSP
-        addTimeout(listConfig->config);
+        recalculateTimeoutAfterTimeout(listConfig->config);
     }
 }
 
