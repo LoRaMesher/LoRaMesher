@@ -281,6 +281,11 @@ void LoraMesher::receivingRoutine() {
 
                 if (state != 0) {
                     Log.errorln(F("Reading packet data gave error: %d"), state);
+                    // Set a count to 
+                    deletePacket(rx);
+                }
+                else if (packetSize != rx->packetSize) {
+                    Log.warningln(F("Packet size is different from the size read");
                     deletePacket(rx);
                 }
                 else {
