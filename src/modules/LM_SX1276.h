@@ -26,6 +26,7 @@ public:
     int16_t readData(uint8_t* buffer, size_t numBytes) override;
     int16_t transmit(uint8_t* buffer, size_t length) override;
     uint32_t getTimeOnAir(size_t length) override;
+    int16_t getChannelScanResult() override;
 
     void setDioActionForReceiving(void (*action)()) override;
     void setDioActionForReceivingTimeout(void (*action)()) override;

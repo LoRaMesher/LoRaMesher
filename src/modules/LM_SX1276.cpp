@@ -60,6 +60,11 @@ uint32_t LM_SX1276::getTimeOnAir(size_t length) {
     return module->getTimeOnAir(length);
 }
 
+int16_t LM_SX1276::getChannelScanResult() {
+    // TODO: implement it for SX1276 RadioLib
+    return RADIOLIB_LORA_DETECTED;
+}
+
 void LM_SX1276::setDioActionForReceiving(void (*action)()) {
     module->setDio0Action(action);
 }
