@@ -285,7 +285,7 @@ void LoraMesher::receivingRoutine() {
                     deletePacket(rx);
                 }
                 else if (packetSize != rx->packetSize) {
-                    Log.warningln(F("Packet size is different from the size read");
+                        Log.warningln(F("Packet size is different from the size read"));
                     deletePacket(rx);
                 }
                 else {
