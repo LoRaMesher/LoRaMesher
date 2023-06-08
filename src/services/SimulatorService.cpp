@@ -14,6 +14,13 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
         return;
     }
 
+    uint32_t freeHeap = ESP.getFreeHeap();
+
+    if (freeHeap < 10000) {
+        Log.verbose(F("Not enough memory to simulate. Free heap: %d"), freeHeap);
+        return;
+    }
+
     LM_State* state = new LM_State();
     state->id = numberStates++;
     state->receivedQueueSize = receivedQueueSize;
@@ -24,7 +31,7 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
     state->q_WSPSize = q_WSPSize;
     state->type = type;
     state->secondsSinceStart = millis() / 1000;
-    state->freeMemoryAllocation = ESP.getFreeHeap();
+    state->freeMemoryAllocation = freeHeap;
 
     if (packet == nullptr) {
         state->packetHeader = ControlPacket();
