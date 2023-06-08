@@ -21,9 +21,6 @@ void LoraMesher::standby() {
     if (res != 0)
         Log.errorln(F("Standby gave error: %d"), res);
 
-    //Disable Interrupts
-    enableInterrupt = false;
-
     //Clear Dio Actions
     clearDioActions();
 
@@ -31,11 +28,9 @@ void LoraMesher::standby() {
     vTaskSuspend(ReceivePacket_TaskHandle);
     vTaskSuspend(Hello_TaskHandle);
     vTaskSuspend(ReceiveData_TaskHandle);
-    vTaskSuspend(ReceiveTimeout_TaskHandle);
     vTaskSuspend(SendData_TaskHandle);
     vTaskSuspend(RoutingTableManager_TaskHandle);
     vTaskSuspend(QueueManager_TaskHandle);
-
 
     //Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
@@ -52,13 +47,9 @@ void LoraMesher::start() {
     vTaskResume(ReceivePacket_TaskHandle);
     vTaskResume(Hello_TaskHandle);
     vTaskResume(ReceiveData_TaskHandle);
-    vTaskResume(ReceiveTimeout_TaskHandle);
     vTaskResume(SendData_TaskHandle);
     vTaskResume(RoutingTableManager_TaskHandle);
     vTaskResume(QueueManager_TaskHandle);
-
-    //Enable Interrupt
-    enableInterrupt = true;
 
     // Start Receiving
     startReceiving();
@@ -71,7 +62,6 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(ReceivePacket_TaskHandle);
     vTaskDelete(Hello_TaskHandle);
     vTaskDelete(ReceiveData_TaskHandle);
-    vTaskDelete(ReceiveTimeout_TaskHandle);
     vTaskDelete(SendData_TaskHandle);
     vTaskDelete(RoutingTableManager_TaskHandle);
     vTaskDelete(QueueManager_TaskHandle);
@@ -124,15 +114,10 @@ void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, ui
 }
 
 void LoraMesher::setDioActionsForScanChannel() {
-    clearDioActions();
-
-    // set the function that will be called
-    // when LoRa preamble is not detected within CAD timeout period
-    radio->setDioActionForScanningTimeout(onReceivingTimeout);
-
     // set the function that will be called
     // when LoRa preamble is detected
-    radio->setDioActionForScanning(onReceive);
+    clearDioActions();
+    // radio->setDioActionForScanning(onReceive);
 }
 
 void LoraMesher::setDioActionsForReceivePacket() {
@@ -186,16 +171,6 @@ void LoraMesher::initializeSchedulers() {
         &ReceivePacket_TaskHandle);
     if (res != pdPASS) {
         Log.errorln(F("Receiving routine creation gave error: %d"), res);
-    }
-    res = xTaskCreate(
-        [](void* o) { static_cast<LoraMesher*>(o)->receivingTimeoutRoutine(); },
-        "Receiving timeout routine",
-        2048,
-        this,
-        6,
-        &ReceiveTimeout_TaskHandle);
-    if (res != pdPASS) {
-        Log.errorln(F("Receiving timeout routine creation gave error: %d"), res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
@@ -253,36 +228,10 @@ void LoraMesher::initializeSchedulers() {
 ICACHE_RAM_ATTR
 #endif
 void LoraMesher::onReceive(void) {
-    if (!LoraMesher::getInstance().enableInterrupt)
-        return;
-
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     xHigherPriorityTaskWoken = xTaskNotifyFromISR(
         LoraMesher::getInstance().ReceivePacket_TaskHandle,
-        0,
-        eSetValueWithoutOverwrite,
-        &xHigherPriorityTaskWoken);
-
-    if (xHigherPriorityTaskWoken == pdTRUE)
-        portYIELD_FROM_ISR();
-}
-
-// this function is called when no preamble
-// is detected within timeout period
-// IMPORTANT: this function MUST be 'void' type
-//            and MUST NOT have any arguments!
-#if defined(ESP8266) || defined(ESP32)
-ICACHE_RAM_ATTR
-#endif
-void LoraMesher::onReceivingTimeout(void) {
-    if (!LoraMesher::getInstance().enableInterrupt)
-        return;
-
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-
-    xHigherPriorityTaskWoken = xTaskNotifyFromISR(
-        LoraMesher::getInstance().ReceiveTimeout_TaskHandle,
         0,
         eSetValueWithoutOverwrite,
         &xHigherPriorityTaskWoken);
@@ -308,102 +257,54 @@ void LoraMesher::receivingRoutine() {
             portMAX_DELAY);
 
         if (TWres == pdPASS) {
+            hasReceivedMessage = true;
+
             Log.verboseln(F("Preamble detected, starting reception... "));
 
-            state = RADIOLIB_ERR_NONE;
-            enableInterrupt = false;
+            packetSize = radio->getPacketLength();
+            if (packetSize == 0)
+                Log.warningln(F("Empty packet received"));
+            else {
+                Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
 
-            if (scanChannelFlag == 1) {
-                // check CAD result
-                state = radio->getChannelScanResult();
+                rssi = (int8_t) round(radio->getRSSI());
+                snr = (int8_t) round(radio->getSNR());
 
-                if (state == RADIOLIB_LORA_DETECTED) {
-                    scanChannelFlag = 2;
+                Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
 
-                    state = radio->receive(0, RADIOLIB_SX127X_RXSINGLE);
+                if (packetSize > MAXPACKETSIZE) {
+                    Log.warningln(F("Received packet with size greater than MAX Packet Size"));
+                    packetSize = MAXPACKETSIZE;
                 }
-                else if (state == RADIOLIB_CHANNEL_FREE) {
-                    // CAD timeout
-                    scanChannelFlag = 3;
-                    Log.verboseln(F("CAD timeout, channel is clear"));
+
+                state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
+
+                if (state != 0) {
+                    Log.errorln(F("Reading packet data gave error: %d"), state);
+                    // Set a count to 
+                    deletePacket(rx);
                 }
-                else {
-                    Log.verboseln(F("CAD error, code %d"), state);
-                }
-            }
-
-            if (state == RADIOLIB_ERR_NONE) {
-                packetSize = radio->getPacketLength();
-                if (packetSize == 0)
-                    Log.warningln(F("Empty packet received"));
-                else {
-                    Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
-
-                    rssi = (int8_t) round(radio->getRSSI());
-                    snr = (int8_t) round(radio->getSNR());
-
-                    Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
-
-                    if (packetSize > MAXPACKETSIZE) {
-                        Log.warningln(F("Received packet with size greater than MAX Packet Size"));
-                        packetSize = MAXPACKETSIZE;
-                    }
-
-                    state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
-
-                    if (state != 0) {
-                        Log.errorln(F("Reading packet data gave error: %d"), state);
-                        // Set a count to 
-                        deletePacket(rx);
-                    }
-                    else if (packetSize != rx->packetSize) {
+                else if (packetSize != rx->packetSize) {
                         Log.warningln(F("Packet size is different from the size read"));
-                        deletePacket(rx);
-                    }
-                    else {
-                        //Create a Packet Queue element containing the Packet
-                        QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0, 0, rssi, snr);
+                    deletePacket(rx);
+                }
+                else {
+                    //Create a Packet Queue element containing the Packet
+                    QueuePacket<Packet<uint8_t>>* pq = PacketQueueService::createQueuePacket(rx, 0, 0, rssi, snr);
 
-                        //Add the Packet Queue element created into the ReceivedPackets List
-                        ReceivedPackets->Append(pq);
+                    //Add the Packet Queue element created into the ReceivedPackets List
+                    ReceivedPackets->Append(pq);
 
-                        //Notify that a packet needs to be process
-                        TWres = xTaskNotifyFromISR(
-                            ReceiveData_TaskHandle,
-                            0,
-                            eSetValueWithoutOverwrite,
-                            &TWres);
-                    }
+                    //Notify that a packet needs to be process
+                    TWres = xTaskNotifyFromISR(
+                        ReceiveData_TaskHandle,
+                        0,
+                        eSetValueWithoutOverwrite,
+                        &TWres);
                 }
             }
-
-            enableInterrupt = true;
 
             startReceiving();
-        }
-    }
-}
-
-void LoraMesher::receivingTimeoutRoutine() {
-    vTaskSuspend(NULL);
-
-    BaseType_t TWres;
-
-    for (;;) {
-        TWres = xTaskNotifyWait(
-            pdTRUE,
-            pdFALSE,
-            NULL,
-            portMAX_DELAY);
-
-        if (TWres == pdPASS) {
-            if (scanChannelFlag == 0)
-                continue;
-
-            Log.verboseln(F("Scanning channel timeout"));
-            //If timeout and was scanning the channel, set 
-            if (scanChannelFlag == 1)
-                scanChannelFlag = 3;
         }
     }
 }
@@ -417,12 +318,10 @@ uint16_t LoraMesher::getLocalAddress() {
 **/
 
 void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
-    if (repeatedDetectPreambles > MAX_TRY_BEFORE_SEND) {
-        scanChannelFlag = 0;
+    if (repeatedDetectPreambles > MAX_TRY_BEFORE_SEND)
         return;
-    }
 
-    // hasReceivedMessage = false;
+    hasReceivedMessage = false;
 
     //Random delay, to avoid some collisions.
     uint32_t randomDelay = getPropagationTimeWithRandom(repeatedDetectPreambles);
@@ -434,23 +333,11 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
 
     Log.verboseln(F("Starting scanning channel"));
 
-    scanChannelFlag = 1;
-
-    Log.verboseln(F("Starting scanning channel"));
-    startChannelScan();
-
-    while (scanChannelFlag == 1) {
-        vTaskDelay(10);
-    }
-
-    //Found preamble
-    if (scanChannelFlag == 2) {
+    if (channelScan() == RADIOLIB_PREAMBLE_DETECTED || hasReceivedMessage) {
+        startReceiving();
         Log.verboseln(F("Preamble detected while waiting"));
         waitBeforeSend(repeatedDetectPreambles + 1);
-        return;
     }
-
-    scanChannelFlag = 0;
 }
 
 uint32_t LoraMesher::getMaxPropagationTime() {
@@ -460,9 +347,6 @@ uint32_t LoraMesher::getMaxPropagationTime() {
 bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
     waitBeforeSend(1);
 
-    //Disable interrupts
-    enableInterrupt = false;
-
     clearDioActions();
 
     // Print the packet to be sent
@@ -470,9 +354,6 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
 
     //Blocking transmit, it is necessary due to deleting the packet after sending it. 
     int resT = radio->transmit(reinterpret_cast<uint8_t*>(p), p->packetSize);
-
-    //Enable interrupts
-    enableInterrupt = true;
 
     //Start receiving again after sending a packet
     startReceiving();
@@ -1388,7 +1269,6 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
 
     queue->releaseInUse();
 }
-
 
 unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) {
     uint8_t hops = configPacket->node->networkNode.metric;

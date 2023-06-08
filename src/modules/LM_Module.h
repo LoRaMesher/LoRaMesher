@@ -24,7 +24,6 @@ public:
     virtual int16_t readData(uint8_t* buffer, size_t numBytes) = 0;
     virtual int16_t transmit(uint8_t* buffer, size_t length) = 0;
     virtual uint32_t getTimeOnAir(size_t length) = 0;
-    virtual int16_t getChannelScanResult() = 0;
 
     virtual void setDioActionForReceiving(void (*action)()) = 0;
     virtual void setDioActionForReceivingTimeout(void (*action)()) = 0;

@@ -63,10 +63,6 @@ uint32_t LM_SX1262::getTimeOnAir(size_t length) {
     return module->getTimeOnAir(length);
 }
 
-int16_t LM_SX1262::getChannelScanResult() {
-    return module->getChannelScanResult();
-}
-
 void LM_SX1262::setDioActionForReceiving(void (*action)()) {
     module->setDio1Action(action);
 }
@@ -76,7 +72,7 @@ void LM_SX1262::setDioActionForReceivingTimeout(void(*action)()) {
 }
 
 void LM_SX1262::setDioActionForScanning(void(*action)()) {
-    module->setDio1Action(action);
+    return;
 }
 
 void LM_SX1262::setDioActionForScanningTimeout(void(*action)()) {

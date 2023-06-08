@@ -458,13 +458,6 @@ private:
      */
     TaskHandle_t ReceivePacket_TaskHandle = nullptr;
 
-
-    /**
-     * @brief Task Handle to process the timeout receiving routine
-     *
-     */
-    TaskHandle_t ReceiveTimeout_TaskHandle = nullptr;
-
     /**
      * @brief Receive Data task handle. It will process all the packets inside the received packets queue.
      * It will be notified by the ReceivePacket_TaskHandle
@@ -501,8 +494,6 @@ private:
 
     static void onReceive(void);
 
-    static void onReceivingTimeout(void);
-
     void setDioActionsForScanChannel();
 
     void setDioActionsForReceivePacket();
@@ -521,8 +512,6 @@ private:
     int startChannelScan();
 
     void receivingRoutine();
-
-    void receivingTimeoutRoutine();
 
     void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module);
 
@@ -922,21 +911,6 @@ private:
      *
      */
     uint32_t maxTimeOnAir = 0;
-
-    /**
-     * @brief State Flag used when trying to send to detect a packet preamble.
-     * Values: 0 - Not scanning the Channel.
-     *         1 - Scanning the Channel.
-     *         2 - Scanning the Channel and found a preamble.
-     *         3 - Scanning the Channel and not found a preamble.
-     */
-    volatile int scanChannelFlag = 0;
-
-    /**
-     * @brief Flag used to enable and disable interrupts
-     *
-     */
-    volatile bool enableInterrupt = true;
 
     /**
      * @brief Wait before sending function
