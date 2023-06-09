@@ -259,8 +259,6 @@ void LoraMesher::receivingRoutine() {
         if (TWres == pdPASS) {
             hasReceivedMessage = true;
 
-            Log.verboseln(F("Preamble detected, starting reception... "));
-
             packetSize = radio->getPacketLength();
             if (packetSize == 0)
                 Log.warningln(F("Empty packet received"));
@@ -279,13 +277,13 @@ void LoraMesher::receivingRoutine() {
 
                 state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
 
-                if (state != 0) {
-                    Log.errorln(F("Reading packet data gave error: %d"), state);
-                    // Set a count to 
+                if (state != RADIOLIB_ERR_NONE) {
+                    Log.warningln(F("Reading packet data gave error: %d"), state);
+                    // Set a count to get the number of CRC errors
                     deletePacket(rx);
                 }
                 else if (packetSize != rx->packetSize) {
-                        Log.warningln(F("Packet size is different from the size read"));
+                    Log.warningln(F("Packet size is different from the size read"));
                     deletePacket(rx);
                 }
                 else {
@@ -318,7 +316,7 @@ uint16_t LoraMesher::getLocalAddress() {
 **/
 
 void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
-    if (repeatedDetectPreambles > MAX_TRY_BEFORE_SEND)
+    if (repeatedDetectPreambles > RoutingTableService::routingTableSize())
         return;
 
     hasReceivedMessage = false;
@@ -331,11 +329,9 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     //Set a random delay, to avoid some collisions.
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
 
-    Log.verboseln(F("Starting scanning channel"));
-
-    if (channelScan() == RADIOLIB_PREAMBLE_DETECTED || hasReceivedMessage) {
+    if (hasReceivedMessage) {
         startReceiving();
-        Log.verboseln(F("Preamble detected while waiting"));
+        Log.verboseln(F("Preamble detected while waiting %d,"), repeatedDetectPreambles);
         waitBeforeSend(repeatedDetectPreambles + 1);
     }
 }
@@ -774,7 +770,7 @@ void LoraMesher::notifyUserReceivedPacket(AppPacket<uint8_t>* appPacket) {
 uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
     // TODO: Use the RTT or other congestion metrics to calculate the time, timeouts...
     uint32_t time = getMaxPropagationTime();
-    uint32_t randomTime = random(time * 2, time * 4 + (multiplayer + routingTableSize()) * 100);
+    uint32_t randomTime = random(time, time * 3 + (multiplayer + routingTableSize()) * 100);
     return randomTime;
 }
 
