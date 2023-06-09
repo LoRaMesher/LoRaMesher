@@ -33,7 +33,7 @@ RouteNode* RoutingTableService::getBestNodeByRole(uint8_t role) {
             RouteNode* node = routingTableList->getCurrent();
 
             if ((node->networkNode.role & role) == role &&
-                (bestNode == nullptr || node->networkNode.metric > bestNode->networkNode.metric)) {
+                (bestNode == nullptr || node->networkNode.metric < bestNode->networkNode.metric)) {
                 bestNode = node;
             }
 
