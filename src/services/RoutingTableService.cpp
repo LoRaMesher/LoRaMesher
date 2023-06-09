@@ -130,6 +130,12 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
         Log.warningln(F("Routing table max size reached, not adding route and deleting it"));
         return;
     }
+
+    if (calculateMaximumMetricOfRoutingTable() < node->metric) {
+        Log.warningln(F("Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it"));
+        return;
+    }
+
     RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
 
     //Reset the timeout of the node
@@ -216,6 +222,26 @@ void RoutingTableService::manageTimeoutRoutingTable() {
     routingTableList->releaseInUse();
 
     printRoutingTable();
+}
+
+uint8_t RoutingTableService::calculateMaximumMetricOfRoutingTable() {
+    routingTableList->setInUse();
+
+    uint8_t maximumMetricOfRoutingTable = 0;
+
+    if (routingTableList->moveToStart()) {
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            if (node->networkNode.metric > maximumMetricOfRoutingTable)
+                maximumMetricOfRoutingTable = node->networkNode.metric;
+
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+
+    return maximumMetricOfRoutingTable + 1;
 }
 
 LM_LinkedList<RouteNode>* RoutingTableService::routingTableList = new LM_LinkedList<RouteNode>();
