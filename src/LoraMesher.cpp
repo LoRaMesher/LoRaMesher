@@ -1223,7 +1223,7 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
         queueName = F("Waiting Send Queue");
     }
 
-    Log.verboseln(F("Checking %s timeouts"), queueName.c_str());
+    Log.verboseln(F("Checking %s timeouts. Open connections %d"), queueName.c_str(), queue->getLength());
 
     queue->setInUse();
 
