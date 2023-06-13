@@ -913,9 +913,9 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     }
 
     //Set has been received some ACK
-    if (config->config->firstAckReceived != 1) {
-        config->config->firstAckReceived = 1;
-    }
+    config->config->firstAckReceived = 1;
+
+    // TODO: Check for repeated ACKs and packets.
 
     //Add the last ack to the config packet
     config->config->lastAck = seq_num;
@@ -1091,6 +1091,13 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
     }
 
     //TODO: Check for duplicate consecutive lost packets, set a timeout to resend the lost packet.
+
+    // Reset the timeout
+    resetTimeout(listConfig->config);
+
+    // First ack received is set to 1, this counts as a ack received. 
+    // If the first sync is received but the first ack is not, then the receiver will send a first lost packet.
+    listConfig->config->firstAckReceived = 1;
 
     //Send the packet sequence that has been lost
     if (sendPacketSequence(listConfig, seq_num)) {
