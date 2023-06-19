@@ -489,6 +489,13 @@ void LoraMesher::processPackets() {
             QueuePacket<Packet<uint8_t>>* rx = ReceivedPackets->Pop();
 
             if (rx) {
+#ifdef TESTING
+                if (!canReceivePacket(rx->packet)) {
+                    PacketQueueService::deleteQueuePacketAndPacket(rx);
+                    continue;
+                }
+#endif
+
                 printHeaderPacket(rx->packet, "received");
 
                 uint8_t type = rx->packet->type;
@@ -787,6 +794,12 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
         getReceivedQueueSize(), routingTableSize(), q_WRP->getLength(), q_WSP->getLength(),
         type, packet);
 }
+
+#ifdef TESTING
+bool LoraMesher::canReceivePacket(Packet<uint8_t>* packet) {
+    return true;
+}
+#endif
 
 /**
  *  End Region Packet Service

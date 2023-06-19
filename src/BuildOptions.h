@@ -49,7 +49,7 @@
 //MAX payload size for hello packets = MAXPACKETSIZE - 6 bytes of header
 //MAX payload size for data packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via
 //MAX payload size for reliable and large packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via - 3 of control packet
-#define MAXPACKETSIZE 222
+#define MAXPACKETSIZE 100
 
 // Packet types
 #define NEED_ACK_P 0b00000011
@@ -68,17 +68,19 @@
 //Definition Times in seconds
 #define HELLO_PACKETS_DELAY 120
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*5
-#define MIN_TIMEOUT 10 // Preview, need to be tested
+#define MIN_TIMEOUT 20
 
 //Maximum times that a sequence of packets reach the timeout
-#define MAX_TIMEOUTS 3
+#define MAX_TIMEOUTS 10
 #define MAX_RESEND_PACKET 3
-#define MAX_TRY_BEFORE_SEND 5 // Before send there is a CSMA detection which, if a packet is detected on the channel, will wait a random time before send. And we need to have a maximum 
-
+#define MAX_TRY_BEFORE_SEND 5
 
 //Role Types
 #define ROLE_DEFAULT 0b00000000
 #define ROLE_GATEWAY 0b00000001
 //Free Role Types from 0b00000010 to 0b10000000
+
+// Define if is testing
+// #define TESTING
 
 #endif

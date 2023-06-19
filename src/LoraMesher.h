@@ -959,6 +959,16 @@ private:
      */
     void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
 
+#ifdef TESTING
+    /**
+     * @brief Only for testing purposes. It will return true if the packet can be received
+     *
+     * @param packet Packet to be received
+     */
+    bool canReceivePacket(Packet<uint8_t>* packet);
+#endif
+
+
 public:
 
     /**
