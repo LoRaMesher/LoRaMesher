@@ -961,11 +961,13 @@ private:
 
 #ifdef TESTING
     /**
-     * @brief Only for testing purposes. It will return true if the packet can be received
+     * @brief Returns if the packet can be received. Only for testing
      *
-     * @param packet Packet to be received
+     * @param source The source of the packet
+     * @return true The packet can be received
+     * @return false The packet will be dropped
      */
-    bool canReceivePacket(Packet<uint8_t>* packet);
+    bool canReceivePacket(uint16_t source);
 #endif
 
 

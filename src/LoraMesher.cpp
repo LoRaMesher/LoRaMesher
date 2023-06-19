@@ -489,8 +489,10 @@ void LoraMesher::processPackets() {
             QueuePacket<Packet<uint8_t>>* rx = ReceivedPackets->Pop();
 
             if (rx) {
+                uint8_t type = rx->packet->type;
+
 #ifdef TESTING
-                if (!canReceivePacket(rx->packet)) {
+                if ((PacketService::isDataPacket(type) && reinterpret_cast<DataPacket*>(rx->packet)->via != getLocalAddress()) || !canReceivePacket(rx->packet)) {
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
                     continue;
                 }
@@ -498,7 +500,6 @@ void LoraMesher::processPackets() {
 
                 printHeaderPacket(rx->packet, "received");
 
-                uint8_t type = rx->packet->type;
 
                 recordState(LM_StateType::STATE_TYPE_RECEIVED, rx->packet);
 
@@ -796,7 +797,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 }
 
 #ifdef TESTING
-bool LoraMesher::canReceivePacket(Packet<uint8_t>* packet) {
+bool LoraMesher::canReceivePacket(uint16_t source) {
     return true;
 }
 #endif
