@@ -72,7 +72,7 @@
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 10
-#define MAX_RESEND_PACKET 3
+#define MAX_RESEND_PACKET 10
 #define MAX_TRY_BEFORE_SEND 5
 
 //Role Types
