@@ -1404,8 +1404,6 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
         listConfig->config = new sequencePacketConfig(seq_id, source, seq_num, node);
         listConfig->list = new LM_LinkedList<QueuePacket<ControlPacket>>();
 
-        listConfig->config->firstAckReceived = 1;
-
         // Starting to calculate RTT
         actualizeRTT(listConfig->config);
 
@@ -1584,8 +1582,12 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
                 // Increment number of timeouts
                 configPacket->numberOfTimeouts++;
 
+                // Description of the timeout:
+                // The number of the packet would be the following: 
+                // If it is a sender it starts from 0 to n + 1 packets, that includes the sync packet: If num = 0, it is that the sync packet has been lost, if num > 0, it is that the packet num - 1 has been lost
+                // For the the receiver it starts from 0 to n packets
                 Log.warningln(F("%s timeout reached, Src: %X, Seq_Id: %d, Num: %d, N.TimeOuts %d"),
-                    queueName.c_str(), configPacket->source, configPacket->seq_id, configPacket->lastAck, configPacket->numberOfTimeouts);
+                    queueName.c_str(), configPacket->source, configPacket->seq_id, configPacket->lastAck + configPacket->firstAckReceived, configPacket->numberOfTimeouts);
 
                 // If number of timeouts is greater than Max timeouts, erase it
                 if (configPacket->numberOfTimeouts >= MAX_TIMEOUTS) {
