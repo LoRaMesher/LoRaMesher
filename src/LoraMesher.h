@@ -767,7 +767,7 @@ private:
         unsigned long calculatingRTT{0}; // Calculating RTT
         RouteNode* node; //Node of the routing table sequence
 
-        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node) : seq_id(seq_id), source(source), number(number), node(node) {};
+        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node): seq_id(seq_id), source(source), number(number), node(node) {};
     };
 
     /**
@@ -974,12 +974,28 @@ private:
 public:
 
     /**
+     * @brief Has active sent connections, Q_WSP greater than 0
+     *
+     * @return true if has active sent connections
+     * @return false if not
+     */
+    bool hasActiveSentConnections() { return q_WSP->getLength() > 0; }
+
+    /**
+     * @brief Has active received connections, Q_WRP greater than 0
+     *
+     * @return true if has active received connections
+     * @return false if not
+     */
+    bool hasActiveReceivedConnections() { return q_WRP->getLength() > 0; }
+
+    /**
      * @brief Returns if there are active connections, Q_WRP or Q_WSP or Queue ToSendPackets or Queue ReceivedPackets greater than 0
      *
      * @return true
      * @return false
      */
-    bool hasActiveConnections() { return q_WRP->getLength() > 0 || q_WSP->getLength() > 0 || ToSendPackets->getLength() > 0 || ReceivedPackets->getLength() > 0; };
+    bool hasActiveConnections() { return hasActiveReceivedConnections() || hasActiveSentConnections() || ToSendPackets->getLength() > 0 || ReceivedPackets->getLength() > 0; };
 };
 
 #endif

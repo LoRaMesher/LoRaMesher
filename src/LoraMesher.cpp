@@ -492,7 +492,11 @@ void LoraMesher::processPackets() {
                 uint8_t type = rx->packet->type;
 
 #ifdef TESTING
-                if ((PacketService::isDataPacket(type) && reinterpret_cast<DataPacket*>(rx->packet)->via != getLocalAddress()) || !canReceivePacket(rx->packet->src)) {
+                //TODO: Refactor this code
+                if ((PacketService::isDataPacket(type) && reinterpret_cast<DataPacket*>(rx->packet)->via == getLocalAddress())) {
+                    void();
+                }
+                else if (!canReceivePacket(rx->packet->src)) {
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
                     continue;
                 }
@@ -798,338 +802,338 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    uint16_t localAddress = getLocalAddress();
-    if (localAddress == 20068) {
-        if (source == 20068) {
-            return true;
-        }
-        if (source == 25516) {
-            return true;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 25516) {
-        if (source == 20068) {
-            return true;
-        }
-        if (source == 25516) {
-            return true;
-        }
-        if (source == 20056) {
-            return true;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 20056) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return true;
-        }
-        if (source == 20056) {
-            return true;
-        }
-        if (source == 27980) {
-            return true;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 27980) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return true;
-        }
-        if (source == 27980) {
-            return true;
-        }
-        if (source == 22312) {
-            return true;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 22312) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return true;
-        }
-        if (source == 22312) {
-            return true;
-        }
-        if (source == 56988) {
-            return true;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 56988) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return true;
-        }
-        if (source == 56988) {
-            return true;
-        }
-        if (source == 22656) {
-            return true;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 22656) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return true;
-        }
-        if (source == 22656) {
-            return true;
-        }
-        if (source == 22212) {
-            return true;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 22212) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return true;
-        }
-        if (source == 22212) {
-            return true;
-        }
-        if (source == 37428) {
-            return true;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 37428) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return true;
-        }
-        if (source == 37428) {
-            return true;
-        }
-        if (source == 35872) {
-            return true;
-        }
-        return false;
-    }
-    if (localAddress == 35872) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return true;
-        }
-        if (source == 35872) {
-            return true;
-        }
-        return false;
-    }
-    return false;
+	uint16_t localAddress = getLocalAddress();
+	if (localAddress == 20068) {
+		if (source == 20068) {
+			return true;
+		}
+		if (source == 25516) {
+			return true;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 25516) {
+		if (source == 20068) {
+			return true;
+		}
+		if (source == 25516) {
+			return true;
+		}
+		if (source == 20056) {
+			return true;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 20056) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return true;
+		}
+		if (source == 20056) {
+			return true;
+		}
+		if (source == 27980) {
+			return true;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 27980) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return true;
+		}
+		if (source == 27980) {
+			return true;
+		}
+		if (source == 22312) {
+			return true;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 22312) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return true;
+		}
+		if (source == 22312) {
+			return true;
+		}
+		if (source == 56988) {
+			return true;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 56988) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return true;
+		}
+		if (source == 56988) {
+			return true;
+		}
+		if (source == 22656) {
+			return true;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 22656) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return true;
+		}
+		if (source == 22656) {
+			return true;
+		}
+		if (source == 22212) {
+			return true;
+		}
+		if (source == 37428) {
+			return false;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 22212) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return true;
+		}
+		if (source == 22212) {
+			return true;
+		}
+		if (source == 37428) {
+			return true;
+		}
+		if (source == 35872) {
+			return false;
+		}
+		return false;
+	}
+	if (localAddress == 37428) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return true;
+		}
+		if (source == 37428) {
+			return true;
+		}
+		if (source == 35872) {
+			return true;
+		}
+		return false;
+	}
+	if (localAddress == 35872) {
+		if (source == 20068) {
+			return false;
+		}
+		if (source == 25516) {
+			return false;
+		}
+		if (source == 20056) {
+			return false;
+		}
+		if (source == 27980) {
+			return false;
+		}
+		if (source == 22312) {
+			return false;
+		}
+		if (source == 56988) {
+			return false;
+		}
+		if (source == 22656) {
+			return false;
+		}
+		if (source == 22212) {
+			return false;
+		}
+		if (source == 37428) {
+			return true;
+		}
+		if (source == 35872) {
+			return true;
+		}
+		return false;
+	}
+	return false;
 }
 #endif
 
@@ -1434,6 +1438,8 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
     }
 
     //TODO: Check for duplicate consecutive lost packets, set a timeout to resend the lost packet.
+    // Recalculate the RTT
+    actualizeRTT(listConfig->config);
 
     // Reset the timeout
     resetTimeout(listConfig->config);
@@ -1444,6 +1450,7 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
 
     //Send the packet sequence that has been lost
     if (sendPacketSequence(listConfig, seq_num)) {
+        listConfig->config->numberOfTimeouts++;
         //Reset the timeout of this sequence packets inside the q_WSP
         recalculateTimeoutAfterTimeout(listConfig->config);
     }
@@ -1473,9 +1480,14 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
         return;
     }
 
-    unsigned long actualRTT = millis() - config->calculatingRTT;
-
     RouteNode* node = config->node;
+
+    if (node == nullptr) {
+        Log.errorln(F("Node not found in the routing table"));
+        return;
+    }
+
+    unsigned long actualRTT = millis() - config->calculatingRTT;
 
     // First time RTT is calculated for this node (RFC 6298)
     if (node->SRTT == 0) {
@@ -1483,8 +1495,9 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
         node->RTTVAR = actualRTT / 2;
     }
     else {
-        node->RTTVAR = (node->RTTVAR * 3 + (unsigned long) std::abs(((int) node->SRTT - (int) actualRTT))) / 4;
-        node->SRTT = (node->SRTT * 7 + actualRTT) / 8;
+        unsigned long absRTT = (node->SRTT > actualRTT) ? (node->SRTT - actualRTT) : (actualRTT - node->SRTT);
+        node->RTTVAR = std::min((node->RTTVAR * 3 + absRTT) / 4, 100000UL);
+        node->SRTT = std::min((node->SRTT * 7 + actualRTT) / 8, 100000UL);
     }
 
     config->calculatingRTT = millis();
@@ -1624,10 +1637,10 @@ unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) 
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
         Log.errorln(F("Find next hop in add timeout"));
-        return 0;
+        return 100000;
     }
 
-    return DEFAULT_TIMEOUT * 1000 * hops;
+    return 60000 + hops * 5000;//DEFAULT_TIMEOUT * 1000 * hops;
 }
 
 unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
@@ -1638,21 +1651,21 @@ unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
         Log.errorln(F("Find next hop in add timeout"));
-        return 0;
+        return MIN_TIMEOUT * 1000;
     }
 
     if (configPacket->node->SRTT == 0)
         // TODO: The default timeout should be enough smaller to prevent unnecessary timeouts.
         // TODO: Testing the default value
-        return 10000 * 4 + hops * 1000;
+        return MIN_TIMEOUT * 1000 + hops * 5000;
 
     unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
 
     if (calculatedTimeout > maxTimeout)
-        return  maxTimeout;
+        return maxTimeout;
 
-    return (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000);
+    return (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000 + hops * 5000);
 }
 
 void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
@@ -1666,7 +1679,8 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
     unsigned long timeout = calculateTimeout(configPacket);
-    unsigned long prevTimeout = configPacket->previousTimeout * 2 + ToSendPackets->getLength() * 3000;
+    // TODO: The following prevTimeout function should be tested
+    unsigned long prevTimeout = log(configPacket->numberOfTimeouts + 1) * 50000 + ToSendPackets->getLength() * 3000;
 
     if (prevTimeout > timeout)
         timeout = prevTimeout;
