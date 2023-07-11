@@ -90,6 +90,10 @@ void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, ui
             Log.verboseln(F("Using SX1262 module"));
             radio = new LM_SX1262();
             break;
+        case SX1278_MOD:
+            Log.verboseln(F("Using SX1278 module"));
+            radio = new LM_SX1278();
+            break;
         default:
             Log.verboseln(F("Using SX1276 module"));
             radio = new LM_SX1276();
@@ -802,338 +806,338 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-	uint16_t localAddress = getLocalAddress();
-	if (localAddress == 20068) {
-		if (source == 20068) {
-			return true;
-		}
-		if (source == 25516) {
-			return true;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 25516) {
-		if (source == 20068) {
-			return true;
-		}
-		if (source == 25516) {
-			return true;
-		}
-		if (source == 20056) {
-			return true;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 20056) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return true;
-		}
-		if (source == 20056) {
-			return true;
-		}
-		if (source == 27980) {
-			return true;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 27980) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return true;
-		}
-		if (source == 27980) {
-			return true;
-		}
-		if (source == 22312) {
-			return true;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 22312) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return true;
-		}
-		if (source == 22312) {
-			return true;
-		}
-		if (source == 56988) {
-			return true;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 56988) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return true;
-		}
-		if (source == 56988) {
-			return true;
-		}
-		if (source == 22656) {
-			return true;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 22656) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return true;
-		}
-		if (source == 22656) {
-			return true;
-		}
-		if (source == 22212) {
-			return true;
-		}
-		if (source == 37428) {
-			return false;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 22212) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return true;
-		}
-		if (source == 22212) {
-			return true;
-		}
-		if (source == 37428) {
-			return true;
-		}
-		if (source == 35872) {
-			return false;
-		}
-		return false;
-	}
-	if (localAddress == 37428) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return true;
-		}
-		if (source == 37428) {
-			return true;
-		}
-		if (source == 35872) {
-			return true;
-		}
-		return false;
-	}
-	if (localAddress == 35872) {
-		if (source == 20068) {
-			return false;
-		}
-		if (source == 25516) {
-			return false;
-		}
-		if (source == 20056) {
-			return false;
-		}
-		if (source == 27980) {
-			return false;
-		}
-		if (source == 22312) {
-			return false;
-		}
-		if (source == 56988) {
-			return false;
-		}
-		if (source == 22656) {
-			return false;
-		}
-		if (source == 22212) {
-			return false;
-		}
-		if (source == 37428) {
-			return true;
-		}
-		if (source == 35872) {
-			return true;
-		}
-		return false;
-	}
-	return false;
+    uint16_t localAddress = getLocalAddress();
+    if (localAddress == 20068) {
+        if (source == 20068) {
+            return true;
+        }
+        if (source == 25516) {
+            return true;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 25516) {
+        if (source == 20068) {
+            return true;
+        }
+        if (source == 25516) {
+            return true;
+        }
+        if (source == 20056) {
+            return true;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 20056) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return true;
+        }
+        if (source == 20056) {
+            return true;
+        }
+        if (source == 27980) {
+            return true;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 27980) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return true;
+        }
+        if (source == 27980) {
+            return true;
+        }
+        if (source == 22312) {
+            return true;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 22312) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return true;
+        }
+        if (source == 22312) {
+            return true;
+        }
+        if (source == 56988) {
+            return true;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 56988) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return true;
+        }
+        if (source == 56988) {
+            return true;
+        }
+        if (source == 22656) {
+            return true;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 22656) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return true;
+        }
+        if (source == 22656) {
+            return true;
+        }
+        if (source == 22212) {
+            return true;
+        }
+        if (source == 37428) {
+            return false;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 22212) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return true;
+        }
+        if (source == 22212) {
+            return true;
+        }
+        if (source == 37428) {
+            return true;
+        }
+        if (source == 35872) {
+            return false;
+        }
+        return false;
+    }
+    if (localAddress == 37428) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return true;
+        }
+        if (source == 37428) {
+            return true;
+        }
+        if (source == 35872) {
+            return true;
+        }
+        return false;
+    }
+    if (localAddress == 35872) {
+        if (source == 20068) {
+            return false;
+        }
+        if (source == 25516) {
+            return false;
+        }
+        if (source == 20056) {
+            return false;
+        }
+        if (source == 27980) {
+            return false;
+        }
+        if (source == 22312) {
+            return false;
+        }
+        if (source == 56988) {
+            return false;
+        }
+        if (source == 22656) {
+            return false;
+        }
+        if (source == 22212) {
+            return false;
+        }
+        if (source == 37428) {
+            return true;
+        }
+        if (source == 35872) {
+            return true;
+        }
+        return false;
+    }
+    return false;
 }
 #endif
 

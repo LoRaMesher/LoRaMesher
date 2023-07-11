@@ -4,6 +4,7 @@
 // Compatible modules
 #define SX1276_MOD 0
 #define SX1262_MOD 1
+#define SX1278_MOD 2
 
 // Set LoRa pins
 #ifndef LORA_CS
