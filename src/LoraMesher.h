@@ -260,7 +260,7 @@ public:
      */
     template <typename T>
     static void deletePacket(AppPacket<T>* p) {
-        delete p;
+        free(p);
     }
 
     /**

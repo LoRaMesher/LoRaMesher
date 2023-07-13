@@ -237,12 +237,15 @@ void LM_LinkedList<T>::DeleteCurrent() {
 
     if (length == 0)
         head = curr = tail = nullptr;
-    else if (curr == head)
+    else if (curr == head) {
         curr = head = head->next;
+        if (head == nullptr)  // If the new head is nullptr, set tail to nullptr as well
+            tail = nullptr;
+    }
     else if (curr == tail)
         curr = tail = tail->prev;
     else
-        curr = curr->prev;
+        curr = curr->next;
 
     delete temp;
 }

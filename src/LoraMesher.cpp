@@ -209,7 +209,7 @@ void LoraMesher::initializeSchedulers() {
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->routingTableManager(); },
         "Routing Table Manager routine",
-        4096,
+        2048,
         this,
         2,
         &RoutingTableManager_TaskHandle);
@@ -219,7 +219,7 @@ void LoraMesher::initializeSchedulers() {
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->queueManager(); },
         "Queue Manager routine",
-        4096,
+        2048,
         this,
         2,
         &QueueManager_TaskHandle);
@@ -596,6 +596,12 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
 }
 
 void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
+    // vTaskDelay(10 / portTICK_PERIOD_MS);
+
+    // Log.verboseln(F("Free heap size 1: %d"), ESP.getFreeHeap());
+
+    Log.verboseln(F("Sending reliable payload with %d bytes"), payloadSize);
+
     //TODO: Need some refactor
     //TODO: Cannot send an empty packet?? Maybe it could be like a ping?
     if (payloadSize == 0)
@@ -630,6 +636,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     //Add the SYNC configuration packet
     packetList->Append(getStartSequencePacketQueue(dst, seq_id, numOfPackets));
 
+
     for (uint16_t i = 1; i <= numOfPackets; i++) {
         //Get the position of the payload
         uint8_t* payloadToSend = reinterpret_cast<uint8_t*>((unsigned long) payload + ((i - 1) * maxPayloadSize));
@@ -658,16 +665,16 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     listConfig->config = new sequencePacketConfig(seq_id, dst, numOfPackets, node);
     listConfig->list = packetList;
 
-    //Add dataList pair to the waiting send packets queue
-    q_WSP->setInUse();
-    q_WSP->Append(listConfig);
-    q_WSP->releaseInUse();
-
     // Set the RTT of the first packet of the sequence
     listConfig->config->calculatingRTT = millis();
 
     // Set the timeout of the first packet of the sequence
     addTimeout(listConfig->config);
+
+    //Add dataList pair to the waiting send packets queue
+    q_WSP->setInUse();
+    q_WSP->Append(listConfig);
+    q_WSP->releaseInUse();
 
     //Send the first packet of the sequence (SYNC packet)
     sendPacketSequence(listConfig, 0);
@@ -806,338 +813,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    uint16_t localAddress = getLocalAddress();
-    if (localAddress == 20068) {
-        if (source == 20068) {
-            return true;
-        }
-        if (source == 25516) {
-            return true;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 25516) {
-        if (source == 20068) {
-            return true;
-        }
-        if (source == 25516) {
-            return true;
-        }
-        if (source == 20056) {
-            return true;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 20056) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return true;
-        }
-        if (source == 20056) {
-            return true;
-        }
-        if (source == 27980) {
-            return true;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 27980) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return true;
-        }
-        if (source == 27980) {
-            return true;
-        }
-        if (source == 22312) {
-            return true;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 22312) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return true;
-        }
-        if (source == 22312) {
-            return true;
-        }
-        if (source == 56988) {
-            return true;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 56988) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return true;
-        }
-        if (source == 56988) {
-            return true;
-        }
-        if (source == 22656) {
-            return true;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 22656) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return true;
-        }
-        if (source == 22656) {
-            return true;
-        }
-        if (source == 22212) {
-            return true;
-        }
-        if (source == 37428) {
-            return false;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 22212) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return true;
-        }
-        if (source == 22212) {
-            return true;
-        }
-        if (source == 37428) {
-            return true;
-        }
-        if (source == 35872) {
-            return false;
-        }
-        return false;
-    }
-    if (localAddress == 37428) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return true;
-        }
-        if (source == 37428) {
-            return true;
-        }
-        if (source == 35872) {
-            return true;
-        }
-        return false;
-    }
-    if (localAddress == 35872) {
-        if (source == 20068) {
-            return false;
-        }
-        if (source == 25516) {
-            return false;
-        }
-        if (source == 20056) {
-            return false;
-        }
-        if (source == 27980) {
-            return false;
-        }
-        if (source == 22312) {
-            return false;
-        }
-        if (source == 56988) {
-            return false;
-        }
-        if (source == 22656) {
-            return false;
-        }
-        if (source == 22212) {
-            return false;
-        }
-        if (source == 37428) {
-            return true;
-        }
-        if (source == 35872) {
-            return true;
-        }
-        return false;
-    }
-    return false;
+    return true;
 }
 #endif
 
@@ -1515,13 +1191,17 @@ void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
     list->setInUse();
     Log.traceln(F("Clearing list configuration Seq_Id: %d Src: %X"), listConfig->config->seq_id, listConfig->config->source);
 
-    for (int i = 0; i < list->getLength(); i++) {
-        PacketQueueService::deleteQueuePacketAndPacket(list->getCurrent());
-        list->DeleteCurrent();
+    size_t listSize = list->getLength();
 
+    Log.verboseln(F("List size: %d"), listSize);
+
+    for (int i = 0; i < listSize; i++) {
+        QueuePacket<ControlPacket>* current = list->getCurrent();
+        PacketQueueService::deleteQueuePacketAndPacket(current);
+        list->DeleteCurrent();
     }
 
-    delete listConfig->list;
+    delete list;
     delete listConfig->config;
     delete listConfig;
 }
@@ -1529,17 +1209,13 @@ void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
 void LoraMesher::findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
     queue->setInUse();
 
-    listConfiguration* current = queue->getCurrent();
-
-    //Find list config inside the queue, if not find error
-    if (current != listConfig && !queue->Search(listConfig)) {
+    if (!queue->Search(listConfig)) {
         Log.errorln(F("Not found list config"));
         queue->releaseInUse();
-        //TODO: What to do inside all errors????????????????
-        return;
     }
 
     clearLinkedList(listConfig);
+
     queue->DeleteCurrent();
 
     queue->releaseInUse();
