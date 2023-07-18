@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "loramesher.h"
+#include "LoraMesher.h"
 #include "display.h"
 
 //Using LILYGO TTGO T-BEAM v1.1 
