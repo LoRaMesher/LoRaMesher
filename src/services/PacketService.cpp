@@ -178,7 +178,7 @@ ControlPacket* PacketService::getPacketHeader(Packet<uint8_t>* p) {
         memcpy(ctrlPacket, srcCtrPacket, sizeof(ControlPacket));
         return ctrlPacket;
     }
-    if(isDataPacket(p->type)) {
+    if (isDataPacket(p->type)) {
         DataPacket* srcDataPacket = (DataPacket*) p;
         memcpy(ctrlPacket, srcDataPacket, sizeof(DataPacket));
         return ctrlPacket;

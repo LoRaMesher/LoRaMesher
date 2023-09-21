@@ -10,7 +10,9 @@ void WiFiService::init() {
 }
 
 uint16_t WiFiService::getLocalAddress() {
+    if (localAddress == 0)
+        init();
     return localAddress;
 }
 
-uint16_t WiFiService::localAddress;
+uint16_t WiFiService::localAddress = 0;
