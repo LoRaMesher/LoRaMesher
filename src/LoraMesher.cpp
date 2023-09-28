@@ -140,16 +140,21 @@ int LoraMesher::startReceiving() {
     int res = radio->startReceive();
     if (res != 0) {
         Log.errorln(F("Starting receiving gave error: %d"), res);
+        startReceiving();
     }
     return res;
 }
 
-int16_t LoraMesher::channelScan() {
-    clearDioActions();
-
+void LoraMesher::channelScan() {
     setDioActionsForScanChannel();
 
-    return radio->scanChannel();
+    int res = radio->scanChannel();
+
+    if (res != RADIOLIB_ERR_NONE) {
+        Log.errorln(F("Starting new scan failed, code %d"), res);
+        channelScan();
+    }
+
 }
 
 //TODO: Retry start channel scan if it fails
@@ -157,8 +162,10 @@ int LoraMesher::startChannelScan() {
     setDioActionsForScanChannel();
 
     int state = radio->startChannelScan();
-    if (state != RADIOLIB_ERR_NONE)
+    if (state != RADIOLIB_ERR_NONE) {
         Log.errorln(F("Starting new scan failed, code %d"), state);
+        startChannelScan();
+    }
 
     return state;
 }

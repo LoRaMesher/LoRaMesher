@@ -505,9 +505,8 @@ private:
     /**
      * @brief Scan activity channel
      *
-     * @return int RADIOLIB_PREAMBLE_DETECTED if activity detected or RADIOLIB_CHANNEL_FREE if not
      */
-    int16_t channelScan();
+    void channelScan();
 
     int startChannelScan();
 
