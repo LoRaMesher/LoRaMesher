@@ -152,7 +152,7 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
 
     routingTableList->releaseInUse();
 
-    ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %b", node->address, via, node->metric, node->role);
+    ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %d", node->address, via, node->metric, node->role);
 }
 
 NetworkNode* RoutingTableService::getAllNetworkNodes() {
