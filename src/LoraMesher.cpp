@@ -3,7 +3,6 @@
 LoraMesher::LoraMesher() {}
 
 void LoraMesher::begin(uint8_t module, float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
-    Log.begin(LOG_LEVEL_VERBOSE, &Serial);
     initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength, module);
     initializeSchedulers();
     recalculateMaxTimeOnAir();
@@ -18,7 +17,7 @@ void LoraMesher::standby() {
 
     int res = radio->standby();
     if (res != 0)
-        Log.errorln(F("Standby gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Standby gave error: %d", res);
 
     //Clear Dio Actions
     clearDioActions();
@@ -79,41 +78,41 @@ LoraMesher::~LoraMesher() {
 }
 
 void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module) {
-    Log.verboseln(F("Initializing RadioLib"));
+    ESP_LOGV(LM_TAG, "Initializing RadioLib");
     switch (module) {
         case SX1276_MOD:
-            Log.verboseln(F("Using SX1276 module"));
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
             radio = new LM_SX1276();
             break;
         case SX1262_MOD:
-            Log.verboseln(F("Using SX1262 module"));
+            ESP_LOGV(LM_TAG, "Using SX1262 module");
             radio = new LM_SX1262();
             break;
         case SX1278_MOD:
-            Log.verboseln(F("Using SX1278 module"));
+            ESP_LOGV(LM_TAG, "Using SX1278 module");
             radio = new LM_SX1278();
             break;
         default:
-            Log.verboseln(F("Using SX1276 module"));
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
             radio = new LM_SX1276();
             break;
     }
 
     if (radio == NULL) {
-        Log.errorln(F("RadioLib not initialized properly"));
+        ESP_LOGE(LM_TAG, "RadioLib not initialized properly");
     }
 
     // Set up the radio parameters
-    Log.verboseln(F("Initializing radio"));
+    ESP_LOGV(LM_TAG, "Initializing radio");
     int res = radio->begin(freq, bw, sf, cr, syncWord, power, preambleLength);
     if (res != 0) {
-        Log.errorln(F("Radio module gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Radio module gave error: %d", res);
     }
 
 #ifdef LM_ADDCRC_PAYLOAD
     radio->setCRC(true);
 #endif
-    Log.traceln(F("LoRa module initialization DONE"));
+    ESP_LOGI(LM_TAG, "LoRa module initialization DONE");
 }
 
 void LoraMesher::setDioActionsForScanChannel() {
@@ -139,7 +138,7 @@ int LoraMesher::startReceiving() {
 
     int res = radio->startReceive();
     if (res != 0) {
-        Log.errorln(F("Starting receiving gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Starting receiving gave error: %d", res);
         startReceiving();
     }
     return res;
@@ -151,7 +150,7 @@ void LoraMesher::channelScan() {
     int res = radio->scanChannel();
 
     if (res != RADIOLIB_ERR_NONE) {
-        Log.errorln(F("Starting new scan failed, code %d"), res);
+        ESP_LOGE(LM_TAG, "Starting new scan failed, code %d", res);
         channelScan();
     }
 
@@ -163,7 +162,7 @@ int LoraMesher::startChannelScan() {
 
     int state = radio->startChannelScan();
     if (state != RADIOLIB_ERR_NONE) {
-        Log.errorln(F("Starting new scan failed, code %d"), state);
+        ESP_LOGE(LM_TAG, "Starting new scan failed, code %d", state);
         startChannelScan();
     }
 
@@ -171,7 +170,7 @@ int LoraMesher::startChannelScan() {
 }
 
 void LoraMesher::initializeSchedulers() {
-    Log.verboseln(F("Setting up Schedulers"));
+    ESP_LOGV(LM_TAG, "Setting up Schedulers");
     int res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
         "Receiving routine",
@@ -180,7 +179,7 @@ void LoraMesher::initializeSchedulers() {
         6,
         &ReceivePacket_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Receiving routine creation gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Receiving routine creation gave error: %d", res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendPackets(); },
@@ -190,7 +189,7 @@ void LoraMesher::initializeSchedulers() {
         5,
         &SendData_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Sending Task creation gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Sending Task creation gave error: %d", res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
@@ -200,7 +199,7 @@ void LoraMesher::initializeSchedulers() {
         4,
         &Hello_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Process Task creation gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Process Task creation gave error: %d", res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->processPackets(); },
@@ -210,7 +209,7 @@ void LoraMesher::initializeSchedulers() {
         3,
         &ReceiveData_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Process Task creation gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Process Task creation gave error: %d", res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->routingTableManager(); },
@@ -220,7 +219,7 @@ void LoraMesher::initializeSchedulers() {
         2,
         &RoutingTableManager_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Routing Table Manager Task creation gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Routing Table Manager Task creation gave error: %d", res);
     }
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->queueManager(); },
@@ -230,7 +229,7 @@ void LoraMesher::initializeSchedulers() {
         2,
         &QueueManager_TaskHandle);
     if (res != pdPASS) {
-        Log.errorln(F("Queue Manager Task creation gave error: %d"), res);
+        ESP_LOGE(LM_TAG, "Queue Manager Task creation gave error: %d", res);
     }
 }
 
@@ -251,7 +250,7 @@ void LoraMesher::onReceive(void) {
 }
 
 void LoraMesher::receivingRoutine() {
-    Log.verboseln("Receiving routine started");
+    ESP_LOGV(LM_TAG, "Receiving routine started");
     vTaskSuspend(NULL);
 
     BaseType_t TWres;
@@ -271,29 +270,29 @@ void LoraMesher::receivingRoutine() {
 
             packetSize = radio->getPacketLength();
             if (packetSize == 0)
-                Log.warningln(F("Empty packet received"));
+                ESP_LOGW(LM_TAG, "Empty packet received");
             else {
                 Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
 
                 rssi = (int8_t) round(radio->getRSSI());
                 snr = (int8_t) round(radio->getSNR());
 
-                Log.noticeln(F("Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d"), packetSize, rssi, snr);
+                ESP_LOGI(LM_TAG, "Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d", packetSize, rssi, snr);
 
                 if (packetSize > MAXPACKETSIZE) {
-                    Log.warningln(F("Received packet with size greater than MAX Packet Size"));
+                    ESP_LOGW(LM_TAG, "Received packet with size greater than MAX Packet Size");
                     packetSize = MAXPACKETSIZE;
                 }
 
                 state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
 
                 if (state != RADIOLIB_ERR_NONE) {
-                    Log.warningln(F("Reading packet data gave error: %d"), state);
+                    ESP_LOGW(LM_TAG, "Reading packet data gave error: %d", state);
                     // Set a count to get the number of CRC errors
                     deletePacket(rx);
                 }
                 else if (packetSize != rx->packetSize) {
-                    Log.warningln(F("Packet size is different from the size read"));
+                    ESP_LOGW(LM_TAG, "Packet size is different from the size read");
                     deletePacket(rx);
                 }
                 else {
@@ -334,14 +333,14 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     //Random delay, to avoid some collisions.
     uint32_t randomDelay = getPropagationTimeWithRandom(repeatedDetectPreambles);
 
-    Log.verboseln(F("RandomDelay %d ms"), randomDelay);
+    ESP_LOGV(LM_TAG, "RandomDelay %d ms", randomDelay);
 
     //Set a random delay, to avoid some collisions.
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
 
     if (hasReceivedMessage) {
         startReceiving();
-        Log.verboseln(F("Preamble detected while waiting %d,"), repeatedDetectPreambles);
+        ESP_LOGV(LM_TAG, "Preamble detected while waiting %d", repeatedDetectPreambles);
         waitBeforeSend(repeatedDetectPreambles + 1);
     }
 }
@@ -365,14 +364,14 @@ bool LoraMesher::sendPacket(Packet<uint8_t>* p) {
     startReceiving();
 
     if (resT != RADIOLIB_ERR_NONE) {
-        Log.errorln(F("Transmit gave error: %d"), resT);
+        ESP_LOGE(LM_TAG, "Transmit gave error: %d", resT);
         return false;
     }
     return true;
 }
 
 void LoraMesher::sendPackets() {
-    Log.verboseln("Send routine started");
+    ESP_LOGV(LM_TAG, "Send routine started");
     vTaskSuspend(NULL);
 
     int sendCounter = 0;
@@ -392,14 +391,14 @@ void LoraMesher::sendPackets() {
 
             ToSendPackets->setInUse();
 
-            Log.verboseln("Size of Send Packets Queue: %d", ToSendPackets->getLength());
+            ESP_LOGV(LM_TAG, "Size of Send Packets Queue: %d", ToSendPackets->getLength());
 
             QueuePacket<Packet<uint8_t>>* tx = ToSendPackets->Pop();
 
             ToSendPackets->releaseInUse();
 
             if (tx) {
-                Log.verboseln("Send n. %d", sendCounter);
+                ESP_LOGV(LM_TAG, "Send n. %d", sendCounter);
 
                 if (tx->packet->src == getLocalAddress())
                     tx->packet->id = sendId++;
@@ -410,7 +409,7 @@ void LoraMesher::sendPackets() {
 
                     //Next hop not found
                     if (nextHop == 0) {
-                        Log.errorln(F("NextHop Not found from %X, destination %X"), tx->packet->src, tx->packet->dst);
+                        ESP_LOGE(LM_TAG, "NextHop Not found from %X, destination %X", tx->packet->src, tx->packet->dst);
                         PacketQueueService::deleteQueuePacketAndPacket(tx);
                         incDestinyUnreachable();
                         continue;
@@ -449,7 +448,7 @@ void LoraMesher::sendPackets() {
 
                 TickType_t delayBetweenSend = timeOnAir * dutyCycleEvery;
 
-                Log.verboseln("TimeOnAir %d ms, next message in %d ms", timeOnAir, delayBetweenSend);
+                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", timeOnAir, delayBetweenSend);
 
                 PacketQueueService::deleteQueuePacketAndPacket(tx);
 
@@ -460,14 +459,14 @@ void LoraMesher::sendPackets() {
 }
 
 void LoraMesher::sendHelloPacket() {
-    Log.verboseln("Send Hello Packet routine started");
+    ESP_LOGV(LM_TAG, "Send Hello Packet routine started");
     vTaskSuspend(NULL);
 
     //Wait an initial 2 second
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     for (;;) {
-        Log.traceln(F("Creating Routing Packet"));
+        ESP_LOGI(LM_TAG, "Creating Routing Packet");
 
         incSentHelloPackets();
 
@@ -486,14 +485,14 @@ void LoraMesher::sendHelloPacket() {
 }
 
 void LoraMesher::processPackets() {
-    Log.verboseln("Process routine started");
+    ESP_LOGV(LM_TAG, "Process routine started");
     vTaskSuspend(NULL);
 
     for (;;) {
         /* Wait for the notification of receivingRoutine and enter blocking */
         ulTaskNotifyTake(pdPASS, portMAX_DELAY);
 
-        Log.verboseln("Size of Received Packets Queue: %d", ReceivedPackets->getLength());
+        ESP_LOGV(LM_TAG, "Size of Received Packets Queue: %d", ReceivedPackets->getLength());
 
         while (ReceivedPackets->getLength() > 0) {
             QueuePacket<Packet<uint8_t>>* rx = ReceivedPackets->Pop();
@@ -531,7 +530,7 @@ void LoraMesher::processPackets() {
                     processDataPacket(reinterpret_cast<QueuePacket<DataPacket>*>(rx));
 
                 else {
-                    Log.verboseln(F("Packet not identified, deleting it"));
+                    ESP_LOGV(LM_TAG, "Packet not identified, deleting it");
                     incReceivedNotForMe();
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
                 }
@@ -541,7 +540,7 @@ void LoraMesher::processPackets() {
 }
 
 void LoraMesher::routingTableManager() {
-    Log.verboseln("Routing Table Manager routine started");
+    ESP_LOGV(LM_TAG, "Routing Table Manager routine started");
     vTaskSuspend(NULL);
 
     for (;;) {
@@ -561,7 +560,7 @@ void LoraMesher::routingTableManager() {
 }
 
 void LoraMesher::queueManager() {
-    Log.verboseln("Queue Manager routine started");
+    ESP_LOGV(LM_TAG, "Queue Manager routine started");
     vTaskSuspend(NULL);
 
     for (;;) {
@@ -569,7 +568,7 @@ void LoraMesher::queueManager() {
         recordState(LM_StateType::STATE_TYPE_MANAGER);
 
         if (q_WSP->getLength() == 0 && q_WRP->getLength() == 0) {
-            Log.verboseln("No packets to send or received");
+            ESP_LOGV(LM_TAG, "No packets to send or received");
 
             // Wait for the notification of send or receive reliable message and enter blocking
             ulTaskNotifyTake(
@@ -587,26 +586,27 @@ void LoraMesher::queueManager() {
 }
 
 void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
-    String log = F("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b");
-    if (PacketService::isDataPacket(p->type)) {
-        log += F(" Via: %X");
-        if (PacketService::isControlPacket(p->type)) {
-            log += F(" Seq_Id: %d Num: %d");
-        }
-    }
+    bool isDataPacket = PacketService::isDataPacket(p->type);
+    bool isControlPacket = PacketService::isControlPacket(p->type);
 
-    Log.verboseln(log.c_str(), title.c_str(), p->packetSize, p->src, p->dst, p->id, p->type,
-        (reinterpret_cast<DataPacket*>(p))->via,
-        (reinterpret_cast<ControlPacket*>(p))->seq_id,
-        (reinterpret_cast<ControlPacket*>(p))->number);
+    ESP_LOGV(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %b Via: %X Seq_Id: %d Num: %d",
+        title.c_str(),
+        p->packetSize,
+        p->src,
+        p->dst,
+        p->id,
+        p->type,
+        isDataPacket ? (reinterpret_cast<DataPacket*>(p))->via : 0,
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->seq_id : 0,
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0);
 }
 
 void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
     // vTaskDelay(10 / portTICK_PERIOD_MS);
 
-    // Log.verboseln(F("Free heap size 1: %d"), ESP.getFreeHeap());
+    // ESP_LOGV(LM_TAG, "Free heap size 1: %d"), ESP.getFreeHeap());
 
-    Log.verboseln(F("Sending reliable payload with %d bytes"), payloadSize);
+    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes", payloadSize);
 
     //TODO: Need some refactor
     //TODO: Cannot send an empty packet?? Maybe it could be like a ping?
@@ -620,7 +620,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     RouteNode* node = RoutingTableService::findNode(dst);
 
     if (node == NULL) {
-        Log.verboseln("Destination not found in the routing table");
+        ESP_LOGV(LM_TAG, "Destination not found in the routing table");
         return;
     }
 
@@ -652,7 +652,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
         if (i == numOfPackets)
             payloadSizeToSend = payloadSize - (maxPayloadSize * (numOfPackets - 1));
 
-        Log.verboseln("Payload Size: %d", payloadSizeToSend);
+        ESP_LOGV(LM_TAG, "Payload Size: %d", payloadSizeToSend);
 
         //Create a new packet with the previous payload
         ControlPacket* cPacket = PacketService::createControlPacket(dst, getLocalAddress(), type, payloadToSend, payloadSizeToSend);
@@ -695,10 +695,10 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
 
     incReceivedDataPackets();
 
-    Log.traceln(F("Data packet from %X, destination %X, via %X"), packet->src, packet->dst, packet->via);
+    ESP_LOGI(LM_TAG, "Data packet from %X, destination %X, via %X", packet->src, packet->dst, packet->via);
 
     if (packet->dst == getLocalAddress()) {
-        Log.verboseln(F("Data packet from %X for me"), packet->src);
+        ESP_LOGV(LM_TAG, "Data packet from %X for me", packet->src);
         incDataPacketForMe();
 
         processDataPacketForMe(pq);
@@ -706,20 +706,20 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
 
     }
     else if (packet->dst == BROADCAST_ADDR) {
-        Log.verboseln(F("Data packet from %X BROADCAST"), packet->src);
+        ESP_LOGV(LM_TAG, "Data packet from %X BROADCAST", packet->src);
         incReceivedBroadcast();
         processDataPacketForMe(pq);
         return;
 
     }
     else if (packet->via == getLocalAddress()) {
-        Log.verboseln(F("Data Packet from %X for %X. Via is me. Forwarding it"), packet->src, packet->dst);
+        ESP_LOGV(LM_TAG, "Data Packet from %X for %X. Via is me. Forwarding it", packet->src, packet->dst);
         incReceivedIAmVia();
         addToSendOrderedAndNotify(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
         return;
     }
 
-    Log.verboseln(F("Packet not for me, deleting it"));
+    ESP_LOGV(LM_TAG, "Packet not for me, deleting it");
     incReceivedNotForMe();
     PacketQueueService::deleteQueuePacketAndPacket(pq);
 }
@@ -734,7 +734,7 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
     bool needAck = PacketService::isNeedAckPacket(p->type);
 
     if (PacketService::isOnlyDataPacket(p->type)) {
-        Log.verboseln(F("Data Packet received"));
+        ESP_LOGV(LM_TAG, "Data Packet received");
         //Convert the packet into a user packet
         AppPacket<uint8_t>* appPacket = PacketService::convertPacket(p);
 
@@ -743,23 +743,23 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
 
     }
     else if (PacketService::isAckPacket(p->type)) {
-        Log.verboseln(F("ACK Packet received"));
+        ESP_LOGV(LM_TAG, "ACK Packet received");
         addAck(p->src, cPacket->seq_id, cPacket->number);
 
     }
     else if (PacketService::isLostPacket(p->type)) {
-        Log.verboseln(F("Lost Packet received"));
+        ESP_LOGV(LM_TAG, "Lost Packet received");
         processLostPacket(p->src, cPacket->seq_id, cPacket->number);
 
     }
     else if (PacketService::isSyncPacket(p->type)) {
-        Log.verboseln(F("Synchronization Packet received"));
+        ESP_LOGV(LM_TAG, "Synchronization Packet received");
         processSyncPacket(p->src, cPacket->seq_id, cPacket->number);
 
         needAck = false;
     }
     else if (PacketService::isXLPacket(p->type)) {
-        Log.verboseln(F("Large payload Packet received"));
+        ESP_LOGV(LM_TAG, "Large payload Packet received");
         processLargePayloadPacket(reinterpret_cast<QueuePacket<ControlPacket>*>(pq));
         needAck = false;
         deleteQueuePacket = false;
@@ -768,7 +768,7 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
     //Need ack
     if (needAck) {
         //TODO: All packets with this ack will ack?
-        Log.verboseln(F("Previous packet need an ACK"));
+        ESP_LOGV(LM_TAG, "Previous packet need an ACK");
         sendAckPacket(p->src, cPacket->seq_id, cPacket->number);
     }
 
@@ -805,7 +805,7 @@ uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
 
 void LoraMesher::recalculateMaxTimeOnAir() {
     maxTimeOnAir = radio->getTimeOnAir(MAXPACKETSIZE) / 1000;
-    Log.verboseln(F("Max Time on Air changed %d ms"), maxTimeOnAir);
+    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", maxTimeOnAir);
 }
 
 void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
@@ -819,7 +819,38 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	uint16_t localAddress = getLocalAddress();
+	if (localAddress == 0x56C4) {
+		if (source == 0x56C4) {
+			return true;
+		}
+		if (source == 0x4E58) {
+			return true;
+		}
+		return false;
+	}
+	if (localAddress == 0x4E58) {
+		if (source == 0x56C4) {
+			return true;
+		}
+		if (source == 0x4E58) {
+			return true;
+		}
+		if (source == 0x5880) {
+			return true;
+		}
+		return false;
+	}
+	if (localAddress == 0x5880) {
+		if (source == 0x4E58) {
+			return true;
+		}
+		if (source == 0x5880) {
+			return true;
+		}
+		return false;
+	}
+	return false;
 }
 #endif
 
@@ -855,7 +886,7 @@ size_t LoraMesher::getSendQueueSize() {
 
 void LoraMesher::addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp) {
     PacketQueueService::addOrdered(ToSendPackets, qp);
-    Log.traceln(F("Added packet to Q_SP, notifying sender task"));
+    ESP_LOGI(LM_TAG, "Added packet to Q_SP, notifying sender task");
 
     //Notify the sendData task handle
     xTaskNotify(SendData_TaskHandle, 0, eSetValueWithOverwrite);
@@ -906,7 +937,7 @@ void LoraMesher::sendLostPacket(uint16_t destination, uint8_t seq_id, uint16_t s
 bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_num) {
     // Check if the sequence number requested is valid
     if (lstConfig->config->lastAck > seq_num) {
-        Log.errorln(F("Trying to send packet sequence previously acknowledged Seq_id: %d, Num: %d"), lstConfig->config->seq_id, seq_num);
+        ESP_LOGE(LM_TAG, "Trying to send packet sequence previously acknowledged Seq_id: %d, Num: %d", lstConfig->config->seq_id, seq_num);
         return false;
     }
 
@@ -914,7 +945,7 @@ bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_n
     QueuePacket<ControlPacket>* pq = PacketQueueService::findPacketQueue(lstConfig->list, seq_num);
 
     if (pq == nullptr) {
-        Log.errorln(F("NOT FOUND the packet queue with Seq_id: %d, Num: %d"), lstConfig->config->seq_id, seq_num);
+        ESP_LOGE(LM_TAG, "NOT FOUND the packet queue with Seq_id: %d, Num: %d", lstConfig->config->seq_id, seq_num);
         return false;
     }
 
@@ -930,20 +961,20 @@ bool LoraMesher::sendPacketSequence(listConfiguration* lstConfig, uint16_t seq_n
 void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
     if (config == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in add ack with Seq_id: %d, Source: %d"), seq_id, source);
+        ESP_LOGE(LM_TAG, "NOT FOUND the sequence packet config in add ack with Seq_id: %d, Source: %d", seq_id, source);
         return;
     }
 
     //If all packets has been arrived to the destiny
     //Delete this sequence
     if (config->config->number == seq_num) {
-        Log.traceln(F("All the packets has been arrived to the seq_Id: %d"), seq_id);
+        ESP_LOGI(LM_TAG, "All the packets has been arrived to the seq_Id: %d", seq_id);
         findAndClearLinkedList(q_WSP, config);
         return;
     }
 
     if (config->config->lastAck > seq_num) {
-        Log.errorln(F("ACK received that has been yet acknowledged Seq_id: %d, Num: %d"), config->config->seq_id, seq_num);
+        ESP_LOGE(LM_TAG, "ACK received that has been yet acknowledged Seq_id: %d, Num: %d", config->config->seq_id, seq_num);
         return;
     }
 
@@ -961,7 +992,7 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     //Reset the timeouts
     resetTimeout(config->config);
 
-    Log.verboseln(F("Sending next packet after receiving an ACK"));
+    ESP_LOGV(LM_TAG, "Sending next packet after receiving an ACK");
 
     //Send the next packet sequence
     sendPacketSequence(config, seq_num + 1);
@@ -972,13 +1003,13 @@ bool LoraMesher::processLargePayloadPacket(QueuePacket<ControlPacket>* pq) {
 
     listConfiguration* configList = findSequenceList(q_WRP, cPacket->seq_id, cPacket->src);
     if (configList == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in Process Large Payload with Seq_id: %d, Source: %d"), cPacket->seq_id, cPacket->src);
+        ESP_LOGE(LM_TAG, "NOT FOUND the sequence packet config in Process Large Payload with Seq_id: %d, Source: %d", cPacket->seq_id, cPacket->src);
         PacketQueueService::deleteQueuePacketAndPacket(pq);
         return false;
     }
 
     if (configList->config->lastAck + 1 != cPacket->number) {
-        Log.errorln(F("Sequence number received in bad order in seq_Id: %d, received: %d expected: %d"), cPacket->seq_id, cPacket->number, configList->config->lastAck + 1);
+        ESP_LOGE(LM_TAG, "Sequence number received in bad order in seq_Id: %d, received: %d expected: %d", cPacket->seq_id, cPacket->number, configList->config->lastAck + 1);
         sendLostPacket(cPacket->src, cPacket->seq_id, configList->config->lastAck + 1);
 
         PacketQueueService::deleteQueuePacketAndPacket(pq);
@@ -1010,7 +1041,7 @@ bool LoraMesher::processLargePayloadPacket(QueuePacket<ControlPacket>* pq) {
 }
 
 void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
-    Log.verboseln(F("Joining packets seq_Id: %d Src: %X"), listConfig->config->seq_id, listConfig->config->source);
+    ESP_LOGV(LM_TAG, "Joining packets seq_Id: %d Src: %X", listConfig->config->seq_id, listConfig->config->source);
 
     LM_LinkedList<QueuePacket<ControlPacket>>* list = listConfig->list;
 
@@ -1029,7 +1060,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
         if (number != (currentP->number))
             //TODO: ORDER THE PACKETS if they are not ordered?
-            Log.errorln(F("Wrong packet order"));
+            ESP_LOGE(LM_TAG, "Wrong packet order");
 
         number++;
         payloadSize += PacketService::getPacketPayloadLength(currentP);
@@ -1047,7 +1078,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
     AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(malloc(packetLength));
 
-    Log.verboseln(F("Large Packet Packet length: %d Payload Size: %d"), packetLength, payloadSize);
+    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", packetLength, payloadSize);
 
     if (p) {
         //Copy the payload into the packet
@@ -1085,7 +1116,7 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
         RouteNode* node = RoutingTableService::findNode(source);
 
         if (node == nullptr) {
-            Log.errorln(F("Node not found in the routing table"));
+            ESP_LOGE(LM_TAG, "Node not found in the routing table");
             return;
         }
 
@@ -1119,7 +1150,7 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
     listConfiguration* listConfig = findSequenceList(q_WSP, seq_id, destination);
 
     if (listConfig == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in ost packet with Seq_id: %d, Source: %d"), seq_id, destination);
+        ESP_LOGE(LM_TAG, "NOT FOUND the sequence packet config in ost packet with Seq_id: %d, Source: %d", seq_id, destination);
         return;
     }
 
@@ -1145,7 +1176,7 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
 void LoraMesher::addTimeout(LM_LinkedList<listConfiguration>* queue, uint8_t seq_id, uint16_t source) {
     listConfiguration* config = findSequenceList(q_WSP, seq_id, source);
     if (config == nullptr) {
-        Log.errorln(F("NOT FOUND the sequence packet config in add timeout with Seq_id: %d, Source: %d"), seq_id, source);
+        ESP_LOGE(LM_TAG, "NOT FOUND the sequence packet config in add timeout with Seq_id: %d, Source: %d", seq_id, source);
         return;
     }
 
@@ -1161,7 +1192,7 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     if (config->calculatingRTT == 0) {
         //Set the first RTT received time
         config->calculatingRTT = millis();
-        Log.verboseln(F("Starting to calculate RTT seq_Id: %d Src: %X"),
+        ESP_LOGV(LM_TAG, "Starting to calculate RTT seq_Id: %d Src: %X",
             config->seq_id, config->source);
         return;
     }
@@ -1169,7 +1200,7 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     RouteNode* node = config->node;
 
     if (node == nullptr) {
-        Log.errorln(F("Node not found in the routing table"));
+        ESP_LOGE(LM_TAG, "Node not found in the routing table");
         return;
     }
 
@@ -1188,18 +1219,18 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
 
     config->calculatingRTT = millis();
 
-    Log.verboseln(F("Updating RTT (%u ms), SRTT (%u), RTTVAR (%u) seq_Id: %d Src: %X"),
+    ESP_LOGV(LM_TAG, "Updating RTT (%u ms), SRTT (%u), RTTVAR (%u) seq_Id: %d Src: %X",
         actualRTT, node->SRTT, node->RTTVAR, config->seq_id, config->source);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
     LM_LinkedList<QueuePacket<ControlPacket>>* list = listConfig->list;
     list->setInUse();
-    Log.traceln(F("Clearing list configuration Seq_Id: %d Src: %X"), listConfig->config->seq_id, listConfig->config->source);
+    ESP_LOGI(LM_TAG, "Clearing list configuration Seq_Id: %d Src: %X", listConfig->config->seq_id, listConfig->config->source);
 
     size_t listSize = list->getLength();
 
-    Log.verboseln(F("List size: %d"), listSize);
+    ESP_LOGV(LM_TAG, "List size: %d", listSize);
 
     for (int i = 0; i < listSize; i++) {
         QueuePacket<ControlPacket>* current = list->getCurrent();
@@ -1216,7 +1247,7 @@ void LoraMesher::findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue,
     queue->setInUse();
 
     if (!queue->Search(listConfig)) {
-        Log.errorln(F("Not found list config"));
+        ESP_LOGE(LM_TAG, "Not found list config");
         queue->releaseInUse();
     }
 
@@ -1265,7 +1296,7 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
         queueName = F("Waiting Send Queue");
     }
 
-    Log.verboseln(F("Checking %s timeouts. Open connections %d"), queueName.c_str(), queue->getLength());
+    ESP_LOGV(LM_TAG, "Checking %s timeouts. Open connections %d", queueName.c_str(), queue->getLength());
 
     queue->setInUse();
 
@@ -1285,12 +1316,12 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
                 // The number of the packet would be the following: 
                 // If it is a sender it starts from 0 to n + 1 packets, that includes the sync packet: If num = 0, it is that the sync packet has been lost, if num > 0, it is that the packet num - 1 has been lost
                 // For the the receiver it starts from 0 to n packets
-                Log.warningln(F("%s timeout reached, Src: %X, Seq_Id: %d, Num: %d, N.TimeOuts %d"),
+                ESP_LOGW(LM_TAG, "%s timeout reached, Src: %X, Seq_Id: %d, Num: %d, N.TimeOuts %d",
                     queueName.c_str(), configPacket->source, configPacket->seq_id, configPacket->lastAck + configPacket->firstAckReceived, configPacket->numberOfTimeouts);
 
                 // If number of timeouts is greater than Max timeouts, erase it
                 if (configPacket->numberOfTimeouts >= MAX_TIMEOUTS) {
-                    Log.errorln(F("%s, MAX TIMEOUTS reached, erasing Id: %d"), queueName.c_str(), configPacket->seq_id);
+                    ESP_LOGE(LM_TAG, "%s, MAX TIMEOUTS reached, erasing Id: %d"), queueName.c_str(), configPacket->seq_id;
                     clearLinkedList(current);
                     queue->DeleteCurrent();
                     continue;
@@ -1322,7 +1353,7 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
 unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) {
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
-        Log.errorln(F("Find next hop in add timeout"));
+        ESP_LOGE(LM_TAG, "Find next hop in add timeout");
         return 100000;
     }
 
@@ -1336,7 +1367,7 @@ unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
     //TODO: Account for how many packets are inside the Q_SP
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
-        Log.errorln(F("Find next hop in add timeout"));
+        ESP_LOGE(LM_TAG, "Find next hop in add timeout");
         return MIN_TIMEOUT * 1000;
     }
 
@@ -1360,7 +1391,7 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    Log.verboseln(F("Timeout set to %u s"), timeout / 1000);
+    ESP_LOGV(LM_TAG, "Timeout set to %u s", timeout / 1000);
 }
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
@@ -1386,7 +1417,7 @@ void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPack
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    Log.verboseln(F("Timeout recalculated to %u s"), timeout / 1000);
+    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", timeout / 1000);
 }
 
 uint8_t LoraMesher::getSequenceId() {

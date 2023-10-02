@@ -2,13 +2,13 @@
 
 Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
     if (packetSize > MAXPACKETSIZE) {
-        Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
+        ESP_LOGI(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
         packetSize = MAXPACKETSIZE;
     }
 
     Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(malloc(packetSize));
 
-    Log.traceln(F("Packet created with %d bytes"), packetSize);
+    ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
 
     return p;
 
@@ -31,7 +31,7 @@ AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, u
         memcpy(p->payload, payload, payloadSize);
     }
     else {
-        Log.errorln(F("User Packet not allocated"));
+        ESP_LOGW(LM_TAG, "User Packet not allocated");
         return nullptr;
     }
 

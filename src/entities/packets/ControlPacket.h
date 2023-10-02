@@ -5,6 +5,8 @@
 
 #include "RouteDataPacket.h"
 
+#include "BuildOptions.h"
+
 #pragma pack(1)
 class ControlPacket final: public RouteDataPacket {
 public:
@@ -27,7 +29,7 @@ public:
      * @param p Packet to be deleted
      */
     void operator delete(void* p) {
-        Log.traceln(F("Deleting Control packet"));
+        ESP_LOGV(LM_TAG, "Deleting Control packet");
         free(p);
     }
 };

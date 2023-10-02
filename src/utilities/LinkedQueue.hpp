@@ -4,6 +4,8 @@
 
 #include <Arduino.h>
 
+#include "BuildOptions.h"
+
 template <class T>
 class LM_ListNode {
 public:
@@ -58,7 +60,7 @@ LM_LinkedList<T>::LM_LinkedList() {
     xSemaphore = xSemaphoreCreateMutex();
 
     if (xSemaphore == NULL) {
-        Log.errorln("Semaphore in Linked List not created");
+        ESP_LOGE(LM_TAG, "Semaphore in Linked List not created");
     }
 }
 
@@ -73,7 +75,7 @@ inline LM_LinkedList<T>::LM_LinkedList(LM_LinkedList<T>& list) {
     xSemaphore = xSemaphoreCreateMutex();
 
     if (xSemaphore == NULL) {
-        Log.errorln("Semaphore in Linked List not created");
+        ESP_LOGE(LM_TAG, "Semaphore in Linked List not created");
     }
 
 
@@ -270,7 +272,7 @@ void LM_LinkedList<T>::Clear() {
 template <class T>
 void LM_LinkedList<T>::setInUse() {
     while (xSemaphoreTake(xSemaphore, (TickType_t) 10) != pdTRUE) {
-        Log.warningln("List in Use Alert");
+        ESP_LOGW(LM_TAG, "List in Use Alert");
     }
 }
 

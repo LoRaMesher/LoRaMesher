@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-#include "ArduinoLog.h"
+#include "BuildOptions.h"
 
 #pragma pack(1)
 class PacketHeader {
@@ -21,7 +21,7 @@ public:
      * @param p Packet to be deleted
      */
     void operator delete(void* p) {
-        Log.traceln(F("Deleting Header packet"));
+        ESP_LOGV(LM_TAG, "Deleting Header packet");
         free(p);
     }
 

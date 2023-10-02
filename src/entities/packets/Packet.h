@@ -3,11 +3,8 @@
 
 #include <Arduino.h>
 
-#include <ArduinoLog.h>
-
 #include "BuildOptions.h"
 #include "PacketHeader.h"
-
 
 #pragma pack(1)
 template <typename T>
@@ -22,7 +19,7 @@ public:
      * @param p Packet to be deleted
      */
     void operator delete(void* p) {
-        Log.traceln(F("Deleting packet"));
+        ESP_LOGV(LM_TAG, "Deleting  packet");
         free(p);
     }
 

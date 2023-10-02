@@ -6,7 +6,7 @@
 // WiFi libraries
 #include <WiFi.h>
 
-#include "ArduinoLog.h"
+#include "BuildOptions.h"
 
 class WiFiService {
 public:

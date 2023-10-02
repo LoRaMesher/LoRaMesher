@@ -3,9 +3,6 @@
 
 #include <Arduino.h>
 
-#include "ArduinoLog.h"
-
-
 #include "utilities/LinkedQueue.hpp"
 
 #include "entities/routingTable/RouteNode.h"

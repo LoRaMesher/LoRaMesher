@@ -1,6 +1,8 @@
 #ifndef _LORAMESHER_BUILD_OPTIONS_H
 #define _LORAMESHER_BUILD_OPTIONS_H
 
+static const char* LM_TAG = "LoRaMesher";
+
 // Compatible modules
 #define SX1276_MOD 0
 #define SX1262_MOD 1
@@ -50,7 +52,7 @@
 //MAX payload size for hello packets = MAXPACKETSIZE - 6 bytes of header
 //MAX payload size for data packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via
 //MAX payload size for reliable and large packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via - 3 of control packet
-#define MAXPACKETSIZE 50
+#define MAXPACKETSIZE 100
 
 // Packet types
 #define NEED_ACK_P 0b00000011
@@ -67,13 +69,13 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 600
+#define HELLO_PACKETS_DELAY 120
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*5
 #define MIN_TIMEOUT 20
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 10
-#define MAX_RESEND_PACKET 10
+#define MAX_RESEND_PACKET 3
 #define MAX_TRY_BEFORE_SEND 5
 
 //Role Types
@@ -82,6 +84,6 @@
 //Free Role Types from 0b00000010 to 0b10000000
 
 // Define if is testing
-// #define TESTING
+#define TESTING
 
 #endif

@@ -17,7 +17,7 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
     uint32_t freeHeap = ESP.getFreeHeap();
 
     if (freeHeap < 10000) {
-        Log.verbose(F("Not enough memory to simulate. Free heap: %d"), freeHeap);
+        ESP_LOGW(LM_TAG, "Not enough memory to simulate. Free heap: %d", freeHeap);
         return;
     }
 

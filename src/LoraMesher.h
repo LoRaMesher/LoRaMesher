@@ -4,10 +4,6 @@
 // LoRa libraries
 #include "RadioLib.h"
 
-// Logger
-#include <ArduinoLog.h>
-//#define DISABLE_LOGGING
-
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
@@ -97,7 +93,7 @@ public:
      *       2,
      *       &receiveLoRaMessage_Handle);
      *   if (res != pdPASS) {
-     *       Log.errorln(F("Receive User Task creation gave error: %d"), res);
+     *       ESP_LOGE(LM_TAG, "Receive User Task creation gave error: %d"), res);
      *   }
      *
      *   radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
@@ -594,9 +590,9 @@ private:
      * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
      */
     void setPackedForSend(Packet<uint8_t>* p, uint8_t priority) {
-        Log.traceln(F("Adding packet to Q_SP"));
+        ESP_LOGI(LM_TAG, "Adding packet to Q_SP");
         QueuePacket<Packet<uint8_t>>* send = PacketQueueService::createQueuePacket(p, priority);
-        Log.traceln(F("Created packet to Q_SP"));
+        ESP_LOGI(LM_TAG, "Created packet to Q_SP");
         addToSendOrderedAndNotify(send);
         //TODO: Using vTaskDelay to kill the packet inside LoraMesher
     }

@@ -7,6 +7,7 @@
 #include "entities/packets/AppPacket.h"
 #include "entities/packets/RoutePacket.h"
 #include "services/RoleService.h"
+#include "BuildOptions.h"
 
 class PacketService {
 public:
@@ -87,7 +88,7 @@ public:
             memcpy(cpPacket, p, packetLength);
         }
         else {
-            Log.errorln(F("Copy Packet not allocated"));
+            ESP_LOGE(LM_TAG, "Copy Packet not allocated");
             return nullptr;
         }
 
@@ -281,9 +282,9 @@ public:
 
     /**
      * @brief Get the Packet Header
-     * 
+     *
      * @param p Get the packet headers without the payload to identify the packet and the payload size
-     * @return ControlPacket* 
+     * @return ControlPacket*
      */
     static ControlPacket* getPacketHeader(Packet<uint8_t>* p);
 
@@ -304,11 +305,11 @@ private:
         int packetSize = sizeof(T) + payloadSize;
 
         if (packetSize > MAXPACKETSIZE) {
-            Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
+            ESP_LOGW(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
             return nullptr;
         }
 
-        Log.verboseln(F("Creating packet with %d bytes"), packetSize);
+        ESP_LOGV(LM_TAG, "Creating packet with %d bytes", packetSize);
 
         T* p = static_cast<T*>(malloc(packetSize));
 
@@ -317,11 +318,11 @@ private:
             memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
         }
         else {
-            Log.errorln(F("packet not allocated"));
+            ESP_LOGE(LM_TAG, "packet not allocated");
             return nullptr;
         }
 
-        Log.traceln(F("Packet created with %d bytes"), packetSize);
+        ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
 
         return p;
     };

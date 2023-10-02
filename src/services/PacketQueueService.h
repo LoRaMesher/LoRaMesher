@@ -3,13 +3,13 @@
 
 #include <Arduino.h>
 
-#include "ArduinoLog.h"
-
 #include "entities/packets/QueuePacket.h"
 
 #include "services/PacketService.h"
 
 #include "utilities/LinkedQueue.hpp"
+
+#include "BuildOptions.h"
 
 class PacketQueueService {
 public:
@@ -79,10 +79,10 @@ public:
      * @param pq packet queue to be deleted
      */
     static void deleteQueuePacketAndPacket(QueuePacket<Packet<uint8_t>>* pq) {
-        Log.traceln(F("Deleting packet"));
+        ESP_LOGI(LM_TAG, "Deleting packet");
         free(pq->packet);
 
-        Log.traceln(F("Deleting packet queue"));
+        ESP_LOGI(LM_TAG, "Deleting packet queue");
         delete pq;
     }
 

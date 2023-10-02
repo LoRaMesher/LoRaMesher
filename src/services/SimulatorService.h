@@ -8,6 +8,8 @@
 #include "services/PacketService.h"
 #include "utilities/LinkedQueue.hpp"
 
+#include "BuildOptions.h"
+
 class SimulatorService {
 public:
     SimulatorService();
