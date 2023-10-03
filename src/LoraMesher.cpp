@@ -507,6 +507,7 @@ void LoraMesher::processPackets() {
                 }
                 else if (!canReceivePacket(rx->packet->src)) {
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
+                    ESP_LOGV(LM_TAG, "TESTING: Packet not for me, deleting it");
                     continue;
                 }
 #endif
