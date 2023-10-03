@@ -51,7 +51,7 @@ public:
      */
     void operator delete(void* p) {
         ESP_LOGV(LM_TAG, "Deleting app packet");
-        free(p);
+        vPortFree(p);
     }
 };
 

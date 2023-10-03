@@ -256,7 +256,7 @@ public:
      */
     template <typename T>
     static void deletePacket(AppPacket<T>* p) {
-        free(p);
+        vPortFree(p);
     }
 
     /**
@@ -580,7 +580,7 @@ private:
      */
     template <typename T>
     static void deletePacket(Packet<T>* p) {
-        free(p);
+        vPortFree(p);
     }
 
     /**

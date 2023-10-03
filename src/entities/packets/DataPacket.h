@@ -19,7 +19,7 @@ public:
      */
     void operator delete(void* p) {
         ESP_LOGV(LM_TAG, "Deleting Data packet");
-        free(p);
+        vPortFree(p);
     }
 };
 #pragma pack()

@@ -1046,7 +1046,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
     //Packet length = size of the packet + size of the payload
     uint32_t packetLength = appPacketLength + payloadSize;
 
-    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(malloc(packetLength));
+    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(pvPortMalloc(packetLength));
 
     ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", packetLength, payloadSize);
 

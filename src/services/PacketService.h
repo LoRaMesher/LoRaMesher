@@ -82,7 +82,7 @@ public:
      */
     template<class T>
     static Packet<uint8_t>* copyPacket(T* p, size_t packetLength) {
-        Packet<uint8_t>* cpPacket = static_cast<Packet<uint8_t>*>(malloc(packetLength));
+        Packet<uint8_t>* cpPacket = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetLength));
 
         if (cpPacket) {
             memcpy(cpPacket, p, packetLength);
@@ -311,7 +311,7 @@ private:
 
         ESP_LOGV(LM_TAG, "Creating packet with %d bytes", packetSize);
 
-        T* p = static_cast<T*>(malloc(packetSize));
+        T* p = static_cast<T*>(pvPortMalloc(packetSize));
 
         if (p) {
             //Copy the payload into the packet

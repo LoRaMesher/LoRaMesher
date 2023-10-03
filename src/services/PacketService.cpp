@@ -6,7 +6,7 @@ Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
         packetSize = MAXPACKETSIZE;
     }
 
-    Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(malloc(packetSize));
+    Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetSize));
 
     ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
 
@@ -24,7 +24,7 @@ AppPacket<uint8_t>* PacketService::convertPacket(DataPacket* p) {
 AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize) {
     int packetLength = sizeof(AppPacket<uint8_t>) + payloadSize;
 
-    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(malloc(packetLength));
+    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(pvPortMalloc(packetLength));
 
     if (p) {
         //Copy the payload into the packet

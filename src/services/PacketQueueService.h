@@ -80,7 +80,7 @@ public:
      */
     static void deleteQueuePacketAndPacket(QueuePacket<Packet<uint8_t>>* pq) {
         ESP_LOGI(LM_TAG, "Deleting packet");
-        free(pq->packet);
+        vPortFree(pq->packet);
 
         ESP_LOGI(LM_TAG, "Deleting packet queue");
         delete pq;

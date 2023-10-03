@@ -20,7 +20,7 @@ public:
      */
     void operator delete(void* p) {
         ESP_LOGV(LM_TAG, "Deleting  packet");
-        free(p);
+        vPortFree(p);
     }
 
 };

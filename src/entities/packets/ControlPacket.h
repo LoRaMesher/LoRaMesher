@@ -30,7 +30,7 @@ public:
      */
     void operator delete(void* p) {
         ESP_LOGV(LM_TAG, "Deleting Control packet");
-        free(p);
+        vPortFree(p);
     }
 };
 #pragma pack()
