@@ -819,38 +819,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-	uint16_t localAddress = getLocalAddress();
-	if (localAddress == 0x56C4) {
-		if (source == 0x56C4) {
-			return true;
-		}
-		if (source == 0x4E58) {
-			return true;
-		}
-		return false;
-	}
-	if (localAddress == 0x4E58) {
-		if (source == 0x56C4) {
-			return true;
-		}
-		if (source == 0x4E58) {
-			return true;
-		}
-		if (source == 0x5880) {
-			return true;
-		}
-		return false;
-	}
-	if (localAddress == 0x5880) {
-		if (source == 0x4E58) {
-			return true;
-		}
-		if (source == 0x5880) {
-			return true;
-		}
-		return false;
-	}
-	return false;
+	return true;
 }
 #endif
 
