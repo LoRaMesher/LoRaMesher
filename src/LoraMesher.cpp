@@ -479,6 +479,7 @@ void LoraMesher::sendHelloPacket() {
         size_t numOfNodes = RoutingTableService::routingTableSize();
 
         size_t numPackets = (numOfNodes + maxNodesPerPacket - 1) / maxNodesPerPacket;
+        numPackets = (numPackets == 0) ? 1 : numPackets;
 
         for (size_t i = 0; i < numPackets; ++i) {
             size_t startIndex = i * maxNodesPerPacket;
