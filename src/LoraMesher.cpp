@@ -460,6 +460,11 @@ void LoraMesher::sendPackets() {
 
 void LoraMesher::sendHelloPacket() {
     ESP_LOGV(LM_TAG, "Send Hello Packet routine started");
+
+    size_t maxNodesPerPacket = (MAXPACKETSIZE - sizeof(RoutePacket)) / sizeof(NetworkNode);
+
+    ESP_LOGV(LM_TAG, "Max routing nodes per packet: %d", maxNodesPerPacket);
+
     vTaskSuspend(NULL);
 
     //Wait an initial 2 second
@@ -471,13 +476,26 @@ void LoraMesher::sendHelloPacket() {
         incSentHelloPackets();
 
         NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
+        size_t numOfNodes = RoutingTableService::routingTableSize();
 
-        RoutePacket* tx = PacketService::createRoutingPacket(
-            getLocalAddress(), nodes, RoutingTableService::routingTableSize(), RoleService::getRole());
+        size_t numPackets = (numOfNodes + maxNodesPerPacket - 1) / maxNodesPerPacket;
 
-        delete[] nodes;
+        for (size_t i = 0; i < numPackets; ++i) {
+            size_t startIndex = i * maxNodesPerPacket;
+            size_t endIndex = startIndex + maxNodesPerPacket;
+            if (endIndex > numOfNodes) {
+                endIndex = numOfNodes;
+            }
 
-        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 1);
+            size_t nodesInThisPacket = endIndex - startIndex;
+
+            // Create and send the packet
+            RoutePacket* tx = PacketService::createRoutingPacket(
+                getLocalAddress(), &nodes[startIndex], nodesInThisPacket, RoleService::getRole()
+            );
+
+            setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 1);
+        }
 
         //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
