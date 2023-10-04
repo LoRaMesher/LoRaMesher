@@ -501,11 +501,7 @@ void LoraMesher::processPackets() {
                 uint8_t type = rx->packet->type;
 
 #ifdef TESTING
-                //TODO: Refactor this code
-                if ((PacketService::isDataPacket(type) && reinterpret_cast<DataPacket*>(rx->packet)->via == getLocalAddress())) {
-                    void();
-                }
-                else if (!canReceivePacket(rx->packet->src)) {
+                if (!shouldProcessPacket(rx->packet)) {
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
                     ESP_LOGV(LM_TAG, "TESTING: Packet not for me, deleting it");
                     continue;
@@ -820,7 +816,17 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-	return true;
+    return true;
+}
+#endif
+
+#ifdef TESTING
+bool LoraMesher::isDataPacketAndLocal(DataPacket* packet, uint16_t localAddress) {
+    return PacketService::isDataPacket(packet->type) && packet->via == localAddress;
+}
+
+bool LoraMesher::shouldProcessPacket(Packet<uint8_t>* packet) {
+    return isDataPacketAndLocal(reinterpret_cast<DataPacket*>(packet), getLocalAddress()) || canReceivePacket(packet->src);
 }
 #endif
 
