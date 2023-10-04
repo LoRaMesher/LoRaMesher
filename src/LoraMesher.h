@@ -1010,6 +1010,20 @@ public:
      * @return false
      */
     bool hasActiveConnections() { return hasActiveReceivedConnections() || hasActiveSentConnections() || ToSendPackets->getLength() > 0 || ReceivedPackets->getLength() > 0; };
+
+    /**
+     * @brief Returns the number of packets inside the waiting send packets queue
+     * 
+     * @return size_t number of packets
+     */
+    size_t queueWaitingSendPacketsLength() { return q_WSP->getLength(); }
+
+    /**
+     * @brief Returns the number of packets inside the waiting received packets queue
+     * 
+     * @return size_t number of packets
+     */
+    size_t queueWaitingReceivedPacketsLength() { return q_WRP->getLength(); }
 };
 
 #endif
