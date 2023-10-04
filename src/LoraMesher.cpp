@@ -1092,7 +1092,7 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
         RouteNode* node = RoutingTableService::findNode(source);
 
         if (node == nullptr) {
-            ESP_LOGE(LM_TAG, "Node not found in the routing table");
+            ESP_LOGW(LM_TAG, "Node not found in the routing table");
             return;
         }
 
@@ -1176,7 +1176,7 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     RouteNode* node = config->node;
 
     if (node == nullptr) {
-        ESP_LOGE(LM_TAG, "Node not found in the routing table");
+        ESP_LOGW(LM_TAG, "Node not found in the routing table");
         return;
     }
 
