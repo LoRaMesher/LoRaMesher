@@ -1,7 +1,7 @@
 #include "LM_SX1262.h"
 
-LM_SX1262::LM_SX1262() {
-    module = new SX1262(new Module(LORA_CS, LORA_IRQ, LORA_RST, LORA_IO1));
+LM_SX1262::LM_SX1262(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, uint8_t loraIo1, SPIClass* spi) {
+    module = new SX1262(new Module(loraCs, loraIrq, loraRst, loraIo1, *spi));
 }
 
 int16_t LM_SX1262::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, int16_t preambleLength) {

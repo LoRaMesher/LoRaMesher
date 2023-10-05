@@ -8,7 +8,12 @@
 
 class LM_SX1276: public LM_Module {
 public:
-    LM_SX1276();
+    LM_SX1276(
+        uint8_t loraCs = LORA_CS, // LoRa chip select pin
+        uint8_t loraIrq = LORA_IRQ, // LoRa IRQ pin
+        uint8_t loraRst = LORA_RST, // LoRa reset pin
+        SPIClass* spi = &SPI // SPI interface
+    );
 
     int16_t begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord,
         int8_t power, int16_t preambleLength) override;

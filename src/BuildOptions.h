@@ -3,11 +3,6 @@
 
 static const char* LM_TAG = "LoRaMesher";
 
-// Compatible modules
-#define SX1276_MOD 0
-#define SX1262_MOD 1
-#define SX1278_MOD 2
-
 // Set LoRa pins
 #ifndef LORA_CS
 #define LORA_CS 8
@@ -23,6 +18,18 @@ static const char* LM_TAG = "LoRaMesher";
 
 #ifndef LORA_IO1
 #define LORA_IO1 13
+#endif
+
+#ifndef LM_SPI_MISO
+#define LM_SPI_MISO 19
+#endif
+
+#ifndef LM_SPI_MOSI
+#define LM_SPI_MOSI 27
+#endif
+
+#ifndef LM_SPI_SCK
+#define LM_SPI_SCK 5
 #endif
 
 // LoRa band definition
