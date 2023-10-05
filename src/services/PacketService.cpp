@@ -2,20 +2,20 @@
 
 Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
     if (packetSize > MAXPACKETSIZE) {
-        Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
+        ESP_LOGI(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
         packetSize = MAXPACKETSIZE;
     }
 
-    Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(malloc(packetSize));
+    Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetSize));
 
-    Log.traceln(F("Packet created with %d bytes"), packetSize);
+    ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
 
     return p;
 
 }
 
 AppPacket<uint8_t>* PacketService::convertPacket(DataPacket* p) {
-    uint32_t payloadSize = p->payloadSize - (sizeof(DataPacket) - sizeof(PacketHeader));
+    uint32_t payloadSize = p->packetSize - sizeof(DataPacket);
 
     AppPacket<uint8_t>* uPacket = createAppPacket(p->dst, p->src, p->payload, payloadSize);
     return uPacket;
@@ -24,14 +24,14 @@ AppPacket<uint8_t>* PacketService::convertPacket(DataPacket* p) {
 AppPacket<uint8_t>* PacketService::createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize) {
     int packetLength = sizeof(AppPacket<uint8_t>) + payloadSize;
 
-    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(malloc(packetLength));
+    AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(pvPortMalloc(packetLength));
 
     if (p) {
         //Copy the payload into the packet
         memcpy(p->payload, payload, payloadSize);
     }
     else {
-        Log.errorln(F("User Packet not allocated"));
+        ESP_LOGW(LM_TAG, "User Packet not allocated");
         return nullptr;
     }
 
@@ -82,12 +82,12 @@ bool PacketService::isDataControlPacket(uint8_t type) {
     return (isHelloPacket(type) || isAckPacket(type) || isLostPacket(type) || isLostPacket(type));
 }
 
-uint8_t PacketService::getExtraLengthToPayload(uint8_t type) {
-    if (isDataPacket(type))
-        return sizeof(DataPacket) - sizeof(PacketHeader);
-
+uint8_t PacketService::getHeaderLength(uint8_t type) {
     if (isControlPacket(type))
-        return sizeof(ControlPacket) - sizeof(PacketHeader);
+        return sizeof(ControlPacket);
+
+    if (isDataPacket(type))
+        return sizeof(DataPacket);
 
     return 0;
 }
@@ -99,7 +99,7 @@ RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNo
     routePacket->dst = BROADCAST_ADDR;
     routePacket->src = localAddress;
     routePacket->type = HELLO_P;
-    routePacket->payloadSize = routingSizeInBytes + sizeof(RoutePacket) - sizeof(PacketHeader);
+    routePacket->packetSize = routingSizeInBytes + sizeof(RoutePacket);
     routePacket->nodeRole = nodeRole;
 
     return routePacket;
@@ -118,7 +118,7 @@ ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, ui
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
-    packet->payloadSize = payloadSize + sizeof(ControlPacket) - sizeof(PacketHeader);
+    packet->packetSize = payloadSize + sizeof(ControlPacket);
 
     return packet;
 }
@@ -130,7 +130,7 @@ ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t sr
     packet->type = type;
     packet->seq_id = seq_id;
     packet->number = num_packets;
-    packet->payloadSize = sizeof(ControlPacket) - sizeof(PacketHeader);
+    packet->packetSize = sizeof(ControlPacket);
 
     return packet;
 }
@@ -140,32 +140,50 @@ DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t 
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
-    packet->payloadSize = payloadSize + sizeof(DataPacket) - sizeof(PacketHeader);
+    packet->packetSize = payloadSize + sizeof(DataPacket);
 
     return packet;
 }
 
 size_t PacketService::getPacketPayloadLength(Packet<uint8_t>* p) {
-    return p->payloadSize - getPacketHeaderLength(p);
+    return p->packetSize - getHeaderLength(p);
 }
 
-size_t PacketService::getPacketHeaderLength(Packet<uint8_t>* p) {
-    return getExtraLengthToPayload(p->type) + sizeof(PacketHeader);
+size_t PacketService::getHeaderLength(Packet<uint8_t>* p) {
+    return getHeaderLength(p->type);
 }
 
 size_t PacketService::getControlLength(Packet<uint8_t>* p) {
     if (isDataControlPacket(p->type))
-        return p->getPacketLength();
+        return p->packetSize;
 
-    return getPacketHeaderLength(p);
+    return getHeaderLength(p);
 }
 
 uint8_t PacketService::getMaximumPayloadLength(uint8_t type) {
-    return MAXPACKETSIZE - getExtraLengthToPayload(type);
+    return MAXPACKETSIZE - getHeaderLength(type);
 }
 
 size_t PacketService::getPacketPayloadLengthWithoutControl(Packet<uint8_t>* p) {
     if (isDataControlPacket(p->type))
         return 0;
     return getPacketPayloadLength(p);
+}
+
+ControlPacket* PacketService::getPacketHeader(Packet<uint8_t>* p) {
+    ControlPacket* ctrlPacket = new ControlPacket();
+
+    if (isControlPacket(p->type)) {
+        ControlPacket* srcCtrPacket = (ControlPacket*) p;
+        memcpy(ctrlPacket, srcCtrPacket, sizeof(ControlPacket));
+        return ctrlPacket;
+    }
+    if (isDataPacket(p->type)) {
+        DataPacket* srcDataPacket = (DataPacket*) p;
+        memcpy(ctrlPacket, srcDataPacket, sizeof(DataPacket));
+        return ctrlPacket;
+    }
+
+    memcpy(ctrlPacket, p, sizeof(PacketHeader));
+    return ctrlPacket;
 }

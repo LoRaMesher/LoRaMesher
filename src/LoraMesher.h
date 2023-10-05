@@ -4,9 +4,7 @@
 // LoRa libraries
 #include "RadioLib.h"
 
-// Logger
-#include <ArduinoLog.h>
-//#define DISABLE_LOGGING
+#include <SPI.h>
 
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
@@ -25,6 +23,8 @@
 
 #include "services/RoleService.h"
 
+#include "services/SimulatorService.h"
+
 /**
  * @brief LoRaMesher Library
  *
@@ -40,20 +40,45 @@ public:
     static LoraMesher& getInstance() {
         static LoraMesher instance;
         return instance;
-    }
+    };
+
+    enum LoraModules {
+        SX1276_MOD,
+        SX1262_MOD,
+        SX1278_MOD,
+    };
+
+    /**
+     * @brief LoRaMesher configuration
+     *
+     */
+    struct LoraMesherConfig {
+        // LoRa pins
+        uint8_t loraCs = LORA_CS; // LoRa chip select pin
+        uint8_t loraIrq = LORA_IRQ; // LoRa IRQ pin
+        uint8_t loraRst = LORA_RST; // LoRa reset pin
+        uint8_t loraIo1 = LORA_IO1; // LoRa DIO1 pin
+
+        // LoRa configuration
+        LoraModules module = LoraModules::SX1276_MOD; // Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
+        float freq = LM_BAND; // Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
+        float bw = LM_BANDWIDTH; // LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
+        uint8_t sf = LM_LORASF; // LoRa spreading factor. Allowed values range from 6 to 12.
+        uint8_t cr = LM_CODING_RATE; // LoRa coding rate denominator. Allowed values range from 5 to 8.
+        uint8_t syncWord = LM_SYNC_WORD; // LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
+        int8_t power = LM_POWER; // Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
+        uint16_t preambleLength = LM_PREAMBLE_LENGTH; //Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number. Allowed values range from 6 to 65535.
+
+        // Custom SPI pins
+        SPIClass* spi = &SPI;
+
+        LoraMesherConfig() {}
+    };
 
     /**
      * @brief LoRaMesh initialization method.
      *
-     * @param module Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
-     * @param freq Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
-     * @param bw LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
-     * @param sf LoRa spreading factor. Allowed values range from 6 to 12.
-     * @param cr LoRa coding rate denominator. Allowed values range from 5 to 8.
-     * @param syncWord LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
-     * @param power Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
-     * @param preambleLength Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number.
-     * Allowed values range from 6 to 65535.
+     * @param config Configuration of the LoRaMesher
      *
      * Example of usage:
      * @code
@@ -95,7 +120,7 @@ public:
      *       2,
      *       &receiveLoRaMessage_Handle);
      *   if (res != pdPASS) {
-     *       Log.errorln(F("Receive User Task creation gave error: %d"), res);
+     *       ESP_LOGE(LM_TAG, "Receive User Task creation gave error: %d"), res);
      *   }
      *
      *   radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
@@ -104,7 +129,7 @@ public:
      *
      * @ref RadioLib reference begin code
      */
-    void begin(uint8_t module = SX1276_MOD, float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
+    void begin(LoraMesherConfig config = LoraMesherConfig());
 
     /**
      * @brief Start/Resume LoRaMesher. After calling begin(...) or standby() you can Start/resume the LoRaMesher.
@@ -170,10 +195,10 @@ public:
     void setReceiveAppDataTaskHandle(TaskHandle_t ReceiveAppDataTaskHandle) { ReceiveAppData_TaskHandle = ReceiveAppDataTaskHandle; }
 
     /**
-     * @brief Routing table List
+     * @brief A copy of the routing table list. Delete it after using the list.
      *
      */
-    LM_LinkedList<RouteNode>* routingTableList() { return RoutingTableService::routingTableList; }
+    LM_LinkedList<RouteNode>* routingTableListCopy() { return new LM_LinkedList<RouteNode>(*RoutingTableService::routingTableList); }
 
     /**
      * @brief Create a Packet And Send it
@@ -258,15 +283,15 @@ public:
      */
     template <typename T>
     static void deletePacket(AppPacket<T>* p) {
-        delete p;
+        vPortFree(p);
     }
 
     /**
      * @brief Returns the routing table size
      *
-     * @return int
+     * @return size_t Routing Table Size
      */
-    int routingTableSize();
+    size_t routingTableSize();
 
 
     /**
@@ -408,6 +433,19 @@ public:
      */
     static RouteNode* getBestNodeWithRole(uint8_t role) { return RoutingTableService::getBestNodeByRole(role); };
 
+    /**
+     * @brief Set the Simulator Service object
+     *
+     * @param service Simulator Service
+     */
+    void setSimulatorService(SimulatorService* service) { simulatorService = service; }
+
+    /**
+     * @brief Remove the Simulator Service object
+     *
+     */
+    void removeSimulatorService() { simulatorService = nullptr; }
+
 #ifndef LM_GOD_MODE
 private:
 #endif
@@ -465,10 +503,17 @@ private:
     TaskHandle_t ReceiveAppData_TaskHandle = nullptr;
 
     /**
-     * @brief Packet manager task handle. This manages all the routing table and large and reliable payloads, checking for timeouts and resending messages.
+     * @brief Queue manager task handle. This task manages the queues inside LoRaMesher, checking for timeouts and resending messages.
      *
      */
-    TaskHandle_t PacketManager_TaskHandle = nullptr;
+    TaskHandle_t QueueManager_TaskHandle = nullptr;
+
+    /**
+     * @brief Routing table manager task handle. This manages the routing table, checking for timeouts and removing nodes.
+     *
+     */
+    TaskHandle_t RoutingTableManager_TaskHandle = nullptr;
+
 
     static void onReceive(void);
 
@@ -483,21 +528,22 @@ private:
     /**
      * @brief Scan activity channel
      *
-     * @return int RADIOLIB_PREAMBLE_DETECTED if activity detected or RADIOLIB_CHANNEL_FREE if not
      */
-    int16_t channelScan();
+    void channelScan();
 
     int startChannelScan();
 
     void receivingRoutine();
 
-    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module);
+    void initializeLoRa(LoraMesherConfig config);
 
     void initializeSchedulers();
 
     void sendHelloPacket();
 
-    void packetManager();
+    void routingTableManager();
+
+    void queueManager();
 
     /**
      * @brief Region Monitoring variables
@@ -561,7 +607,7 @@ private:
      */
     template <typename T>
     static void deletePacket(Packet<T>* p) {
-        free(p);
+        vPortFree(p);
     }
 
     /**
@@ -571,9 +617,9 @@ private:
      * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
      */
     void setPackedForSend(Packet<uint8_t>* p, uint8_t priority) {
-        Log.traceln(F("Adding packet to Q_SP"));
+        ESP_LOGI(LM_TAG, "Adding packet to Q_SP");
         QueuePacket<Packet<uint8_t>>* send = PacketQueueService::createQueuePacket(p, priority);
-        Log.traceln(F("Created packet to Q_SP"));
+        ESP_LOGI(LM_TAG, "Created packet to Q_SP");
         addToSendOrderedAndNotify(send);
         //TODO: Using vTaskDelay to kill the packet inside LoraMesher
     }
@@ -584,6 +630,12 @@ private:
      * @param qp
      */
     void addToSendOrderedAndNotify(QueuePacket<Packet<uint8_t>>* qp);
+
+    /**
+     * @brief Notify the QueueManager_TaskHandle that a new sequence has been started
+     *
+     */
+    void notifyNewSequenceStarted();
 
     /**
      * @brief Process the data packet
@@ -731,11 +783,13 @@ private:
         uint16_t number{0}; //Number of packets of the sequence
         uint8_t firstAckReceived{0}; //If this value is set to 0, there has not been received any ack.
         uint16_t lastAck{0}; //Last ack received/send. 0 to n ACKs where n is the number of packets. 
-        unsigned long timeout{0};; //Timeout of the sequence
+        unsigned long timeout{0}; //Timeout of the sequence
+        unsigned long previousTimeout{0}; //Previous timeout of the sequence
         uint8_t numberOfTimeouts{0}; //Number of timeouts that has been occurred
-        uint32_t RTT{0}; //Round Trip time
+        unsigned long calculatingRTT{0}; // Calculating RTT
+        RouteNode* node; //Node of the routing table sequence
 
-        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number): seq_id(seq_id), source(source), number(number) {};
+        sequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node): seq_id(seq_id), source(source), number(number), node(node) {};
     };
 
     /**
@@ -747,12 +801,19 @@ private:
         LM_LinkedList<QueuePacket<ControlPacket>>* list;
     };
 
+    enum QueueType {
+        WRP,
+        WSP
+    };
+
+    void managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueType type);
+
     /**
      * @brief Actualize the RTT field
      *
      * @param config configuration to be actualized
      */
-    void actualizeRTT(listConfiguration* config);
+    void actualizeRTT(sequencePacketConfig* config);
 
     /**
      * @brief Send a packet of the sequence_id and sequence_num
@@ -799,11 +860,34 @@ private:
     void resetTimeout(sequencePacketConfig* configPacket);
 
     /**
+     * @brief Get the Maximum Timeout object
+     *
+     * @param configPacket configuration packet to be calculated
+     * @return unsigned long maximum timeout
+     */
+    unsigned long getMaximumTimeout(sequencePacketConfig* configPacket);
+
+    /**
+     * @brief Calculate the timeout of the sequence
+     *
+     * @param configPacket configuration packet to be calculated
+     * @return unsigned long timeout
+     */
+    unsigned long calculateTimeout(sequencePacketConfig* configPacket);
+
+    /**
      * @brief Adds the micros() + default timeout to the config packet
      *
      * @param configPacket config packet to be modified
      */
     void addTimeout(sequencePacketConfig* configPacket);
+
+    /**
+     * @brief Recalculate the timeout after a timeout
+     *
+     * @param configPacket config packet to be modified
+     */
+    void recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket);
 
     /**
      * @brief Clear the Linked List deleting all the elements inside
@@ -858,11 +942,115 @@ private:
     void waitBeforeSend(uint8_t repeatedDetectPreambles);
 
     /**
+     * @brief Max propagation time for a given configuration in ms
+     * @return uint32_t Max propagation time
+     */
+    uint32_t getMaxPropagationTime();
+
+    /**
+     * @brief Get the Propagation Time With Random ms
+     * @param multiplayer Multiplayer of the random
+     *
+     * @return uint32_t Propagation time with random
+     */
+    uint32_t getPropagationTimeWithRandom(uint8_t multiplayer);
+
+    /**
      * @brief Max Time on air for a given configuration, Used for time slots
      *
      */
     void recalculateMaxTimeOnAir();
 
+    /**
+     * @brief Has received a Message when scanning channels
+     *
+     */
+    bool hasReceivedMessage = false;
+
+    /** @brief Get the Simulator Service object
+     *
+     * @return SimulatorService*
+     */
+    SimulatorService* simulatorService = nullptr;
+
+    /**
+     * @brief Record the state of the LoRaMesher
+     *
+     * @param type Type of the state
+     * @param packet Packet to be recorded
+     */
+    void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
+
+#ifdef TESTING
+    /**
+     * @brief Returns if the packet can be received. Only for testing
+     *
+     * @param source The source of the packet
+     * @return true The packet can be received
+     * @return false The packet will be dropped
+     */
+    bool canReceivePacket(uint16_t source);
+
+    /**
+     * @brief Returns if is a data packet and the via is the local address. Only for testing
+     *
+     * @param packet Packet to be checked
+     * @param localAddress Local address
+     * @return true Is a data packet and the via is the local address
+     */
+    bool isDataPacketAndLocal(DataPacket* packet, uint16_t localAddress);
+
+    /**
+     * @brief Returns if the packet should be processed. Only for testing
+     *
+     * @param packet Packet to be checked
+     * @return true
+     * @return false
+     */
+    bool shouldProcessPacket(Packet<uint8_t>* packet);
+
+#endif
+
+
+public:
+
+    /**
+     * @brief Has active sent connections, Q_WSP greater than 0
+     *
+     * @return true if has active sent connections
+     * @return false if not
+     */
+    bool hasActiveSentConnections() { return q_WSP->getLength() > 0; }
+
+    /**
+     * @brief Has active received connections, Q_WRP greater than 0
+     *
+     * @return true if has active received connections
+     * @return false if not
+     */
+    bool hasActiveReceivedConnections() { return q_WRP->getLength() > 0; }
+
+    /**
+     * @brief Returns if there are active connections, Q_WRP or Q_WSP or Queue ToSendPackets or Queue ReceivedPackets greater than 0
+     *
+     * @return true
+     * @return false
+     */
+    bool hasActiveConnections() { return hasActiveReceivedConnections() || hasActiveSentConnections() || ToSendPackets->getLength() > 0 || ReceivedPackets->getLength() > 0; };
+
+    /**
+     * @brief Returns the number of packets inside the waiting send packets queue
+     *
+     * @return size_t number of packets
+     */
+    size_t queueWaitingSendPacketsLength() { return q_WSP->getLength(); }
+
+    /**
+     * @brief Returns the number of packets inside the waiting received packets queue
+     *
+     * @return size_t number of packets
+     */
+    size_t queueWaitingReceivedPacketsLength() { return q_WRP->getLength(); }
 };
 
 #endif

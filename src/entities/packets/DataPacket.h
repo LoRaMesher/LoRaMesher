@@ -5,8 +5,10 @@
 
 #include "RouteDataPacket.h"
 
+#include "BuildOptions.h"
+
 #pragma pack(1)
-class DataPacket final : public RouteDataPacket {
+class DataPacket final: public RouteDataPacket {
 public:
     uint8_t payload[];
 
@@ -16,8 +18,8 @@ public:
      * @param p Packet to be deleted
      */
     void operator delete(void* p) {
-        Log.traceln(F("Deleting Data packet"));
-        free(p);
+        ESP_LOGV(LM_TAG, "Deleting Data packet");
+        vPortFree(p);
     }
 };
 #pragma pack()

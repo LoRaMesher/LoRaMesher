@@ -5,11 +5,13 @@
 
 #include "RouteDataPacket.h"
 
+#include "BuildOptions.h"
+
 #pragma pack(1)
-class ControlPacket final : public RouteDataPacket {
+class ControlPacket final: public RouteDataPacket {
 public:
-    uint8_t seq_id;
-    uint16_t number;
+    uint8_t seq_id = 0;
+    uint16_t number = 0;
     uint8_t payload[];
 
     /**
@@ -19,7 +21,7 @@ public:
      * @param p Packet of Type T
      * @return size_t Packet size in bytes
      */
-    size_t getPacketLength() { return sizeof(ControlPacket) + this->payloadSize; }
+    size_t getPacketLength() { return this->packetSize; }
 
     /**
      * @brief Delete function for Packets
@@ -27,8 +29,8 @@ public:
      * @param p Packet to be deleted
      */
     void operator delete(void* p) {
-        Log.traceln(F("Deleting Control packet"));
-        free(p);
+        ESP_LOGV(LM_TAG, "Deleting Control packet");
+        vPortFree(p);
     }
 };
 #pragma pack()

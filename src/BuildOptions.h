@@ -1,9 +1,7 @@
 #ifndef _LORAMESHER_BUILD_OPTIONS_H
 #define _LORAMESHER_BUILD_OPTIONS_H
 
-// Compatible modules
-#define SX1276_MOD 0
-#define SX1262_MOD 1
+static const char* LM_TAG = "LoRaMesher";
 
 // Set LoRa pins
 #ifndef LORA_CS
@@ -26,13 +24,13 @@
 // 433E6 for Asia
 // 866E6 for Europe
 // 915E6 for North America
-#define LM_BAND 868.0F
+#define LM_BAND 433.5F
 #define LM_BANDWIDTH 125.0F
-#define LM_LORASF 7U // Spreading factor 6-12 (default 7)
+#define LM_LORASF 9U // Spreading factor 6-12 (default 7)
 #define LM_CODING_RATE 7U
 #define LM_PREAMBLE_LENGTH 8U
-#define LM_POWER 10
-#define LM_DUTY_CYCLE 1 //In %
+#define LM_POWER 2 // In dBm
+#define LM_DUTY_CYCLE 100 //In %
 
 //Syncronization Word that identifies the mesh network
 #define LM_SYNC_WORD 19U
@@ -49,7 +47,7 @@
 //MAX payload size for hello packets = MAXPACKETSIZE - 6 bytes of header
 //MAX payload size for data packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via
 //MAX payload size for reliable and large packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via - 3 of control packet
-#define MAXPACKETSIZE 222
+#define MAXPACKETSIZE 100
 
 // Packet types
 #define NEED_ACK_P 0b00000011
@@ -66,16 +64,21 @@
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 60
-#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*3
+#define HELLO_PACKETS_DELAY 120
+#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*5
+#define MIN_TIMEOUT 20
 
 //Maximum times that a sequence of packets reach the timeout
-#define MAX_TIMEOUTS 3
+#define MAX_TIMEOUTS 10
 #define MAX_RESEND_PACKET 3
+#define MAX_TRY_BEFORE_SEND 5
 
 //Role Types
 #define ROLE_DEFAULT 0b00000000
 #define ROLE_GATEWAY 0b00000001
 //Free Role Types from 0b00000010 to 0b10000000
+
+// Define if is testing
+#define TESTING
 
 #endif

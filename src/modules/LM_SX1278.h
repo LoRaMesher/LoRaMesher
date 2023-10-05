@@ -6,12 +6,13 @@
 
 #include "LM_Module.h"
 
-class LM_SX1276: public LM_Module {
+class LM_SX1278: public LM_Module {
 public:
-    LM_SX1276(
+    LM_SX1278(
         uint8_t loraCs = LORA_CS, // LoRa chip select pin
         uint8_t loraIrq = LORA_IRQ, // LoRa IRQ pin
         uint8_t loraRst = LORA_RST, // LoRa reset pin
+        uint8_t loraIo1 = LORA_IO1, // LoRa DIO1 pin 
         SPIClass* spi = &SPI // SPI interface
     );
 
@@ -51,8 +52,8 @@ public:
 private:
 
     /**
-    * @brief RadioLib SX1272 Module
+    * @brief RadioLib SX1278 Module
     *
     */
-    SX1276* module;
+    SX1278* module;
 };

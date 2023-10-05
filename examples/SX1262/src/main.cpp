@@ -32,7 +32,7 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  * @param data
  */
 void printPacket(dataPacket data) {
-    Log.verboseln(F("Hello Counter received nº %X"), data.counter);
+    Serial.printf("Hello Counter received nº %d\n", data.counter);
 }
 
 /**
@@ -41,7 +41,7 @@ void printPacket(dataPacket data) {
  * @param packet
  */
 void printDataPacket(AppPacket<dataPacket>* packet) {
-    Log.traceln(F("Packet arrived from %X with size %d"), packet->src, packet->payloadSize);
+    Serial.printf("Packet arrived from %X with size %d\n", packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
@@ -63,12 +63,12 @@ void processReceivedPackets(void*) {
         ulTaskNotifyTake(pdPASS, portMAX_DELAY);
         led_Flash(1, 100); //one quick LED flashes to indicate a packet has arrived
 
-        //Iterate through all the packets inside the Received User Packets FiFo
+        //Iterate through all the packets inside the Received User Packets Queue
         while (radio.getReceivedQueueSize() > 0) {
-            Log.traceln(F("ReceivedUserData_TaskHandle notify received"));
-            Log.traceln(F("Fifo receiveUserData size: %d"), radio.getReceivedQueueSize() > 0);
+            Serial.println("ReceivedUserData_TaskHandle notify received");
+            Serial.printf("Queue receiveUserData size: %d\n", radio.getReceivedQueueSize());
 
-            //Get the first element inside the Received User Packets FiFo
+            //Get the first element inside the Received User Packets Queue
             AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
@@ -95,7 +95,7 @@ void createReceiveMessages() {
         2,
         &receiveLoRaMessage_Handle);
     if (res != pdPASS) {
-        Log.errorln(F("Receive App Task creation gave error: %d"), res);
+        Serial.printf("Error: Receive App Task creation gave error: %d\n", res);
     }
 
     radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
@@ -107,8 +107,12 @@ void createReceiveMessages() {
  *
  */
 void setupLoraMesher() {
+    // Example on how to change the module. See LoraMesherConfig to see all the configurable parameters.
+    LoraMesher::LoraMesherConfig config;
+    config.module = LoraMesher::LoraModules::SX1262_MOD;
+
     //Init the loramesher with a processReceivedPackets function
-    radio.begin(SX1262_MOD);
+    radio.begin(config);
 
     //Create the receive task and add it to the LoRaMesher
     createReceiveMessages();
@@ -132,7 +136,7 @@ void setup() {
 
 void loop() {
     for (;;) {
-        Log.traceln(F("Send packet %d"), dataCounter);
+        Serial.printf("Send packet %d\n", dataCounter);
 
         helloPacket->counter = dataCounter++;
 

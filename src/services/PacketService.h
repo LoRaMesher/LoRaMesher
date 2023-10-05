@@ -7,6 +7,7 @@
 #include "entities/packets/AppPacket.h"
 #include "entities/packets/RoutePacket.h"
 #include "services/RoleService.h"
+#include "BuildOptions.h"
 
 class PacketService {
 public:
@@ -81,13 +82,13 @@ public:
      */
     template<class T>
     static Packet<uint8_t>* copyPacket(T* p, size_t packetLength) {
-        Packet<uint8_t>* cpPacket = static_cast<Packet<uint8_t>*>(malloc(packetLength));
+        Packet<uint8_t>* cpPacket = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetLength));
 
         if (cpPacket) {
             memcpy(cpPacket, p, packetLength);
         }
         else {
-            Log.errorln(F("Copy Packet not allocated"));
+            ESP_LOGE(LM_TAG, "Copy Packet not allocated");
             return nullptr;
         }
 
@@ -138,7 +139,7 @@ public:
      * @param p Data packet
      * @return size_t Size of the actual payload
      */
-    static size_t getPacketPayloadLength(DataPacket* p) { return p->payloadSize + sizeof(DataPacket) - sizeof(PacketHeader); }
+    static size_t getPacketPayloadLength(DataPacket* p) { return p->packetSize - sizeof(DataPacket); }
 
     /**
      * @brief Get the Packet Payload Length object
@@ -146,7 +147,7 @@ public:
      * @param p
      * @return size_t
      */
-    static size_t getPacketPayloadLength(ControlPacket* p) { return p->payloadSize - (sizeof(ControlPacket) - sizeof(PacketHeader)); }
+    static size_t getPacketPayloadLength(ControlPacket* p) { return p->packetSize - sizeof(ControlPacket); }
 
     /**
      * @brief Get the Packet Payload Length Without the Control packets payloads
@@ -162,7 +163,15 @@ public:
      * @param p
      * @return size_t
      */
-    static size_t getPacketHeaderLength(Packet<uint8_t>* p);
+    static size_t getHeaderLength(Packet<uint8_t>* p);
+
+    /**
+     * @brief Get the Header Length
+     *
+     * @param type type of the packet
+     * @return uin16_t header length
+     */
+    static uint8_t getHeaderLength(uint8_t type);
 
     /**
      * @brief Get the Control Length in bytes. Used to calculate the Overhead of all the packets.
@@ -272,12 +281,12 @@ public:
     static bool isDataControlPacket(uint8_t type);
 
     /**
-     * @brief Get the Extra Length To Payload
+     * @brief Get the Packet Header
      *
-     * @param type type of the packet
-     * @return uin16_t extra length to payload
+     * @param p Get the packet headers without the payload to identify the packet and the payload size
+     * @return ControlPacket*
      */
-    static uint8_t getExtraLengthToPayload(uint8_t type);
+    static ControlPacket* getPacketHeader(Packet<uint8_t>* p);
 
 #ifndef LM_GOD_MODE
 private:
@@ -292,26 +301,28 @@ private:
      */
     template<class T>
     static T* createPacket(uint8_t* payload, uint8_t payloadSize) {
-        //Packet length = size of the packet + size of the payload
-        int packetLength = sizeof(T) + payloadSize;
+        //Packet size = size of the header + size of the payload
+        int packetSize = sizeof(T) + payloadSize;
 
-        if (packetLength > MAXPACKETSIZE) {
-            Log.warningln(F("Trying to create a packet greater than MAXPACKETSIZE"));
+        if (packetSize > MAXPACKETSIZE) {
+            ESP_LOGW(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
             return nullptr;
         }
 
-        T* p = static_cast<T*>(malloc(packetLength));
+        ESP_LOGV(LM_TAG, "Creating packet with %d bytes", packetSize);
+
+        T* p = static_cast<T*>(pvPortMalloc(packetSize));
 
         if (p) {
             //Copy the payload into the packet
             memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
         }
         else {
-            Log.errorln(F("packet not allocated"));
+            ESP_LOGE(LM_TAG, "packet not allocated");
             return nullptr;
         }
 
-        Log.traceln(F("Packet created with %d bytes"), packetLength);
+        ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
 
         return p;
     };

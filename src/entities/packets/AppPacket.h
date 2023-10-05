@@ -1,6 +1,7 @@
 #ifndef _LORAMESHER_APPPACKET_H
 #define _LORAMESHER_APPPACKET_H
 
+#include "BuildOptions.h"
 
 /**
  * @brief Application packet, it is used to send the packet to the application layer
@@ -49,8 +50,8 @@ public:
      * @param p AppPacket to be deleted
      */
     void operator delete(void* p) {
-        Log.traceln(F("Deleting app packet"));
-        free(p);
+        ESP_LOGV(LM_TAG, "Deleting app packet");
+        vPortFree(p);
     }
 };
 

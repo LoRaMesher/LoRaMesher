@@ -33,7 +33,7 @@ RouteNode* RoutingTableService::getBestNodeByRole(uint8_t role) {
             RouteNode* node = routingTableList->getCurrent();
 
             if ((node->networkNode.role & role) == role &&
-                (bestNode == nullptr || node->networkNode.metric > bestNode->networkNode.metric)) {
+                (bestNode == nullptr || node->networkNode.metric < bestNode->networkNode.metric)) {
                 bestNode = node;
             }
 
@@ -68,8 +68,13 @@ uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
 }
 
 void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
+    if ((p->packetSize - sizeof(RoutePacket)) % sizeof(NetworkNode) != 0) {
+        ESP_LOGE(LM_TAG, "Invalid route packet size");
+        return;
+    }
+
     size_t numNodes = p->getNetworkNodesSize();
-    Log.verboseln(F("Route packet from %X with size %d"), p->src, numNodes);
+    ESP_LOGI(LM_TAG, "Route packet from %X with size %d", p->src, numNodes);
 
     NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
     processRoute(p->src, receivedNode);
@@ -91,7 +96,7 @@ void RoutingTableService::resetReceiveSNRRoutePacket(uint16_t src, int8_t receiv
     if (rNode == nullptr)
         return;
 
-    Log.verboseln("Reset Receive SNR from %X: %d", src, receivedSNR);
+    ESP_LOGI(LM_TAG, "Reset Receive SNR from %X: %d", src, receivedSNR);
 
     rNode->receivedSNR = receivedSNR;
 }
@@ -111,23 +116,32 @@ void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
             rNode->networkNode.metric = node->metric;
             rNode->via = via;
             resetTimeoutRoutingNode(rNode);
-            Log.verboseln(F("Found better route for %X via %X metric %d"), node->address, via, node->metric);
+            ESP_LOGI(LM_TAG, "Found better route for %X via %X metric %d", node->address, via, node->metric);
         }
         else if (node->metric == rNode->networkNode.metric) {
             //Reset the timeout, only when the metric is the same as the actual route.
             resetTimeoutRoutingNode(rNode);
         }
 
-        //Update the Role all the cases
-        rNode->networkNode.role = node->role;
+        // Update the Role only if the node that sent the packet is the next hop
+        if (getNextHop(node->address) == via) {
+            ESP_LOGI(LM_TAG, "Updating role of %X to %d", node->address, node->role);
+            rNode->networkNode.role = node->role;
+        }
     }
 }
 
 void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via) {
     if (routingTableList->getLength() >= RTMAXSIZE) {
-        Log.warningln(F("Routing table max size reached, not adding route and deleting it"));
+        ESP_LOGW(LM_TAG, "Routing table max size reached, not adding route and deleting it");
         return;
     }
+
+    if (calculateMaximumMetricOfRoutingTable() < node->metric) {
+        ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
+        return;
+    }
+
     RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
 
     //Reset the timeout of the node
@@ -139,7 +153,7 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
 
     routingTableList->releaseInUse();
 
-    Log.verboseln(F("New route added: %X via %X metric %d, role %b"), node->address, via, node->metric, node->role);
+    ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %d", node->address, via, node->metric, node->role);
 }
 
 NetworkNode* RoutingTableService::getAllNetworkNodes() {
@@ -169,7 +183,7 @@ void RoutingTableService::resetTimeoutRoutingNode(RouteNode* node) {
 }
 
 void RoutingTableService::printRoutingTable() {
-    Log.verboseln(F("Current routing table:"));
+    ESP_LOGI(LM_TAG, "Current routing table:");
 
     routingTableList->setInUse();
 
@@ -179,7 +193,7 @@ void RoutingTableService::printRoutingTable() {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
-            Log.verboseln(F("%d - %X via %X metric %d Role %d"), position,
+            ESP_LOGI(LM_TAG, "%d - %X via %X metric %d Role %d", position,
                 node->networkNode.address,
                 node->via,
                 node->networkNode.metric,
@@ -193,7 +207,7 @@ void RoutingTableService::printRoutingTable() {
 }
 
 void RoutingTableService::manageTimeoutRoutingTable() {
-    Log.verboseln(F("Checking routes timeout"));
+    ESP_LOGI(LM_TAG, "Checking routes timeout");
 
     routingTableList->setInUse();
 
@@ -202,7 +216,7 @@ void RoutingTableService::manageTimeoutRoutingTable() {
             RouteNode* node = routingTableList->getCurrent();
 
             if (node->timeout < millis()) {
-                Log.warningln(F("Route timeout %X via %X"), node->networkNode.address, node->via);
+                ESP_LOGW(LM_TAG, "Route timeout %X via %X", node->networkNode.address, node->via);
 
                 delete node;
                 routingTableList->DeleteCurrent();
@@ -214,6 +228,26 @@ void RoutingTableService::manageTimeoutRoutingTable() {
     routingTableList->releaseInUse();
 
     printRoutingTable();
+}
+
+uint8_t RoutingTableService::calculateMaximumMetricOfRoutingTable() {
+    routingTableList->setInUse();
+
+    uint8_t maximumMetricOfRoutingTable = 0;
+
+    if (routingTableList->moveToStart()) {
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            if (node->networkNode.metric > maximumMetricOfRoutingTable)
+                maximumMetricOfRoutingTable = node->networkNode.metric;
+
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+
+    return maximumMetricOfRoutingTable + 1;
 }
 
 LM_LinkedList<RouteNode>* RoutingTableService::routingTableList = new LM_LinkedList<RouteNode>();

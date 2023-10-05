@@ -39,10 +39,10 @@ void led_Flash(uint16_t flashes, uint16_t delaymS) {
  */
 void printPacket(dataPacket* data, uint16_t sourceAddress) {
     char text[32];
-    snprintf(text, 32, ("%X-> %d"), sourceAddress, data->counter[0]);
+    snprintf(text, 32, ("%X-> %d\n"), sourceAddress, data->counter[0]);
 
     Screen.changeLineThree(String(text));
-    Log.verboseln(F("Received data nº %d"), data->counter[0]);
+    Serial.printf("Received data nº %d\n", data->counter[0]);
 }
 
 /**
@@ -51,7 +51,7 @@ void printPacket(dataPacket* data, uint16_t sourceAddress) {
  * @param packet
  */
 void printDataPacket(AppPacket<dataPacket>* packet) {
-    Log.traceln(F("Packet arrived from %X with size %d bytes"), packet->src, packet->payloadSize);
+    Serial.printf("Packet arrived from %X with size %d bytes\n", packet->src, packet->payloadSize);
 
     //Get the payload to iterate through it
     dataPacket* dPacket = packet->payload;
@@ -59,23 +59,20 @@ void printDataPacket(AppPacket<dataPacket>* packet) {
 
     printPacket(&dPacket[0], packet->src);
 
-    Log.traceln(F("---- Payload ---- Payload length in dataP: %d "), payloadLength);
-    Log.setShowLevel(false);
+    Serial.printf("---- Payload ---- Payload length in dataP: %d \n", payloadLength);
 
     for (size_t i = 0; i < payloadLength; i++) {
-        Log.verbose(F("Received data nº %d"), i);
-        Log.verbose(F("%d -- "), i);
+        Serial.printf("Received data nº %d", i);
+        Serial.printf("%d -- ", i);
 
         for (size_t j = 0; j < 35; j++) {
-            Log.verbose(F("%d, "), dPacket[i].counter[j]);
+            Serial.printf("%d, ", dPacket[i].counter[j]);
 
         }
-        Log.verbose(F(""));
+        Serial.println();
     }
 
-    Log.setShowLevel(true);
-    Log.traceln(F("---- Payload Done ---- "));
-
+    Serial.println("---- Payload Done ---- ");
 }
 
 /**
@@ -88,12 +85,12 @@ void processReceivedPackets(void*) {
         ulTaskNotifyTake(pdPASS, portMAX_DELAY);
         led_Flash(1, 100); //one quick LED flashes to indicate a packet has arrived
 
-        //Iterate through all the packets inside the Received User Packets FiFo
+        //Iterate through all the packets inside the Received User Packets Queue
         while (radio.getReceivedQueueSize() > 0) {
-            Log.traceln(F("ReceivedUserData_TaskHandle notify received"));
-            Log.traceln(F("Fifo receiveUserData size: %d"), radio.getReceivedQueueSize() > 0);
+            Serial.println("ReceivedUserData_TaskHandle notify received");
+            Serial.printf("Queue receiveUserData size: %d\n", radio.getReceivedQueueSize());
 
-            //Get the first element inside the Received User Packets FiFo
+            //Get the first element inside the Received User Packets Queue
             AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
 
             //Print the data packet
@@ -101,7 +98,6 @@ void processReceivedPackets(void*) {
 
             //Delete the packet when used. It is very important to call this function to release the memory of the packet.
             radio.deletePacket(packet);
-
         }
     }
 }
@@ -121,7 +117,7 @@ void createReceiveMessages() {
         2,
         &receiveLoRaMessage_Handle);
     if (res != pdPASS) {
-        Log.errorln(F("Receive App Task creation gave error: %d"), res);
+        Serial.printf("Error: Receive App Task creation gave error: %d\n", res);
     }
 
     radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
@@ -141,7 +137,7 @@ void setupLoraMesher() {
     //Start LoRaMesher
     radio.start();
 
-    Log.verboseln("Lora initialized");
+    Serial.println("Lora initialized");
 }
 
 /**
@@ -162,7 +158,7 @@ void printAddressDisplay() {
 void printRoutingTableToDisplay() {
 
     //Set the routing table list that is being used and cannot be accessed (Remember to release use after usage)
-    LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
+    LM_LinkedList<RouteNode>* routingTableList = radio.routingTableListCopy();
 
     routingTableList->setInUse();
 
@@ -178,6 +174,9 @@ void printRoutingTableToDisplay() {
 
     //Release routing table list usage.
     routingTableList->releaseInUse();
+
+    // Delete routing table list
+    delete routingTableList;
 
     Screen.changeLineFour();
 }
@@ -198,11 +197,11 @@ void sendLoRaMessage(void*) {
         if (radio.routingTableSize() <= dataTablePosition)
             dataTablePosition = 0;
 
-        LM_LinkedList<RouteNode>* routingTableList = radio.routingTableList();
+        LM_LinkedList<RouteNode>* routingTableList = radio.routingTableListCopy();
 
         uint16_t addr = (*routingTableList)[dataTablePosition]->networkNode.address;
 
-        Log.traceln(F("Send data packet nº %d to %X (%d)"), dataCounter, addr, dataTablePosition);
+        Serial.printf("Send data packet nº %d to %X (%d)\n", dataCounter, addr, dataTablePosition);
 
         dataTablePosition++;
 
@@ -217,6 +216,9 @@ void sendLoRaMessage(void*) {
 
         //Print routing Table to Display
         printRoutingTableToDisplay();
+
+        //Release routing table list usage.
+        delete routingTableList;
 
         //Wait 20 seconds to send the next packet
         vTaskDelay(120000 / portTICK_PERIOD_MS);
@@ -237,7 +239,7 @@ void createSendMessages() {
         1,
         &sendLoRaMessage_Handle);
     if (res != pdPASS) {
-        Log.errorln(F("Send LoRa Message task creation gave error: %d"), res);
+        Serial.printf("Error: Send LoRa Message task creation gave error: %d\n", res);
         vTaskDelete(sendLoRaMessage_Handle);
     }
 }
@@ -247,7 +249,7 @@ void setup() {
     pinMode(BOARD_LED, OUTPUT); //setup pin as output for indicator LED
 
     Screen.initDisplay();
-    Log.verboseln("Board Init");
+    Serial.println("Board Init");
 
 
     led_Flash(2, 125);          //two quick LED flashes to indicate program start

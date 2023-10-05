@@ -4,6 +4,8 @@
 
 #include <Arduino.h>
 
+#include "BuildOptions.h"
+
 template <class T>
 class LM_ListNode {
 public:
@@ -26,6 +28,7 @@ private:
     SemaphoreHandle_t xSemaphore;
 public:
     LM_LinkedList();
+    LM_LinkedList(LM_LinkedList<T>& list);
     ~LM_LinkedList();
     T* getCurrent();
     T* First() const;
@@ -57,8 +60,34 @@ LM_LinkedList<T>::LM_LinkedList() {
     xSemaphore = xSemaphoreCreateMutex();
 
     if (xSemaphore == NULL) {
-        Log.errorln("Semaphore in Linked List not created");
+        ESP_LOGE(LM_TAG, "Semaphore in Linked List not created");
     }
+}
+
+template<class T>
+inline LM_LinkedList<T>::LM_LinkedList(LM_LinkedList<T>& list) {
+    length = 0;
+    head = nullptr;
+    tail = nullptr;
+    curr = nullptr;
+
+    /* Attempt to create a semaphore. */
+    xSemaphore = xSemaphoreCreateMutex();
+
+    if (xSemaphore == NULL) {
+        ESP_LOGE(LM_TAG, "Semaphore in Linked List not created");
+    }
+
+
+    list.setInUse();
+
+    if (list.moveToStart()) {
+        do {
+            Append(list.getCurrent());
+        } while (list.next());
+    }
+
+    list.releaseInUse();
 }
 
 
@@ -210,12 +239,15 @@ void LM_LinkedList<T>::DeleteCurrent() {
 
     if (length == 0)
         head = curr = tail = nullptr;
-    else if (curr == head)
+    else if (curr == head) {
         curr = head = head->next;
+        if (head == nullptr)  // If the new head is nullptr, set tail to nullptr as well
+            tail = nullptr;
+    }
     else if (curr == tail)
         curr = tail = tail->prev;
     else
-        curr = curr->prev;
+        curr = curr->next;
 
     delete temp;
 }
@@ -235,13 +267,12 @@ void LM_LinkedList<T>::Clear() {
     head = curr = tail = nullptr;
 
     length = 0;
-
 }
 
 template <class T>
 void LM_LinkedList<T>::setInUse() {
     while (xSemaphoreTake(xSemaphore, (TickType_t) 10) != pdTRUE) {
-        Log.warningln("List in Use Alert");
+        ESP_LOGW(LM_TAG, "List in Use Alert");
     }
 }
 
