@@ -10,3 +10,6 @@
 
 // SX1262_MOD
 #include "LM_SX1262.h"
+
+// SX1268_MOD
+#include "LM_SX1268.h"
