@@ -8,8 +8,10 @@ The LoRaMesher library implements a distance-vector routing protocol for communi
 
 ### Compatibility
 At this moment, LoRaMesher has been tested within the following modules:
-- SX1276
 - SX1262
+- SX1268
+- SX1276
+- SX1278
 
 You can request another module to be added to the library by opening an issue.
 

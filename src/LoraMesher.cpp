@@ -92,6 +92,10 @@ void LoraMesher::initializeLoRa(LoraMesherConfig config) {
             ESP_LOGV(LM_TAG, "Using SX1278 module");
             radio = new LM_SX1278(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
             break;
+        case LoraModules::SX1268_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1268 module");
+            radio = new LM_SX1268(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+            break;
         default:
             ESP_LOGV(LM_TAG, "Using SX1276 module");
             radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);

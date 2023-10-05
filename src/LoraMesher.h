@@ -46,6 +46,7 @@ public:
         SX1276_MOD,
         SX1262_MOD,
         SX1278_MOD,
+        SX1268_MOD,
     };
 
     /**
