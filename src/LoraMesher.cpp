@@ -2,8 +2,8 @@
 
 LoraMesher::LoraMesher() {}
 
-void LoraMesher::begin(uint8_t module, float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength) {
-    initializeLoRa(freq, bw, sf, cr, syncWord, power, preambleLength, module);
+void LoraMesher::begin(LoraMesherConfig config) {
+    initializeLoRa(config);
     initializeSchedulers();
     recalculateMaxTimeOnAir();
 }
@@ -77,24 +77,24 @@ LoraMesher::~LoraMesher() {
     delete radio;
 }
 
-void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module) {
+void LoraMesher::initializeLoRa(LoraMesherConfig config) {
     ESP_LOGV(LM_TAG, "Initializing RadioLib");
-    switch (module) {
-        case SX1276_MOD:
+    switch (config.module) {
+        case LoraModules::SX1276_MOD:
             ESP_LOGV(LM_TAG, "Using SX1276 module");
-            radio = new LM_SX1276();
+            radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
             break;
-        case SX1262_MOD:
+        case LoraModules::SX1262_MOD:
             ESP_LOGV(LM_TAG, "Using SX1262 module");
-            radio = new LM_SX1262();
+            radio = new LM_SX1262(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
             break;
-        case SX1278_MOD:
+        case LoraModules::SX1278_MOD:
             ESP_LOGV(LM_TAG, "Using SX1278 module");
-            radio = new LM_SX1278();
+            radio = new LM_SX1278(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
             break;
         default:
             ESP_LOGV(LM_TAG, "Using SX1276 module");
-            radio = new LM_SX1276();
+            radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
             break;
     }
 
@@ -104,7 +104,7 @@ void LoraMesher::initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, ui
 
     // Set up the radio parameters
     ESP_LOGV(LM_TAG, "Initializing radio");
-    int res = radio->begin(freq, bw, sf, cr, syncWord, power, preambleLength);
+    int res = radio->begin(config.freq, config.bw, config.sf, config.cr, config.syncWord, config.power, config.preambleLength);
     if (res != 0) {
         ESP_LOGE(LM_TAG, "Radio module gave error: %d", res);
     }

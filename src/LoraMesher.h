@@ -4,6 +4,8 @@
 // LoRa libraries
 #include "RadioLib.h"
 
+#include <SPI.h>
+
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
@@ -38,20 +40,45 @@ public:
     static LoraMesher& getInstance() {
         static LoraMesher instance;
         return instance;
-    }
+    };
+
+    enum LoraModules {
+        SX1276_MOD,
+        SX1262_MOD,
+        SX1278_MOD,
+    };
+
+    /**
+     * @brief LoRaMesher configuration
+     *
+     */
+    struct LoraMesherConfig {
+        // LoRa pins
+        uint8_t loraCs = LORA_CS; // LoRa chip select pin
+        uint8_t loraIrq = LORA_IRQ; // LoRa IRQ pin
+        uint8_t loraRst = LORA_RST; // LoRa reset pin
+        uint8_t loraIo1 = LORA_IO1; // LoRa DIO1 pin
+
+        // LoRa configuration
+        LoraModules module = LoraModules::SX1276_MOD; // Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
+        float freq = LM_BAND; // Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
+        float bw = LM_BANDWIDTH; // LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
+        uint8_t sf = LM_LORASF; // LoRa spreading factor. Allowed values range from 6 to 12.
+        uint8_t cr = LM_CODING_RATE; // LoRa coding rate denominator. Allowed values range from 5 to 8.
+        uint8_t syncWord = LM_SYNC_WORD; // LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
+        int8_t power = LM_POWER; // Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
+        uint16_t preambleLength = LM_PREAMBLE_LENGTH; //Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number. Allowed values range from 6 to 65535.
+
+        // Custom SPI pins
+        SPIClass* spi = &SPI;
+
+        LoraMesherConfig() {}
+    };
 
     /**
      * @brief LoRaMesh initialization method.
      *
-     * @param module Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
-     * @param freq Carrier frequency in MHz. Allowed values range from 137.0 MHz to 1020.0 MHz.
-     * @param bw LoRa bandwidth in kHz. Allowed values are 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250 and 500 kHz.
-     * @param sf LoRa spreading factor. Allowed values range from 6 to 12.
-     * @param cr LoRa coding rate denominator. Allowed values range from 5 to 8.
-     * @param syncWord LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
-     * @param power Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
-     * @param preambleLength Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number.
-     * Allowed values range from 6 to 65535.
+     * @param config Configuration of the LoRaMesher
      *
      * Example of usage:
      * @code
@@ -102,7 +129,7 @@ public:
      *
      * @ref RadioLib reference begin code
      */
-    void begin(uint8_t module = SX1276_MOD, float freq = LM_BAND, float bw = LM_BANDWIDTH, uint8_t sf = LM_LORASF, uint8_t cr = LM_CODING_RATE, uint8_t syncWord = LM_SYNC_WORD, int8_t power = LM_POWER, uint16_t preambleLength = LM_PREAMBLE_LENGTH);
+    void begin(LoraMesherConfig config = LoraMesherConfig());
 
     /**
      * @brief Start/Resume LoRaMesher. After calling begin(...) or standby() you can Start/resume the LoRaMesher.
@@ -168,7 +195,7 @@ public:
     void setReceiveAppDataTaskHandle(TaskHandle_t ReceiveAppDataTaskHandle) { ReceiveAppData_TaskHandle = ReceiveAppDataTaskHandle; }
 
     /**
-     * @brief A copy of the routing table list. Remove it after using the list.
+     * @brief A copy of the routing table list. Delete it after using the list.
      *
      */
     LM_LinkedList<RouteNode>* routingTableListCopy() { return new LM_LinkedList<RouteNode>(*RoutingTableService::routingTableList); }
@@ -508,7 +535,7 @@ private:
 
     void receivingRoutine();
 
-    void initializeLoRa(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, uint16_t preambleLength, uint8_t module);
+    void initializeLoRa(LoraMesherConfig config);
 
     void initializeSchedulers();
 
@@ -1013,14 +1040,14 @@ public:
 
     /**
      * @brief Returns the number of packets inside the waiting send packets queue
-     * 
+     *
      * @return size_t number of packets
      */
     size_t queueWaitingSendPacketsLength() { return q_WSP->getLength(); }
 
     /**
      * @brief Returns the number of packets inside the waiting received packets queue
-     * 
+     *
      * @return size_t number of packets
      */
     size_t queueWaitingReceivedPacketsLength() { return q_WRP->getLength(); }

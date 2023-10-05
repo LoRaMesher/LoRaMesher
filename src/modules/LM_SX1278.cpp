@@ -1,12 +1,7 @@
 #include "LM_SX1278.h"
 
-SPIClass newSPI(HSPI);
-Module* mod1;
-
-LM_SX1278::LM_SX1278() {
-    newSPI.begin(14, 12, 13, 15);
-    mod1 = new Module(15, 26, 27, 33, newSPI);
-    module = new SX1278(mod1);
+LM_SX1278::LM_SX1278(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, uint8_t loraIo1, SPIClass* spi) {
+    module = new SX1278(new Module(loraCs, loraIrq, loraRst, loraIo1, *spi));
 }
 
 int16_t LM_SX1278::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, int16_t preambleLength) {
