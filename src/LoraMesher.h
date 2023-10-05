@@ -4,6 +4,8 @@
 // LoRa libraries
 #include "RadioLib.h"
 
+#include <SPI.h>
+
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
@@ -38,12 +40,12 @@ public:
     static LoraMesher& getInstance() {
         static LoraMesher instance;
         return instance;
-    }
+    };
 
-    enum LoraModules: uint8_t {
+    enum LoraModules {
         SX1276_MOD,
         SX1262_MOD,
-        SX1278_MOD
+        SX1278_MOD,
     };
 
     /**
@@ -69,6 +71,8 @@ public:
 
         // Custom SPI pins
         SPIClass* spi = &SPI;
+
+        LoraMesherConfig() {}
     };
 
     /**
