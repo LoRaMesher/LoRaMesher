@@ -91,8 +91,8 @@ void processReceivedPackets(void*) {
 
         //Iterate through all the packets inside the Received User Packets FiFo
         while (radio.getReceivedQueueSize() > 0) {
-            Log.trace(F("ReceivedUserData_TaskHandle notify received" CR));
-            Log.trace(F("Queue receiveUserData size: %d" CR), radio.getReceivedQueueSize());
+            Serial.println("ReceivedUserData_TaskHandle notify received");
+            Serial.printf("Queue receiveUserData size: %d\n", radio.getReceivedQueueSize());
 
             //Get the first element inside the Received User Packets FiFo
             AppPacket<dataPacket>* packet = radio.getNextAppPacket<dataPacket>();
@@ -135,7 +135,7 @@ void createReceiveMessages() {
         2,
         &receiveLoRaMessage_Handle);
     if (res != pdPASS) {
-        Log.errorln(F("Receive App Task creation gave error: %d"), res);
+        Serial.printf("Error: Receive App Task creation gave error: %d\n", res);
     }
 }
 
@@ -202,7 +202,7 @@ When receiving the packet, we need to understand what the Queue will return us. 
  * @param data
  */
 void printPacket(dataPacket data) {
-  Log.verbose(F("Hello Counter received n %X" CR), data.counter);
+  Serial.printf("Hello Counter received n %d\n", data.counter);
 }
 
 /**

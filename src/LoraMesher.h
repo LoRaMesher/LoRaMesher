@@ -121,7 +121,7 @@ public:
      *       2,
      *       &receiveLoRaMessage_Handle);
      *   if (res != pdPASS) {
-     *       ESP_LOGE(LM_TAG, "Receive User Task creation gave error: %d"), res);
+     *       ESP_LOGE(LM_TAG, "Receive User Task creation gave error: %d", res);
      *   }
      *
      *   radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
