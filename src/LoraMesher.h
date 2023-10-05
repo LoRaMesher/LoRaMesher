@@ -195,7 +195,7 @@ public:
     void setReceiveAppDataTaskHandle(TaskHandle_t ReceiveAppDataTaskHandle) { ReceiveAppData_TaskHandle = ReceiveAppDataTaskHandle; }
 
     /**
-     * @brief A copy of the routing table list. Remove it after using the list.
+     * @brief A copy of the routing table list. Delete it after using the list.
      *
      */
     LM_LinkedList<RouteNode>* routingTableListCopy() { return new LM_LinkedList<RouteNode>(*RoutingTableService::routingTableList); }
