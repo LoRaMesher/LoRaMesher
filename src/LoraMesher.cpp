@@ -79,6 +79,12 @@ LoraMesher::~LoraMesher() {
 
 void LoraMesher::initializeLoRa(LoraMesherConfig config) {
     ESP_LOGV(LM_TAG, "Initializing RadioLib");
+
+    if (config.spi == nullptr) {
+        SPI.begin();
+        config.spi = &SPI;
+    }
+
     switch (config.module) {
         case LoraModules::SX1276_MOD:
             ESP_LOGV(LM_TAG, "Using SX1276 module");

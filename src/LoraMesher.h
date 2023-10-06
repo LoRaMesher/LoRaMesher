@@ -71,7 +71,7 @@ public:
         uint16_t preambleLength = LM_PREAMBLE_LENGTH; //Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number. Allowed values range from 6 to 65535.
 
         // Custom SPI pins
-        SPIClass* spi = &SPI;
+        SPIClass* spi = nullptr;
 
         LoraMesherConfig() {}
     };
