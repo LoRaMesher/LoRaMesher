@@ -5,7 +5,7 @@ LM_SX1262::LM_SX1262(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, uint8_t l
 }
 
 int16_t LM_SX1262::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, int16_t preambleLength) {
-    return module->begin(freq, bw, sf, cr, syncWord, power, preambleLength, 0, false);
+    return module->begin(freq, bw, sf, cr, syncWord, power, preambleLength);
 }
 
 int16_t LM_SX1262::receive(uint8_t* data, size_t len) {
