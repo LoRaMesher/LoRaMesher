@@ -226,3 +226,18 @@ void printDataPacket(AppPacket<dataPacket>* packet) {
 2. We need to get the payload of the packet using `packet->payload`.
 3. We iterate through the `packet->getPayloadLength()`. This will let us know how big the payload is, in dataPackets types, for a given packet. In our case, we always send only one dataPacket.
 4. Get the payload and call the `printPacket(dPacket[i])` function, that will print the counter received.
+
+### More information on the design and evaluation of LoRaMesher
+Please see our open access paper ["Implementation of a LoRa Mesh Library"](https://ieeexplore.ieee.org/document/9930341) for a detailed description. If you use the LoRaMesher library, in academic work, please cite the following:
+```
+@ARTICLE{9930341,
+  author={Solé, Joan Miquel and Centelles, Roger Pueyo and Freitag, Felix and Meseguer, Roc},
+  journal={IEEE Access}, 
+  title={Implementation of a LoRa Mesh Library}, 
+  year={2022},
+  volume={10},
+  number={},
+  pages={113158-113171},
+  doi={10.1109/ACCESS.2022.3217215}}
+```
+
