@@ -161,6 +161,12 @@ NetworkNode* RoutingTableService::getAllNetworkNodes() {
 
     int routingSize = routingTableSize();
 
+    // If the routing table is empty return nullptr
+    if (routingSize == 0) {
+        routingTableList->releaseInUse();
+        return nullptr;
+    }
+
     NetworkNode* payload = new NetworkNode[routingSize];
 
     if (routingTableList->moveToStart()) {

@@ -510,9 +510,11 @@ void LoraMesher::sendHelloPacket() {
             setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 1);
         }
 
-        delete[] nodes;
+        // Delete the nodes array
+        if (numOfNodes > 0)
+            delete[] nodes;
 
-        //Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
+        // Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
     }
 }
