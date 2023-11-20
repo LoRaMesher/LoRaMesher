@@ -67,11 +67,11 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(QueueManager_TaskHandle);
 
     ToSendPackets->Clear();
-    delete ToSendPackets;
+    vPortFree(ToSendPackets);
     ReceivedPackets->Clear();
-    delete ReceivedPackets;
+    vPortFree(ReceivedPackets);
     ReceivedAppPackets->Clear();
-    delete ReceivedAppPackets;
+    vPortFree(ReceivedAppPackets);
 
     clearDioActions();
     radio->reset();
@@ -495,6 +495,7 @@ void LoraMesher::sendHelloPacket() {
         incSentHelloPackets();
 
         NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
+
         size_t numOfNodes = RoutingTableService::routingTableSize();
 
         size_t numPackets = (numOfNodes + maxNodesPerPacket - 1) / maxNodesPerPacket;
@@ -519,7 +520,7 @@ void LoraMesher::sendHelloPacket() {
 
         // Delete the nodes array
         if (numOfNodes > 0)
-            delete[] nodes;
+            vPortFree(nodes);
 
         // Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
@@ -685,7 +686,12 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     uint16_t numOfPackets = payloadSize / maxPayloadSize + (payloadSize % maxPayloadSize > 0);
 
     //Create a new Linked list to store the QueuePackets and the payload
-    LM_LinkedList<QueuePacket<ControlPacket>>* packetList = new LM_LinkedList<QueuePacket<ControlPacket>>();
+    LM_LinkedList<QueuePacket<ControlPacket>>* packetList = (LM_LinkedList<QueuePacket<ControlPacket>>*) pvPortMalloc(sizeof(LM_LinkedList<QueuePacket<ControlPacket>>));
+
+    if (packetList == NULL) {
+        ESP_LOGE(LM_TAG, "Error allocating memory for the packet list");
+        return;
+    }
 
     //Add the SYNC configuration packet
     packetList->Append(getStartSequencePacketQueue(dst, seq_id, numOfPackets));
@@ -715,8 +721,25 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     }
 
     //Create the pair of configuration
-    listConfiguration* listConfig = new listConfiguration();
-    listConfig->config = new sequencePacketConfig(seq_id, dst, numOfPackets, node);
+    listConfiguration* listConfig = (listConfiguration*) pvPortMalloc(sizeof(listConfiguration));
+
+    if (listConfig == NULL) {
+        ESP_LOGE(LM_TAG, "Error allocating memory for the list configuration");
+        return;
+    }
+
+
+    listConfig->config = (sequencePacketConfig*) pvPortMalloc(sizeof(sequencePacketConfig));
+
+    if (listConfig->config == NULL) {
+        ESP_LOGE(LM_TAG, "Error allocating memory for the list configuration");
+        return;
+    }
+
+    listConfig->config->seq_id = seq_id;
+    listConfig->config->source = dst;
+    listConfig->config->number = numOfPackets;
+    listConfig->config->node = node;
     listConfig->list = packetList;
 
     // Set the RTT of the first packet of the sequence
@@ -867,7 +890,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 
@@ -1148,9 +1171,27 @@ void LoraMesher::processSyncPacket(uint16_t source, uint8_t seq_id, uint16_t seq
         }
 
         //Create the pair of configuration
-        listConfig = new listConfiguration();
-        listConfig->config = new sequencePacketConfig(seq_id, source, seq_num, node);
-        listConfig->list = new LM_LinkedList<QueuePacket<ControlPacket>>();
+        listConfig = (listConfiguration*) pvPortMalloc(sizeof(listConfiguration));
+
+        if (listConfig == NULL) {
+            ESP_LOGE(LM_TAG, "Error allocating memory for the list configuration");
+            return;
+        }
+
+        sequencePacketConfig* config = createSequencePacketConfig(seq_id, source, seq_num, node);
+
+        if (config == nullptr) {
+            ESP_LOGE(LM_TAG, "Error allocating memory for the sequence packet config");
+            return;
+        }
+
+        listConfig->config = config;
+        listConfig->list = (LM_LinkedList<QueuePacket<ControlPacket>>*) pvPortMalloc(sizeof(LM_LinkedList<QueuePacket<ControlPacket>>));
+
+        if (listConfig->list == nullptr) {
+            ESP_LOGE(LM_TAG, "Error allocating memory for the list");
+            return;
+        }
 
         // Starting to calculate RTT
         actualizeRTT(listConfig->config);
@@ -1265,9 +1306,9 @@ void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
         list->DeleteCurrent();
     }
 
-    delete list;
-    delete listConfig->config;
-    delete listConfig;
+    vPortFree(list);
+    vPortFree(listConfig->config);
+    vPortFree(listConfig);
 }
 
 void LoraMesher::findAndClearLinkedList(LM_LinkedList<listConfiguration>* queue, listConfiguration* listConfig) {
@@ -1461,4 +1502,34 @@ uint8_t LoraMesher::getSequenceId() {
 
 /**
  * End Large and Reliable payloads
+ */
+
+ /**
+  * Region Initializers
+  */
+
+LoraMesher::sequencePacketConfig* LoraMesher::createSequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node) {
+    sequencePacketConfig* config = (sequencePacketConfig*) pvPortMalloc(sizeof(sequencePacketConfig));
+
+    if (config) {
+        ESP_LOGE(LM_TAG, "Error allocating memory for sequencePacketConfig");
+        return nullptr;
+    }
+
+    config->seq_id = seq_id;
+    config->source = source;
+    config->number = number;
+    config->node = node;
+    config->firstAckReceived = 0;
+    config->lastAck = 0;
+    config->numberOfTimeouts = 0;
+    config->calculatingRTT = 0;
+    config->timeout = 0;
+    config->previousTimeout = 0;
+
+    return config;
+}
+
+/**
+ * End Region Initializers
  */

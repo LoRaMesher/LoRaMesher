@@ -21,7 +21,7 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
         return;
     }
 
-    LM_State* state = new LM_State();
+    LM_State* state = static_cast<LM_State*>(pvPortMalloc(sizeof(LM_State)));
     state->id = numberStates++;
     state->receivedQueueSize = receivedQueueSize;
     state->sentQueueSize = sentQueueSize;
@@ -40,8 +40,14 @@ void SimulatorService::addState(size_t receivedQueueSize, size_t sentQueueSize, 
     }
 
     ControlPacket* ctrlPacket = PacketService::getPacketHeader(packet);
+
+    if (ctrlPacket == nullptr) {
+        ESP_LOGW(LM_TAG, "Not enough memory to simulate. Free heap: %d", freeHeap);
+        return;
+    }
+
     memcpy(&state->packetHeader, ctrlPacket, sizeof(ControlPacket));
-    delete ctrlPacket;
+    vPortFree(ctrlPacket);
 
     statesList->Append(state);
 }

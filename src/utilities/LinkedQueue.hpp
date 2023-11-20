@@ -135,7 +135,17 @@ size_t LM_LinkedList<T>::getLength() {
 
 template <class T>
 void LM_LinkedList<T>::Append(T* element) {
-    LM_ListNode<T>* node = new LM_ListNode<T>(element, tail, nullptr);
+    LM_ListNode<T>* node = (LM_ListNode<T>*) pvPortMalloc(sizeof(LM_ListNode<T>));
+
+    if (node == nullptr) {
+        ESP_LOGE(LM_TAG, "Node not allocated");
+        return;
+    }
+
+
+    node->element = element;
+    node->prev = tail;
+    node->next = nullptr;
 
     if (length == 0)
         curr = tail = head = node;
@@ -155,11 +165,16 @@ void LM_LinkedList<T>::addCurrent(T* element) {
         return;
     }
 
-    if (curr->prev == nullptr) {
+    LM_ListNode<T>* node = (LM_ListNode<T>*) pvPortMalloc(sizeof(LM_ListNode<T>));
 
+    if (node == nullptr) {
+        ESP_LOGE(LM_TAG, "Node not allocated");
+        return;
     }
 
-    LM_ListNode<T>* node = new LM_ListNode<T>(element, curr->prev, curr);
+    node->element = element;
+    node->prev = curr->prev;
+    node->next = curr;
 
     if (curr->prev != nullptr) {
         curr->prev->next = node;
@@ -249,7 +264,7 @@ void LM_LinkedList<T>::DeleteCurrent() {
     else
         curr = curr->next;
 
-    delete temp;
+    vPortFree(temp);
 }
 
 template <class T>
@@ -259,8 +274,11 @@ void LM_LinkedList<T>::Clear() {
     LM_ListNode<T>* temp = head;
 
     while (temp != nullptr) {
+        if (temp->element != nullptr)
+            vPortFree(temp->element);
+
         head = head->next;
-        delete temp;
+        vPortFree(temp);
         temp = head;
     }
 
@@ -271,7 +289,7 @@ void LM_LinkedList<T>::Clear() {
 
 template <class T>
 void LM_LinkedList<T>::setInUse() {
-    while (xSemaphoreTake(xSemaphore, (TickType_t) 10) != pdTRUE) {
+    while (xSemaphoreTake(xSemaphore, portMAX_DELAY) != pdTRUE) {
         ESP_LOGW(LM_TAG, "List in Use Alert");
     }
 }

@@ -115,6 +115,10 @@ ControlPacket* PacketService::controlPacket(Packet<uint8_t>* p) {
 
 ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
     ControlPacket* packet = createPacket<ControlPacket>(payload, payloadSize);
+
+    if (packet == nullptr)
+        return nullptr;
+
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -125,6 +129,10 @@ ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, ui
 
 ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t seq_id, uint16_t num_packets) {
     ControlPacket* packet = createPacket<ControlPacket>(0, 0);
+
+    if (packet == nullptr)
+        return nullptr;
+
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -137,6 +145,10 @@ ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t sr
 
 DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
     DataPacket* packet = createPacket<DataPacket>(payload, payloadSize);
+
+    if (packet == nullptr)
+        return nullptr;
+
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -171,7 +183,10 @@ size_t PacketService::getPacketPayloadLengthWithoutControl(Packet<uint8_t>* p) {
 }
 
 ControlPacket* PacketService::getPacketHeader(Packet<uint8_t>* p) {
-    ControlPacket* ctrlPacket = new ControlPacket();
+    ControlPacket* ctrlPacket = (ControlPacket*) pvPortMalloc(sizeof(ControlPacket));
+
+    if (ctrlPacket == nullptr)
+        return nullptr;
 
     if (isControlPacket(p->type)) {
         ControlPacket* srcCtrPacket = (ControlPacket*) p;

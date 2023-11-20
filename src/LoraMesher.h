@@ -457,11 +457,11 @@ private:
      */
     LoraMesher();
 
-    LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = new LM_LinkedList<AppPacket<uint8_t>>();
+    LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = (LM_LinkedList<AppPacket<uint8_t>>*) pvPortMalloc(sizeof(LM_LinkedList<AppPacket<uint8_t>>));
 
-    LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ReceivedPackets = new LM_LinkedList<QueuePacket<Packet<uint8_t>>>();
+    LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ReceivedPackets = (LM_LinkedList<QueuePacket<Packet<uint8_t>>>*) pvPortMalloc(sizeof(LM_LinkedList<QueuePacket<Packet<uint8_t>>>));
 
-    LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ToSendPackets = new LM_LinkedList<QueuePacket<Packet<uint8_t>>>();
+    LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ToSendPackets = (LM_LinkedList<QueuePacket<Packet<uint8_t>>>*) pvPortMalloc(sizeof(LM_LinkedList<QueuePacket<Packet<uint8_t>>>));
 
     /**
      * @brief RadioLib module
@@ -802,6 +802,8 @@ private:
         LM_LinkedList<QueuePacket<ControlPacket>>* list;
     };
 
+    sequencePacketConfig* createSequencePacketConfig(uint8_t seq_id, uint16_t source, uint16_t number, RouteNode* node);
+
     enum QueueType {
         WRP,
         WSP
@@ -921,13 +923,13 @@ private:
      * then there is another linked list with all the packets of the sequence)
      *
      */
-    LM_LinkedList<listConfiguration>* q_WSP = new LM_LinkedList<listConfiguration>();
+    LM_LinkedList<listConfiguration>* q_WSP = (LM_LinkedList<listConfiguration>*) pvPortMalloc(sizeof(LM_LinkedList<listConfiguration>));
 
     /**
      * @brief Queue Waiting Received Packet (Q_WRP)
      *
      */
-    LM_LinkedList<listConfiguration>* q_WRP = new LM_LinkedList<listConfiguration>();
+    LM_LinkedList<listConfiguration>* q_WRP = (LM_LinkedList<listConfiguration>*) pvPortMalloc(sizeof(LM_LinkedList<listConfiguration>));
 
     /**
      * @brief Max time on air for a given configuration in ms

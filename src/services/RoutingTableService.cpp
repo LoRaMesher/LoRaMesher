@@ -76,9 +76,19 @@ void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     size_t numNodes = p->getNetworkNodesSize();
     ESP_LOGI(LM_TAG, "Route packet from %X with size %d", p->src, numNodes);
 
-    NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
+    NetworkNode* receivedNode = (NetworkNode*) pvPortMalloc(sizeof(NetworkNode));
+
+    if (receivedNode == nullptr) {
+        ESP_LOGE(LM_TAG, "Not enough memory to process route packet");
+        return;
+    }
+
+    receivedNode->address = p->src;
+    receivedNode->metric = 1;
+    receivedNode->role = p->nodeRole;
+
     processRoute(p->src, receivedNode);
-    delete receivedNode;
+    vPortFree(receivedNode);
 
     resetReceiveSNRRoutePacket(p->src, receivedSNR);
 
@@ -142,7 +152,17 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
         return;
     }
 
-    RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
+    RouteNode* rNode = (RouteNode*) pvPortMalloc(sizeof(RouteNode));
+
+    if (rNode == nullptr) {
+        ESP_LOGE(LM_TAG, "Not enough memory to add route");
+        return;
+    }
+
+    rNode->networkNode.address = node->address;
+    rNode->networkNode.metric = node->metric;
+    rNode->networkNode.role = node->role;
+    rNode->via = via;
 
     //Reset the timeout of the node
     resetTimeoutRoutingNode(rNode);
@@ -167,7 +187,13 @@ NetworkNode* RoutingTableService::getAllNetworkNodes() {
         return nullptr;
     }
 
-    NetworkNode* payload = new NetworkNode[routingSize];
+    NetworkNode* payload = (NetworkNode*) pvPortMalloc(sizeof(NetworkNode) * routingSize);
+
+    if (payload == nullptr) {
+        ESP_LOGE(LM_TAG, "Not enough memory to get all network nodes");
+        routingTableList->releaseInUse();
+        return nullptr;
+    }
 
     if (routingTableList->moveToStart()) {
         for (int i = 0; i < routingSize; i++) {
@@ -224,7 +250,7 @@ void RoutingTableService::manageTimeoutRoutingTable() {
             if (node->timeout < millis()) {
                 ESP_LOGW(LM_TAG, "Route timeout %X via %X", node->networkNode.address, node->via);
 
-                delete node;
+                vPortFree(node);
                 routingTableList->DeleteCurrent();
             }
 

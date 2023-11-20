@@ -27,7 +27,13 @@ public:
      */
     template<class T>
     static QueuePacket<T>* createQueuePacket(T* p, uint8_t priority, uint16_t number = 0, int8_t rssi = 0, int8_t snr = 0) {
-        QueuePacket<T>* qp = new QueuePacket<T>();
+        QueuePacket<T>* qp = (QueuePacket<T>*) pvPortMalloc(sizeof(QueuePacket<T>));
+
+        if (qp == nullptr) {
+            ESP_LOGE(LM_TAG, "Not enough memory to create Queue Packet");
+            return nullptr;
+        }
+
         qp->priority = priority;
         qp->number = number;
         qp->packet = p;
@@ -83,7 +89,7 @@ public:
         vPortFree(pq->packet);
 
         ESP_LOGI(LM_TAG, "Deleting packet queue");
-        delete pq;
+        vPortFree(pq);
     }
 
     /**
