@@ -3,6 +3,8 @@
 LoraMesher::LoraMesher() {}
 
 void LoraMesher::begin(LoraMesherConfig config) {
+    ESP_LOGV(LM_TAG, "Initializing LoraMesher v%s", LM_VERSION);
+
     initializeLoRa(config);
     initializeSchedulers();
     recalculateMaxTimeOnAir();

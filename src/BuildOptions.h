@@ -2,6 +2,7 @@
 #define _LORAMESHER_BUILD_OPTIONS_H
 
 static const char* LM_TAG = "LoRaMesher";
+static const char* LM_VERSION = "0.0.7";
 
 // Set LoRa pins
 #ifndef LORA_CS
