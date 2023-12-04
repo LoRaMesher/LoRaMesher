@@ -504,7 +504,7 @@ void LoraMesher::sendPackets() {
 
                 PacketQueueService::deleteQueuePacketAndPacket(tx);
 
-                vTaskDelay(delayBetweenSend);
+                vTaskDelay(delayBetweenSend / portTICK_PERIOD_MS);
             }
         }
     }
@@ -514,17 +514,16 @@ void LoraMesher::sendHelloPacket() {
     ESP_LOGV(LM_TAG, "Send Hello Packet routine started");
 
     vTaskSuspend(NULL);
+
     size_t maxNodesPerPacket = (MAXPACKETSIZE - sizeof(RoutePacket)) / sizeof(NetworkNode);
 
     ESP_LOGV(LM_TAG, "Max routing nodes per packet: %d", maxNodesPerPacket);
-
-    vTaskSuspend(NULL);
 
     //Wait an initial 2 second
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
     for (;;) {
-        ESP_LOGI(LM_TAG, "Creating Routing Packet");
+        ESP_LOGV(LM_TAG, "Creating Routing Packet");
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
         ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
 
