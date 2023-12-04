@@ -1383,7 +1383,7 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
 
                 // If number of timeouts is greater than Max timeouts, erase it
                 if (configPacket->numberOfTimeouts >= MAX_TIMEOUTS) {
-                    ESP_LOGE(LM_TAG, "%s, MAX TIMEOUTS reached, erasing Id: %d"), queueName.c_str(), configPacket->seq_id;
+                    ESP_LOGE(LM_TAG, "%s, MAX TIMEOUTS reached, erasing Id: %d", queueName.c_str(), configPacket->seq_id);
                     clearLinkedList(current);
                     queue->DeleteCurrent();
                     continue;
