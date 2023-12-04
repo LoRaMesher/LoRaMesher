@@ -152,6 +152,25 @@ public:
     ~LoraMesher();
 
     /**
+     * @brief Set a new LoRaMesher configuration. This function will stop the LoRaMesher and restart it with the new configuration.
+     *
+     */
+    void setConfig(LoraMesherConfig config);
+
+    /**
+     * @brief Get the LoRaMesher configuration
+     *
+     * @return LoraMesherConfig
+     */
+    LoraMesherConfig getConfig() { return loraMesherConfig; }
+
+    /**
+     * @brief Restart the radio module
+     *
+     */
+    void restartRadio();
+
+    /**
      * @brief Set the Frequency. Allowed values range from 137.0 MHz to 525.0 MHz.
      *
      * @param freq Frequency to be set in MHz
@@ -457,6 +476,12 @@ private:
      */
     LoraMesher();
 
+    /**
+     * @brief Configuration of the LoRaMesher
+     *
+     */
+    LoraMesherConfig loraMesherConfig = LoraMesherConfig();
+
     LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = new LM_LinkedList<AppPacket<uint8_t>>();
 
     LM_LinkedList<QueuePacket<Packet<uint8_t>>>* ReceivedPackets = new LM_LinkedList<QueuePacket<Packet<uint8_t>>>();
@@ -536,7 +561,7 @@ private:
 
     void receivingRoutine();
 
-    void initializeLoRa(LoraMesherConfig config);
+    void initializeLoRa();
 
     void initializeSchedulers();
 

@@ -61,19 +61,19 @@ uint32_t LM_SX1278::getTimeOnAir(size_t length) {
 }
 
 void LM_SX1278::setDioActionForReceiving(void (*action)()) {
-    module->setDio0Action(action);
+    module->setDio0Action(action, RISING);
 }
 
 void LM_SX1278::setDioActionForReceivingTimeout(void(*action)()) {
-    module->setDio1Action(action);
+    module->setDio1Action(action, RISING);
 }
 
 void LM_SX1278::setDioActionForScanning(void (*action)()) {
-    module->setDio1Action(action);
+    module->setDio1Action(action, RISING);
 }
 
 void LM_SX1278::setDioActionForScanningTimeout(void(*action)()) {
-    module->setDio0Action(action);
+    module->setDio0Action(action, RISING);
 }
 
 void LM_SX1278::clearDioActions() {
@@ -116,5 +116,3 @@ int16_t LM_SX1278::setGain(uint8_t gain) {
 int16_t LM_SX1278::setOutputPower(int8_t power, int8_t useRfo) {
     return module->setOutputPower(power, useRfo);
 }
-
-

@@ -5,9 +5,17 @@ LoraMesher::LoraMesher() {}
 void LoraMesher::begin(LoraMesherConfig config) {
     ESP_LOGV(LM_TAG, "Initializing LoraMesher v%s", LM_VERSION);
 
-    initializeLoRa(config);
-    initializeSchedulers();
+    // Set the configuration
+    loraMesherConfig = config;
+
+    // Initialize the radio
+    initializeLoRa();
+
+    // Recalculate the max time on air
     recalculateMaxTimeOnAir();
+
+    // Initialize the queues
+    initializeSchedulers();
 }
 
 void LoraMesher::standby() {
@@ -79,10 +87,30 @@ LoraMesher::~LoraMesher() {
     delete radio;
 }
 
-void LoraMesher::initializeLoRa(LoraMesherConfig config) {
+void LoraMesher::setConfig(LoraMesherConfig config) {
+    standby();
+
+    loraMesherConfig = config;
+    recalculateMaxTimeOnAir();
+
+    restartRadio();
+
+    start();
+}
+
+void LoraMesher::restartRadio() {
+    radio->reset();
+    initializeLoRa();
+
+    ESP_LOGI(LM_TAG, "Restarting radio DONE");
+}
+
+void LoraMesher::initializeLoRa() {
     ESP_LOGV(LM_TAG, "Initializing RadioLib");
 
-    if (config.spi == nullptr) {
+    LoraMesherConfig config = loraMesherConfig;
+
+    if (loraMesherConfig.spi == nullptr) {
         SPI.begin();
         config.spi = &SPI;
     }
@@ -243,6 +271,8 @@ void LoraMesher::initializeSchedulers() {
     if (res != pdPASS) {
         ESP_LOGE(LM_TAG, "Queue Manager Task creation gave error: %d", res);
     }
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
 #if defined(ESP8266) || defined(ESP32)
@@ -303,7 +333,12 @@ void LoraMesher::receivingRoutine() {
 
                 if (state != RADIOLIB_ERR_NONE) {
                     ESP_LOGW(LM_TAG, "Reading packet data gave error: %d", state);
-                    // Set a count to get the number of CRC errors
+                    if (state == RADIOLIB_ERR_SPI_WRITE_FAILED) {
+                        ESP_LOGW(LM_TAG, "SPI Write failed, restarting radio");
+                        restartRadio();
+                    }
+
+                    // TODO: Set a count to get the number of CRC errors
                     deletePacket(rx);
                 }
                 else if (packetSize != rx->packetSize) {
@@ -398,11 +433,11 @@ void LoraMesher::sendPackets() {
     const uint8_t dutyCycleEvery = (100 - LM_DUTY_CYCLE) / portTICK_PERIOD_MS;
 
     for (;;) {
+        /* Wait for the notification of new packet has to be sent and enter blocking */
+        ulTaskNotifyTake(pdFALSE, portMAX_DELAY);
+
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
         ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
-
-        /* Wait for the notification of new packet has to be sent and enter blocking */
-        ulTaskNotifyTake(pdPASS, 30000 / portTICK_PERIOD_MS);
 
         while (ToSendPackets->getLength() > 0) {
 
@@ -478,6 +513,7 @@ void LoraMesher::sendPackets() {
 void LoraMesher::sendHelloPacket() {
     ESP_LOGV(LM_TAG, "Send Hello Packet routine started");
 
+    vTaskSuspend(NULL);
     size_t maxNodesPerPacket = (MAXPACKETSIZE - sizeof(RoutePacket)) / sizeof(NetworkNode);
 
     ESP_LOGV(LM_TAG, "Max routing nodes per packet: %d", maxNodesPerPacket);

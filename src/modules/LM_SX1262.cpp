@@ -118,14 +118,3 @@ int16_t LM_SX1262::setGain(uint8_t gain) {
 int16_t LM_SX1262::setOutputPower(int8_t power, int8_t useRfo) {
     return module->setOutputPower(power);
 }
-
-
-
-
-
-
-
-
-
-
-

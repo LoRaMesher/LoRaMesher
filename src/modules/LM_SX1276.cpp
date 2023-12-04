@@ -1,7 +1,7 @@
 #include "LM_SX1276.h"
 
 LM_SX1276::LM_SX1276(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, SPIClass* spi) {
-    module = new SX1276(new Module(loraCs, loraIrq, loraRst, 255, *spi));
+    module = new SX1276(new Module(loraCs, loraIrq, loraRst, RADIOLIB_NC, *spi));
 }
 
 int16_t LM_SX1276::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, int16_t preambleLength) {
@@ -61,19 +61,19 @@ uint32_t LM_SX1276::getTimeOnAir(size_t length) {
 }
 
 void LM_SX1276::setDioActionForReceiving(void (*action)()) {
-    module->setDio0Action(action);
+    module->setDio0Action(action, RISING);
 }
 
 void LM_SX1276::setDioActionForReceivingTimeout(void(*action)()) {
-    module->setDio1Action(action);
+    module->setDio1Action(action, RISING);
 }
 
 void LM_SX1276::setDioActionForScanning(void (*action)()) {
-    module->setDio1Action(action);
+    module->setDio1Action(action, RISING);
 }
 
 void LM_SX1276::setDioActionForScanningTimeout(void(*action)()) {
-    module->setDio0Action(action);
+    module->setDio0Action(action, RISING);
 }
 
 void LM_SX1276::clearDioActions() {
@@ -116,5 +116,3 @@ int16_t LM_SX1276::setGain(uint8_t gain) {
 int16_t LM_SX1276::setOutputPower(int8_t power, int8_t useRfo) {
     return module->setOutputPower(power, useRfo);
 }
-
-
