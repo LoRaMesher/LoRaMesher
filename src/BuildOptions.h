@@ -45,9 +45,9 @@ static const char* LM_VERSION = "0.0.8";
 //MAX packet size per packet
 //If exceed it will be automatically separated through multiple packets 
 //In bytes (226 bytes [UE max allowed with SF7 and 125khz])
-//MAX payload size for hello packets = MAXPACKETSIZE - 6 bytes of header
-//MAX payload size for data packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via
-//MAX payload size for reliable and large packets = MAXPACKETSIZE - 6 bytes of header - 2 bytes of via - 3 of control packet
+//MAX payload size for hello packets = MAXPACKETSIZE - 7 bytes of header
+//MAX payload size for data packets = MAXPACKETSIZE - 7 bytes of header - 2 bytes of via
+//MAX payload size for reliable and large packets = MAXPACKETSIZE - 7 bytes of header - 2 bytes of via - 3 of control packet
 #define MAXPACKETSIZE 100
 
 // Packet types

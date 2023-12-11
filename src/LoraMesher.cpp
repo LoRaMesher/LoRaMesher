@@ -6,7 +6,7 @@ void LoraMesher::begin(LoraMesherConfig config) {
     ESP_LOGV(LM_TAG, "Initializing LoraMesher v%s", LM_VERSION);
 
     // Set the configuration
-    loraMesherConfig = config;
+    *loraMesherConfig = config;
 
     // Initialize the radio
     initializeLoRa();
@@ -90,7 +90,7 @@ LoraMesher::~LoraMesher() {
 void LoraMesher::setConfig(LoraMesherConfig config) {
     standby();
 
-    loraMesherConfig = config;
+    *loraMesherConfig = config;
     recalculateMaxTimeOnAir();
 
     restartRadio();
@@ -108,9 +108,9 @@ void LoraMesher::restartRadio() {
 void LoraMesher::initializeLoRa() {
     ESP_LOGV(LM_TAG, "Initializing RadioLib");
 
-    LoraMesherConfig config = loraMesherConfig;
+    LoraMesherConfig config = *loraMesherConfig;
 
-    if (loraMesherConfig.spi == nullptr) {
+    if (config.spi == nullptr) {
         SPI.begin();
         config.spi = &SPI;
     }
@@ -272,7 +272,7 @@ void LoraMesher::initializeSchedulers() {
         ESP_LOGE(LM_TAG, "Queue Manager Task creation gave error: %d", res);
     }
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
 }
 
 #if defined(ESP8266) || defined(ESP32)

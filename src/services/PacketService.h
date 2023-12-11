@@ -306,7 +306,7 @@ private:
 
         if (packetSize > MAXPACKETSIZE) {
             ESP_LOGW(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
-            return nullptr;
+            packetSize = MAXPACKETSIZE;
         }
 
         ESP_LOGV(LM_TAG, "Creating packet with %d bytes", packetSize);

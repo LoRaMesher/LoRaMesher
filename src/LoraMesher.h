@@ -162,7 +162,7 @@ public:
      *
      * @return LoraMesherConfig
      */
-    LoraMesherConfig getConfig() { return loraMesherConfig; }
+    LoraMesherConfig getConfig() { return *loraMesherConfig; }
 
     /**
      * @brief Restart the radio module
@@ -236,6 +236,8 @@ public:
 
         //Get the size of the payload in bytes
         size_t payloadSizeInBytes = payloadSize * sizeof(T);
+
+        ESP_LOGV(LM_TAG, "Creating a packet for send with %d bytes", payloadSizeInBytes);
 
         //Create a data packet with the payload
         DataPacket* dPacket = PacketService::createDataPacket(dst, getLocalAddress(), DATA_P, reinterpret_cast<uint8_t*>(payload), payloadSizeInBytes);
@@ -480,7 +482,7 @@ private:
      * @brief Configuration of the LoRaMesher
      *
      */
-    LoraMesherConfig loraMesherConfig = LoraMesherConfig();
+    LoraMesherConfig* loraMesherConfig = new LoraMesherConfig();
 
     LM_LinkedList<AppPacket<uint8_t>>* ReceivedAppPackets = new LM_LinkedList<AppPacket<uint8_t>>();
 
