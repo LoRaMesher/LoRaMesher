@@ -180,7 +180,7 @@ int LoraMesher::startReceiving() {
     if (res != 0) {
         ESP_LOGE(LM_TAG, "Starting receiving gave error: %d", res);
         restartRadio();
-        startReceiving();
+        return startReceiving();
     }
     return res;
 }
