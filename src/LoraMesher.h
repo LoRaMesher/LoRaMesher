@@ -4,8 +4,6 @@
 // LoRa libraries
 #include "RadioLib.h"
 
-#include <SPI.h>
-
 //Actual LoRaMesher Libraries
 #include "BuildOptions.h"
 
@@ -69,10 +67,12 @@ public:
         uint8_t syncWord = LM_SYNC_WORD; // LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
         int8_t power = LM_POWER; // Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
         uint16_t preambleLength = LM_PREAMBLE_LENGTH; //Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number. Allowed values range from 6 to 65535.
-
+#ifdef ARDUINO
         // Custom SPI pins
         SPIClass* spi = nullptr;
-
+#else
+        RadioLibHal* hal=nullptr;
+#endif
         LoraMesherConfig() {}
     };
 

@@ -1,8 +1,14 @@
 #include "LM_SX1268.h"
 
+#ifdef ARDUINO
 LM_SX1268::LM_SX1268(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, uint8_t loraIo1, SPIClass* spi) {
     module = new SX1268(new Module(loraCs, loraIrq, loraRst, loraIo1, *spi));
 }
+#else 
+LM_SX1268::LM_SX1268(Module* mod) {
+    module=new SX1268(mod);
+}
+#endif
 
 int16_t LM_SX1268::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, int16_t preambleLength) {
     return module->begin(freq, bw, sf, cr, syncWord, power, preambleLength);

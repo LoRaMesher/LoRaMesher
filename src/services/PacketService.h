@@ -85,7 +85,7 @@ public:
         Packet<uint8_t>* cpPacket = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetLength));
 
         if (cpPacket) {
-            memcpy(cpPacket, p, packetLength);
+            memcpy(reinterpret_cast<void*>(cpPacket), reinterpret_cast<void*>(p), packetLength);
         }
         else {
             ESP_LOGE(LM_TAG, "Copy Packet not allocated");

@@ -1,13 +1,12 @@
 #pragma once
 
-#include <Arduino.h>
-
 #include <RadioLib.h>
 
 #include "BuildOptions.h"
 
 class LM_Module {
 public:
+    virtual ~LM_Module(){}
     virtual int16_t begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord,
         int8_t power, int16_t preambleLength) = 0;
 

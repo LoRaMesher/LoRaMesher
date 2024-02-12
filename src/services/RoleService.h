@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_ROLE_SERVICE_H
 #define _LORAMESHER_ROLE_SERVICE_H
 
-#include <Arduino.h>
-
 #include "BuildOptions.h"
 
 class RoleService {

@@ -1,11 +1,6 @@
 #ifndef _LORAMESHER_WIFI_SERVICE_H
 #define _LORAMESHER_WIFI_SERVICE_H
 
-#include <Arduino.h>
-
-// WiFi libraries
-#include <WiFi.h>
-
 #include "BuildOptions.h"
 
 class WiFiService {

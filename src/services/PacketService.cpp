@@ -175,15 +175,15 @@ ControlPacket* PacketService::getPacketHeader(Packet<uint8_t>* p) {
 
     if (isControlPacket(p->type)) {
         ControlPacket* srcCtrPacket = (ControlPacket*) p;
-        memcpy(ctrlPacket, srcCtrPacket, sizeof(ControlPacket));
+        memcpy(reinterpret_cast<void*>(ctrlPacket), reinterpret_cast<void*>(srcCtrPacket), sizeof(ControlPacket));
         return ctrlPacket;
     }
     if (isDataPacket(p->type)) {
         DataPacket* srcDataPacket = (DataPacket*) p;
-        memcpy(ctrlPacket, srcDataPacket, sizeof(DataPacket));
+        memcpy(reinterpret_cast<void*>(ctrlPacket), reinterpret_cast<void*>(srcDataPacket), sizeof(DataPacket));
         return ctrlPacket;
     }
 
-    memcpy(ctrlPacket, p, sizeof(PacketHeader));
+    memcpy(reinterpret_cast<void*>(ctrlPacket), reinterpret_cast<void*>(p), sizeof(PacketHeader));
     return ctrlPacket;
 }

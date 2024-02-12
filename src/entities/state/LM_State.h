@@ -1,6 +1,5 @@
 #pragma once
 
-#include <Arduino.h>
 #include "entities/packets/ControlPacket.h"
 
 #pragma pack(1)

@@ -1,8 +1,51 @@
 #ifndef _LORAMESHER_BUILD_OPTIONS_H
 #define _LORAMESHER_BUILD_OPTIONS_H
 
-static const char* LM_TAG = "LoRaMesher";
-static const char* LM_VERSION = "0.0.8";
+#ifdef ARDUINO
+#include "Arduino.h"
+#else
+#include <freertos/FreeRTOS.h>
+#include <string.h>
+#include <string>
+#include <cstdint>
+#include <math.h>
+#include <esp_log.h>
+#include <esp_heap_caps.h>
+
+using namespace std;
+
+// adjust SPI pins as needed
+#ifndef SPI_SCK
+#define SPI_SCK 9
+#endif
+
+#ifndef SPI_MOSI
+#define SPI_MOSI 10
+#endif
+
+#ifndef SPI_MISO
+#define SPI_MISO 11
+#endif
+
+
+#define LOW (0x0)
+#define HIGH (0x1)
+#define INPUT (0x01)
+#define OUTPUT (0x03)
+#define RISING (0x01)
+#define FALLING (0x02)
+
+#define String std::string
+#define F(string_literal) (string_literal)
+
+unsigned long millis();
+size_t getFreeHeap();
+long random( long howsmall, long howbig );
+
+#endif
+
+extern const char* LM_TAG;
+extern const char* LM_VERSION;
 
 // Set LoRa pins
 #ifndef LORA_CS

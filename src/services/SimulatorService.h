@@ -1,7 +1,5 @@
 #pragma once
 
-#include <Arduino.h>
-
 #include "entities/state/LM_State.h"
 #include "entities/packets/ControlPacket.h"
 #include "entities/packets/Packet.h"

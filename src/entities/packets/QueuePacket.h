@@ -1,7 +1,7 @@
 #ifndef _LORAMESHER_QUEUE_PACKET_H
 #define _LORAMESHER_QUEUE_PACKET_H
 
-#include <Arduino.h>
+#include "BuildOptions.h"
 
 template <typename T>
 class QueuePacket {

@@ -1,13 +1,12 @@
 #pragma once
 
-#include <Arduino.h>
-
 #include <RadioLib.h>
 
 #include "LM_Module.h"
 
 class LM_SX1268: public LM_Module {
 public:
+#ifdef ARDUINO
     LM_SX1268(
         uint8_t loraCs = LORA_CS, // LoRa chip select pin
         uint8_t loraIrq = LORA_IRQ, // LoRa IRQ pin
@@ -15,6 +14,9 @@ public:
         uint8_t loraIo1 = LORA_IO1, // LoRa DIO1 pin 
         SPIClass* spi = &SPI // SPI interface
     );
+#else
+    LM_SX1268(Module* module);
+#endif
 
     int16_t begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord,
         int8_t power, int16_t preambleLength) override;

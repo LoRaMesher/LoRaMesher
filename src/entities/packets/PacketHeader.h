@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_PACKET_HEADER_H
 #define _LORAMESHER_PACKET_HEADER_H
 
-#include <Arduino.h>
-
 #include "BuildOptions.h"
 
 #pragma pack(1)
