@@ -1,14 +1,13 @@
 #include "WiFiService.h"
 
 #ifdef ARDUINO
-#include "WiFh.h"
+#include "WiFi.h"
 #else
-#include <hal/efuse_hal.h>
+#include "hal/efuse_hal.h"
 #include "esp_mac.h"
 #endif
 
-void WiFiService::init()
-{
+void WiFiService::init() {
     uint8_t mac[6];
 #ifdef ARDUINO
     WiFi.macAddress(mac);
@@ -19,8 +18,7 @@ void WiFiService::init()
     ESP_LOGI(LM_TAG, "Local LoRa address (from WiFi MAC): %X", localAddress);
 }
 
-uint16_t WiFiService::getLocalAddress()
-{
+uint16_t WiFiService::getLocalAddress() {
     if (localAddress == 0)
         init();
     return localAddress;

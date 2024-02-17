@@ -1,6 +1,6 @@
 #include "LoraMesher.h"
 
-#ifndef ARDIUNO
+#ifndef ARDUINO
 #include "EspHal.h"
 #endif
 
@@ -144,10 +144,10 @@ void LoraMesher::initializeLoRa() {
     }
 
 #else
-    if (config.hal == nullptr) 
+    if (config.hal == nullptr)
         config.hal = new EspHal(SPI_SCK, SPI_MISO, SPI_MOSI);
 
-    if (config.hal == nullptr) 
+    if (config.hal == nullptr)
         ESP_LOGE(LM_TAG, "Could not create SPI HAL");
 
     auto mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
@@ -423,7 +423,7 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     //Random delay, to avoid some collisions.
     uint32_t randomDelay = getPropagationTimeWithRandom(repeatedDetectPreambles);
 
-    ESP_LOGV(LM_TAG, "RandomDelay %d ms", (int)randomDelay);
+    ESP_LOGV(LM_TAG, "RandomDelay %d ms", (int) randomDelay);
 
     //Set a random delay, to avoid some collisions.
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
@@ -543,7 +543,7 @@ void LoraMesher::sendPackets() {
 
                 TickType_t delayBetweenSend = timeOnAir * dutyCycleEvery;
 
-                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", (int)timeOnAir, (int)delayBetweenSend);
+                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", (int) timeOnAir, (int) delayBetweenSend);
 
                 PacketQueueService::deleteQueuePacketAndPacket(tx);
 
@@ -741,15 +741,15 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
         size_t numOfNodes = RoutingTableService::routingTableSize();
         if (numOfNodes > 0) {
             NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
-            for (int i=0; i<numOfNodes; i++) {
-                auto node=&nodes[i];
+            for (int i = 0; i < numOfNodes; i++) {
+                auto node = &nodes[i];
                 sendReliablePacket(node->address, payload, payloadSize);
             }
             delete[] nodes;
         }
         return;
     }
-    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes to %X", (int)payloadSize, dst);
+    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes to %X", (int) payloadSize, dst);
 
     // Get the Routing Table node of the destination
     RouteNode* node = RoutingTableService::findNode(dst);
@@ -940,7 +940,7 @@ uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
 
 void LoraMesher::recalculateMaxTimeOnAir() {
     maxTimeOnAir = radio->getTimeOnAir(MAXPACKETSIZE) / 1000;
-    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", (int)maxTimeOnAir);
+    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", (int) maxTimeOnAir);
 }
 
 void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
@@ -954,7 +954,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 
@@ -1192,7 +1192,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
     AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(pvPortMalloc(packetLength));
 
-    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", (int)packetLength, payloadSize);
+    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", (int) packetLength, payloadSize);
 
     if (p) {
         //Copy the payload into the packet
@@ -1334,7 +1334,7 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     config->calculatingRTT = millis();
 
     ESP_LOGV(LM_TAG, "Updating RTT (%u ms), SRTT (%u), RTTVAR (%u) seq_Id: %d Src: %X",
-        (unsigned int)actualRTT, (unsigned int)node->SRTT, (unsigned int)node->RTTVAR, config->seq_id, config->source);
+        (unsigned int) actualRTT, (unsigned int) node->SRTT, (unsigned int) node->RTTVAR, config->seq_id, config->source);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
@@ -1505,7 +1505,7 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout set to %u s", (unsigned int)(timeout / 1000));
+    ESP_LOGV(LM_TAG, "Timeout set to %u s", (unsigned int) (timeout / 1000));
 }
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
@@ -1531,7 +1531,7 @@ void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPack
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", (unsigned int)(timeout / 1000));
+    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", (unsigned int) (timeout / 1000));
 }
 
 uint8_t LoraMesher::getSequenceId() {

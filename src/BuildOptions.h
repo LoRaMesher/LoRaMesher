@@ -39,10 +39,11 @@ using namespace std;
 #define F(string_literal) (string_literal)
 
 unsigned long millis();
-size_t getFreeHeap();
-long random( long howsmall, long howbig );
+long random(long howsmall, long howbig);
 
 #endif
+
+size_t getFreeHeap();
 
 extern const char* LM_TAG;
 extern const char* LM_VERSION;
@@ -85,7 +86,7 @@ extern const char* LM_VERSION;
 // Routing table max size
 #define RTMAXSIZE 256
 
-//MAX packet size per packet
+//MAX packet size per packet in bytes. It could be changed between 13 and 255 bytes. Recommended 100 or less bytes.
 //If exceed it will be automatically separated through multiple packets 
 //In bytes (226 bytes [UE max allowed with SF7 and 125khz])
 //MAX payload size for hello packets = MAXPACKETSIZE - 7 bytes of header

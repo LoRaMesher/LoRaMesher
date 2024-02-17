@@ -1,4 +1,4 @@
-#ifndef ARDIUNO
+#ifndef ARDUINO
 #include "EspHal.h"
 
 #include "freertos/FreeRTOS.h"
@@ -23,11 +23,9 @@
 // all of the following is needed to calculate SPI clock divider
 #define ClkRegToFreq(reg) (apb_freq / (((reg)->clkdiv_pre + 1) * ((reg)->clkcnt_n + 1)))
 
-typedef union
-{
+typedef union {
     uint32_t value;
-    struct
-    {
+    struct {
         uint32_t clkcnt_l : 6;
         uint32_t clkcnt_h : 6;
         uint32_t clkcnt_n : 6;
@@ -38,13 +36,11 @@ typedef union
 
 EspHal::EspHal(int8_t sck, int8_t miso, int8_t mosi)
     : RadioLibHal(INPUT, OUTPUT, LOW, HIGH, RISING, FALLING),
-      spiSCK(sck), spiMISO(miso), spiMOSI(mosi)
-{
-    gpio_install_isr_service((int)ESP_INTR_FLAG_IRAM);
+    spiSCK(sck), spiMISO(miso), spiMOSI(mosi) {
+    gpio_install_isr_service((int) ESP_INTR_FLAG_IRAM);
 }
 
-void EspHal::init()
-{
+void EspHal::init() {
     static const int SPI_Frequency = 2000000;
     spi_bus_config_t spi_bus_config = {
         .mosi_io_num = this->spiMOSI,
@@ -72,16 +68,14 @@ void EspHal::init()
     ESP_ERROR_CHECK_WITHOUT_ABORT(spi_bus_add_device(HOST_ID, &devcfg, &_handle));
 }
 
-void EspHal::term()
-{
+void EspHal::term() {
     std::lock_guard guard(_mutex);
     spi_bus_remove_device(_handle);
 }
 
 // GPIO-related methods (pinMode, digitalWrite etc.) should check
 // RADIOLIB_NC as an alias for non-connected pins
-void EspHal::pinMode(uint32_t pin, uint32_t mode)
-{
+void EspHal::pinMode(uint32_t pin, uint32_t mode) {
     if (pin == RADIOLIB_NC)
         return;
 
@@ -90,93 +84,79 @@ void EspHal::pinMode(uint32_t pin, uint32_t mode)
 
     gpio_config_t conf = {
         .pin_bit_mask = (1ULL << pin),
-        .mode = (gpio_mode_t)mode,
+        .mode = (gpio_mode_t) mode,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = (gpio_int_type_t)gpiohal.dev->pin[pin].int_type,
+        .intr_type = (gpio_int_type_t) gpiohal.dev->pin[pin].int_type,
     };
     gpio_config(&conf);
 }
 
-void EspHal::digitalWrite(uint32_t pin, uint32_t value)
-{
+void EspHal::digitalWrite(uint32_t pin, uint32_t value) {
     if (pin == RADIOLIB_NC)
         return;
 
-    gpio_set_level((gpio_num_t)pin, value);
+    gpio_set_level((gpio_num_t) pin, value);
 }
 
-uint32_t EspHal::digitalRead(uint32_t pin)
-{
+uint32_t EspHal::digitalRead(uint32_t pin) {
     if (pin == RADIOLIB_NC)
         return 0;
 
-    return gpio_get_level((gpio_num_t)pin);
+    return gpio_get_level((gpio_num_t) pin);
 }
 
-void EspHal::attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode)
-{
+void EspHal::attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) {
     if (interruptNum == RADIOLIB_NC)
         return;
 
-    gpio_set_intr_type((gpio_num_t)interruptNum, (gpio_int_type_t)(mode & 0x7));
+    gpio_set_intr_type((gpio_num_t) interruptNum, (gpio_int_type_t) (mode & 0x7));
 
     // this uses function typecasting, which is not defined when the functions have different signatures
     // untested and might not work
-    gpio_isr_handler_add((gpio_num_t)interruptNum, (void (*)(void *))interruptCb, NULL);
+    gpio_isr_handler_add((gpio_num_t) interruptNum, (void (*)(void*))interruptCb, NULL);
 }
 
-void EspHal::detachInterrupt(uint32_t interruptNum)
-{
+void EspHal::detachInterrupt(uint32_t interruptNum) {
     if (interruptNum == RADIOLIB_NC)
         return;
 
-    gpio_isr_handler_remove((gpio_num_t)interruptNum);
-    gpio_wakeup_disable((gpio_num_t)interruptNum);
-    gpio_set_intr_type((gpio_num_t)interruptNum, GPIO_INTR_DISABLE);
+    gpio_isr_handler_remove((gpio_num_t) interruptNum);
+    gpio_wakeup_disable((gpio_num_t) interruptNum);
+    gpio_set_intr_type((gpio_num_t) interruptNum, GPIO_INTR_DISABLE);
 }
 
-void EspHal::delay(unsigned long ms)
-{
+void EspHal::delay(unsigned long ms) {
     vTaskDelay(ms / portTICK_PERIOD_MS);
 }
 
 #define NOP() asm volatile("nop")
 
-void EspHal::delayMicroseconds(unsigned long us)
-{
-    uint64_t m = (uint64_t)esp_timer_get_time();
-    if (us)
-    {
+void EspHal::delayMicroseconds(unsigned long us) {
+    uint64_t m = (uint64_t) esp_timer_get_time();
+    if (us) {
         uint64_t e = (m + us);
-        if (m > e)
-        { // overflow
-            while ((uint64_t)esp_timer_get_time() > e)
-            {
+        if (m > e) { // overflow
+            while ((uint64_t) esp_timer_get_time() > e) {
                 NOP();
             }
         }
-        while ((uint64_t)esp_timer_get_time() < e)
-        {
+        while ((uint64_t) esp_timer_get_time() < e) {
             NOP();
         }
     }
 }
 
-unsigned long EspHal::millis()
-{
-    return ((unsigned long)(esp_timer_get_time() / 1000ULL));
+unsigned long EspHal::millis() {
+    return ((unsigned long) (esp_timer_get_time() / 1000ULL));
 }
 
-unsigned long EspHal::micros()
-{
-    return ((unsigned long)(esp_timer_get_time()));
+unsigned long EspHal::micros() {
+    return ((unsigned long) (esp_timer_get_time()));
 }
 
-long EspHal::pulseIn(uint32_t pin, uint32_t state, unsigned long timeout)
-{
-    if (pin == RADIOLIB_NC)
-    {
+long EspHal::pulseIn(uint32_t pin, uint32_t state, unsigned long timeout) {
+    if (pin == RADIOLIB_NC) {
         return (0);
     }
 
@@ -184,10 +164,8 @@ long EspHal::pulseIn(uint32_t pin, uint32_t state, unsigned long timeout)
     uint32_t start = this->micros();
     uint32_t curtick = this->micros();
 
-    while (this->digitalRead(pin) == state)
-    {
-        if ((this->micros() - curtick) > timeout)
-        {
+    while (this->digitalRead(pin) == state) {
+        if ((this->micros() - curtick) > timeout) {
             return (0);
         }
     }
@@ -195,8 +173,7 @@ long EspHal::pulseIn(uint32_t pin, uint32_t state, unsigned long timeout)
     return (this->micros() - start);
 }
 
-void EspHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in)
-{
+void EspHal::spiTransfer(uint8_t* out, size_t len, uint8_t* in) {
     std::lock_guard guard(_mutex);
     spi_transaction_t SPITransaction;
     memset(&SPITransaction, 0, sizeof(spi_transaction_t));
