@@ -1,4 +1,4 @@
-description: LoRa Mesher
+description: LoRaMesher
 version: 0.0.8
 dependencies:
   idf: ">=5.1"

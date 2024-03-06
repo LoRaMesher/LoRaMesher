@@ -71,10 +71,10 @@ extern const char* LM_VERSION;
 // 915E6 for North America
 #define LM_BAND 869.900F
 #define LM_BANDWIDTH 125.0
-#define LM_LORASF 9U
+#define LM_LORASF 7U
 #define LM_CODING_RATE 7U
 #define LM_PREAMBLE_LENGTH 8U
-#define LM_POWER 2
+#define LM_POWER 6
 #define LM_DUTY_CYCLE 100
 
 //Syncronization Word that identifies the mesh network
