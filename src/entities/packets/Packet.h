@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_PACKET_H
 #define _LORAMESHER_PACKET_H
 
-#include <Arduino.h>
-
 #include "BuildOptions.h"
 #include "PacketHeader.h"
 

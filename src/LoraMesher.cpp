@@ -1,5 +1,9 @@
 #include "LoraMesher.h"
 
+#ifndef ARDUINO
+#include "EspHal.h"
+#endif
+
 LoraMesher::LoraMesher() {}
 
 void LoraMesher::begin(LoraMesherConfig config) {
@@ -110,6 +114,7 @@ void LoraMesher::initializeLoRa() {
 
     LoraMesherConfig config = *loraMesherConfig;
 
+#ifdef ARDUINO
     if (config.spi == nullptr) {
         SPI.begin();
         config.spi = &SPI;
@@ -137,6 +142,40 @@ void LoraMesher::initializeLoRa() {
             radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
             break;
     }
+
+#else
+    if (config.hal == nullptr)
+        config.hal = new EspHal(SPI_SCK, SPI_MISO, SPI_MOSI);
+
+    if (config.hal == nullptr)
+        ESP_LOGE(LM_TAG, "Could not create SPI HAL");
+
+    auto mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
+
+    switch (config.module) {
+        case LoraModules::SX1276_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
+            radio = new LM_SX1276(mod);
+            break;
+        case LoraModules::SX1262_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1262 module");
+            radio = new LM_SX1262(mod);
+            break;
+        case LoraModules::SX1278_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1278 module");
+            radio = new LM_SX1278(mod);
+            break;
+        case LoraModules::SX1268_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1268 module");
+            radio = new LM_SX1268(mod);
+            break;
+        default:
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
+            radio = new LM_SX1276(mod);
+            break;
+    }
+
+#endif
 
     if (radio == NULL) {
         ESP_LOGE(LM_TAG, "RadioLib not initialized properly");
@@ -215,7 +254,7 @@ void LoraMesher::initializeSchedulers() {
     int res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->receivingRoutine(); },
         "Receiving routine",
-        2048,
+        4096,
         this,
         6,
         &ReceivePacket_TaskHandle);
@@ -235,7 +274,7 @@ void LoraMesher::initializeSchedulers() {
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
         "Hello routine",
-        2048,
+        4096,
         this,
         4,
         &Hello_TaskHandle);
@@ -255,7 +294,7 @@ void LoraMesher::initializeSchedulers() {
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->routingTableManager(); },
         "Routing Table Manager routine",
-        2048,
+        4096,
         this,
         2,
         &RoutingTableManager_TaskHandle);
@@ -265,7 +304,7 @@ void LoraMesher::initializeSchedulers() {
     res = xTaskCreate(
         [](void* o) { static_cast<LoraMesher*>(o)->queueManager(); },
         "Queue Manager routine",
-        2048,
+        4096,
         this,
         2,
         &QueueManager_TaskHandle);
@@ -310,7 +349,7 @@ void LoraMesher::receivingRoutine() {
 
         if (TWres == pdPASS) {
             ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
-            ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
+            ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
             hasReceivedMessage = true;
 
@@ -384,7 +423,7 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     //Random delay, to avoid some collisions.
     uint32_t randomDelay = getPropagationTimeWithRandom(repeatedDetectPreambles);
 
-    ESP_LOGV(LM_TAG, "RandomDelay %d ms", randomDelay);
+    ESP_LOGV(LM_TAG, "RandomDelay %d ms", (int) randomDelay);
 
     //Set a random delay, to avoid some collisions.
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
@@ -429,8 +468,11 @@ void LoraMesher::sendPackets() {
     uint8_t sendId = 0;
     uint8_t resendMessage = 0;
 
+#ifdef ARDUINO
     randomSeed(getLocalAddress());
-
+#else
+    srand(getLocalAddress());
+#endif
     const uint8_t dutyCycleEvery = (100 - LM_DUTY_CYCLE) / portTICK_PERIOD_MS;
 
     for (;;) {
@@ -438,7 +480,7 @@ void LoraMesher::sendPackets() {
         ulTaskNotifyTake(pdFALSE, portMAX_DELAY);
 
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
-        ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
+        ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
         while (ToSendPackets->getLength() > 0) {
 
@@ -501,7 +543,7 @@ void LoraMesher::sendPackets() {
 
                 TickType_t delayBetweenSend = timeOnAir * dutyCycleEvery;
 
-                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", timeOnAir, delayBetweenSend);
+                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", (int) timeOnAir, (int) delayBetweenSend);
 
                 PacketQueueService::deleteQueuePacketAndPacket(tx);
 
@@ -526,7 +568,7 @@ void LoraMesher::sendHelloPacket() {
     for (;;) {
         ESP_LOGV(LM_TAG, "Creating Routing Packet");
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
-        ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
+        ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
         incSentHelloPackets();
 
@@ -568,7 +610,7 @@ void LoraMesher::processPackets() {
 
     for (;;) {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
-        ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
+        ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
         /* Wait for the notification of receivingRoutine and enter blocking */
         ulTaskNotifyTake(pdPASS, portMAX_DELAY);
@@ -623,7 +665,7 @@ void LoraMesher::routingTableManager() {
 
     for (;;) {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
-        ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
+        ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
         // TODO: If the routing table removes a node, remove the nodes from the Q_WSP and Q_WRP
         RoutingTableService::manageTimeoutRoutingTable();
@@ -646,7 +688,7 @@ void LoraMesher::queueManager() {
 
     for (;;) {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
-        ESP_LOGV(LM_TAG, "Free heap: %d", ESP.getFreeHeap());
+        ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
         // Record the state for the simulation
         recordState(LM_StateType::STATE_TYPE_MANAGER);
@@ -690,15 +732,24 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
 
     // ESP_LOGV(LM_TAG, "Free heap size 1: %d"), ESP.getFreeHeap());
 
-    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes", payloadSize);
-
-    //TODO: Need some refactor
+     //TODO: Need some refactor
     //TODO: Cannot send an empty packet?? Maybe it could be like a ping?
     if (payloadSize == 0)
         return;
     //TODO: Could it send reliable messages to broadcast?
-    if (dst == BROADCAST_ADDR)
+    if (dst == BROADCAST_ADDR) {
+        size_t numOfNodes = RoutingTableService::routingTableSize();
+        if (numOfNodes > 0) {
+            NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
+            for (int i = 0; i < numOfNodes; i++) {
+                auto node = &nodes[i];
+                sendReliablePacket(node->address, payload, payloadSize);
+            }
+            delete[] nodes;
+        }
         return;
+    }
+    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes to %X", (int) payloadSize, dst);
 
     // Get the Routing Table node of the destination
     RouteNode* node = RoutingTableService::findNode(dst);
@@ -889,7 +940,7 @@ uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
 
 void LoraMesher::recalculateMaxTimeOnAir() {
     maxTimeOnAir = radio->getTimeOnAir(MAXPACKETSIZE) / 1000;
-    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", maxTimeOnAir);
+    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", (int) maxTimeOnAir);
 }
 
 void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
@@ -903,7 +954,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 
@@ -1141,7 +1192,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
     AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(pvPortMalloc(packetLength));
 
-    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", packetLength, payloadSize);
+    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", (int) packetLength, payloadSize);
 
     if (p) {
         //Copy the payload into the packet
@@ -1283,7 +1334,7 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     config->calculatingRTT = millis();
 
     ESP_LOGV(LM_TAG, "Updating RTT (%u ms), SRTT (%u), RTTVAR (%u) seq_Id: %d Src: %X",
-        actualRTT, node->SRTT, node->RTTVAR, config->seq_id, config->source);
+        (unsigned int) actualRTT, (unsigned int) node->SRTT, (unsigned int) node->RTTVAR, config->seq_id, config->source);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
@@ -1454,7 +1505,7 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout set to %u s", timeout / 1000);
+    ESP_LOGV(LM_TAG, "Timeout set to %u s", (unsigned int) (timeout / 1000));
 }
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
@@ -1480,7 +1531,7 @@ void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPack
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", timeout / 1000);
+    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", (unsigned int) (timeout / 1000));
 }
 
 uint8_t LoraMesher::getSequenceId() {

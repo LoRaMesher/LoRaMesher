@@ -1,8 +1,52 @@
 #ifndef _LORAMESHER_BUILD_OPTIONS_H
 #define _LORAMESHER_BUILD_OPTIONS_H
 
-static const char* LM_TAG = "LoRaMesher";
-static const char* LM_VERSION = "0.0.8";
+#ifdef ARDUINO
+#include "Arduino.h"
+#else
+#include <freertos/FreeRTOS.h>
+#include <string.h>
+#include <string>
+#include <cstdint>
+#include <math.h>
+#include <esp_log.h>
+#include <esp_heap_caps.h>
+
+using namespace std;
+
+// adjust SPI pins as needed
+#ifndef SPI_SCK
+#define SPI_SCK 9
+#endif
+
+#ifndef SPI_MOSI
+#define SPI_MOSI 10
+#endif
+
+#ifndef SPI_MISO
+#define SPI_MISO 11
+#endif
+
+
+#define LOW (0x0)
+#define HIGH (0x1)
+#define INPUT (0x01)
+#define OUTPUT (0x03)
+#define RISING (0x01)
+#define FALLING (0x02)
+
+#define String std::string
+#define F(string_literal) (string_literal)
+
+unsigned long millis();
+long random(long howsmall, long howbig);
+
+#endif
+
+size_t getFreeHeap();
+
+extern const char* LM_TAG;
+extern const char* LM_VERSION;
 
 // Set LoRa pins
 #ifndef LORA_CS
@@ -27,10 +71,10 @@ static const char* LM_VERSION = "0.0.8";
 // 915E6 for North America
 #define LM_BAND 869.900F
 #define LM_BANDWIDTH 125.0
-#define LM_LORASF 9U
+#define LM_LORASF 7U
 #define LM_CODING_RATE 7U
 #define LM_PREAMBLE_LENGTH 8U
-#define LM_POWER 2
+#define LM_POWER 6
 #define LM_DUTY_CYCLE 100
 
 //Syncronization Word that identifies the mesh network
@@ -42,7 +86,7 @@ static const char* LM_VERSION = "0.0.8";
 // Routing table max size
 #define RTMAXSIZE 256
 
-//MAX packet size per packet
+//MAX packet size per packet in bytes. It could be changed between 13 and 255 bytes. Recommended 100 or less bytes.
 //If exceed it will be automatically separated through multiple packets 
 //In bytes (226 bytes [UE max allowed with SF7 and 125khz])
 //MAX payload size for hello packets = MAXPACKETSIZE - 7 bytes of header

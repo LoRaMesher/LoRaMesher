@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_DATA_PACKET_H
 #define _LORAMESHER_DATA_PACKET_H
 
-#include <Arduino.h>
-
 #include "RouteDataPacket.h"
 
 #include "BuildOptions.h"

@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_ROUTE_NODE_H
 #define _LORAMESHER_ROUTE_NODE_H
 
-#include <Arduino.h>
-
 #include "NetworkNode.h"
 
 /**

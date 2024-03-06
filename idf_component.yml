@@ -1,0 +1,7 @@
+description: LoRaMesher
+version: 0.0.8
+dependencies:
+  idf: ">=5.1"
+  RadioLib:
+    public: true
+    git: https://github.com/jgromes/RadioLib.git

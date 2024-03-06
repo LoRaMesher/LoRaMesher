@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_NETWORK_NODE_H
 #define _LORAMESHER_NETWORK_NODE_H
 
-#include <Arduino.h>
-
 #pragma pack(1)
 
 /**

@@ -2,8 +2,6 @@
 
 //Inspired by: https://stackoverflow.com/questions/9986591/vectors-in-arduino#:~:text=You%20can%20write%20this%20LinkedList%20template%20class%20and%20simply%20call%20it%20wherever%20you%20want%20%3A
 
-#include <Arduino.h>
-
 #include "BuildOptions.h"
 
 template <class T>

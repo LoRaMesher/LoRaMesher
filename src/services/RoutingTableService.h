@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_ROUTING_TABLE_SERVICE_H
 #define _LORAMESHER_ROUTING_TABLE_SERVICE_H
 
-#include <Arduino.h>
-
 #include "utilities/LinkedQueue.hpp"
 
 #include "entities/routingTable/RouteNode.h"

@@ -1,8 +1,6 @@
 #ifndef _LORAMESHER_ROUTE_PACKET_H
 #define _LORAMESHER_ROUTE_PACKET_H
 
-#include <Arduino.h>
-
 #include "PacketHeader.h"
 #include "entities/routingTable/NetworkNode.h"
 
