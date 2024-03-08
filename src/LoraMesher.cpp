@@ -150,7 +150,7 @@ void LoraMesher::initializeLoRa() {
     if (config.hal == nullptr)
         ESP_LOGE(LM_TAG, "Could not create SPI HAL");
 
-    auto mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
+    Module* mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
 
     switch (config.module) {
         case LoraModules::SX1276_MOD:
@@ -728,21 +728,16 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
 }
 
 void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
-    // vTaskDelay(10 / portTICK_PERIOD_MS);
-
-    // ESP_LOGV(LM_TAG, "Free heap size 1: %d"), ESP.getFreeHeap());
-
-     //TODO: Need some refactor
-    //TODO: Cannot send an empty packet?? Maybe it could be like a ping?
+    // Cannot send an empty packet
     if (payloadSize == 0)
         return;
-    //TODO: Could it send reliable messages to broadcast?
     if (dst == BROADCAST_ADDR) {
+        ESP_LOGW(LM_TAG, "Be aware of sending a reliable packet to the broadcast address");
         size_t numOfNodes = RoutingTableService::routingTableSize();
         if (numOfNodes > 0) {
             NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
-            for (int i = 0; i < numOfNodes; i++) {
-                auto node = &nodes[i];
+            for (size_t i = 0; i < numOfNodes; i++) {
+                NetworkNode* node = &nodes[i];
                 sendReliablePacket(node->address, payload, payloadSize);
             }
             delete[] nodes;
@@ -954,7 +949,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-	return true;
+    return true;
 }
 #endif
 

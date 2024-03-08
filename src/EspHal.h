@@ -9,8 +9,7 @@
 #include <driver/spi_master.h>
 #include <mutex>
 
-class EspHal : public RadioLibHal
-{
+class EspHal: public RadioLibHal {
 public:
     // default constructor - initializes the base HAL and any needed private members
     EspHal(int8_t sck, int8_t miso, int8_t mosi);
@@ -33,7 +32,7 @@ public:
 
     void spiBegin() override {}
     void spiBeginTransaction() override {}
-    void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+    void spiTransfer(uint8_t* out, size_t len, uint8_t* in) override;
     void spiEndTransaction() override {}
     void spiEnd() override {}
 

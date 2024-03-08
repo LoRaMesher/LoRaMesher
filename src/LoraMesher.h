@@ -71,7 +71,8 @@ public:
         // Custom SPI pins
         SPIClass* spi = nullptr;
 #else
-        RadioLibHal* hal=nullptr;
+        // Custom RadioLibHal
+        RadioLibHal* hal = nullptr;
 #endif
         LoraMesherConfig() {}
     };
