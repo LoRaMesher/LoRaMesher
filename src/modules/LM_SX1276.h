@@ -8,9 +8,9 @@ class LM_SX1276: public LM_Module {
 public:
 #ifdef ARDUINO
     LM_SX1276(
-        uint8_t loraCs = LORA_CS, // LoRa chip select pin
-        uint8_t loraIrq = LORA_IRQ, // LoRa IRQ pin
-        uint8_t loraRst = LORA_RST, // LoRa reset pin
+        uint8_t loraCs = 0, // LoRa chip select pin
+        uint8_t loraIrq = 0, // LoRa IRQ pin
+        uint8_t loraRst = 0, // LoRa reset pin
         SPIClass* spi = &SPI // SPI interface
     );
 #else

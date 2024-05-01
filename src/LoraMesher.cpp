@@ -114,6 +114,13 @@ void LoraMesher::initializeLoRa() {
 
     LoraMesherConfig config = *loraMesherConfig;
 
+    ESP_LOGI(LM_TAG, "LoRaMesher Configuration:");
+    ESP_LOGI(LM_TAG, "LoRa Module: %d", config.module);
+    ESP_LOGI(LM_TAG, "LoRa CS: %d", config.loraCs);
+    ESP_LOGI(LM_TAG, "LoRa IRQ: %d", config.loraIrq);
+    ESP_LOGI(LM_TAG, "LoRa RST: %d", config.loraRst);
+    ESP_LOGI(LM_TAG, "LoRa IO1: %d", config.loraIo1);
+
 #ifdef ARDUINO
     if (config.spi == nullptr) {
         SPI.begin();
@@ -949,7 +956,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 

@@ -53,10 +53,10 @@ public:
      */
     struct LoraMesherConfig {
         // LoRa pins
-        uint8_t loraCs = LORA_CS; // LoRa chip select pin
-        uint8_t loraIrq = LORA_IRQ; // LoRa IRQ pin
-        uint8_t loraRst = LORA_RST; // LoRa reset pin
-        uint8_t loraIo1 = LORA_IO1; // LoRa DIO1 pin
+        uint8_t loraCs = 0; // LoRa chip select pin
+        uint8_t loraIrq = 0; // LoRa IRQ pin
+        uint8_t loraRst = 0; // LoRa reset pin
+        uint8_t loraIo1 = 0; // LoRa DIO1 pin
 
         // LoRa configuration
         LoraModules module = LoraModules::SX1276_MOD; // Define the module to be used. Allowed values are in the BuildOptions.h file. By default is SX1276_MOD
