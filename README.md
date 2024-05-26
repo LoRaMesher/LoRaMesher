@@ -54,34 +54,13 @@ dataPacket* helloPacket = new dataPacket;
 
 To initialize the new implementation, you can configure the LoRa parameters that the library will use. If your node needs to receive messages to the application, see Received packets function section.
 
-```
-Serial.begin(115200);
-Serial.println("initBoard");
-
-//Get the LoraMesher instance
-LoraMesher& radio = LoraMesher::getInstance();
-
-//Initialize the LoraMesher. You can specify the LoRa parameters here or later with their respective functions
-radio.begin();
-
-//After initializing you need to start the radio with
-radio.start();
-
-//You can pause and resume at any moment with
-radio.standby();
-//And then
-radio.start();
-```
-
-#### Custom Configuration
-
 You can configure different parameters for LoRa configuration. 
-Using the ```LoRaMeseherConfig``` you can configure the following parameters:
-- LoRaCS
-- LoRaIRQ
-- LoRaRST
-- LoRaI01
-- LoRa Module (See Compatibility)
+Using the ```LoRaMeseherConfig``` you can configure the following parameters (Mandatory*):
+- LoRaCS*
+- LoRaIRQ*
+- LoRaRST*
+- LoRaI01*
+- LoRa Module (See Compatibility)*
 - Frequency
 - Band
 - Spreading Factor
@@ -119,6 +98,8 @@ radio.standby();
 //And then
 radio.start();
 ```
+
+*Be aware of the local laws that apply to radio frequencies*
 
 ### Received packets function
 
