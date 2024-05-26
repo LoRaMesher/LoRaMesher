@@ -50,6 +50,8 @@ dataPacket* helloPacket = new dataPacket;
 
 ### LoRaMesh Initialization
 
+#### Default Configuration
+
 To initialize the new implementation, you can configure the LoRa parameters that the library will use. If your node needs to receive messages to the application, see Received packets function section.
 
 ```
@@ -61,6 +63,53 @@ LoraMesher& radio = LoraMesher::getInstance();
 
 //Initialize the LoraMesher. You can specify the LoRa parameters here or later with their respective functions
 radio.begin();
+
+//After initializing you need to start the radio with
+radio.start();
+
+//You can pause and resume at any moment with
+radio.standby();
+//And then
+radio.start();
+```
+
+#### Custom Configuration
+
+You can configure different parameters for LoRa configuration. 
+Using the ```LoRaMeseherConfig``` you can configure the following parameters:
+- LoRaCS
+- LoRaIRQ
+- LoRaRST
+- LoRaI01
+- LoRa Module (See Compatibility)
+- Frequency
+- Band
+- Spreading Factor
+- Synchronization Word
+- Power
+- Preamble Length
+- SPI Class.
+
+Here is an example on how to configure LoRaMesher using this configuration:
+
+```
+//Get the LoraMesher instance
+LoraMesher& radio = LoraMesher::getInstance();
+
+//Get the default configuration
+LoraMesher::LoraMesherConfig config = LoraMesher::LoraMesherConfig();
+
+//Change some parameters to the configuration
+//(TTGO T-Beam v1.1 pins)
+config.loraCS = 18
+config.loraRst = 23
+config.loraIrq = 26
+config.loraIo1 = 33
+
+config.module = LoraMesher::LoraModules::SX1276_MOD;
+
+//Initialize the LoraMesher. You can specify the LoRa parameters here or later with their respective functions
+radio.begin(config);
 
 //After initializing you need to start the radio with
 radio.start();
