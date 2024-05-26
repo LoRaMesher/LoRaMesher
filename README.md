@@ -55,7 +55,7 @@ dataPacket* helloPacket = new dataPacket;
 To initialize the new implementation, you can configure the LoRa parameters that the library will use. If your node needs to receive messages to the application, see Received packets function section.
 
 You can configure different parameters for LoRa configuration. 
-Using the ```LoRaMeseherConfig``` you can configure the following parameters (Mandatory*):
+Using the ```LoRaMesherConfig``` you can configure the following parameters (Mandatory*):
 - LoRaCS*
 - LoRaIRQ*
 - LoRaRST*

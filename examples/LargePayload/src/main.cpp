@@ -121,8 +121,6 @@ void createReceiveMessages() {
     if (res != pdPASS) {
         Serial.printf("Error: Receive App Task creation gave error: %d\n", res);
     }
-
-    radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
 }
 
 /**
@@ -130,11 +128,25 @@ void createReceiveMessages() {
  *
  */
 void setupLoraMesher() {
-    //Init the loramesher with a processReceivedPackets function
-    radio.begin();
+    //Get the configuration of the LoRaMesher
+    LoraMesher::LoraMesherConfig config = LoraMesher::LoraMesherConfig();
+
+    //Set the configuration of the LoRaMesher (TTGO T-BEAM v1.1)
+    config.loraCs = 18;
+    config.loraRst = 23;
+    config.loraIrq = 26;
+    config.loraIo1 = 33;
+
+    config.module = LoraMesher::LoraModules::SX1276_MOD;
+
+    //Init the loramesher with a configuration
+    radio.begin(config);
 
     //Create the receive task and add it to the LoRaMesher
     createReceiveMessages();
+
+    //Set the task handle to the LoRaMesher
+    radio.setReceiveAppDataTaskHandle(receiveLoRaMessage_Handle);
 
     //Start LoRaMesher
     radio.start();
