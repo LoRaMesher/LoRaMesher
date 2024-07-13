@@ -28,10 +28,11 @@ public:
     static T* createPacket(uint8_t* payload, uint8_t payloadSize) {
         //Packet size = size of the header + size of the payload
         size_t packetSize = sizeof(T) + payloadSize;
+        size_t maxPacketSize = PacketFactory::getMaxPacketSize();
 
         if (packetSize > getMaxPacketSize()) {
-            ESP_LOGW(LM_TAG, "Trying to create a packet greater than %d bytes", PacketFactory::maxPacketSize);
-            packetSize = PacketFactory::maxPacketSize;
+            ESP_LOGW(LM_TAG, "Trying to create a packet greater than %d bytes", maxPacketSize);
+            packetSize = maxPacketSize;
         }
 
         ESP_LOGV(LM_TAG, "Creating packet with %d bytes", packetSize);
