@@ -505,7 +505,7 @@ private:
      * @brief RadioLib module
      *
      */
-    LM_Module* radio;
+    LM_Module* radio = nullptr;
 
     /**
      * @brief Hello task handle. It will send a hello packet every HELLO_PACKETS_DELAY s

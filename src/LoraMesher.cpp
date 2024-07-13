@@ -135,27 +135,29 @@ void LoraMesher::initializeLoRa() {
         config.spi = &SPI;
     }
 
-    switch (config.module) {
-        case LoraModules::SX1276_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1276 module");
-            radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
-            break;
-        case LoraModules::SX1262_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1262 module");
-            radio = new LM_SX1262(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-            break;
-        case LoraModules::SX1278_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1278 module");
-            radio = new LM_SX1278(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-            break;
-        case LoraModules::SX1268_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1268 module");
-            radio = new LM_SX1268(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-            break;
-        default:
-            ESP_LOGV(LM_TAG, "Using SX1276 module");
-            radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
-            break;
+    if (radio == nullptr) {
+        switch (config.module) {
+            case LoraModules::SX1276_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1276 module");
+                radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
+                break;
+            case LoraModules::SX1262_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1262 module");
+                radio = new LM_SX1262(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+                break;
+            case LoraModules::SX1278_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1278 module");
+                radio = new LM_SX1278(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+                break;
+            case LoraModules::SX1268_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1268 module");
+                radio = new LM_SX1268(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+                break;
+            default:
+                ESP_LOGV(LM_TAG, "Using SX1276 module");
+                radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
+                break;
+        }
     }
 
 #else
@@ -165,29 +167,31 @@ void LoraMesher::initializeLoRa() {
     if (config.hal == nullptr)
         ESP_LOGE(LM_TAG, "Could not create SPI HAL");
 
-    Module* mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
+    if (radio == nullptr) {
+        Module* mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
 
-    switch (config.module) {
-        case LoraModules::SX1276_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1276 module");
-            radio = new LM_SX1276(mod);
-            break;
-        case LoraModules::SX1262_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1262 module");
-            radio = new LM_SX1262(mod);
-            break;
-        case LoraModules::SX1278_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1278 module");
-            radio = new LM_SX1278(mod);
-            break;
-        case LoraModules::SX1268_MOD:
-            ESP_LOGV(LM_TAG, "Using SX1268 module");
-            radio = new LM_SX1268(mod);
-            break;
-        default:
-            ESP_LOGV(LM_TAG, "Using SX1276 module");
-            radio = new LM_SX1276(mod);
-            break;
+        switch (config.module) {
+            case LoraModules::SX1276_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1276 module");
+                radio = new LM_SX1276(mod);
+                break;
+            case LoraModules::SX1262_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1262 module");
+                radio = new LM_SX1262(mod);
+                break;
+            case LoraModules::SX1278_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1278 module");
+                radio = new LM_SX1278(mod);
+                break;
+            case LoraModules::SX1268_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1268 module");
+                radio = new LM_SX1268(mod);
+                break;
+            default:
+                ESP_LOGV(LM_TAG, "Using SX1276 module");
+                radio = new LM_SX1276(mod);
+                break;
+        }
     }
 
 #endif
