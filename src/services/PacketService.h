@@ -8,6 +8,7 @@
 #include "entities/packets/RoutePacket.h"
 #include "services/RoleService.h"
 #include "BuildOptions.h"
+#include "PacketFactory.h"
 
 class PacketService {
 public:
@@ -287,45 +288,6 @@ public:
      * @return ControlPacket*
      */
     static ControlPacket* getPacketHeader(Packet<uint8_t>* p);
-
-#ifndef LM_GOD_MODE
-private:
-#endif
-
-    /**
-     * @brief Create a T*
-     *
-     * @param payload Payload
-     * @param payloadSize Length of the payload in bytes
-     * @return T*
-     */
-    template<class T>
-    static T* createPacket(uint8_t* payload, uint8_t payloadSize) {
-        //Packet size = size of the header + size of the payload
-        int packetSize = sizeof(T) + payloadSize;
-
-        if (packetSize > MAXPACKETSIZE) {
-            ESP_LOGW(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
-            packetSize = MAXPACKETSIZE;
-        }
-
-        ESP_LOGV(LM_TAG, "Creating packet with %d bytes", packetSize);
-
-        T* p = static_cast<T*>(pvPortMalloc(packetSize));
-
-        if (p) {
-            //Copy the payload into the packet
-            memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
-        }
-        else {
-            ESP_LOGE(LM_TAG, "packet not allocated");
-            return nullptr;
-        }
-
-        ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
-
-        return p;
-    };
 };
 
 #endif

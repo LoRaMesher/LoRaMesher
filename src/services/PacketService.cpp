@@ -1,9 +1,10 @@
 #include "PacketService.h"
 
 Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
-    if (packetSize > MAXPACKETSIZE) {
-        ESP_LOGI(LM_TAG, "Trying to create a packet greater than MAXPACKETSIZE");
-        packetSize = MAXPACKETSIZE;
+    size_t maxPacketSize = PacketFactory::getMaxPacketSize();
+    if (packetSize > maxPacketSize) {
+        ESP_LOGI(LM_TAG, "Trying to create a packet greater than %d bytes", maxPacketSize);
+        packetSize = maxPacketSize;
     }
 
     Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetSize));
@@ -95,7 +96,7 @@ uint8_t PacketService::getHeaderLength(uint8_t type) {
 RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole) {
     size_t routingSizeInBytes = numOfNodes * sizeof(NetworkNode);
 
-    RoutePacket* routePacket = createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
+    RoutePacket* routePacket = PacketFactory::createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
     routePacket->dst = BROADCAST_ADDR;
     routePacket->src = localAddress;
     routePacket->type = HELLO_P;
@@ -114,7 +115,7 @@ ControlPacket* PacketService::controlPacket(Packet<uint8_t>* p) {
 }
 
 ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
-    ControlPacket* packet = createPacket<ControlPacket>(payload, payloadSize);
+    ControlPacket* packet = PacketFactory::createPacket<ControlPacket>(payload, payloadSize);
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -124,7 +125,7 @@ ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, ui
 }
 
 ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t seq_id, uint16_t num_packets) {
-    ControlPacket* packet = createPacket<ControlPacket>(0, 0);
+    ControlPacket* packet = PacketFactory::createPacket<ControlPacket>(0, 0);
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -136,7 +137,7 @@ ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t sr
 }
 
 DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
-    DataPacket* packet = createPacket<DataPacket>(payload, payloadSize);
+    DataPacket* packet = PacketFactory::createPacket<DataPacket>(payload, payloadSize);
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -161,7 +162,7 @@ size_t PacketService::getControlLength(Packet<uint8_t>* p) {
 }
 
 uint8_t PacketService::getMaximumPayloadLength(uint8_t type) {
-    return MAXPACKETSIZE - getHeaderLength(type);
+    return PacketFactory::getMaxPacketSize() - getHeaderLength(type);
 }
 
 size_t PacketService::getPacketPayloadLengthWithoutControl(Packet<uint8_t>* p) {

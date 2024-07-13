@@ -11,6 +11,7 @@ void LoraMesher::begin(LoraMesherConfig config) {
 
     // Set the configuration
     *loraMesherConfig = config;
+    initConfiguration();
 
     // Initialize the radio
     initializeLoRa();
@@ -95,6 +96,7 @@ void LoraMesher::setConfig(LoraMesherConfig config) {
     standby();
 
     *loraMesherConfig = config;
+    initConfiguration();
     recalculateMaxTimeOnAir();
 
     restartRadio();
@@ -107,6 +109,12 @@ void LoraMesher::restartRadio() {
     initializeLoRa();
 
     ESP_LOGI(LM_TAG, "Restarting radio DONE");
+}
+
+void LoraMesher::initConfiguration() {
+    ESP_LOGV(LM_TAG, "Initializing Configuration");
+
+    PacketFactory::setMaxPacketSize(loraMesherConfig->max_packet_size);
 }
 
 void LoraMesher::initializeLoRa() {
@@ -371,9 +379,10 @@ void LoraMesher::receivingRoutine() {
 
                 ESP_LOGI(LM_TAG, "Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d", packetSize, rssi, snr);
 
-                if (packetSize > MAXPACKETSIZE) {
+                size_t max_packet_size = PacketFactory::getMaxPacketSize();
+                if (packetSize > max_packet_size) {
                     ESP_LOGW(LM_TAG, "Received packet with size greater than MAX Packet Size");
-                    packetSize = MAXPACKETSIZE;
+                    packetSize = max_packet_size;
                 }
 
                 state = radio->readData(reinterpret_cast<uint8_t*>(rx), packetSize);
@@ -565,7 +574,7 @@ void LoraMesher::sendHelloPacket() {
 
     vTaskSuspend(NULL);
 
-    size_t maxNodesPerPacket = (MAXPACKETSIZE - sizeof(RoutePacket)) / sizeof(NetworkNode);
+    size_t maxNodesPerPacket = (PacketFactory::getMaxPacketSize() - sizeof(RoutePacket)) / sizeof(NetworkNode);
 
     ESP_LOGV(LM_TAG, "Max routing nodes per packet: %d", maxNodesPerPacket);
 
@@ -941,7 +950,7 @@ uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
 }
 
 void LoraMesher::recalculateMaxTimeOnAir() {
-    maxTimeOnAir = radio->getTimeOnAir(MAXPACKETSIZE) / 1000;
+    maxTimeOnAir = radio->getTimeOnAir(PacketFactory::getMaxPacketSize()) / 1000;
     ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", (int) maxTimeOnAir);
 }
 
@@ -956,7 +965,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-	return true;
+    return true;
 }
 #endif
 

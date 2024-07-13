@@ -23,6 +23,8 @@
 
 #include "services/SimulatorService.h"
 
+#include "services/PacketFactory.h"
+
 /**
  * @brief LoRaMesher Library
  *
@@ -66,7 +68,15 @@ public:
         uint8_t cr = LM_CODING_RATE; // LoRa coding rate denominator. Allowed values range from 5 to 8.
         uint8_t syncWord = LM_SYNC_WORD; // LoRa sync word. Can be used to distinguish different networks. Note that value 0x34 is reserved for LoRaWAN networks.
         int8_t power = LM_POWER; // Transmission output power in dBm. Allowed values range from 2 to 17 dBm.
-        uint16_t preambleLength = LM_PREAMBLE_LENGTH; //Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number. Allowed values range from 6 to 65535.
+        uint16_t preambleLength = LM_PREAMBLE_LENGTH; // Length of LoRa transmission preamble in symbols. The actual preamble length is 4.25 symbols longer than the set number. Allowed values range from 6 to 65535.
+        // MAX packet size per packet in bytes. It could be changed between 13 and 255 bytes. Recommended 100 or less bytes.
+        // If exceed it will be automatically separated through multiple packets 
+        // In bytes (226 bytes [UE max allowed with SF7 and 125khz])
+        // MAX payload size for hello packets = LM_MAX_PACKET_SIZE - 7 bytes of header
+        // MAX payload size for data packets = LM_MAX_PACKET_SIZE - 7 bytes of header - 2 bytes of via
+        // MAX payload size for reliable and large packets = LM_MAX_PACKET_SIZE - 7 bytes of header - 2 bytes of via - 3 of control packet.
+        // Having different max_packet_size in the same network will cause problems.
+        size_t max_packet_size = LM_MAX_PACKET_SIZE;
 #ifdef ARDUINO
         // Custom SPI pins
         SPIClass* spi = nullptr;
@@ -543,6 +553,7 @@ private:
      */
     TaskHandle_t RoutingTableManager_TaskHandle = nullptr;
 
+    void initConfiguration();
 
     static void onReceive(void);
 

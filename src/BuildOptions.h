@@ -72,10 +72,10 @@ extern const char* LM_VERSION;
 //MAX packet size per packet in bytes. It could be changed between 13 and 255 bytes. Recommended 100 or less bytes.
 //If exceed it will be automatically separated through multiple packets 
 //In bytes (226 bytes [UE max allowed with SF7 and 125khz])
-//MAX payload size for hello packets = MAXPACKETSIZE - 7 bytes of header
-//MAX payload size for data packets = MAXPACKETSIZE - 7 bytes of header - 2 bytes of via
-//MAX payload size for reliable and large packets = MAXPACKETSIZE - 7 bytes of header - 2 bytes of via - 3 of control packet
-#define MAXPACKETSIZE 100
+//MAX payload size for hello packets = LM_MAX_PACKET_SIZE - 7 bytes of header
+//MAX payload size for data packets = LM_MAX_PACKET_SIZE - 7 bytes of header - 2 bytes of via
+//MAX payload size for reliable and large packets = LM_MAX_PACKET_SIZE - 7 bytes of header - 2 bytes of via - 3 of control packet
+#define LM_MAX_PACKET_SIZE 100
 
 // Packet types
 #define NEED_ACK_P 0b00000011
