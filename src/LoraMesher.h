@@ -23,8 +23,6 @@
 
 #include "services/SimulatorService.h"
 
-#include "services/PacketFactory.h"
-
 /**
  * @brief LoRaMesher Library
  *

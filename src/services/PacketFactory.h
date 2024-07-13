@@ -6,15 +6,17 @@
 class PacketFactory {
 public:
 
-    static void setMaxPacketSize(size_t maxPacketSize) {
-        if (PacketFactory::maxPacketSize == nullptr)
-            PacketFactory::maxPacketSize = new size_t(maxPacketSize);
+    static void setMaxPacketSize(size_t setMaxPacketSize) {
+        if (maxPacketSize == nullptr)
+            maxPacketSize = new size_t(setMaxPacketSize);
         else
-            *PacketFactory::maxPacketSize = maxPacketSize;
+            *maxPacketSize = setMaxPacketSize;
     }
 
     static size_t getMaxPacketSize() {
-        return *PacketFactory::maxPacketSize;
+        if (maxPacketSize == nullptr)
+            return 0;
+        return *maxPacketSize;
     }
 
     /**
@@ -30,7 +32,7 @@ public:
         size_t packetSize = sizeof(T) + payloadSize;
         size_t maxPacketSize = PacketFactory::getMaxPacketSize();
 
-        if (packetSize > getMaxPacketSize()) {
+        if (packetSize > maxPacketSize) {
             ESP_LOGW(LM_TAG, "Trying to create a packet greater than %d bytes", maxPacketSize);
             packetSize = maxPacketSize;
         }
@@ -55,6 +57,7 @@ public:
 
 private:
     static size_t* maxPacketSize;
+
 };
 
 #endif // _LORAMESHER_PACKET_FACTORY_H
