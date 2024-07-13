@@ -27,9 +27,9 @@ public:
     template<class T>
     static T* createPacket(uint8_t* payload, uint8_t payloadSize) {
         //Packet size = size of the header + size of the payload
-        int packetSize = sizeof(T) + payloadSize;
+        size_t packetSize = sizeof(T) + payloadSize;
 
-        if (packetSize > PacketFactory::maxPacketSize) {
+        if (packetSize > getMaxPacketSize()) {
             ESP_LOGW(LM_TAG, "Trying to create a packet greater than %d bytes", PacketFactory::maxPacketSize);
             packetSize = PacketFactory::maxPacketSize;
         }
