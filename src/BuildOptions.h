@@ -107,6 +107,6 @@ extern const char* LM_VERSION;
 //Free Role Types from 0b00000010 to 0b10000000
 
 // Define if is testing
-#define TESTING
+// #define LM_TESTING
 
 #endif

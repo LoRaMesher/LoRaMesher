@@ -652,7 +652,7 @@ void LoraMesher::processPackets() {
             if (rx) {
                 uint8_t type = rx->packet->type;
 
-#ifdef TESTING
+#ifdef LM_TESTING
                 if (!shouldProcessPacket(rx->packet)) {
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
                     ESP_LOGV(LM_TAG, "TESTING: Packet not for me, deleting it");
@@ -673,11 +673,9 @@ void LoraMesher::processPackets() {
 
                     RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet), rx->snr);
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
-
                 }
                 else if (PacketService::isDataPacket(type))
                     processDataPacket(reinterpret_cast<QueuePacket<DataPacket>*>(rx));
-
                 else {
                     ESP_LOGV(LM_TAG, "Packet not identified, deleting it");
                     incReceivedNotForMe();
@@ -848,7 +846,6 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
     notifyNewSequenceStarted();
 }
 
-
 void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
     DataPacket* packet = pq->packet;
 
@@ -899,17 +896,14 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
 
         //Add and notify the user of this packet
         notifyUserReceivedPacket(appPacket);
-
     }
     else if (PacketService::isAckPacket(p->type)) {
         ESP_LOGV(LM_TAG, "ACK Packet received");
         addAck(p->src, cPacket->seq_id, cPacket->number);
-
     }
     else if (PacketService::isLostPacket(p->type)) {
         ESP_LOGV(LM_TAG, "Lost Packet received");
         processLostPacket(p->src, cPacket->seq_id, cPacket->number);
-
     }
     else if (PacketService::isSyncPacket(p->type)) {
         ESP_LOGV(LM_TAG, "Synchronization Packet received");
@@ -976,13 +970,13 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
         type, packet);
 }
 
-#ifdef TESTING
+#ifdef LM_TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
     return true;
 }
 #endif
 
-#ifdef TESTING
+#ifdef LM_TESTING
 bool LoraMesher::isDataPacketAndLocal(DataPacket* packet, uint16_t localAddress) {
     return PacketService::isDataPacket(packet->type) && packet->via == localAddress;
 }

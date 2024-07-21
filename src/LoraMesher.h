@@ -1020,7 +1020,7 @@ private:
      */
     void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
 
-#ifdef TESTING
+#ifdef LM_TESTING
     /**
      * @brief Returns if the packet can be received. Only for testing
      *
