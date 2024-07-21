@@ -12,6 +12,7 @@ At this moment, LoRaMesher has been tested within the following modules:
 - SX1268
 - SX1276
 - SX1278
+- SX1280
 
 You can request another module to be added to the library by opening an issue.
 

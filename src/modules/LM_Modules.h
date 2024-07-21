@@ -13,3 +13,6 @@
 
 // SX1268_MOD
 #include "LM_SX1268.h"
+
+// SX1280_MOD
+#include "LM_SX1280.h"

@@ -153,6 +153,10 @@ void LoraMesher::initializeLoRa() {
                 ESP_LOGV(LM_TAG, "Using SX1268 module");
                 radio = new LM_SX1268(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
                 break;
+            case LoraModules::SX1280_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1280 module");
+                radio = new LM_SX1280(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+                break;
             default:
                 ESP_LOGV(LM_TAG, "Using SX1276 module");
                 radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
@@ -186,6 +190,10 @@ void LoraMesher::initializeLoRa() {
             case LoraModules::SX1268_MOD:
                 ESP_LOGV(LM_TAG, "Using SX1268 module");
                 radio = new LM_SX1268(mod);
+                break;
+            case LoraModules::SX1280_MOD:
+                ESP_LOGV(LM_TAG, "Using SX1280 module");
+                radio = new LM_SX1280(mod);
                 break;
             default:
                 ESP_LOGV(LM_TAG, "Using SX1276 module");
@@ -435,6 +443,7 @@ uint16_t LoraMesher::getLocalAddress() {
 **/
 
 void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
+    // TODO: Why did I set this if?
     if (repeatedDetectPreambles > RoutingTableService::routingTableSize())
         return;
 
