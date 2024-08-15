@@ -6,12 +6,19 @@ LM_SX1262::LM_SX1262(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, uint8_t l
 }
 #else 
 LM_SX1262::LM_SX1262(Module* mod) {
-    module=new SX1262(mod);
+    module = new SX1262(mod);
 }
 #endif
 
 int16_t LM_SX1262::begin(float freq, float bw, uint8_t sf, uint8_t cr, uint8_t syncWord, int8_t power, int16_t preambleLength) {
-    return module->begin(freq, bw, sf, cr, syncWord, power, preambleLength);
+    int16_t state = module->begin(freq, bw, sf, cr, syncWord, power, preambleLength);
+    if (state == -706 || state == -707)
+        // tcxoVoltage – TCXO reference voltage to be set on DIO3. Defaults to 1.6 V. 
+        // If you are seeing -706/-707 error codes, it likely means you are using non-0 value for module with XTAL. 
+        // To use XTAL, either set this value to 0, or set SX126x::XTAL to true.
+        state = module->begin(freq, bw, sf, cr, syncWord, power, preambleLength, 0);
+
+    return state;
 }
 
 int16_t LM_SX1262::receive(uint8_t* data, size_t len) {
