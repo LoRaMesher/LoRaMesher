@@ -14,7 +14,7 @@ Inspired by the following article: [BMX6](https://ieeexplore.ieee.org/document/7
 
 - LM_REDUCED_FACTOR_HOP_COUNT: This parameter will be used to reduce the metric value with each iteration. The default value is 0.97. This value can be changed in the LoRaMesher.h file.
 
-- LM_MAX_METRIC is the maximum metric value that the packet can have. The default value is 255. Which will be the maximum size of an uint8_t. This value CANNOT be changed.
+- LM_MAX_METRIC is the maximum metric value that the packet can have. The default value is 255. Which will be the maximum size of an uint8_t. This value CANNOT be changed since the metric is an uint8_t.
 
 #### Implementation of the new routing table protocol.
 
@@ -36,7 +36,7 @@ Inspired by the following article: [BMX6](https://ieeexplore.ieee.org/document/7
 - With ql = ri+ti/2
 
 - F(Hope Count) will be calculated as follows:
-    - F(HC) = LM_MAX_METRIC * Hop Count * LM_MAX_METRIC
+    - F(HC) = LM_REDUCED_FACTOR_HOP_COUNT * Hop Count * LM_MAX_METRIC
         "doing nothing else than reducing the updated metric value by the minimal possible constant factor of 3% with each iteration, thus every additional hop."
 
 
@@ -51,6 +51,7 @@ The calculated metric will be calculated as follows:
     - Destination (s)
     - Metric (s)
     - Role (s)
+    - Hop Count (s)
     - Next Hop / Via (n)
     - Received Link Quality (n) [Only for the neighbors]
     - Transmitted Link Quality (n) [Only for the neighbors]

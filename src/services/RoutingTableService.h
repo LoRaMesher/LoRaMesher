@@ -1,18 +1,17 @@
 #ifndef _LORAMESHER_ROUTING_TABLE_SERVICE_H
 #define _LORAMESHER_ROUTING_TABLE_SERVICE_H
 
+#include "BuildOptions.h"
+
 #include "utilities/LinkedQueue.hpp"
 
 #include "entities/routingTable/RouteNode.h"
-
 #include "entities/routingTable/NetworkNode.h"
-
 #include "entities/packets/RoutePacket.h"
-
-#include "BuildOptions.h"
+#include "entities/routingTable/HelloPacketNode.h"
+#include "entities/packets/HelloPacket.h"
 
 #include "services/WiFiService.h"
-
 #include "services/RoleService.h"
 
 /**
@@ -45,9 +44,10 @@ public:
 	 * @brief Find the node that contains the address
 	 *
 	 * @param address address to be found
+	 * @param block_routing_table block the routing table
 	 * @return RouteNode* pointer to the RouteNode or nullptr
 	 */
-	static RouteNode* findNode(uint16_t address);
+	static RouteNode* findNode(uint16_t address, bool block_routing_table = true);
 
 	/**
 	 * @brief Get the best node that contains a role, the nearest
@@ -104,6 +104,15 @@ public:
 	static void processRoute(RoutePacket* p, int8_t receivedSNR);
 
 	/**
+	 * @brief Process the Hello Packet
+	 *
+	 * @param p Hello Packet
+	 * @param receivedSNR Received SNR
+	 * @return true If the routing table has been updated
+	 */
+	static bool processHelloPacket(HelloPacket* p, int8_t receivedSNR);
+
+	/**
 	 * @brief Reset the SNR from the Route Node received
 	 *
 	 * @param src Source address
@@ -124,6 +133,23 @@ public:
 	 *
 	 */
 	static void manageTimeoutRoutingTable();
+
+	/**
+	 * @brief Get the number of nodes that are at One Hop
+	 *
+	 * @return size_t Number of nodes at one hop
+	 */
+	static size_t oneHopSize();
+
+	/**
+	 * @brief Get all a Hello Packet, this will contain all the nodes at one hop
+	 *
+	 *
+	 * @param helloPacketNode Hello Packet Node
+	 * @param size Size of the Hello Packet Node
+	 * @return true If the Hello Packet Node is returned
+	 */
+	static bool getAllHelloPacketsNode(HelloPacketNode** helloPacketNode, size_t* size);
 
 private:
 
@@ -172,6 +198,32 @@ private:
 	 * @return uint8_t Returns the maximum metric of the routing table
 	 */
 	static uint8_t calculateMaximumMetricOfRoutingTable();
+
+	/**
+	 * @brief Find the hello packet node
+	 *
+	 * @param helloPacketNode Hello Packet Node
+	 * @param address Address to be found
+	 * @return HelloPacketNode* pointer to the Hello Packet Node or nullptr
+	 */
+	static HelloPacketNode* findHelloPacketNode(HelloPacket* helloPacketNode, uint16_t address);
+
+	/**
+	 * @brief get the transmitted link quality
+	 *
+	 * @param helloPacketNode Hello Packet Node
+	 * @return uint8_t Transmitted link quality
+	 */
+	static uint8_t get_transmitted_link_quality(HelloPacket* helloPacketNode);
+
+	/**
+	 * @brief Update the metric of the Route Node
+	 *
+	 * @param rNode Route Node
+	 * @param hops Hops
+	 * @return true If the metric has been updated
+	 */
+	static bool updateMetric(RouteNode* rNode, uint8_t hops);
 };
 
 #endif

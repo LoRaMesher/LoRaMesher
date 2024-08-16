@@ -52,7 +52,11 @@ bool PacketService::isOnlyDataPacket(uint8_t type) {
 }
 
 bool PacketService::isControlPacket(uint8_t type) {
-    return !(isHelloPacket(type) || isOnlyDataPacket(type));
+    return !(isRoutingTablePacket(type) || isOnlyDataPacket(type) || isHelloPacket(type));
+}
+
+bool PacketService::isRoutingTablePacket(uint8_t type) {
+    return (type & ROUTING_P) == ROUTING_P;
 }
 
 bool PacketService::isHelloPacket(uint8_t type) {
@@ -80,7 +84,7 @@ bool PacketService::isXLPacket(uint8_t type) {
 }
 
 bool PacketService::isDataControlPacket(uint8_t type) {
-    return (isHelloPacket(type) || isAckPacket(type) || isLostPacket(type) || isLostPacket(type));
+    return (isRoutingTablePacket(type) || isAckPacket(type) || isLostPacket(type) || isLostPacket(type) || isHelloPacket(type));
 }
 
 uint8_t PacketService::getHeaderLength(uint8_t type) {
@@ -99,12 +103,26 @@ RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNo
     RoutePacket* routePacket = PacketFactory::createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
     routePacket->dst = BROADCAST_ADDR;
     routePacket->src = localAddress;
-    routePacket->type = HELLO_P;
+    routePacket->type = ROUTING_P;
     routePacket->packetSize = routingSizeInBytes + sizeof(RoutePacket);
     routePacket->nodeRole = nodeRole;
 
     return routePacket;
 }
+
+HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes) {
+    size_t helloSizeInBytes = numOfNodes * sizeof(HelloPacketNode);
+
+    HelloPacket* helloPacket = PacketFactory::createPacket<HelloPacket>(reinterpret_cast<uint8_t*>(nodes), helloSizeInBytes);
+    helloPacket->dst = BROADCAST_ADDR;
+    helloPacket->src = localAddress;
+    helloPacket->type = HELLO_P;
+    helloPacket->packetSize = helloSizeInBytes + sizeof(HelloPacket);
+
+    return helloPacket;
+}
+
+
 
 DataPacket* PacketService::dataPacket(Packet<uint8_t>* p) {
     return reinterpret_cast<DataPacket*>(p);

@@ -80,11 +80,12 @@ extern const char* LM_VERSION;
 // Packet types
 #define NEED_ACK_P 0b00000011
 #define DATA_P     0b00000010
-#define HELLO_P    0b00000100
+#define ROUTING_P    0b00000100
 #define ACK_P      0b00001010
 #define XL_DATA_P  0b00010010
 #define LOST_P     0b00100010
 #define SYNC_P     0b01000010
+#define HELLO_P  0b10000000
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -100,6 +101,12 @@ extern const char* LM_VERSION;
 #define MAX_TIMEOUTS 10
 #define MAX_RESEND_PACKET 3
 #define MAX_TRY_BEFORE_SEND 5
+
+// Routing Table Configuration
+#define LM_QUALITY_WINDOWS_SIZE 100
+#define LM_MAX_HOPS 10
+#define LM_REDUCED_FACTOR_HOP_COUNT 0.97
+#define LM_MAX_METRIC 255
 
 //Role Types
 #define ROLE_DEFAULT 0b00000000

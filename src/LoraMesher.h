@@ -580,6 +580,8 @@ private:
 
     void sendHelloPacket();
 
+    void sendRoutingTablePacket();
+
     void routingTableManager();
 
     void queueManager();
@@ -630,6 +632,9 @@ private:
 
     uint32_t sentControlBytes = 0;
     void incSentControlBytes(uint32_t numBytes) { sentControlBytes += numBytes; }
+
+    uint32_t receivedRoutingTablePacketsNum = 0;
+    void incReceivedRoutingTablePackets() { receivedRoutingTablePacketsNum++; }
 
     /**
      * @brief Function that process the packets inside Received Packets

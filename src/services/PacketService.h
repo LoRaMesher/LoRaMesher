@@ -1,14 +1,18 @@
 #ifndef _LORAMESHER_PACKET_SERVICE_H
 #define _LORAMESHER_PACKET_SERVICE_H
 
+#include "BuildOptions.h"
+
+#include "PacketFactory.h"
+
+#include "services/RoleService.h"
+
 #include "entities/packets/Packet.h"
 #include "entities/packets/ControlPacket.h"
 #include "entities/packets/DataPacket.h"
 #include "entities/packets/AppPacket.h"
 #include "entities/packets/RoutePacket.h"
-#include "services/RoleService.h"
-#include "BuildOptions.h"
-#include "PacketFactory.h"
+#include "entities/packets/HelloPacket.h"
 
 class PacketService {
 public:
@@ -225,7 +229,7 @@ public:
      * @return true True if needed
      * @return false If not
      */
-    static bool isHelloPacket(uint8_t type);
+    static bool isRoutingTablePacket(uint8_t type);
 
     /**
      * @brief Given a type returns if is a NeedAck packet
@@ -273,7 +277,7 @@ public:
     static bool isXLPacket(uint8_t type);
 
     /**
-     * @brief Given a type returns if is a Data Control Packet, It will include HELLO_P, ACKs, LOST_P and SYN_P
+     * @brief Given a type returns if is a Data Control Packet, It will include HELLO_P, ROUTING_P, ACKs, LOST_P and SYN_P
      *
      * @param type type of the packet
      * @return true True if needed
@@ -282,12 +286,32 @@ public:
     static bool isDataControlPacket(uint8_t type);
 
     /**
+     * @brief Given a type returns if is a Hello Packet
+     *
+     * @param type type of the packet
+     * @return true
+     * @return false
+     */
+    static bool isHelloPacket(uint8_t type);
+
+    /**
      * @brief Get the Packet Header
      *
      * @param p Get the packet headers without the payload to identify the packet and the payload size
      * @return ControlPacket*
      */
     static ControlPacket* getPacketHeader(Packet<uint8_t>* p);
+
+    /**
+     * @brief Create a Hello Packet
+     *
+     * @param localAddress local address of the node
+     * @param nodes list of HelloPacketNode
+     * @param numOfNodes Number of nodes
+     * @return HelloPacket*
+     */
+    static HelloPacket* createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes);
+
 };
 
 #endif

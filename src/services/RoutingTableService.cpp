@@ -4,22 +4,27 @@ size_t RoutingTableService::routingTableSize() {
     return routingTableList->getLength();
 }
 
-RouteNode* RoutingTableService::findNode(uint16_t address) {
-    routingTableList->setInUse();
+RouteNode* RoutingTableService::findNode(uint16_t address, bool block_routing_table) {
+
+    if (block_routing_table)
+        routingTableList->setInUse();
 
     if (routingTableList->moveToStart()) {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
             if (node->networkNode.address == address) {
-                routingTableList->releaseInUse();
+                if (block_routing_table)
+                    routingTableList->releaseInUse();
                 return node;
             }
 
         } while (routingTableList->next());
     }
 
-    routingTableList->releaseInUse();
+    if (block_routing_table)
+        routingTableList->releaseInUse();
+
     return nullptr;
 }
 
@@ -67,7 +72,102 @@ uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
     return node->networkNode.metric;
 }
 
+HelloPacketNode* RoutingTableService::findHelloPacketNode(HelloPacket* helloPacketNode, uint16_t address) {
+    for (size_t i = 0; i < helloPacketNode->getHelloPacketNodesSize(); i++) {
+        if (helloPacketNode->helloPacketNodes[i].address == address) {
+            return &helloPacketNode->helloPacketNodes[i];
+        }
+    }
+
+    return nullptr;
+}
+
+uint8_t RoutingTableService::get_transmitted_link_quality(HelloPacket* helloPacket) {
+    HelloPacketNode* helloPacketNode = findHelloPacketNode(helloPacket, WiFiService::getLocalAddress());
+    if (helloPacketNode == nullptr)
+        return LM_MAX_METRIC;
+
+    return helloPacketNode->received_link_quality;
+}
+
+bool RoutingTableService::updateMetric(RouteNode* rNode, uint8_t hops) {
+    bool updated = false;
+    if (rNode->networkNode.hop_count != hops) {
+        rNode->networkNode.hop_count = hops;
+        updated = true;
+    }
+
+    uint8_t factor_hops = LM_REDUCED_FACTOR_HOP_COUNT * hops * LM_MAX_METRIC;
+
+    printf("Factor hops: %d\n", factor_hops);
+
+    uint8_t quality_link = (rNode->received_link_quality + rNode->transmitted_link_quality) / 2;
+
+    printf("Received link quality: %d\n", rNode->received_link_quality);
+    printf("Transmitted link quality: %d\n", rNode->transmitted_link_quality);
+
+    printf("Quality link: %d\n", quality_link);
+
+    uint8_t factor_link_quality = LM_MAX_METRIC / std::sqrt((LM_MAX_METRIC / rNode->networkNode.metric) ^ 2 + (LM_MAX_METRIC / quality_link) ^ 2);
+
+    printf("Factor link quality: %d\n", factor_link_quality);
+
+    // Update the received link quality
+    uint8_t new_metric = std::min(factor_hops, factor_link_quality);
+
+    printf("New metric: %d\n", new_metric);
+
+    // TODO: Use some kind of hysteresis to avoid oscillations?
+    if (rNode->networkNode.metric != new_metric) {
+        rNode->networkNode.metric = new_metric;
+        updated = true;
+    }
+
+    return updated;
+
+}
+
+bool RoutingTableService::processHelloPacket(HelloPacket* p, int8_t receivedSNR) {
+    ESP_LOGI(LM_TAG, "Hello packet from %X", p->src);
+
+    uint8_t transmitted_link_quality = get_transmitted_link_quality(p);
+
+    printf("Transmitted link quality: %d\n", transmitted_link_quality);
+
+    routingTableList->setInUse();
+
+    uint8_t factor_hops = LM_REDUCED_FACTOR_HOP_COUNT * 1 * LM_MAX_METRIC;
+
+    bool block_routing_table = false;
+    RouteNode* rNode = findNode(p->src, block_routing_table);
+    if (rNode == nullptr) {
+        rNode = new RouteNode(p->src, factor_hops, ROLE_DEFAULT, p->src, 1, LM_MAX_METRIC, transmitted_link_quality);
+        resetTimeoutRoutingNode(rNode);
+
+        // Add to the routing table
+        routingTableList->Append(rNode);
+        routingTableList->releaseInUse();
+
+        return true;
+    }
+
+    rNode->transmitted_link_quality = transmitted_link_quality;
+    rNode->hasReceivedHelloPacket = true;
+
+    bool updated = updateMetric(rNode, 1);
+
+    resetTimeoutRoutingNode(rNode);
+    rNode->receivedSNR = receivedSNR;
+
+    routingTableList->releaseInUse();
+
+    printRoutingTable();
+
+    return updated;
+}
+
 void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
+    // TODO: Implement
     if ((p->packetSize - sizeof(RoutePacket)) % sizeof(NetworkNode) != 0) {
         ESP_LOGE(LM_TAG, "Invalid route packet size");
         return;
@@ -76,19 +176,19 @@ void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     size_t numNodes = p->getNetworkNodesSize();
     ESP_LOGI(LM_TAG, "Route packet from %X with size %d", p->src, numNodes);
 
-    NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
-    processRoute(p->src, receivedNode);
-    delete receivedNode;
+    // NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
+    // processRoute(p->src, receivedNode);
+    // delete receivedNode;
 
-    resetReceiveSNRRoutePacket(p->src, receivedSNR);
+    // resetReceiveSNRRoutePacket(p->src, receivedSNR);
 
-    for (size_t i = 0; i < numNodes; i++) {
-        NetworkNode* node = &p->networkNodes[i];
-        node->metric++;
-        processRoute(p->src, node);
-    }
+    // for (size_t i = 0; i < numNodes; i++) {
+    //     NetworkNode* node = &p->networkNodes[i];
+    //     node->metric++;
+    //     processRoute(p->src, node);
+    // }
 
-    printRoutingTable();
+    // printRoutingTable();
 }
 
 void RoutingTableService::resetReceiveSNRRoutePacket(uint16_t src, int8_t receivedSNR) {
@@ -132,26 +232,29 @@ void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
 }
 
 void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via) {
-    if (routingTableList->getLength() >= RTMAXSIZE) {
-        ESP_LOGW(LM_TAG, "Routing table max size reached, not adding route and deleting it");
-        return;
-    }
+    // TODO: implement
+    ESP_LOGE(LM_TAG, "TODO: NOT IMPLEMENTED");
+    return;
+    // if (routingTableList->getLength() >= RTMAXSIZE) {
+    //     ESP_LOGW(LM_TAG, "Routing table max size reached, not adding route and deleting it");
+    //     return;
+    // }
 
-    if (calculateMaximumMetricOfRoutingTable() < node->metric) {
-        ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
-        return;
-    }
+    // if (calculateMaximumMetricOfRoutingTable() < node->metric) {
+    //     ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
+    //     return;
+    // }
 
-    RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
+    // RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
 
-    //Reset the timeout of the node
-    resetTimeoutRoutingNode(rNode);
+    // //Reset the timeout of the node
+    // resetTimeoutRoutingNode(rNode);
 
-    routingTableList->setInUse();
+    // routingTableList->setInUse();
 
-    routingTableList->Append(rNode);
+    // routingTableList->Append(rNode);
 
-    routingTableList->releaseInUse();
+    // routingTableList->releaseInUse();
 
     ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %d", node->address, via, node->metric, node->role);
 }
@@ -199,10 +302,12 @@ void RoutingTableService::printRoutingTable() {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
-            ESP_LOGI(LM_TAG, "%d - %X via %X metric %d Role %d", position,
+            ESP_LOGI(LM_TAG, "%d - %X via %X metric %d hop_count %d role %d",
+                position,
                 node->networkNode.address,
                 node->via,
                 node->networkNode.metric,
+                node->networkNode.hop_count,
                 node->networkNode.role);
 
             position++;
@@ -254,6 +359,58 @@ uint8_t RoutingTableService::calculateMaximumMetricOfRoutingTable() {
     routingTableList->releaseInUse();
 
     return maximumMetricOfRoutingTable + 1;
+}
+
+
+size_t RoutingTableService::oneHopSize() {
+    size_t oneHopSize = 0;
+
+    if (routingTableList->moveToStart()) {
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            if (node->networkNode.metric == 1)
+                oneHopSize++;
+
+        } while (routingTableList->next());
+    }
+
+    return oneHopSize;
+}
+
+bool RoutingTableService::getAllHelloPacketsNode(HelloPacketNode** helloPacketNode, size_t* size) {
+    routingTableList->setInUse();
+
+    size_t oneHop = oneHopSize();
+
+    *size = 0;
+
+    // If the routing table is empty return nullptr
+    if (oneHop == 0) {
+        routingTableList->releaseInUse();
+        return true;
+    }
+
+    *size = oneHop;
+    *helloPacketNode = new HelloPacketNode[oneHop];
+
+    if (routingTableList->moveToStart()) {
+        size_t position = 0;
+
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            if (node->networkNode.metric == 1) {
+                (*helloPacketNode)[position] = HelloPacketNode(node->networkNode.address, node->receivedSNR);
+                position++;
+            }
+
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+
+    return true;
 }
 
 LM_LinkedList<RouteNode>* RoutingTableService::routingTableList = new LM_LinkedList<RouteNode>();
