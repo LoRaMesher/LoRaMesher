@@ -432,19 +432,19 @@ public:
     uint32_t getSentControlBytes() { return sentControlBytes; }
 
     /**
-     * @brief Defines that the node is a gateway
+     * @brief Defines that the node is a gateway. WARNING: Changing the role frequently can cause problems in the network.
      *
      */
     static void addGatewayRole() { RoleService::setRole(ROLE_GATEWAY); };
 
     /**
-     * @brief Defines that the node is not a gateway
+     * @brief Defines that the node is not a gateway. WARNING: Changing the role frequently can cause problems in the network.
      *
      */
     static void removeGatewayRole() { RoleService::removeRole(ROLE_GATEWAY); };
 
     /**
-     * @brief Defines any type of Role
+     * @brief Defines any type of Role. WARNING: Changing the role frequently can cause problems in the network.
      *
      * @param role Role to be defined
      */

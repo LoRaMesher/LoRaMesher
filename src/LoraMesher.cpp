@@ -605,7 +605,7 @@ void LoraMesher::sendRoutingTablePacket() {
 
         // Create and send the packet
         RoutePacket* tx = PacketService::createRoutingPacket(
-            getLocalAddress(), &nodes[startIndex], nodesInThisPacket, RoleService::getRole()
+            getLocalAddress(), &nodes[startIndex], nodesInThisPacket, RoleService::getRole(), RoutingTableService::routingTableId
         );
 
         setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 1);
@@ -635,6 +635,8 @@ void LoraMesher::sendHelloPacket() {
         incSentHelloPackets();
 
         HelloPacketNode* node = nullptr;
+        size_t routingTableSize = RoutingTableService::routingTableSize();
+
         size_t numOfNodes = 0;
 
         bool correct = RoutingTableService::getAllHelloPacketsNode(&node, &numOfNodes);
@@ -659,7 +661,9 @@ void LoraMesher::sendHelloPacket() {
 
             // Create and send the packet
             HelloPacket* tx = PacketService::createHelloPacket(
-                getLocalAddress(), &node[startIndex], nodesInThisPacket
+                getLocalAddress(), &node[startIndex], nodesInThisPacket,
+                RoutingTableService::routingTableId, routingTableSize,
+                RoleService::getRole()
             );
 
             setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY);
@@ -716,7 +720,22 @@ void LoraMesher::processPackets() {
                 else if (PacketService::isHelloPacket(type)) {
                     incRecHelloPackets();
 
-                    updatedRoutingTable = RoutingTableService::processHelloPacket(reinterpret_cast<HelloPacket*>(rx->packet), rx->snr);
+                    HelloPacket* hello_p = reinterpret_cast<HelloPacket*>(rx->packet);
+
+                    Packet<uint8_t>* send_packet = nullptr;
+                    bool sendRoutingTable = RoutingTableService::processHelloPacket(reinterpret_cast<HelloPacket*>(rx->packet), rx->snr, &send_packet);
+                    PacketQueueService::deleteQueuePacketAndPacket(rx);
+
+                    if (send_packet != nullptr) {
+                        setPackedForSend(send_packet, DEFAULT_PRIORITY);
+                    }
+
+                    if (sendRoutingTable)
+                        sendRoutingTablePacket();
+                }
+                else if (PacketService::isRoutingTableRequestPacket(type)) {
+                    if (rx->packet->dst == getLocalAddress())
+                        sendRoutingTablePacket();
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
                 }
                 else if (PacketService::isDataPacket(type))

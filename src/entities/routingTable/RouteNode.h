@@ -70,6 +70,12 @@ public:
     bool hasReceivedHelloPacket = true;
 
     /**
+     * @brief Received Metric
+     *
+     */
+    uint8_t receivedMetric = 0;
+
+    /**
      * @brief Construct a new Route Node object
      *
      * @param address_ Address
@@ -81,9 +87,9 @@ public:
      */
     RouteNode(
         uint16_t address_, uint8_t metric_, uint8_t role_, uint16_t via_, uint8_t hop_count_,
-        uint8_t received_link_quality_, uint8_t transmitted_link_quality_):
+        uint8_t received_link_quality_, uint8_t transmitted_link_quality_, uint8_t receivedMetric_):
         networkNode(address_, metric_, role_, hop_count_), via(via_),
-        received_link_quality(received_link_quality_), transmitted_link_quality(transmitted_link_quality_) {
+        received_link_quality(received_link_quality_), transmitted_link_quality(transmitted_link_quality_), receivedMetric(receivedMetric_) {
     };
 };
 

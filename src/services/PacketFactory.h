@@ -41,13 +41,14 @@ public:
 
         T* p = static_cast<T*>(pvPortMalloc(packetSize));
 
-        if (p) {
+        if (!p) {
+            ESP_LOGE(LM_TAG, "Packet not allocated");
+            return nullptr;
+        }
+
+        if (payloadSize > 0) {
             //Copy the payload into the packet
             memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
-        }
-        else {
-            ESP_LOGE(LM_TAG, "packet not allocated");
-            return nullptr;
         }
 
         ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);

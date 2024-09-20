@@ -13,6 +13,8 @@
 
 #include "services/WiFiService.h"
 #include "services/RoleService.h"
+#include "services/PacketService.h"
+#include <entities/packets/Packet.h>
 
 /**
  * @brief Routing Table Service
@@ -26,6 +28,12 @@ public:
 	 *
 	 */
 	static LM_LinkedList<RouteNode>* routingTableList;
+
+	/**
+	 * @brief Routing table Id, used to identify which routing table is being used and if it is updated
+	 *
+	 */
+	static uint8_t routingTableId;
 
 	/**
 	 * @brief Prints the actual routing table in the log
@@ -108,9 +116,10 @@ public:
 	 *
 	 * @param p Hello Packet
 	 * @param receivedSNR Received SNR
-	 * @return true If the routing table has been updated
+	 * @param out_send_packet A pointer to the packet to be sent if necessary
+	 * @return true If the route has been updated
 	 */
-	static bool processHelloPacket(HelloPacket* p, int8_t receivedSNR);
+	static bool processHelloPacket(HelloPacket* p, int8_t receivedSNR, Packet<uint8_t>** out_send_packet);
 
 	/**
 	 * @brief Reset the SNR from the Route Node received
@@ -221,9 +230,18 @@ private:
 	 *
 	 * @param rNode Route Node
 	 * @param hops Hops
+	 * @param rlq Received Link Quality
+	 * @param tlq Transmitted Link Quality
 	 * @return true If the metric has been updated
 	 */
-	static bool updateMetric(RouteNode* rNode, uint8_t hops);
+	static bool updateMetric(RouteNode* rNode, uint8_t hops, uint8_t rlq, uint8_t tlq);
+
+	/**
+	 * @brief Given a node, update the metric of all the nodes that are the next hop of the rNode
+	 *
+	 * @param rNode Route Node
+	 */
+	static void updateMetricOfNextHop(RouteNode* rNode);
 };
 
 #endif

@@ -9,6 +9,24 @@ class HelloPacket final: public PacketHeader {
 public:
 
     /**
+     * @brief Routing Table ID used to identify which routing table is being used and if it is updated
+     *
+     */
+    uint8_t routingTableId = 0;
+
+    /**
+     * @brief Routing Table Size
+     *
+     */
+    uint8_t routingTableSize = 0;
+
+    /**
+     * @brief Role of the Node
+     *
+     */
+    uint8_t role = 0;
+
+    /**
      * @brief Hello Packet Nodes
      *
      */

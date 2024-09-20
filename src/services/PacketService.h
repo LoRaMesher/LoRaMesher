@@ -13,6 +13,7 @@
 #include "entities/packets/AppPacket.h"
 #include "entities/packets/RoutePacket.h"
 #include "entities/packets/HelloPacket.h"
+#include "entities/packets/RTRequestPacket.h"
 
 class PacketService {
 public:
@@ -107,9 +108,10 @@ public:
      * @param nodes list of NetworkNodes
      * @param numOfNodes Number of nodes
      * @param nodeRole Role of the node
+     * @param rtId Routing Table ID
      * @return RoutePacket*
      */
-    static RoutePacket* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole);
+    static RoutePacket* createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole, uint8_t rtId);
 
     /**
      * @brief Create a Application Packet
@@ -121,6 +123,15 @@ public:
      * @return AppPacket<uint8_t>*
      */
     static AppPacket<uint8_t>* createAppPacket(uint16_t dst, uint16_t src, uint8_t* payload, uint32_t payloadSize);
+
+    /**
+     * @brief Create a Routing Table Request Packet object
+     *
+     * @param dst destination address
+     * @param src source address, should be local address
+     * @return RTRequestPacket*
+     */
+    static RTRequestPacket* createRoutingTableRequestPacket(uint16_t dst, uint16_t src);
 
     /**
      * @brief given a DataPacket it will be converted to a AppPacket
@@ -223,13 +234,22 @@ public:
     static bool isControlPacket(uint8_t type);
 
     /**
-     * @brief Given a type returns if is a hello packet
+     * @brief Given a type returns if is a routing table packet
      *
      * @param type type of the packet
      * @return true True if needed
      * @return false If not
      */
     static bool isRoutingTablePacket(uint8_t type);
+
+    /**
+     * @brief Given a type returns if is a routing table request packet
+     *
+     * @param type type of the packet
+     * @return true
+     * @return false
+     */
+    static bool isRoutingTableRequestPacket(uint8_t type);
 
     /**
      * @brief Given a type returns if is a NeedAck packet
@@ -308,9 +328,13 @@ public:
      * @param localAddress local address of the node
      * @param nodes list of HelloPacketNode
      * @param numOfNodes Number of nodes
+     * @param routingTableId Routing Table ID
+     * @param routingTableSize Routing Table Size
+     * @param role Role of the node
      * @return HelloPacket*
      */
-    static HelloPacket* createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes);
+    static HelloPacket* createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes,
+        uint8_t routingTableId, uint8_t routingTableSize, uint8_t role);
 
 };
 

@@ -16,9 +16,15 @@ Inspired by the following article: [BMX6](https://ieeexplore.ieee.org/document/7
 
 - LM_MAX_METRIC is the maximum metric value that the packet can have. The default value is 255. Which will be the maximum size of an uint8_t. This value CANNOT be changed since the metric is an uint8_t.
 
+#### New types of packets
+
+- Hello Packet: This packet will be used to transmit the link quality to the neighbors. Additionally, the hello packet will send the received link quality (ri) for the neighbors to update their transmitted link quality (ti). A parameter has been added to the hello packet which is the routing table sequence number. This number will be incremented every time the routing table is updated. This way the nodes will know if the routing table is newer or not.
+
+- Routing table request packet: This packet will be used to request the routing table from a specific neighbor.
+
 #### Implementation of the new routing table protocol.
 
-- Now the hello packets will be send periodically to the neighbors. This packet will be as a keep alive message and to transmit to their neighbors their quality link. Additionally, the hello packet will send ri (received link quality), for the neighbors to update their ti (transmit link quality).
+- Now the hello packets will be send periodically to the neighbors. This packet will be as a keep alive message and to transmit to their neighbors their quality link. Additionally, the hello packet will send ri (received link quality), for the neighbors to update their ti (transmit link quality). A new parameter has been added to the hello packet which is the routing table sequence number. This number will be incremented every time the routing table is updated. This way the nodes will know if the routing table is newer or not.
 
 - The routing table will be send only when a new node is added to the routing table. And if received a routing table from a neighbor, the routing table will be updated only if the received routing table is newer than the current routing table. A new field has been added to the routing table which is the sequence number. This number will be incremented every time the routing table is updated. This way the nodes will know if the routing table is newer or not.
 
@@ -50,7 +56,7 @@ The calculated metric will be calculated as follows:
 - The routing table will have the following parameters:
     - Destination (s)
     - Metric (s)
-    - Role (s)
+    - Role (s) 
     - Hop Count (s)
     - Next Hop / Via (n)
     - Received Link Quality (n) [Only for the neighbors]
@@ -58,3 +64,20 @@ The calculated metric will be calculated as follows:
     - Timeout (n)
 
 - Whenever a message from a node is received, the routing table timeout will be updated. If the timeout is reached, the node will be removed from the routing table.
+
+- RoutingTableId: Only when I update the routing table, I will increment the routing table id. If I receive a routing table id from a neighbor that is newer than my routing table id and I try to update the routing table and no entry is updated, I will not update the routing table id. Send the routing table.
+
+
+3 nodes starts at the same time:
+1st node send a HelloPacket to 2nd and 3rd. 2nd and 3rd receive, update and send the routing table. They have updated their routingtableid and size which are the same for both. If both routing table packets are lost, both will stay in the same "state". Only when the 1st node receive the updated routingTableId, it will ask for a routingTableUpdate. Routing table from 2nd or 3rd will be send. 1st node will receive the routing table, update their routing table size and send the routing table to the neighbors. RoutingTableOnDemand.
+
+##### When the routing table id is updated
+- When a new node is added to the routing table. +1
+- When a node is removed from the routing table. +1
+- When a node is updated by me. (Metric, role) +1 or +2
+
+When a node is updated, immediately send a HelloPacket with the new routing table id and the new routing table size.
+When received a Routing Table packet, check the increments of the updates. If the increments are the same, the routing table is updated. If the increments are different, ask for a routing table update.
+
+
+- I could calculate when the next helloPacket would be received, send to the user and set a deepsleep for that time.

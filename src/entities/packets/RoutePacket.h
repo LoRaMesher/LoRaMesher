@@ -15,6 +15,11 @@ public:
     uint8_t nodeRole = 0;
 
     /**
+     * @brief Routing Table Id
+     */
+    uint8_t routingTableId = 0;
+
+    /**
      * @brief Network nodes
      *
      */

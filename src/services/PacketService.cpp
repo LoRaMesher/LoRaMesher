@@ -15,6 +15,16 @@ Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
 
 }
 
+RTRequestPacket* PacketService::createRoutingTableRequestPacket(uint16_t dst, uint16_t src) {
+    RTRequestPacket* rtRequestPacket = PacketFactory::createPacket<RTRequestPacket>(0, 0);
+    rtRequestPacket->dst = dst;
+    rtRequestPacket->src = src;
+    rtRequestPacket->type = ROUTING_REQUEST_P;
+    rtRequestPacket->packetSize = sizeof(RTRequestPacket);
+
+    return rtRequestPacket;
+}
+
 AppPacket<uint8_t>* PacketService::convertPacket(DataPacket* p) {
     uint32_t payloadSize = p->packetSize - sizeof(DataPacket);
 
@@ -52,39 +62,44 @@ bool PacketService::isOnlyDataPacket(uint8_t type) {
 }
 
 bool PacketService::isControlPacket(uint8_t type) {
-    return !(isRoutingTablePacket(type) || isOnlyDataPacket(type) || isHelloPacket(type));
+    return !(isRoutingTablePacket(type) || isOnlyDataPacket(type) || isHelloPacket(type) || isRoutingTableRequestPacket(type));
 }
 
 bool PacketService::isRoutingTablePacket(uint8_t type) {
-    return (type & ROUTING_P) == ROUTING_P;
+    return type == ROUTING_P;
+}
+
+bool PacketService::isRoutingTableRequestPacket(uint8_t type) {
+    return type == ROUTING_REQUEST_P;
 }
 
 bool PacketService::isHelloPacket(uint8_t type) {
-    return (type & HELLO_P) == HELLO_P;
+    return type == HELLO_P;
 }
 
 bool PacketService::isNeedAckPacket(uint8_t type) {
-    return (type & NEED_ACK_P) == NEED_ACK_P;
+    return type == NEED_ACK_P;
 }
 
 bool PacketService::isAckPacket(uint8_t type) {
-    return (type & ACK_P) == ACK_P;
+    return type == ACK_P;
 }
 
 bool PacketService::isLostPacket(uint8_t type) {
-    return (type & LOST_P) == LOST_P;
+    return type == LOST_P;
 }
 
 bool PacketService::isSyncPacket(uint8_t type) {
-    return (type & SYNC_P) == SYNC_P;
+    return type == SYNC_P;
 }
 
 bool PacketService::isXLPacket(uint8_t type) {
-    return (type & XL_DATA_P) == XL_DATA_P;
+    return type == XL_DATA_P;
 }
 
 bool PacketService::isDataControlPacket(uint8_t type) {
-    return (isRoutingTablePacket(type) || isAckPacket(type) || isLostPacket(type) || isLostPacket(type) || isHelloPacket(type));
+    return (isRoutingTablePacket(type) || isAckPacket(type) || isLostPacket(type) ||
+        isLostPacket(type) || isHelloPacket(type) || isSyncPacket(type) || isRoutingTableRequestPacket(type));
 }
 
 uint8_t PacketService::getHeaderLength(uint8_t type) {
@@ -97,7 +112,7 @@ uint8_t PacketService::getHeaderLength(uint8_t type) {
     return 0;
 }
 
-RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole) {
+RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNode* nodes, size_t numOfNodes, uint8_t nodeRole, uint8_t rtId) {
     size_t routingSizeInBytes = numOfNodes * sizeof(NetworkNode);
 
     RoutePacket* routePacket = PacketFactory::createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
@@ -106,11 +121,13 @@ RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNo
     routePacket->type = ROUTING_P;
     routePacket->packetSize = routingSizeInBytes + sizeof(RoutePacket);
     routePacket->nodeRole = nodeRole;
+    routePacket->routingTableId = rtId;
 
     return routePacket;
 }
 
-HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes) {
+HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes,
+    uint8_t routingTableId, uint8_t routingTableSize, uint8_t role) {
     size_t helloSizeInBytes = numOfNodes * sizeof(HelloPacketNode);
 
     HelloPacket* helloPacket = PacketFactory::createPacket<HelloPacket>(reinterpret_cast<uint8_t*>(nodes), helloSizeInBytes);
@@ -118,6 +135,9 @@ HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacket
     helloPacket->src = localAddress;
     helloPacket->type = HELLO_P;
     helloPacket->packetSize = helloSizeInBytes + sizeof(HelloPacket);
+    helloPacket->routingTableId = routingTableId;
+    helloPacket->routingTableSize = routingTableSize;
+    helloPacket->role = role;
 
     return helloPacket;
 }
