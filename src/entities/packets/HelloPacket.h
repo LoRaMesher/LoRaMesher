@@ -21,12 +21,6 @@ public:
     uint8_t routingTableSize = 0;
 
     /**
-     * @brief Role of the Node
-     *
-     */
-    uint8_t role = 0;
-
-    /**
      * @brief Hello Packet Nodes
      *
      */

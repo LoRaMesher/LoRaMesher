@@ -108,8 +108,9 @@ public:
 	  *
 	  * @param p Route Packet
 	  * @param receivedSNR Received SNR
+	  * @return true If the routing table has been updated
 	  */
-	static void processRoute(RoutePacket* p, int8_t receivedSNR);
+	static bool processRoute(RoutePacket* p, int8_t receivedSNR);
 
 	/**
 	 * @brief Process the Hello Packet
@@ -167,8 +168,10 @@ private:
 	 *
 	 * @param via via address
 	 * @param node NetworkNode
+	 * @param receivedSNR Received SNR
+	 * @return true If the route has been updated
 	 */
-	static void processRoute(uint16_t via, NetworkNode* node);
+	static bool processRoute(uint16_t via, NetworkNode* node, int8_t receivedSNR);
 
 	/**
 	 * @brief process the network node, adds the node in the routing table if can
@@ -197,9 +200,9 @@ private:
 	  * @brief Add node to the routing table
 	  *
 	  * @param node Network node that includes the address and the metric
-	  * @param via Address to next hop to reach the network node address
+	  * @param viaNode Route Node to next hop to reach the network node address
 	  */
-	static void addNodeToRoutingTable(NetworkNode* node, uint16_t via);
+	static void addNodeToRoutingTable(NetworkNode* node, RouteNode* viaNode);
 
 	/**
 	 * @brief Get the Maximum Metric Of Routing Table. To prevent that some new entries are not added to the routing table.
@@ -226,6 +229,18 @@ private:
 	static uint8_t get_transmitted_link_quality(HelloPacket* helloPacketNode);
 
 	/**
+	 * @brief Update the Node
+	 * 
+	 * @param rNode Node to be updated
+	 * @param hops Hops
+	 * @param rlq Received Link Quality, normally from the via node or the node that sent the packet
+	 * @param tlq Transmitted Link Quality, normally from the via node or the node that sent the packet
+	 * @return true If the node has been updated
+	 * @return false If the node has not been updated
+	 */
+	static bool updateNode(RouteNode* rNode, uint8_t hops, uint8_t rlq, uint8_t tlq);
+
+	/**
 	 * @brief Update the metric of the Route Node
 	 *
 	 * @param rNode Route Node
@@ -235,6 +250,17 @@ private:
 	 * @return true If the metric has been updated
 	 */
 	static bool updateMetric(RouteNode* rNode, uint8_t hops, uint8_t rlq, uint8_t tlq);
+
+	/**
+	 * @brief Calculate the metric
+	 *
+	 * @param previous_metric Previous Metric
+	 * @param hops Hops
+	 * @param rlq Received Link Quality
+	 * @param tlq Transmitted Link Quality
+	 * @return uint8_t Metric
+	 */
+	static uint8_t calculateMetric(uint8_t previous_metric, uint8_t hops, uint8_t rlq, uint8_t tlq);
 
 	/**
 	 * @brief Given a node, update the metric of all the nodes that are the next hop of the rNode

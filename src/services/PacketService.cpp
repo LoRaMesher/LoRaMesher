@@ -127,7 +127,7 @@ RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNo
 }
 
 HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes,
-    uint8_t routingTableId, uint8_t routingTableSize, uint8_t role) {
+    uint8_t routingTableId, uint8_t routingTableSize) {
     size_t helloSizeInBytes = numOfNodes * sizeof(HelloPacketNode);
 
     HelloPacket* helloPacket = PacketFactory::createPacket<HelloPacket>(reinterpret_cast<uint8_t*>(nodes), helloSizeInBytes);
@@ -137,12 +137,9 @@ HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacket
     helloPacket->packetSize = helloSizeInBytes + sizeof(HelloPacket);
     helloPacket->routingTableId = routingTableId;
     helloPacket->routingTableSize = routingTableSize;
-    helloPacket->role = role;
 
     return helloPacket;
 }
-
-
 
 DataPacket* PacketService::dataPacket(Packet<uint8_t>* p) {
     return reinterpret_cast<DataPacket*>(p);

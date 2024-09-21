@@ -300,7 +300,7 @@ void LoraMesher::initializeSchedulers() {
         ESP_LOGE(LM_TAG, "Sending Task creation gave error: %d", res);
     }
     res = xTaskCreate(
-        [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacket(); },
+        [](void* o) { static_cast<LoraMesher*>(o)->sendHelloPacketRoutine(); },
         "Hello routine",
         4096,
         this,
@@ -583,7 +583,31 @@ void LoraMesher::sendPackets() {
     }
 }
 
+bool LoraMesher::isRoutingTableInQueueSend() {
+    bool found = false;
+
+    ToSendPackets->setInUse();
+
+    if (ToSendPackets->moveToStart()) {
+        do {
+            QueuePacket<Packet<uint8_t>>* qp = ToSendPackets->getCurrent();
+
+            if (PacketService::isRoutingTablePacket(qp->packet->type)) {
+                found = true;
+                break;
+            }
+
+        } while (ToSendPackets->next());
+    }
+
+    ToSendPackets->releaseInUse();
+    return found;
+}
+
 void LoraMesher::sendRoutingTablePacket() {
+    // Remove the old routing packets
+    removePacketsFromSendQueue(ROUTING_P);
+
     size_t maxNodesPerPacket = (PacketFactory::getMaxPacketSize() - sizeof(RoutePacket)) / sizeof(NetworkNode);
 
     NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
@@ -616,14 +640,10 @@ void LoraMesher::sendRoutingTablePacket() {
         delete[] nodes;
 }
 
-void LoraMesher::sendHelloPacket() {
+void LoraMesher::sendHelloPacketRoutine() {
     ESP_LOGV(LM_TAG, "Send Hello Packet routine started");
 
     vTaskSuspend(NULL);
-
-    size_t maxNodesPerPacket = (PacketFactory::getMaxPacketSize() - sizeof(HelloPacket)) / sizeof(HelloPacketNode);
-
-    ESP_LOGV(LM_TAG, "Max routing nodes per packet: %d", maxNodesPerPacket);
 
     //Wait an initial 2 second
     vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -632,45 +652,51 @@ void LoraMesher::sendHelloPacket() {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task hello packet: %d", uxTaskGetStackHighWaterMark(NULL));
         ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
-        incSentHelloPackets();
-
-        HelloPacketNode* node = nullptr;
-        size_t routingTableSize = RoutingTableService::routingTableSize();
-
-        size_t numOfNodes = 0;
-
-        bool correct = RoutingTableService::getAllHelloPacketsNode(&node, &numOfNodes);
-        if (!correct) {
-            ESP_LOGE(LM_TAG, "Error getting all hello packets node");
-            return;
-        }
-
-        size_t numPackets = (numOfNodes + maxNodesPerPacket - 1) / maxNodesPerPacket;
-        numPackets = (numPackets == 0) ? 1 : numPackets;
-
-        for (size_t i = 0; i < numPackets; ++i) {
-            ESP_LOGV(LM_TAG, "Creating Routing Packet");
-
-            size_t startIndex = i * maxNodesPerPacket;
-            size_t endIndex = startIndex + maxNodesPerPacket;
-            if (endIndex > numOfNodes) {
-                endIndex = numOfNodes;
-            }
-
-            size_t nodesInThisPacket = endIndex - startIndex;
-
-            // Create and send the packet
-            HelloPacket* tx = PacketService::createHelloPacket(
-                getLocalAddress(), &node[startIndex], nodesInThisPacket,
-                RoutingTableService::routingTableId, routingTableSize,
-                RoleService::getRole()
-            );
-
-            setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY);
-        }
+        sendHelloPacket();
 
         // Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
+    }
+}
+
+void LoraMesher::sendHelloPacket() {
+    // Remove the old hello packets
+    removePacketsFromSendQueue(HELLO_P);
+
+    size_t maxNodesPerPacket = (PacketFactory::getMaxPacketSize() - sizeof(HelloPacket)) / sizeof(HelloPacketNode);
+
+    HelloPacketNode* node = nullptr;
+    size_t routingTableSize = RoutingTableService::routingTableSize();
+
+    size_t numOfNodes = 0;
+
+    bool correct = RoutingTableService::getAllHelloPacketsNode(&node, &numOfNodes);
+    if (!correct) {
+        ESP_LOGE(LM_TAG, "Error getting all hello packets node");
+        return;
+    }
+
+    size_t numPackets = (numOfNodes + maxNodesPerPacket - 1) / maxNodesPerPacket;
+    numPackets = (numPackets == 0) ? 1 : numPackets;
+
+    for (size_t i = 0; i < numPackets; ++i) {
+        ESP_LOGV(LM_TAG, "Creating Hello Packet with RTId %d and RTSize %d", RoutingTableService::routingTableId, routingTableSize);
+
+        size_t startIndex = i * maxNodesPerPacket;
+        size_t endIndex = startIndex + maxNodesPerPacket;
+        if (endIndex > numOfNodes) {
+            endIndex = numOfNodes;
+        }
+
+        size_t nodesInThisPacket = endIndex - startIndex;
+
+        // Create and send the packet
+        HelloPacket* tx = PacketService::createHelloPacket(
+            getLocalAddress(), &node[startIndex], nodesInThisPacket,
+            RoutingTableService::routingTableId, routingTableSize
+        );
+
+        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY);
     }
 }
 
@@ -709,13 +735,16 @@ void LoraMesher::processPackets() {
                 incReceivedPayloadBytes(PacketService::getPacketPayloadLengthWithoutControl(rx->packet));
                 incReceivedControlBytes(PacketService::getControlLength(rx->packet));
 
-                bool updatedRoutingTable = false;
 
                 if (PacketService::isRoutingTablePacket(type)) {
                     incReceivedRoutingTablePackets();
 
-                    RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet), rx->snr);
+                    bool needSendHelloPacket = RoutingTableService::processRoute(reinterpret_cast<RoutePacket*>(rx->packet), rx->snr);
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
+
+                    if (needSendHelloPacket)
+                        sendHelloPacket();
+
                 }
                 else if (PacketService::isHelloPacket(type)) {
                     incRecHelloPackets();
@@ -723,17 +752,18 @@ void LoraMesher::processPackets() {
                     HelloPacket* hello_p = reinterpret_cast<HelloPacket*>(rx->packet);
 
                     Packet<uint8_t>* send_packet = nullptr;
-                    bool sendRoutingTable = RoutingTableService::processHelloPacket(reinterpret_cast<HelloPacket*>(rx->packet), rx->snr, &send_packet);
+                    bool needSendHelloPacket = RoutingTableService::processHelloPacket(reinterpret_cast<HelloPacket*>(rx->packet), rx->snr, &send_packet);
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
 
                     if (send_packet != nullptr) {
                         setPackedForSend(send_packet, DEFAULT_PRIORITY);
                     }
-
-                    if (sendRoutingTable)
-                        sendRoutingTablePacket();
+                    else if (needSendHelloPacket) {
+                        sendHelloPacket();
+                    }
                 }
                 else if (PacketService::isRoutingTableRequestPacket(type)) {
+                    ESP_LOGV(LM_TAG, "Received Routing Table Request Packet");
                     if (rx->packet->dst == getLocalAddress())
                         sendRoutingTablePacket();
                     PacketQueueService::deleteQueuePacketAndPacket(rx);
@@ -1626,6 +1656,30 @@ uint8_t LoraMesher::getSequenceId() {
     sequence_id++;
 
     return seqId;
+}
+
+void LoraMesher::rolesUpdated() {
+    RoutingTableService::routingTableId++;
+
+    sendHelloPacket();
+}
+
+void LoraMesher::removePacketsFromSendQueue(uint8_t type) {
+    ToSendPackets->setInUse();
+    if (ToSendPackets->moveToStart()) {
+        do {
+            QueuePacket<Packet<uint8_t>>* current = ToSendPackets->getCurrent();
+            Packet<uint8_t>* packet = current->packet;
+            if (packet->type == type) {
+                ESP_LOGV(LM_TAG, "Deleting packet from the send queue of type %d", type);
+                PacketQueueService::deleteQueuePacketAndPacket(current);
+                ToSendPackets->DeleteCurrent();
+                if (ToSendPackets->getCurrent() == nullptr)
+                    break;
+            }
+        } while (ToSendPackets->next());
+    }
+    ToSendPackets->releaseInUse();
 }
 
 /**

@@ -435,20 +435,27 @@ public:
      * @brief Defines that the node is a gateway. WARNING: Changing the role frequently can cause problems in the network.
      *
      */
-    static void addGatewayRole() { RoleService::setRole(ROLE_GATEWAY); };
+    void addGatewayRole() { RoleService::setRole(ROLE_GATEWAY); rolesUpdated(); };
 
     /**
      * @brief Defines that the node is not a gateway. WARNING: Changing the role frequently can cause problems in the network.
      *
      */
-    static void removeGatewayRole() { RoleService::removeRole(ROLE_GATEWAY); };
+    void removeGatewayRole() { RoleService::removeRole(ROLE_GATEWAY); rolesUpdated(); };
 
     /**
      * @brief Defines any type of Role. WARNING: Changing the role frequently can cause problems in the network.
      *
      * @param role Role to be defined
      */
-    static void addRole(uint8_t role) { RoleService::setRole(role); };
+    void addRole(uint8_t role) { RoleService::setRole(role); rolesUpdated(); };
+
+    /**
+     * @brief Remove a Role. WARNING: Changing the role frequently can cause problems in the network.
+     *
+     * @param role Role to be removed
+     */
+    void removeRole(uint8_t role) { RoleService::removeRole(role); rolesUpdated(); };
 
     /**
      * @brief Get the Nearest Gateway object
@@ -577,6 +584,8 @@ private:
     void initializeLoRa();
 
     void initializeSchedulers();
+
+    void sendHelloPacketRoutine();
 
     void sendHelloPacket();
 
@@ -1024,6 +1033,17 @@ private:
      * @param packet Packet to be recorded
      */
     void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
+
+    /**
+     * @brief Returns true if a routing table packet is in the queue to be send
+     *
+     * @return true if a routing table packet is in the queue to be send
+     */
+    bool isRoutingTableInQueueSend();
+
+    void rolesUpdated();
+
+    void removePacketsFromSendQueue(uint8_t type);
 
 #ifdef LM_TESTING
     /**

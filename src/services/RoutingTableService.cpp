@@ -107,13 +107,7 @@ void RoutingTableService::updateMetricOfNextHop(RouteNode* rNode) {
     routingTableList->releaseInUse();
 }
 
-bool RoutingTableService::updateMetric(RouteNode* rNode, uint8_t hops, uint8_t rlq, uint8_t tlq) {
-    bool updated = false;
-    if (rNode->networkNode.hop_count != hops) {
-        rNode->networkNode.hop_count = hops;
-        updated = true;
-    }
-
+uint8_t RoutingTableService::calculateMetric(uint8_t previous_metric, uint8_t hops, uint8_t rlq, uint8_t tlq) {
     uint8_t factor_hops = LM_REDUCED_FACTOR_HOP_COUNT * hops * LM_MAX_METRIC;
 
     printf("Factor hops: %d\n", factor_hops);
@@ -125,7 +119,7 @@ bool RoutingTableService::updateMetric(RouteNode* rNode, uint8_t hops, uint8_t r
 
     printf("Quality link: %d\n", quality_link);
 
-    uint8_t factor_link_quality = LM_MAX_METRIC / std::sqrt((LM_MAX_METRIC / rNode->receivedMetric) ^ 2 + (LM_MAX_METRIC / quality_link) ^ 2);
+    uint8_t factor_link_quality = LM_MAX_METRIC / std::sqrt((LM_MAX_METRIC / previous_metric) ^ 2 + (LM_MAX_METRIC / quality_link) ^ 2);
 
     printf("Factor link quality: %d\n", factor_link_quality);
 
@@ -134,10 +128,30 @@ bool RoutingTableService::updateMetric(RouteNode* rNode, uint8_t hops, uint8_t r
 
     printf("New metric: %d\n", new_metric);
 
+    return new_metric;
+}
+
+bool RoutingTableService::updateNode(RouteNode* rNode, uint8_t hops, uint8_t rlq, uint8_t tlq) {
+    resetTimeoutRoutingNode(rNode);
+
+    bool updated = updateMetric(rNode, hops, rlq, tlq);
+    return updated;
+}
+
+bool RoutingTableService::updateMetric(RouteNode* rNode, uint8_t hops, uint8_t rlq, uint8_t tlq) {
+    bool updated = false;
+    if (rNode->networkNode.hop_count != hops) {
+        rNode->networkNode.hop_count = hops;
+        updated = true;
+    }
+
+    uint8_t new_metric = calculateMetric(rNode->receivedMetric, hops, rlq, tlq);
+
     // TODO: Use some kind of hysteresis to avoid oscillations?
     if (rNode->networkNode.metric != new_metric) {
         rNode->networkNode.metric = new_metric;
         updated = true;
+        printf("New metric: %d\n", new_metric);
     }
 
     return updated;
@@ -145,20 +159,10 @@ bool RoutingTableService::updateMetric(RouteNode* rNode, uint8_t hops, uint8_t r
 }
 
 bool RoutingTableService::processHelloPacket(HelloPacket* p, int8_t receivedSNR, Packet<uint8_t>** out_send_packet) {
-    ESP_LOGI(LM_TAG, "Hello packet from %X", p->src);
+    ESP_LOGI(LM_TAG, "Hello packet from %X with RTId %d and size %d", p->src, p->routingTableId, p->routingTableSize);
 
     if (p->routingTableId < routingTableId) {
-        ESP_LOGI(LM_TAG, "Hello packet from %X with old routing table id %d", p->src, p->routingTableId);
-        return false;
-    }
-
-    if (p->routingTableId > routingTableId || p->routingTableSize != routingTableSize()) {
-        ESP_LOGI(LM_TAG, "Hello packet from %X with different routing table id %d", p->src, p->routingTableId);
-        // Ask for the updated routing table
-        RTRequestPacket* rtRequestPacket = PacketService::createRoutingTableRequestPacket(p->src, WiFiService::getLocalAddress());
-
-        *out_send_packet = reinterpret_cast<Packet<uint8_t>*>(rtRequestPacket);
-
+        ESP_LOGI(LM_TAG, "Hello packet from %X with old RTId %d", p->src, p->routingTableId);
         return false;
     }
 
@@ -176,13 +180,14 @@ bool RoutingTableService::processHelloPacket(HelloPacket* p, int8_t receivedSNR,
     RouteNode* rNode = findNode(p->src, block_routing_table);
     if (rNode == nullptr) {
         rNode = new RouteNode(p->src, factor_hops, ROLE_DEFAULT, p->src, 1, LM_MAX_METRIC, transmitted_link_quality, LM_MAX_METRIC);
-        resetTimeoutRoutingNode(rNode);
+        updateNode(rNode, 1, rNode->received_link_quality, transmitted_link_quality);
+        rNode->hasReceivedHelloPacket = true;
 
         // Add to the routing table
         routingTableList->Append(rNode);
         routingTableList->releaseInUse();
 
-        routingTableId = p->routingTableId + 1;
+        routingTableId++;
 
         updated = true;
     }
@@ -190,46 +195,61 @@ bool RoutingTableService::processHelloPacket(HelloPacket* p, int8_t receivedSNR,
         rNode->transmitted_link_quality = transmitted_link_quality;
         rNode->hasReceivedHelloPacket = true;
 
-        bool updated = updateMetric(rNode, 1, rNode->received_link_quality, transmitted_link_quality);
+        bool updated = updateNode(rNode, 1, rNode->received_link_quality, transmitted_link_quality);
 
-        resetTimeoutRoutingNode(rNode);
         rNode->receivedSNR = receivedSNR;
 
         routingTableList->releaseInUse();
 
         if (updated) {
-            updateMetricOfNextHop(rNode);
+            // updateMetricOfNextHop(rNode);
+
+            routingTableId++;
         }
 
         printRoutingTable();
     }
 
+
+    if (p->routingTableId > routingTableId) {
+        ESP_LOGI(LM_TAG, "Hello packet from %X with different RTId %d", p->src, p->routingTableId);
+        // Ask for the updated routing table
+        RTRequestPacket* rtRequestPacket = PacketService::createRoutingTableRequestPacket(p->src, WiFiService::getLocalAddress());
+
+        *out_send_packet = reinterpret_cast<Packet<uint8_t>*>(rtRequestPacket);
+    }
+
     return updated;
 }
 
-void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
-    // TODO: Implement
+bool RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     if ((p->packetSize - sizeof(RoutePacket)) % sizeof(NetworkNode) != 0) {
         ESP_LOGE(LM_TAG, "Invalid route packet size");
-        return;
+        return false;
     }
 
+    bool rt_updated = false;
+
+    routingTableList->setInUse();
+
     size_t numNodes = p->getNetworkNodesSize();
-    ESP_LOGI(LM_TAG, "Route packet from %X with size %d", p->src, numNodes);
+    ESP_LOGI(LM_TAG, "Route packet from %X with RTId %d size %d", p->src, p->routingTableId, numNodes);
 
-    // NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
-    // processRoute(p->src, receivedNode);
-    // delete receivedNode;
+    NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole, 1);
+    rt_updated = processRoute(p->src, receivedNode, receivedSNR);
+    delete receivedNode;
 
-    // resetReceiveSNRRoutePacket(p->src, receivedSNR);
+    for (size_t i = 0; i < numNodes; i++) {
+        NetworkNode* node = &p->networkNodes[i];
+        node->hop_count++;
+        rt_updated = rt_updated || processRoute(p->src, node, receivedSNR);
+    }
 
-    // for (size_t i = 0; i < numNodes; i++) {
-    //     NetworkNode* node = &p->networkNodes[i];
-    //     node->metric++;
-    //     processRoute(p->src, node);
-    // }
+    routingTableList->releaseInUse();
 
-    // printRoutingTable();
+    printRoutingTable();
+
+    return rt_updated;
 }
 
 void RoutingTableService::resetReceiveSNRRoutePacket(uint16_t src, int8_t receivedSNR) {
@@ -242,62 +262,79 @@ void RoutingTableService::resetReceiveSNRRoutePacket(uint16_t src, int8_t receiv
     rNode->receivedSNR = receivedSNR;
 }
 
-void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
-    if (node->address != WiFiService::getLocalAddress()) {
+bool RoutingTableService::processRoute(uint16_t via, NetworkNode* node, int8_t receivedSNR) {
+    if (node->address == WiFiService::getLocalAddress())
+        return false;
 
-        RouteNode* rNode = findNode(node->address);
-        //If nullptr the node is not inside the routing table, then add it
-        if (rNode == nullptr) {
-            addNodeToRoutingTable(node, via);
-            return;
+    bool block_routing_table = false;
+    RouteNode* viaNode = findNode(via, block_routing_table);
+    if (viaNode == nullptr) {
+        ESP_LOGW(LM_TAG, "Via node not found in the routing table");
+        return false;
+    }
+
+    RouteNode* rNode = findNode(node->address, block_routing_table);
+    //If nullptr the node is not inside the routing table, then add it
+    if (rNode == nullptr) {
+        addNodeToRoutingTable(node, viaNode);
+        routingTableId++;
+        return true;
+    }
+
+    resetTimeoutRoutingNode(rNode);
+
+    bool updated = false;
+
+    // If the node is the same as the via, then the route is the same
+    if (rNode->via == via) {
+        updated = updateMetric(rNode, node->hop_count, viaNode->received_link_quality, viaNode->transmitted_link_quality);
+    }
+    else {
+        // If the node is not the same as the via, then check if the new route is better
+        uint8_t new_metric = calculateMetric(rNode->receivedMetric, node->hop_count, viaNode->received_link_quality, viaNode->transmitted_link_quality);
+
+        if (new_metric <= rNode->networkNode.metric) {
+            printf("New metric is not better for %X via %X metric %d\n", node->address, via, node->metric);
+            updated = false;
         }
-
-        //Update the metric and restart timeout if needed
-        if (node->metric < rNode->networkNode.metric) {
-            rNode->networkNode.metric = node->metric;
+        else {
+            rNode->networkNode.metric = new_metric;
+            rNode->networkNode.hop_count = node->hop_count;
             rNode->via = via;
-            resetTimeoutRoutingNode(rNode);
             ESP_LOGI(LM_TAG, "Found better route for %X via %X metric %d", node->address, via, node->metric);
-        }
-        else if (node->metric == rNode->networkNode.metric) {
-            //Reset the timeout, only when the metric is the same as the actual route.
-            resetTimeoutRoutingNode(rNode);
-        }
-
-        // Update the Role only if the node that sent the packet is the next hop
-        if (getNextHop(node->address) == via && node->role != rNode->networkNode.role) {
-            ESP_LOGI(LM_TAG, "Updating role of %X to %d", node->address, node->role);
-            rNode->networkNode.role = node->role;
+            updated = true;
         }
     }
+
+    if (updated) {
+        routingTableId++;
+    }
+
+    if (node->role != rNode->networkNode.role) {
+        ESP_LOGI(LM_TAG, "Updating role of %X to %d", node->address, node->role);
+        rNode->networkNode.role = node->role;
+        updated = true;
+        routingTableId++;
+    }
+
+    return updated;
 }
 
-void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via) {
-    // TODO: implement
-    ESP_LOGE(LM_TAG, "TODO: NOT IMPLEMENTED");
-    return;
-    // if (routingTableList->getLength() >= RTMAXSIZE) {
-    //     ESP_LOGW(LM_TAG, "Routing table max size reached, not adding route and deleting it");
-    //     return;
-    // }
+void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, RouteNode* viaNode) {
+    if (routingTableList->getLength() >= RTMAXSIZE) {
+        ESP_LOGW(LM_TAG, "Routing table max size reached, not adding route and deleting it");
+        return;
+    }
 
-    // if (calculateMaximumMetricOfRoutingTable() < node->metric) {
-    //     ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
-    //     return;
-    // }
+    RouteNode* rNode = new RouteNode(node->address, LM_MAX_METRIC, node->role, viaNode->networkNode.address, node->hop_count, LM_MAX_METRIC);
+    updateMetric(rNode, node->hop_count, viaNode->received_link_quality, viaNode->transmitted_link_quality);
 
-    // RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
+    resetTimeoutRoutingNode(rNode);
 
-    // //Reset the timeout of the node
-    // resetTimeoutRoutingNode(rNode);
+    // Add to the routing table
+    routingTableList->Append(rNode);
 
-    // routingTableList->setInUse();
-
-    // routingTableList->Append(rNode);
-
-    // routingTableList->releaseInUse();
-
-    ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %d", node->address, via, node->metric, node->role);
+    ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %d", node->address, viaNode->networkNode.address, node->metric, node->role);
 }
 
 NetworkNode* RoutingTableService::getAllNetworkNodes() {
@@ -340,6 +377,8 @@ void RoutingTableService::printRoutingTable() {
     if (routingTableList->moveToStart()) {
         size_t position = 0;
 
+        ESP_LOGI(LM_TAG, "---------- RTId %d and size: %d ----------", routingTableId, routingTableSize());
+
         do {
             RouteNode* node = routingTableList->getCurrent();
 
@@ -353,6 +392,8 @@ void RoutingTableService::printRoutingTable() {
 
             position++;
         } while (routingTableList->next());
+
+        ESP_LOGI(LM_TAG, "--------------------------------------------");
     }
 
     routingTableList->releaseInUse();

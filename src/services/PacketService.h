@@ -330,11 +330,10 @@ public:
      * @param numOfNodes Number of nodes
      * @param routingTableId Routing Table ID
      * @param routingTableSize Routing Table Size
-     * @param role Role of the node
      * @return HelloPacket*
      */
     static HelloPacket* createHelloPacket(uint16_t localAddress, HelloPacketNode* nodes, size_t numOfNodes,
-        uint8_t routingTableId, uint8_t routingTableSize, uint8_t role);
+        uint8_t routingTableId, uint8_t routingTableSize);
 
 };
 
