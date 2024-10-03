@@ -696,7 +696,12 @@ void LoraMesher::sendHelloPacket() {
             RoutingTableService::routingTableId, routingTableSize
         );
 
-        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY);
+        if (tx != nullptr) {
+            setPackedForSend(reinterpret_cast<Packet<uint8_t> *>(tx),
+                             DEFAULT_PRIORITY);
+        } else {
+          ESP_LOGV(LM_TAG, "Could not create packet, Hello Packet not sent");
+        }            
     }
 }
 
