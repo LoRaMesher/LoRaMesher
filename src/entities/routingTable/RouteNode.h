@@ -2,6 +2,8 @@
 #define _LORAMESHER_ROUTE_NODE_H
 
 #include "NetworkNode.h"
+#include "utilities/BitList.hpp"
+#include "BuildOptions.h"
 
 /**
  * @brief Route Node
@@ -76,6 +78,12 @@ public:
     uint8_t receivedMetric = 0;
 
     /**
+     * @brief Bit list, it will be used to store information about the received packets
+     *
+     */
+    BitList* bitList = nullptr;
+
+    /**
      * @brief Construct a new Route Node object
      *
      * @param address_ Address
@@ -84,12 +92,23 @@ public:
      * @param hop_count_ Hop count
      * @param received_link_quality_ Received link quality
      * @param transmitted link quality_ Transmitted link quality
+     * @param receivedMetric_ Received Metric
      */
     RouteNode(
         uint16_t address_, uint8_t metric_, uint8_t role_, uint16_t via_, uint8_t hop_count_,
         uint8_t received_link_quality_, uint8_t transmitted_link_quality_ = 0, uint8_t receivedMetric_ = 0):
         networkNode(address_, metric_, role_, hop_count_), via(via_),
         received_link_quality(received_link_quality_), transmitted_link_quality(transmitted_link_quality_), receivedMetric(receivedMetric_) {
+
+        bitList = new BitList(LM_QUALITY_WINDOWS_SIZE);
+    };
+
+    /**
+     * @brief Destroy the Route Node object
+     *
+     */
+    ~RouteNode() {
+        delete bitList;
     };
 };
 
