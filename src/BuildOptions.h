@@ -78,15 +78,17 @@ extern const char* LM_VERSION;
 #define LM_MAX_PACKET_SIZE 100
 
 // Packet types
-#define NEED_ACK_P  0b00000011
+#define NEED_ACK_P  0b00000001 // If any packet contains this bit, the receiver must send an ACK back
 #define DATA_P      0b00000010
 #define ROUTING_P   0b00000100
 #define ACK_P       0b00001010
-#define XL_DATA_P   0b00010010
+#define XL_DATA_P   0b00010011
 #define LOST_P      0b00100010
-#define SYNC_P      0b01000010
+#define SYNC_P      0b01000011
 #define HELLO_P     0b10000000
 #define ROUTING_REQUEST_P 0b00000101
+
+const char* getPacketType(uint8_t type);
 
 // Packet configuration
 #define BROADCAST_ADDR 0xFFFF
@@ -94,8 +96,8 @@ extern const char* LM_VERSION;
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 120
-#define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*5
+#define HELLO_PACKETS_DELAY 30
+#define LM_RT_TIMEOUT HELLO_PACKETS_DELAY*10
 #define MIN_TIMEOUT 20
 
 //Maximum times that a sequence of packets reach the timeout
@@ -104,10 +106,11 @@ extern const char* LM_VERSION;
 #define MAX_TRY_BEFORE_SEND 5
 
 // Routing Table Configuration
-#define LM_QUALITY_WINDOWS_SIZE 100
+#define LM_QUALITY_WINDOWS_SIZE 100 // [0, 255]
 #define LM_MAX_HOPS 10
 #define LM_REDUCED_FACTOR_HOP_COUNT 0.97
 #define LM_MAX_METRIC 255
+#define LM_MAX_NODES 255
 
 //Role Types
 #define ROLE_DEFAULT 0b00000000

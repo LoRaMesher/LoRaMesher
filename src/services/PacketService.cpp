@@ -78,7 +78,7 @@ bool PacketService::isHelloPacket(uint8_t type) {
 }
 
 bool PacketService::isNeedAckPacket(uint8_t type) {
-    return type == NEED_ACK_P;
+    return (type & NEED_ACK_P) == NEED_ACK_P;
 }
 
 bool PacketService::isAckPacket(uint8_t type) {

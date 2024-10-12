@@ -145,6 +145,21 @@ public:
 	static void manageTimeoutRoutingTable();
 
 	/**
+	 * @brief Checks all the routing entries if the node has received a hello packet. If not, reduce the metric.
+	 *
+	 * @return true If the routing table has been updated
+	 */
+	static bool checkReceivedHelloPacket();
+
+	/**
+	 * @brief Penalize the node that has not received a hello packet. It will reduce the received link quality.
+	 *
+	 * @param address Address to be penalized
+	 * @return true If the node has been penalized
+	 */
+	static bool penalizeNodeReceivedLinkQuality(uint16_t address);
+
+	/**
 	 * @brief Get the number of nodes that are at One Hop
 	 *
 	 * @return size_t Number of nodes at one hop
@@ -160,6 +175,15 @@ public:
 	 * @return true If the Hello Packet Node is returned
 	 */
 	static bool getAllHelloPacketsNode(HelloPacketNode** helloPacketNode, size_t* size);
+
+	/**
+	 * @brief Clear all the Hello Packets Node
+	 *
+	 * @param helloPacketNode Hello Packet Node
+	 * @return true If the Hello Packet Node is cleared
+	 * @return false If the Hello Packet Node is not cleared
+	 */
+	static bool clearAllHelloPacketsNode(HelloPacketNode* helloPacketNode);
 
 private:
 
@@ -230,7 +254,7 @@ private:
 
 	/**
 	 * @brief Update the Node
-	 * 
+	 *
 	 * @param rNode Node to be updated
 	 * @param hops Hops
 	 * @param rlq Received Link Quality, normally from the via node or the node that sent the packet
