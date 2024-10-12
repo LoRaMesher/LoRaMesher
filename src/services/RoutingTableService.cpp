@@ -127,7 +127,7 @@ uint8_t RoutingTableService::calculateMetric(uint8_t previous_metric, uint8_t ho
         new_metric = std::min(factor_hops, quality_link);
     }
     else {
-        uint8_t factor_link_quality = LM_MAX_METRIC / std::sqrt((LM_MAX_METRIC / previous_metric) ^ 2 + (LM_MAX_METRIC / quality_link) ^ 2);
+        uint8_t factor_link_quality = LM_MAX_METRIC / std::sqrt((LM_MAX_METRIC / std::max(previous_metric, uint8_t(1))) ^ 2 + (LM_MAX_METRIC / std::max(quality_link, uint8_t(1))) ^ 2);
 
         printf("Factor link quality: %d\n", factor_link_quality);
 
