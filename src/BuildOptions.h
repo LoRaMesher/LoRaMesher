@@ -61,7 +61,7 @@ extern const char* LM_VERSION;
 #define LM_DUTY_CYCLE 100
 
 //Syncronization Word that identifies the mesh network
-#define LM_SYNC_WORD 19U
+#define LM_SYNC_WORD 20U // TODO: Change to 19U when the library is stable
 
 // Comment this line if you want to remove the crc for each packet
 #define LM_ADDCRC_PAYLOAD
@@ -96,8 +96,8 @@ const char* getPacketType(uint8_t type);
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 30
-#define LM_RT_TIMEOUT HELLO_PACKETS_DELAY*10
+#define HELLO_PACKETS_DELAY 60
+#define LM_RT_TIMEOUT HELLO_PACKETS_DELAY*3
 #define MIN_TIMEOUT 20
 
 //Maximum times that a sequence of packets reach the timeout
