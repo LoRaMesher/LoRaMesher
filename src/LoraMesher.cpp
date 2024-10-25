@@ -701,10 +701,11 @@ void LoraMesher::sendHelloPacket() {
 
         if (tx != nullptr) {
             setPackedForSend(reinterpret_cast<Packet<uint8_t> *>(tx),
-                             DEFAULT_PRIORITY);
-        } else {
-          ESP_LOGV(LM_TAG, "Could not create packet, Hello Packet not sent");
-        }            
+                DEFAULT_PRIORITY);
+        }
+        else {
+            ESP_LOGV(LM_TAG, "Could not create packet, Hello Packet not sent");
+        }
     }
 
     RoutingTableService::clearAllHelloPacketsNode(node);
@@ -731,8 +732,8 @@ void LoraMesher::processPackets() {
 
 #ifdef LM_TESTING
                 if (!shouldProcessPacket(rx->packet)) {
-                    PacketQueueService::deleteQueuePacketAndPacket(rx);
                     ESP_LOGV(LM_TAG, "TESTING: Packet not for me, deleting it");
+                    PacketQueueService::deleteQueuePacketAndPacket(rx);
                     continue;
                 }
 #endif
@@ -799,8 +800,8 @@ void LoraMesher::routingTableManager() {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
         ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
-        RoutingTableService::manageTimeoutRoutingTable();
-        bool send_hello_packet = RoutingTableService::checkReceivedHelloPacket();
+        bool send_hello_packet = RoutingTableService::manageTimeoutRoutingTable();
+        send_hello_packet |= RoutingTableService::checkReceivedHelloPacket();
         if (send_hello_packet) {
             ESP_LOGV(LM_TAG, "Send Hello Packet from Routing Table Manager");
             sendHelloPacket();
@@ -1078,7 +1079,31 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef LM_TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+    uint16_t localAddress = getLocalAddress();
+    uint16_t adjacencyGraphSize = 3;
+    uint16_t headers[adjacencyGraphSize] = {27980, 38560, 54172};
+    uint16_t localAddressIndex = 0;
+    for (int i = 0; i < adjacencyGraphSize; i++) {
+        if (headers[i] == localAddress) {
+            localAddressIndex = i;
+            break;
+        }
+    }
+    uint16_t sourceIndex = 0;
+    for (int i = 0; i < adjacencyGraphSize; i++) {
+        if (headers[i] == source) {
+            sourceIndex = i;
+            break;
+        }
+    }
+
+    uint16_t const matrix[adjacencyGraphSize][adjacencyGraphSize] = {
+    { 1, 1, 1 },
+    { 1, 1, 0 },
+    { 1, 0, 1 }
+    };
+
+    return matrix[localAddressIndex][sourceIndex] != 0;
 }
 #endif
 

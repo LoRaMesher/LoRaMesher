@@ -18,10 +18,10 @@ Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
 RTRequestPacket* PacketService::createRoutingTableRequestPacket(uint16_t dst, uint16_t src) {
     RTRequestPacket* rtRequestPacket = PacketFactory::createPacket<RTRequestPacket>(0, 0);
     if (rtRequestPacket) {
-      rtRequestPacket->dst = dst;
-      rtRequestPacket->src = src;
-      rtRequestPacket->type = ROUTING_REQUEST_P;
-      rtRequestPacket->packetSize = sizeof(RTRequestPacket);
+        rtRequestPacket->dst = dst;
+        rtRequestPacket->src = src;
+        rtRequestPacket->type = ROUTING_REQUEST_P;
+        rtRequestPacket->packetSize = sizeof(RTRequestPacket);
     }
     return rtRequestPacket;
 }
@@ -118,12 +118,12 @@ RoutePacket* PacketService::createRoutingPacket(uint16_t localAddress, NetworkNo
 
     RoutePacket* routePacket = PacketFactory::createPacket<RoutePacket>(reinterpret_cast<uint8_t*>(nodes), routingSizeInBytes);
     if (routePacket) {
-      routePacket->dst = BROADCAST_ADDR;
-      routePacket->src = localAddress;
-      routePacket->type = ROUTING_P;
-      routePacket->packetSize = routingSizeInBytes + sizeof(RoutePacket);
-      routePacket->nodeRole = nodeRole;
-      routePacket->routingTableId = rtId;
+        routePacket->dst = BROADCAST_ADDR;
+        routePacket->src = localAddress;
+        routePacket->type = ROUTING_P;
+        routePacket->packetSize = routingSizeInBytes + sizeof(RoutePacket);
+        routePacket->nodeRole = nodeRole;
+        routePacket->routingTableId = rtId;
     }
     return routePacket;
 }
@@ -134,13 +134,13 @@ HelloPacket* PacketService::createHelloPacket(uint16_t localAddress, HelloPacket
 
     HelloPacket* helloPacket = PacketFactory::createPacket<HelloPacket>(reinterpret_cast<uint8_t*>(nodes), helloSizeInBytes);
     if (helloPacket) {
-      helloPacket->dst = BROADCAST_ADDR;
-      helloPacket->src = localAddress;
-      helloPacket->type = HELLO_P;
-      helloPacket->packetSize = helloSizeInBytes + sizeof(HelloPacket);
-      helloPacket->routingTableId = routingTableId;
-      helloPacket->routingTableSize = routingTableSize;
-    }      
+        helloPacket->dst = BROADCAST_ADDR;
+        helloPacket->src = localAddress;
+        helloPacket->type = HELLO_P;
+        helloPacket->packetSize = helloSizeInBytes + sizeof(HelloPacket);
+        helloPacket->routingTableId = routingTableId;
+        helloPacket->routingTableSize = routingTableSize;
+    }
     return helloPacket;
 }
 
@@ -155,10 +155,10 @@ ControlPacket* PacketService::controlPacket(Packet<uint8_t>* p) {
 ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
     ControlPacket* packet = PacketFactory::createPacket<ControlPacket>(payload, payloadSize);
     if (packet) {
-      packet->dst = dst;
-      packet->src = src;
-      packet->type = type;
-      packet->packetSize = payloadSize + sizeof(ControlPacket);
+        packet->dst = dst;
+        packet->src = src;
+        packet->type = type;
+        packet->packetSize = payloadSize + sizeof(ControlPacket);
     }
     return packet;
 }
@@ -166,12 +166,12 @@ ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, ui
 ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t seq_id, uint16_t num_packets) {
     ControlPacket* packet = PacketFactory::createPacket<ControlPacket>(0, 0);
     if (packet) {
-      packet->dst = dst;
-      packet->src = src;
-      packet->type = type;
-      packet->seq_id = seq_id;
-      packet->number = num_packets;
-      packet->packetSize = sizeof(ControlPacket);
+        packet->dst = dst;
+        packet->src = src;
+        packet->type = type;
+        packet->seq_id = seq_id;
+        packet->number = num_packets;
+        packet->packetSize = sizeof(ControlPacket);
     }
     return packet;
 }
@@ -179,10 +179,10 @@ ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t sr
 DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
     DataPacket* packet = PacketFactory::createPacket<DataPacket>(payload, payloadSize);
     if (packet) {
-      packet->dst = dst;
-      packet->src = src;
-      packet->type = type;
-      packet->packetSize = payloadSize + sizeof(DataPacket);
+        packet->dst = dst;
+        packet->src = src;
+        packet->type = type;
+        packet->packetSize = payloadSize + sizeof(DataPacket);
     }
     return packet;
 }

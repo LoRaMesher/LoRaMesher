@@ -141,8 +141,9 @@ public:
 	/**
 	 * @brief Checks all the routing entries for a route timeout and remove the entry.
 	 *
+	 * @return true If the routing table has been updated
 	 */
-	static void manageTimeoutRoutingTable();
+	static bool manageTimeoutRoutingTable();
 
 	/**
 	 * @brief Checks all the routing entries if the node has received a hello packet. If not, reduce the metric.
@@ -290,8 +291,22 @@ private:
 	 * @brief Given a node, update the metric of all the nodes that are the next hop of the rNode
 	 *
 	 * @param rNode Route Node
+	 * @return true If the metric has been updated
 	 */
-	static void updateMetricOfNextHop(RouteNode* rNode);
+	static bool updateMetricOfNextHop(RouteNode* rNode);
+
+	/**
+	 * @brief Generates a new Random Routing Table Id
+	 *
+	 */
+	static void generateNewRTId();
+
+	/**
+	 * @brief Get the Farthest Hop Count
+	 *
+	 * @return uint8_t Farthest Hop Count
+	 */
+	static uint8_t getFarthestHopCount();
 };
 
 #endif
