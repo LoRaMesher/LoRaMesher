@@ -34,6 +34,7 @@ public:
     T* operator[](int);
     size_t getLength();
     void Append(T*);
+    void AppendOrdered(T* element, bool (*compare)(T*, T*));
     T* Pop();
     void addCurrent(T*);
     bool Search(T*);
@@ -144,6 +145,25 @@ void LM_LinkedList<T>::Append(T* element) {
 
     length++;
 
+}
+
+template <class T>
+void LM_LinkedList<T>::AppendOrdered(T* element, bool (*compare)(T*, T*)) {
+    if (length == 0) {
+        Append(element);
+        return;
+    }
+
+    if (moveToStart()) {
+        do {
+            if (compare(curr->element, element)) {
+                addCurrent(element);
+                return;
+            }
+        } while (next());
+    }
+
+    Append(element);
 }
 
 template <class T>
