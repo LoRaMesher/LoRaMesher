@@ -96,9 +96,13 @@ const char* getPacketType(uint8_t type);
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 60
+#define HELLO_PACKETS_DELAY 500
 #define LM_RT_TIMEOUT HELLO_PACKETS_DELAY*3
 #define MIN_TIMEOUT 20
+#define HELLO_PACKETS_DEBOUNCE_TIMEOUT 20 // Timeout duration to prevent sending repeated hello packets; resets on each function call and triggers the packet send after the timeout expires.
+// TODO: Implement the following timeouts, needed if multiple routing packets are needed to send the routing table.
+// #define LM_RT_SECONDARY_TIMEOUT HELLO_PACKETS_DELAY / 2
+// #define LM_RT_STALE_TIMEOUT HELLO_PACKETS_DELAY * 3
 
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 10

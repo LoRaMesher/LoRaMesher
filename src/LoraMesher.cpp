@@ -46,6 +46,9 @@ void LoraMesher::standby() {
     vTaskSuspend(RoutingTableManager_TaskHandle);
     vTaskSuspend(QueueManager_TaskHandle);
 
+    if (Hello_TimerHandle != nullptr)
+        xTimerStop(Hello_TimerHandle, 0);
+
     //Set previous priority
     vTaskPrioritySet(NULL, prevPriority);
 }
@@ -65,6 +68,9 @@ void LoraMesher::start() {
     vTaskResume(RoutingTableManager_TaskHandle);
     vTaskResume(QueueManager_TaskHandle);
 
+    if (Hello_TimerHandle != nullptr)
+        xTimerReset(Hello_TimerHandle, 0);
+
     // Start Receiving
     startReceiving();
 
@@ -79,6 +85,9 @@ LoraMesher::~LoraMesher() {
     vTaskDelete(SendData_TaskHandle);
     vTaskDelete(RoutingTableManager_TaskHandle);
     vTaskDelete(QueueManager_TaskHandle);
+
+    if (Hello_TimerHandle != nullptr)
+        xTimerDelete(Hello_TimerHandle, 0);
 
     ToSendPackets->Clear();
     delete ToSendPackets;
@@ -116,6 +125,12 @@ void LoraMesher::initConfiguration() {
     ESP_LOGV(LM_TAG, "Initializing Configuration");
 
     PacketFactory::setMaxPacketSize(loraMesherConfig->max_packet_size);
+
+    // TODO: To fix this issue, we need to address of sending multiple Routing Table packets, this will involve multiple timeouts when receiving a Routing Table packet.
+    // TODO: At this moment, this is not a priority, but it is a must to fix it if we want to increase the number of nodes in the network.
+    size_t max_nodes_in_network = (PacketFactory::getMaxPacketSize() - sizeof(RoutePacket)) / sizeof(NetworkNode);
+    ESP_LOGW(LM_TAG, "Max nodes in network: %d", max_nodes_in_network);
+    ESP_LOGW(LM_TAG, "Exceeding this number will cause unexpected behavior.");
 }
 
 void LoraMesher::initializeLoRa() {
@@ -337,6 +352,22 @@ void LoraMesher::initializeSchedulers() {
     if (res != pdPASS) {
         ESP_LOGE(LM_TAG, "Queue Manager Task creation gave error: %d", res);
     }
+
+    Hello_TimerHandle = xTimerCreate(
+        "Hello Timer",
+        pdMS_TO_TICKS(2000),
+        pdTRUE,
+        (void*) 0,
+        [](TimerHandle_t xTimer) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xTaskNotifyFromISR(
+            LoraMesher::getInstance().Hello_TaskHandle,
+            0,
+            eSetValueWithoutOverwrite,
+            &xHigherPriorityTaskWoken);
+        if (xHigherPriorityTaskWoken == pdTRUE)
+            portYIELD_FROM_ISR();
+    });
 
     vTaskDelay(5000 / portTICK_PERIOD_MS);
 }
@@ -643,24 +674,36 @@ void LoraMesher::sendHelloPacketRoutine() {
 
     vTaskSuspend(NULL);
 
-    //Wait an initial 2 second
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-
     for (;;) {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task hello packet: %d", uxTaskGetStackHighWaterMark(NULL));
         ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
+        //Wait for the notification of sending a hello packet
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
         sendHelloPacket();
 
-        // Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
-        vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
+        // Clear possible previous notifications
+        ulTaskNotifyValueClear(Hello_TaskHandle, 0);
+
+        // Set the timer to send the next hello packet
+        xTimerChangePeriod(Hello_TimerHandle, pdMS_TO_TICKS(HELLO_PACKETS_DELAY * 1000), 0);
     }
 }
 
-// TODO: Hello Packet routine should be a timer reset every time a hello packet is sent
-// void LoraMesher::resetHelloPacketTimer() {
-//     xTaskNotify(Hello_TaskHandle, 0, eNoAction);
-// }
+void LoraMesher::sendHelloPacketTimer() {
+    ESP_LOGV(LM_TAG, "Creating Hello Packet Timer");
+
+    if (last_hello_packet_time + (HELLO_PACKETS_DELAY * 1000) > millis()) {
+        xTimerChangePeriod(Hello_TimerHandle, pdMS_TO_TICKS(HELLO_PACKETS_DEBOUNCE_TIMEOUT * 1000), 0);
+        return;
+    }
+    else {
+        xTaskNotify(Hello_TaskHandle, 0, eNoAction);
+        return;
+    }
+
+}
 
 void LoraMesher::sendHelloPacket() {
     // Remove the old hello packets
@@ -709,6 +752,8 @@ void LoraMesher::sendHelloPacket() {
     }
 
     RoutingTableService::clearAllHelloPacketsNode(node);
+
+    last_hello_packet_time = millis();
 }
 
 void LoraMesher::processPackets() {
@@ -729,6 +774,12 @@ void LoraMesher::processPackets() {
 
             if (rx) {
                 uint8_t type = rx->packet->type;
+
+                if (rx->packet->src == getLocalAddress()) {
+                    ESP_LOGV(LM_TAG, "Packet from me, deleting it");
+                    PacketQueueService::deleteQueuePacketAndPacket(rx);
+                    continue;
+                }
 
 #ifdef LM_TESTING
                 if (!shouldProcessPacket(rx->packet)) {

@@ -307,6 +307,23 @@ private:
 	 * @return uint8_t Farthest Hop Count
 	 */
 	static uint8_t getFarthestHopCount();
+
+	/**
+	 * @brief Check if the Route Packet needs to delete an entry of the routing table.
+	 * It will find the nodes that are not in the routing table and delete them.
+	 *
+	 * @param p Route Packet
+	 * @return true If the route has deleted an entry
+	 * @return false If the route has not deleted an entry
+	 */
+	static bool checkIfRoutePacketNeedToDeleteEntry(RoutePacket* p);
+
+	/**
+	 * @brief Reset the timeout of the nodes that are the next hop of the node
+	 *
+	 * @param node Route Node
+	 */
+	static void resetTimeoutOfNextHops(RouteNode* node);
 };
 
 #endif

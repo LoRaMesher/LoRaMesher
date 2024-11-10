@@ -559,6 +559,18 @@ private:
      */
     TaskHandle_t RoutingTableManager_TaskHandle = nullptr;
 
+    /**
+     * @brief Hello Timer Handle. It will send a hello packet every HELLO_PACKETS_DELAY s
+     *
+     */
+    TimerHandle_t Hello_TimerHandle = nullptr;
+
+    /**
+     * @brief Last time that a hello packet has been sent
+     *
+     */
+    size_t last_hello_packet_time = 0;
+
     void initConfiguration();
 
     static void onReceive(void);
@@ -586,6 +598,8 @@ private:
     void initializeSchedulers();
 
     void sendHelloPacketRoutine();
+
+    void sendHelloPacketTimer();
 
     void sendHelloPacket();
 
