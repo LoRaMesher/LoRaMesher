@@ -96,7 +96,7 @@ const char* getPacketType(uint8_t type);
 #define MAX_PRIORITY 40
 
 //Definition Times in seconds
-#define HELLO_PACKETS_DELAY 500
+#define HELLO_PACKETS_DELAY 120
 #define LM_RT_TIMEOUT HELLO_PACKETS_DELAY*3
 #define MIN_TIMEOUT 20
 #define HELLO_PACKETS_DEBOUNCE_TIMEOUT 20 // Timeout duration to prevent sending repeated hello packets; resets on each function call and triggers the packet send after the timeout expires.
