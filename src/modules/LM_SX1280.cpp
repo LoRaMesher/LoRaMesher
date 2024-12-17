@@ -2,7 +2,7 @@
 
 #ifdef ARDUINO
 LM_SX1280::LM_SX1280(uint8_t loraCs, uint8_t loraIrq, uint8_t loraRst, uint8_t loraIo1, SPIClass* spi) {
-    module = new SX1280(new Module(loraCs, loraIrq, loraRst, loraIo1, *spi));
+        module = new SX1280(new Module(loraCs, loraIo1, loraRst, loraIrq, *spi));
 }
 #else 
 LM_SX1280::LM_SX1280(Module* mod) {
