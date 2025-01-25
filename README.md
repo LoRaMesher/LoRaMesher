@@ -2,7 +2,7 @@
 
 ## See the [GitHub Pages](https://jaimi5.github.io/LoRaMesher) for more information
 
-## You can join the LoRaMesher's developers and users on [Discord](https://discord.gg/kUaCprbG), if you like. (recently launched)
+## You can join LoRaMesher's developers and users on [Discord](https://discord.gg/kUaCprbG), if you like. (recently launched)
 
 ## Introduction
 
