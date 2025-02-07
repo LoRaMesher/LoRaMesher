@@ -1,8 +1,8 @@
 // src/loramesher/hal/arduino_hal.hpp
 #pragma once
 
-#include "build_options.hpp"
 #include "../loramesher_hal.hpp"
+#include "build_options.hpp"
 
 #ifdef LORAMESHER_BUILD_ARDUINO
 #include "Arduino.h"
