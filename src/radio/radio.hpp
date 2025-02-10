@@ -1,6 +1,10 @@
 // src/radio/radio.h
 #pragma once
 
+#include "radio_error_codes.hpp"
+#include "radio_event.hpp"
+#include "types/configurations/radio_configuration.hpp"
+
 #include <functional>
 #include <vector>
 

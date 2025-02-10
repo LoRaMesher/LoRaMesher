@@ -1,34 +1,47 @@
-// src/loramesher/types/messages/message.hpp
 #pragma once
 
-#include "utilities/byte_operations.h"
-
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
+#include "utilities/byte_operations.h"
 
 namespace loramesher {
 
+/** Type alias for address representations */
 using AddressType = uint16_t;
 
-// Forward declarations of message types
+/**
+ * @brief Enumeration of possible message types in the system
+ */
 enum class MessageType : uint8_t {
-    DATA = 0x01,     // Regular data message
-    XL_DATA = 0x02,  // Large data message
-    HELLO = 0x03,    // Hello packet for routing
-    ACK = 0x04,      // Acknowledgment
-    LOST = 0x05,     // Packet loss notification
-    SYNC = 0x06,     // Synchronization packet
-    NEED_ACK = 0x07  // Request for acknowledgment
+    DATA = 0x01,    /**< Regular data message */
+    XL_DATA = 0x02, /**< Large data message */
+    HELLO = 0x03,   /**< Hello packet for routing */
+    ACK = 0x04,     /**< Acknowledgment */
+    LOST = 0x05,    /**< Packet loss notification */
+    SYNC = 0x06,    /**< Synchronization packet */
+    NEED_ACK = 0x07 /**< Request for acknowledgment */
 };
 
+/**
+ * @brief Header structure for all message types
+ * 
+ * Contains common fields that are present in all message types including
+ * addressing information and payload metadata.
+ */
 struct BaseHeader {
-    AddressType destination;  // Destination address
-    AddressType source;       // Source address
-    MessageType type;         // Message type
-    uint8_t payloadSize;      // Size of payload
+    AddressType destination; /**< Destination address */
+    AddressType source;      /**< Source address */
+    MessageType type;        /**< Message type identifier */
+    uint8_t payloadSize;     /**< Size of the payload in bytes */
 
+    /**
+     * @brief Calculate the size of the header in bytes
+     * @return Size of the header structure in bytes
+     */
     static constexpr size_t size() {
         return sizeof(AddressType) +  // Destination
                sizeof(AddressType) +  // Source
@@ -37,94 +50,150 @@ struct BaseHeader {
     }
 };
 
+/**
+ * @brief Base class for all message types in the system
+ * 
+ * Provides common functionality for message handling including serialization,
+ * deserialization, and basic message operations. All specific message types
+ * should inherit from this class.
+ */
 class BaseMessage {
    public:
     /**
-    * @brief Construct a new Base Message object
-    */
-    BaseMessage(AddressType dest, AddressType src, MessageType type,
-                const std::vector<uint8_t>& data)
-        : baseHeader_{dest, src, type, static_cast<uint8_t>(data.size())},
-          payload_(data) {}
+     * @brief Maximum allowed payload size (255 bytes due to uint8_t payloadSize in header)
+     */
+    static constexpr size_t MAX_PAYLOAD_SIZE =
+        std::numeric_limits<uint8_t>::max();
 
     /**
-     * @brief Destroy the Base Message object
+     * @brief Construct a new Base Message
+     * 
+     * @param dest Destination address for the message
+     * @param src Source address of the message
+     * @param type Type of the message
+     * @param data Payload data for the message
+     * 
+     * @throws std::length_error If data size exceeds maximum allowed size
+     * @throws std::invalid_argument If addresses are invalid or message type is unsupported
+     */
+    BaseMessage(AddressType dest, AddressType src, MessageType type,
+                const std::vector<uint8_t>& data);
+
+    /**
+     * @brief Copy constructor
+     * 
+     * Creates a deep copy of the message including its payload.
+     * 
+     * @param other Message to copy from
+     */
+    BaseMessage(const BaseMessage& other);
+
+    /**
+     * @brief Copy assignment operator
+     * 
+     * Performs a deep copy of the message including its payload.
+     * 
+     * @param other Message to copy from
+     * @return Reference to this message after copying
+     */
+    BaseMessage& operator=(const BaseMessage& other);
+
+    /**
+     * @brief Move constructor
+     * 
+     * Transfers ownership of the message payload efficiently.
+     * 
+     * @param other Message to move from
+     */
+    BaseMessage(BaseMessage&& other) noexcept;
+
+    /**
+     * @brief Move assignment operator
+     * 
+     * Transfers ownership of the message payload efficiently.
+     * 
+     * @param other Message to move from
+     * @return Reference to this message after moving
+     */
+    BaseMessage& operator=(BaseMessage&& other) noexcept;
+
+    /**
+     * @brief Virtual destructor to ensure proper cleanup of derived classes
      */
     virtual ~BaseMessage() = default;
 
-    // Getters
     /**
-     * @brief Get the Base Header object
+     * @brief Get the message header
+     * @return Const reference to the message header
      */
     const BaseHeader& getBaseHeader() const { return baseHeader_; }
 
     /**
-     * @brief Get the Payload object
+     * @brief Get the message payload
+     * @return Const reference to the payload data
      */
     const std::vector<uint8_t>& getPayload() const { return payload_; }
 
-    // Utility methods
     /**
-     * @brief Get the Total Size object
+     * @brief Get the total size of the message
+     * @return Size in bytes including header and payload
      */
     size_t getTotalSize() const { return BaseHeader::size() + payload_.size(); }
 
-    // Serialization
     /**
-     * @brief Serialize a BaseMessage object to a byte array
-     */
-    void serialize(ByteSerializer& serializer) const {
-        serializer.writeUint16(baseHeader_.destination);
-        serializer.writeUint16(baseHeader_.source);
-        serializer.writeUint8(static_cast<uint8_t>(baseHeader_.type));
-        serializer.writeUint8(baseHeader_.payloadSize);
-    }
-
-    /**
-     * @brief Serialize a BaseMessage object to a byte array
-     */
-    std::vector<uint8_t> serialize() const {
-        std::vector<uint8_t> serialized(getTotalSize());
-        ByteSerializer serializer(serialized);
-
-        // Serialize headers
-        serialize(serializer);
-
-        // Serialize payload
-        serializer.writeBytes(payload_.data(), payload_.size());
-
-        return serialized;
-    }
-
-    static BaseHeader deserialize(ByteDeserializer& deserializer) {
-        BaseHeader header;
-        header.destination = deserializer.readUint16();
-        header.source = deserializer.readUint16();
-        header.type = static_cast<MessageType>(deserializer.readUint8());
-        header.payloadSize = deserializer.readUint8();
-        return header;
-    }
-
-    /**
-     * @brief Deserialize a byte array to a BaseMessage object
+     * @brief Serialize the message header
      * 
-     * @param data 
-     * @return std::unique_ptr<BaseMessage> 
+     * @param serializer Serializer object to write to
+     * @throws std::runtime_error If serialization fails
+     */
+    void serialize(ByteSerializer& serializer) const;
+
+    /**
+     * @brief Serialize the complete message
+     * 
+     * Serializes both header and payload into a byte vector.
+     * 
+     * @return Vector containing the serialized message
+     * @throws std::runtime_error If serialization fails
+     */
+    std::vector<uint8_t> serialize() const;
+
+    /**
+     * @brief Deserialize a message header from raw data
+     * 
+     * @param deserializer Deserializer containing the raw data
+     * @return Deserialized header structure
+     * @throws std::runtime_error If deserialization fails or data is invalid
+     */
+    static BaseHeader deserialize(ByteDeserializer& deserializer);
+
+    /**
+     * @brief Create a message from serialized data
+     * 
+     * @param data Raw byte vector containing the serialized message
+     * @return Unique pointer to the deserialized message
+     * @throws std::runtime_error If deserialization fails or data is invalid
      */
     static std::unique_ptr<BaseMessage> deserialize(
-        const std::vector<uint8_t>& data) {
-        ByteDeserializer deserializer(data);
-        BaseHeader header = deserialize(deserializer);
-        std::vector<uint8_t> payload =
-            deserializer.readBytes(header.payloadSize);
+        const std::vector<uint8_t>& data);
 
-        return std::make_unique<BaseMessage>(header.destination, header.source,
-                                             header.type, payload);
-    }
+   private:
+    /**
+     * @brief Validate all input parameters
+     * 
+     * @param dest Destination address
+     * @param src Source address
+     * @param type Message type
+     * @param data Payload data
+     * @throws std::length_error If payload size exceeds MAX_PAYLOAD_SIZE
+     * @throws std::invalid_argument If addresses are invalid or message type is unsupported
+     */
+    void validateInputs(AddressType dest, AddressType src, MessageType type,
+                        const std::vector<uint8_t>& data) const;
 
    protected:
-    BaseHeader baseHeader_;
-    std::vector<uint8_t> payload_;
+    BaseHeader baseHeader_;        /**< Message header */
+    std::vector<uint8_t> payload_; /**< Message payload */
 };
 
 }  // namespace loramesher
