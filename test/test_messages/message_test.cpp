@@ -4,7 +4,7 @@
 #include "../src/types/messages/message.hpp"
 #include "../src/types/messages/routing_message.hpp"
 
-using namespace loramesher;
+namespace loramesher {
 
 TEST(MessageTest, SerializationTest) {
     // Create message with known values
@@ -122,7 +122,9 @@ TEST(MessageTest, RoutingDeserializationTest) {
     EXPECT_EQ(deserialized->getPayload(), payload);
 }
 
-#if defined(ARDUINO)
+}  // namespace loramesher
+
+#ifdef ARDUINO
 #include <Arduino.h>
 
 void setup() {

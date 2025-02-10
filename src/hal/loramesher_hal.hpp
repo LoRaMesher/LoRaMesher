@@ -9,9 +9,9 @@
 namespace loramesher {
 namespace hal {
 
-class LoraMesherHal {
+class ILoraMesherHal {
    public:
-    virtual ~LoraMesherHal() = default;
+    virtual ~ILoraMesherHal() = default;
     virtual uint32_t millis() = 0;
     virtual void delay(uint32_t ms) = 0;
     // Add other platform-specific functions as needed

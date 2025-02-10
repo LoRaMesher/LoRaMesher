@@ -13,78 +13,78 @@ namespace loramesher {
 class ByteSerializer {
    public:
     explicit ByteSerializer(std::vector<uint8_t>& buffer, size_t offset = 0)
-        : m_buffer(buffer), m_offset(offset) {}
+        : buffer_(buffer), offset_(offset) {}
 
     // Write 16-bit value
     void writeUint16(uint16_t value) {
-        m_buffer[m_offset++] = value & 0xFF;
-        m_buffer[m_offset++] = (value >> 8) & 0xFF;
+        buffer_[offset_++] = value & 0xFF;
+        buffer_[offset_++] = (value >> 8) & 0xFF;
     }
 
     // Write 8-bit value
-    void writeUint8(uint8_t value) { m_buffer[m_offset++] = value; }
+    void writeUint8(uint8_t value) { buffer_[offset_++] = value; }
 
     // Write array of bytes
     void writeBytes(const uint8_t* data, size_t length) {
-        std::memcpy(&m_buffer[m_offset], data, length);
-        m_offset += length;
+        std::memcpy(&buffer_[offset_], data, length);
+        offset_ += length;
     }
 
-    size_t getOffset() const { return m_offset; }
+    size_t getOffset() const { return offset_; }
 
    private:
-    std::vector<uint8_t>& m_buffer;
-    size_t m_offset;
+    std::vector<uint8_t>& buffer_;
+    size_t offset_;
 };
 
 class ByteDeserializer {
    public:
     explicit ByteDeserializer(const std::vector<uint8_t>& buffer)
-        : m_buffer(buffer), m_offset(0) {}
+        : buffer_(buffer), offset_(0) {}
 
     uint16_t readUint16() {
         checkAvailable(2);
-        uint16_t value = static_cast<uint16_t>(m_buffer[m_offset]) |
-                         (static_cast<uint16_t>(m_buffer[m_offset + 1]) << 8);
-        m_offset += 2;
+        uint16_t value = static_cast<uint16_t>(buffer_[offset_]) |
+                         (static_cast<uint16_t>(buffer_[offset_ + 1]) << 8);
+        offset_ += 2;
         return value;
     }
 
     uint8_t readUint8() {
         checkAvailable(1);
-        return m_buffer[m_offset++];
+        return buffer_[offset_++];
     }
 
     std::vector<uint8_t> readBytes(size_t length) {
         checkAvailable(length);
-        std::vector<uint8_t> result(m_buffer.begin() + m_offset,
-                                    m_buffer.begin() + m_offset + length);
-        m_offset += length;
+        std::vector<uint8_t> result(buffer_.begin() + offset_,
+                                    buffer_.begin() + offset_ + length);
+        offset_ += length;
         return result;
     }
 
     void skip(size_t bytes) {
         checkAvailable(bytes);
-        m_offset += bytes;
+        offset_ += bytes;
     }
 
-    size_t getBytesLeft() const { return m_buffer.size() - m_offset; }
+    size_t getBytesLeft() const { return buffer_.size() - offset_; }
 
-    size_t getOffset() const { return m_offset; }
+    size_t getOffset() const { return offset_; }
 
-    bool hasMore() const { return m_offset < m_buffer.size(); }
+    bool hasMore() const { return offset_ < buffer_.size(); }
 
    private:
     void checkAvailable(size_t bytes) const {
-        if (m_offset + bytes > m_buffer.size()) {
+        if (offset_ + bytes > buffer_.size()) {
             throw std::out_of_range(
                 "Not enough bytes available to read: " + std::to_string(bytes) +
                 " requested, " + std::to_string(getBytesLeft()) + " available");
         }
     }
 
-    const std::vector<uint8_t>& m_buffer;
-    size_t m_offset;
+    const std::vector<uint8_t>& buffer_;
+    size_t offset_;
 };
 
 }  // namespace loramesher

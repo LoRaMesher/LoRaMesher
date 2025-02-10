@@ -13,7 +13,7 @@
 namespace loramesher {
 namespace hal {
 
-class NativeHal : public LoraMesherHal {
+class NativeHal : public ILoraMesherHal {
    public:
     uint32_t millis() override;
     void delay(uint32_t ms) override;

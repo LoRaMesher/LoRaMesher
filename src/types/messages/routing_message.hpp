@@ -25,15 +25,15 @@ class RoutingMessage : public BaseMessage {
         : BaseMessage(dest, src, MessageType::DATA, data) {}
 
     void setRoutingInfo(AddressType nextHop, uint8_t seqId, uint16_t num) {
-        m_routingHeader.nextHop = nextHop;
-        m_routingHeader.sequenceId = seqId;
-        m_routingHeader.number = num;
+        routingHeader_.nextHop = nextHop;
+        routingHeader_.sequenceId = seqId;
+        routingHeader_.number = num;
     }
 
     /**
      * @brief Get the Routing Header object
      */
-    RoutingHeader getRoutingHeader() const { return m_routingHeader; }
+    RoutingHeader getRoutingHeader() const { return routingHeader_; }
 
     /**
      * @brief Get the Total Size object
@@ -53,9 +53,9 @@ class RoutingMessage : public BaseMessage {
         BaseMessage::serialize(serializer);
 
         // Serialize routing headers
-        serializer.writeUint16(m_routingHeader.nextHop);
-        serializer.writeUint8(m_routingHeader.sequenceId);
-        serializer.writeUint16(m_routingHeader.number);
+        serializer.writeUint16(routingHeader_.nextHop);
+        serializer.writeUint8(routingHeader_.sequenceId);
+        serializer.writeUint16(routingHeader_.number);
 
         // Serialize payload
         serializer.writeBytes(getPayload().data(), getPayload().size());
@@ -88,7 +88,7 @@ class RoutingMessage : public BaseMessage {
     }
 
    private:
-    RoutingHeader m_routingHeader;
+    RoutingHeader routingHeader_;
 };
 
 }  // namespace loramesher

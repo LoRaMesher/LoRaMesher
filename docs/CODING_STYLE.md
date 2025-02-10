@@ -19,7 +19,7 @@
 
 ### Functions & Variables
 - Use camelCase: `sendMessage()`
-- Private member variables: prefix with `m_`: `m_radioConfig`
+- Private member variables: ends with underscore `_`: `radioConfig_`
 
 ### Constants & Enums
 - Use UPPER_CASE: `MAX_PACKET_SIZE`
@@ -52,8 +52,8 @@ public:
 private:
     static constexpr uint32_t MAX_RETRY_COUNT = 3;
     
-    std::unique_ptr<Radio> m_radio;
-    Config                 m_config;
+    std::unique_ptr<Radio> radio_;
+    Config                 config_;
 };
 
 } // namespace loramesher

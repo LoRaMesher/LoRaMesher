@@ -1,7 +1,6 @@
 // src/loramesher/types/messages/message.hpp
 #pragma once
 
-#include "build_options.hpp"
 #include "utilities/byte_operations.h"
 
 #include <cstdint>
@@ -45,8 +44,8 @@ class BaseMessage {
     */
     BaseMessage(AddressType dest, AddressType src, MessageType type,
                 const std::vector<uint8_t>& data)
-        : m_baseHeader{dest, src, type, static_cast<uint8_t>(data.size())},
-          m_payload(data) {}
+        : baseHeader_{dest, src, type, static_cast<uint8_t>(data.size())},
+          payload_(data) {}
 
     /**
      * @brief Destroy the Base Message object
@@ -57,30 +56,28 @@ class BaseMessage {
     /**
      * @brief Get the Base Header object
      */
-    const BaseHeader& getBaseHeader() const { return m_baseHeader; }
+    const BaseHeader& getBaseHeader() const { return baseHeader_; }
 
     /**
      * @brief Get the Payload object
      */
-    const std::vector<uint8_t>& getPayload() const { return m_payload; }
+    const std::vector<uint8_t>& getPayload() const { return payload_; }
 
     // Utility methods
     /**
      * @brief Get the Total Size object
      */
-    size_t getTotalSize() const {
-        return BaseHeader::size() + m_payload.size();
-    }
+    size_t getTotalSize() const { return BaseHeader::size() + payload_.size(); }
 
     // Serialization
     /**
      * @brief Serialize a BaseMessage object to a byte array
      */
     void serialize(ByteSerializer& serializer) const {
-        serializer.writeUint16(m_baseHeader.destination);
-        serializer.writeUint16(m_baseHeader.source);
-        serializer.writeUint8(static_cast<uint8_t>(m_baseHeader.type));
-        serializer.writeUint8(m_baseHeader.payloadSize);
+        serializer.writeUint16(baseHeader_.destination);
+        serializer.writeUint16(baseHeader_.source);
+        serializer.writeUint8(static_cast<uint8_t>(baseHeader_.type));
+        serializer.writeUint8(baseHeader_.payloadSize);
     }
 
     /**
@@ -94,7 +91,7 @@ class BaseMessage {
         serialize(serializer);
 
         // Serialize payload
-        serializer.writeBytes(m_payload.data(), m_payload.size());
+        serializer.writeBytes(payload_.data(), payload_.size());
 
         return serialized;
     }
@@ -126,8 +123,8 @@ class BaseMessage {
     }
 
    protected:
-    BaseHeader m_baseHeader;
-    std::vector<uint8_t> m_payload;
+    BaseHeader baseHeader_;
+    std::vector<uint8_t> payload_;
 };
 
 }  // namespace loramesher

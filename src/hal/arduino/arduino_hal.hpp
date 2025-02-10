@@ -10,7 +10,7 @@
 namespace loramesher {
 namespace hal {
 
-class LoraMesherArduinoHal : public LoraMesherHal {
+class LoraMesherArduinoHal : public ILoraMesherHal {
    public:
     uint32_t millis() override;
     void delay(uint32_t ms) override;
