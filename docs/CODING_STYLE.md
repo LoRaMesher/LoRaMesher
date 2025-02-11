@@ -1,5 +1,7 @@
 # LoRaMesher Coding Style Guide
 
+We are using [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)
+
 ## General Rules
 - Use 4 spaces for indentation
 - Maximum line length is 100 characters
@@ -29,12 +31,18 @@
 - Use forward declarations when possible
 - Order includes:
   1. Related header
-  2. C++ standard library
+  2. A blank line
+  3. C++ standard library
+  4. A blank line
   3. Other libraries
-  4. Project headers
+  4. A blank line
+  5. Project headers
 
 ## Example
 ```cpp
+/// @file radio_manager.hpp
+/// @brief Defines the RadioManager class for handling LoRa communication.
+
 #pragma once
 
 #include <memory>
@@ -44,19 +52,42 @@
 
 namespace loramesher {
 
+/**
+ * @class RadioManager
+ * @brief Manages the LoRa radio communication.
+ *
+ * This class provides functionalities to send packets using a LoRa radio module.
+ */
 class RadioManager {
 public:
+    /**
+     * @brief Constructs a new RadioManager object.
+     *
+     * Initializes the radio module and sets up necessary configurations.
+     */
     RadioManager();
+
+    /**
+     * @brief Sends a packet over the LoRa network.
+     *
+     * @param packet The packet to be transmitted.
+     * @return true if the packet is successfully sent, false otherwise.
+     */
     bool sendPacket(const Packet& packet);
 
 private:
+    /// @brief Maximum number of retry attempts for sending a packet.
     static constexpr uint32_t MAX_RETRY_COUNT = 3;
     
+    /// @brief Unique pointer to the radio interface.
     std::unique_ptr<Radio> radio_;
-    Config                 config_;
+    
+    /// @brief Configuration settings for the radio manager.
+    Config config_;
 };
 
 } // namespace loramesher
+
 ```
 
 ## Comments

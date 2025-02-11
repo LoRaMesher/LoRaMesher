@@ -16,4 +16,4 @@ void LoraMesherArduinoHal::delay(uint32_t ms) {
 }  // namespace hal
 }  // namespace loramesher
 
-#endif
+#endif  // LORAMESHER_BUILD_ARDUINO

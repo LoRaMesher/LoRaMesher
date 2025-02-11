@@ -8,7 +8,9 @@ namespace test {
 
 class RadioConfigTest : public ::testing::Test {
    protected:
-    void SetUp() override { defaultConfig = RadioConfig::createDefault(); }
+    void SetUp() override {
+        defaultConfig = RadioConfig::createDefaultSx1276();
+    }
 
     RadioConfig defaultConfig;
 };
@@ -34,15 +36,16 @@ TEST_F(RadioConfigTest, SpreadingFactorValidation) {
     EXPECT_NO_THROW(defaultConfig.setSpreadingFactor(7));
 }
 
+TEST_F(RadioConfigTest, CodingRateValidation) {
+    EXPECT_THROW(defaultConfig.setCodingRate(4), std::invalid_argument);
+    EXPECT_THROW(defaultConfig.setCodingRate(9), std::invalid_argument);
+    EXPECT_NO_THROW(defaultConfig.setCodingRate(5));
+}
+
 TEST_F(RadioConfigTest, ValidationMessages) {
-    RadioConfig config(100.0F, 5, -1.0F, 4, 25);
-    EXPECT_FALSE(config.isValid());
-    std::string errors = config.validate();
-    EXPECT_TRUE(errors.find("Frequency out of range") != std::string::npos);
-    EXPECT_TRUE(errors.find("Invalid spreading factor") != std::string::npos);
-    EXPECT_TRUE(errors.find("Invalid bandwidth") != std::string::npos);
-    EXPECT_TRUE(errors.find("Invalid coding rate") != std::string::npos);
-    EXPECT_TRUE(errors.find("Power exceeds maximum") != std::string::npos);
+    EXPECT_THROW(
+        RadioConfig config(RadioType::kSx1276, 100.0F, 5, -1.0F, 4, 25),
+        std::invalid_argument);
 }
 
 }  // namespace test

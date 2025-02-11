@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+
 #include "types/messages/message.hpp"
 
 namespace loramesher {

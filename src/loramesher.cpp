@@ -2,23 +2,6 @@
 
 namespace loramesher {
 
-#ifdef LORAMESHER_BUILD_ARDUINO
-LoraMesher::LoraMesher(const Config& config) : config_(config) {
-    hal_ = std::make_unique<hal::LoraMesherArduinoHal>();
-    if (!initialize()) {
-        throw std::runtime_error("Failed to initialize LoraMesher");
-    }
-}
-
-#elif defined(LORAMESHER_BUILD_NATIVE)
-LoraMesher::LoraMesher(const Config& config) {
-    hal_ = std::make_unique<hal::NativeHal>();
-    if (!initialize()) {
-        throw std::runtime_error("Failed to initialize LoraMesher");
-    }
-}
-#endif
-
 LoraMesher::~LoraMesher() {
     stop();
 }
@@ -26,8 +9,9 @@ LoraMesher::~LoraMesher() {
 bool LoraMesher::initialize() {
     try {
         // Create HAL
-        if (!hal_) {
-            return false;
+        hal_ = std::make_unique<hal::HardwareManager>();
+        if (!hal_->initialize()) {
+            throw std::runtime_error("Failed to initialize HAL");
         }
 
         // Initialize managers

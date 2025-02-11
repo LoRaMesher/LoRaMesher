@@ -1,3 +1,4 @@
+// src/types/messages/message.hpp
 #pragma once
 
 #include <cstdint>
@@ -6,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
 #include "utilities/byte_operations.h"
 
 namespace loramesher {

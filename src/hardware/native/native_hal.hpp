@@ -1,16 +1,16 @@
-// src/loramesher/hal/arduino_hal.hpp
+
+// src/loramesher/hal/natie_hal.hpp
 #pragma once
 
-#include "../loramesher_hal.hpp"
+#include "../hal.hpp"
 #include "build_options.hpp"
 
-#ifdef LORAMESHER_BUILD_ARDUINO
-#include "Arduino.h"
+#ifdef LORAMESHER_BUILD_NATIVE
 
 namespace loramesher {
 namespace hal {
 
-class LoraMesherArduinoHal : public ILoraMesherHal {
+class NativeHal : public IHardwareManager {
    public:
     uint32_t millis() override;
     void delay(uint32_t ms) override;
@@ -19,4 +19,4 @@ class LoraMesherArduinoHal : public ILoraMesherHal {
 }  // namespace hal
 }  // namespace loramesher
 
-#endif
+#endif  // LORAMESHER_BUILD_NATIVE

@@ -2,7 +2,8 @@
 
 #if defined(ARDUINO) && ARDUINO >= 100
 // Arduino implementations
-#include "Arduino.h"
+#include <Arduino.h>
+#include <SPI.h>
 #define LORAMESHER_BUILD_ARDUINO
 #else
 // Native implementation

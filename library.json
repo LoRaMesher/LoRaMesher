@@ -17,7 +17,7 @@
         }
     ],
     "dependencies": {
-        "jgromes/RadioLib": "^7.1.0"
+        "jgromes/RadioLib": "^7.1.2"
     },
     "frameworks": "arduino",
     "platforms": "*",

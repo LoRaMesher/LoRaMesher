@@ -61,11 +61,12 @@ int full_example_main() {
                                     .build();
 
         // Method 2: Using the Builder with full custom configuration
-        RadioConfig radioConfig(868.1F,  // frequency
-                                7,       // spreading factor
-                                125.0F,  // bandwidth
-                                5,       // coding rate
-                                17       // power
+        RadioConfig radioConfig(RadioType::kSx1276,  // radio type
+                                868.1F,              // frequency
+                                7,                   // spreading factor
+                                125.0F,              // bandwidth
+                                5,                   // coding rate
+                                17                   // power
         );
 
         ProtocolConfig protocolConfig(120000,  // hello interval (2 min)

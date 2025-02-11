@@ -1,11 +1,11 @@
 // src/types/configurations/loramesher_configuration.hpp
 #pragma once
 
+#include <cstdint>
+
 #include "pin_configuration.hpp"
 #include "protocol_configuration.hpp"
 #include "radio_configuration.hpp"
-
-#include <cstdint>
 
 namespace loramesher {
 
@@ -14,7 +14,7 @@ class Config {
     // Constructor
     explicit Config(
         const PinConfig& pins = PinConfig::createDefault(),
-        const RadioConfig& radio = RadioConfig::createDefault(),
+        const RadioConfig& radio = RadioConfig::createDefaultSx1276(),
         const ProtocolConfig& protocol = ProtocolConfig::createDefault(),
         uint32_t sleepDuration = 60000, bool enableDeepSleep = true);
 

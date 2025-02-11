@@ -2,6 +2,9 @@
 
 #ifdef LORAMESHER_BUILD_NATIVE
 
+#include <chrono>
+#include <thread>
+
 namespace loramesher {
 namespace hal {
 
@@ -19,4 +22,4 @@ void NativeHal::delay(uint32_t ms) {
 }  // namespace hal
 }  // namespace loramesher
 
-#endif
+#endif  // LORAMESHER_BUILD_NATIVE

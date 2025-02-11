@@ -1,28 +1,17 @@
 // include/loramesher/core/loramesher.hpp
 #pragma once
 
+#include <memory>
+
 #include "build_options.hpp"
 
-// Standard includes
-// #include <functional>
-// #include <memory>
-// #include <stdexcept>
-// #include <string>
-// #include <vector>
-
-static const char* LM_TAG = "LoraMesher";
-
-#include <memory>
-#include "hal/arduino/arduino_hal.hpp"
-#include "hal/native/native_hal.hpp"
+#include "hardware/hardware_manager.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/message.hpp"
-// #include "power/sleep_manager.h"
-// #include "protocol/mesh_protocol.h"
-// #include "radio/radio_manager.h"
-// #include "task/task_manager.h"
 
 namespace loramesher {
+
+static const char* LM_TAG = "LoraMesher";
 
 class LoraMesher {
    public:
@@ -64,7 +53,7 @@ class LoraMesher {
     // std::unique_ptr<MeshProtocol> meshProtocol_;
     // std::unique_ptr<SleepManager> sleepManager_;
     // std::unique_ptr<TaskManager> taskManager_;
-    std::unique_ptr<loramesher::hal::ILoraMesherHal> hal_;
+    std::unique_ptr<loramesher::hal::HardwareManager> hal_;
 
     // Configuration
     Config config_;

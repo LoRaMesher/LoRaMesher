@@ -5,13 +5,20 @@
 namespace loramesher {
 
 // RadioConfig Implementation
-RadioConfig::RadioConfig(float frequency, uint8_t spreadingFactor,
-                         float bandwidth, uint8_t codingRate, uint8_t power)
-    : frequency_(frequency),
+RadioConfig::RadioConfig(RadioType type, float frequency,
+                         uint8_t spreadingFactor, float bandwidth,
+                         uint8_t codingRate, uint8_t power)
+    : radio_type_(type),
+      frequency_(frequency),
       spreadingFactor_(spreadingFactor),
       bandwidth_(bandwidth),
       codingRate_(codingRate),
-      power_(power) {}
+      power_(power) {
+    if (!isValid()) {
+        throw std::invalid_argument("Invalid radio configuration:" +
+                                    validate());
+    }
+}
 
 void RadioConfig::setFrequency(float frequency) {
     if (frequency < kMinFrequency || frequency > kMaxFrequency) {
@@ -48,8 +55,12 @@ void RadioConfig::setPower(uint8_t power) {
     power_ = power;
 }
 
-RadioConfig RadioConfig::createDefault() {
+RadioConfig RadioConfig::createDefaultSx1276() {
     return RadioConfig{};
+}
+
+RadioConfig RadioConfig::createDefaultSx1278() {
+    return RadioConfig{RadioType::kSx1278, 433.0, 7, 125.0, 5, 20};
 }
 
 bool RadioConfig::isValid() const {

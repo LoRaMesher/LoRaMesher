@@ -1,4 +1,5 @@
 // src/loramesher/types/messages/routing_message.hpp
+#pragma once
 
 #include "message.hpp"
 

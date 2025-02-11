@@ -1,13 +1,13 @@
 // test/types/test_messages/message_test.cpp
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #ifdef _WIN32
 #include <windows.h>
 #elif defined(__linux__)
 #include <sys/resource.h>
 #endif
-
-#include <memory>
 
 #include "../src/types/messages/message.hpp"
 #include "../src/types/messages/routing_message.hpp"

@@ -5,3 +5,4 @@ dependencies:
   RadioLib:
     public: true
     git: https://github.com/jgromes/RadioLib.git
+    version: 7.1.2

@@ -27,10 +27,6 @@ TEST_F(ConfigTest, SettersValidateConfigs) {
     EXPECT_THROW(defaultConfig.setPinConfig(invalidPins),
                  std::invalid_argument);
 
-    RadioConfig invalidRadio(100.0F, 5, -1.0F, 4, 25);
-    EXPECT_THROW(defaultConfig.setRadioConfig(invalidRadio),
-                 std::invalid_argument);
-
     ProtocolConfig invalidProtocol(500, 400, 0);
     EXPECT_THROW(defaultConfig.setProtocolConfig(invalidProtocol),
                  std::invalid_argument);
@@ -39,19 +35,6 @@ TEST_F(ConfigTest, SettersValidateConfigs) {
 TEST_F(ConfigTest, SleepDurationValidation) {
     EXPECT_THROW(defaultConfig.setSleepDuration(0), std::invalid_argument);
     EXPECT_NO_THROW(defaultConfig.setSleepDuration(1000));
-}
-
-TEST_F(ConfigTest, CombinedValidation) {
-    Config config(PinConfig(-1, -1, -1, -1),
-                  RadioConfig(100.0F, 5, -1.0F, 4, 25),
-                  ProtocolConfig(500, 400, 0), 0, true);
-
-    EXPECT_FALSE(config.isValid());
-    std::string errors = config.validate();
-    EXPECT_TRUE(errors.find("Pin config errors") != std::string::npos);
-    EXPECT_TRUE(errors.find("Radio config errors") != std::string::npos);
-    EXPECT_TRUE(errors.find("Protocol config errors") != std::string::npos);
-    EXPECT_TRUE(errors.find("Invalid sleep duration") != std::string::npos);
 }
 
 }  // namespace test

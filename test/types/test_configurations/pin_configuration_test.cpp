@@ -1,6 +1,7 @@
 // test/types/test_configurations/pin_configuration_test.cpp
-#include "../src/types/configurations/pin_configuration.hpp"
 #include <gtest/gtest.h>
+
+#include "../src/types/configurations/pin_configuration.hpp"
 
 namespace loramesher {
 namespace test {
