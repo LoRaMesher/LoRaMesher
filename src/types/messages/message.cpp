@@ -15,7 +15,7 @@ BaseMessage::BaseMessage(const std::vector<uint8_t>& data) {
             "Data vector is too short to contain a valid message");
     }
 
-    ByteDeserializer deserializer(data);
+    utils::ByteDeserializer deserializer(data);
     baseHeader_ = deserialize(deserializer);
     payload_ = deserializer.readBytes(baseHeader_.payloadSize);
 }
@@ -42,7 +42,7 @@ BaseMessage& BaseMessage::operator=(BaseMessage&& other) noexcept {
     return *this;
 }
 
-void BaseMessage::serialize(ByteSerializer& serializer) const {
+void BaseMessage::serialize(utils::ByteSerializer& serializer) const {
     serializer.writeUint16(baseHeader_.destination);
     serializer.writeUint16(baseHeader_.source);
     serializer.writeUint8(static_cast<uint8_t>(baseHeader_.type));
@@ -51,7 +51,7 @@ void BaseMessage::serialize(ByteSerializer& serializer) const {
 
 std::vector<uint8_t> BaseMessage::serialize() const {
     std::vector<uint8_t> serialized(getTotalSize());
-    ByteSerializer serializer(serialized);
+    utils::ByteSerializer serializer(serialized);
 
     serialize(serializer);
     serializer.writeBytes(payload_.data(), payload_.size());
@@ -59,7 +59,7 @@ std::vector<uint8_t> BaseMessage::serialize() const {
     return serialized;
 }
 
-BaseHeader BaseMessage::deserialize(ByteDeserializer& deserializer) {
+BaseHeader BaseMessage::deserialize(utils::ByteDeserializer& deserializer) {
     BaseHeader header;
     header.destination = deserializer.readUint16();
     header.source = deserializer.readUint16();
@@ -70,7 +70,7 @@ BaseHeader BaseMessage::deserialize(ByteDeserializer& deserializer) {
 
 std::unique_ptr<BaseMessage> BaseMessage::deserialize(
     const std::vector<uint8_t>& data) {
-    ByteDeserializer deserializer(data);
+    utils::ByteDeserializer deserializer(data);
     BaseHeader header = deserialize(deserializer);
     std::vector<uint8_t> payload = deserializer.readBytes(header.payloadSize);
 

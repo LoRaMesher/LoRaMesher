@@ -3,8 +3,7 @@
 
 #include <memory>
 
-#include "build_options.hpp"
-
+#include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/message.hpp"

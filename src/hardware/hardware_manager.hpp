@@ -3,7 +3,7 @@
 
 #include <memory>
 
-#include "build_options.hpp"
+#include "config/system_config.hpp"
 #include "hal.hpp"
 #include "types/configurations/pin_configuration.hpp"
 #include "types/configurations/radio_configuration.hpp"

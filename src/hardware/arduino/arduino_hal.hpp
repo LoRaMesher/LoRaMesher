@@ -4,7 +4,7 @@
 #ifdef LORAMESHER_BUILD_ARDUINO
 
 #include "../hal.hpp"
-#include "build_options.hpp"
+#include "config/system_config.hpp"
 
 namespace loramesher {
 namespace hal {

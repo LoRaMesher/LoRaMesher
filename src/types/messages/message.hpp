@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "utilities/byte_operations.h"
+#include "utils/byte_operations.h"
 
 namespace loramesher {
 
@@ -160,7 +160,7 @@ class BaseMessage {
      * @param serializer Serializer object to write to
      * @throws std::runtime_error If serialization fails
      */
-    void serialize(ByteSerializer& serializer) const;
+    void serialize(utils::ByteSerializer& serializer) const;
 
     /**
      * @brief Serialize the complete message
@@ -179,7 +179,7 @@ class BaseMessage {
      * @return Deserialized header structure
      * @throws std::runtime_error If deserialization fails or data is invalid
      */
-    static BaseHeader deserialize(ByteDeserializer& deserializer);
+    static BaseHeader deserialize(utils::ByteDeserializer& deserializer);
 
     /**
      * @brief Create a message from serialized data

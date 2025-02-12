@@ -8,6 +8,7 @@
 #include <vector>
 
 namespace loramesher {
+namespace utils {
 
 // Helper class for serialization
 class ByteSerializer {
@@ -87,4 +88,5 @@ class ByteDeserializer {
     size_t offset_;
 };
 
+}  // namespace utils
 }  // namespace loramesher

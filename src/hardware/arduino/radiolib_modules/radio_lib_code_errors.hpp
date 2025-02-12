@@ -1,7 +1,7 @@
-// src/hardware/arduino/radioLibModules/radio_lib_code_errors.hpp
+// src/hardware/arduino/radio_lib_modules/radio_lib_code_errors.hpp
 #pragma once
 
-#include "build_options.hpp"
+#include "config/system_config.hpp"
 
 #ifdef LORAMESHER_BUILD_ARDUINO
 

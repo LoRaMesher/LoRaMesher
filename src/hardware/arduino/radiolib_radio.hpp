@@ -6,7 +6,7 @@
 #include <mutex>
 #include <queue>
 
-#include "build_options.hpp"
+#include "config/system_config.hpp"
 #include "types/configurations/radio_configuration.hpp"
 #include "types/messages/message.hpp"
 #include "types/radio/radio.hpp"

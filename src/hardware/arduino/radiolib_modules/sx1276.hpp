@@ -1,7 +1,7 @@
-// src/hardware/arduino/radioLibModules/LoraMesherSX1276.hpp
+// src/hardware/arduino/radio_lib_modules/LoraMesherSX1276.hpp
 #pragma once
 
-#include "build_options.hpp"
+#include "config/system_config.hpp"
 
 #ifdef LORAMESHER_BUILD_ARDUINO
 

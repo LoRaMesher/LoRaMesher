@@ -48,7 +48,7 @@ class RoutingMessage : public BaseMessage {
      */
     std::vector<uint8_t> serialize() const {
         std::vector<uint8_t> serialized(getTotalSize());
-        ByteSerializer serializer(serialized);
+        utils::ByteSerializer serializer(serialized);
 
         // Serialize headers
         BaseMessage::serialize(serializer);
@@ -69,7 +69,7 @@ class RoutingMessage : public BaseMessage {
      */
     static std::unique_ptr<RoutingMessage> deserialize(
         const std::vector<uint8_t>& data) {
-        ByteDeserializer deserializer(data);
+        utils::ByteDeserializer deserializer(data);
         BaseHeader header = BaseMessage::deserialize(deserializer);
 
         RoutingHeader routingHeader;

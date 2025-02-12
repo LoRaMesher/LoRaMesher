@@ -3,7 +3,7 @@
 #pragma once
 
 #include "../hal.hpp"
-#include "build_options.hpp"
+#include "config/system_config.hpp"
 
 #ifdef LORAMESHER_BUILD_NATIVE
 

@@ -4,10 +4,15 @@
 
 #include <functional>
 
+#include "config/task_config.hpp"
 #include "radio_lib_code_errors.hpp"
+#include "utils/task_monitor.hpp"
 
 namespace loramesher {
 namespace radio {
+
+// Static task tag for FreeRTOS
+static const char* kTask_Tag = "SX1276_Task";
 
 // Initialize static member
 LoraMesherSX1276* LoraMesherSX1276::instance_ = nullptr;
@@ -32,17 +37,24 @@ LoraMesherSX1276::~LoraMesherSX1276() {
 }
 
 Result LoraMesherSX1276::initializeHardware() {
-    // Create event queue
-    event_queue_ = xQueueCreate(10, sizeof(uint8_t));  // Adjust size as needed
+    // Create event queue with size based on analysis
+    constexpr size_t kQueueSize = 10;  //TODO: Determine through testing
+    event_queue_ = xQueueCreate(kQueueSize, sizeof(uint8_t));
 
-    // Create processing task
-    xTaskCreate(processEvents,     // Task function
-                "RadioEvents",     // Task name
-                2048,              // Stack size (adjust as needed)
-                this,              // Task parameter
-                5,                 // Priority (adjust as needed)
-                &processing_task_  // Task handle
-    );
+    if (!event_queue_) {
+        return Error(RadioErrorCode::kMemoryError);
+    }
+
+    // Create processing task with monitored configuration
+    BaseType_t task_created = xTaskCreate(
+        processEvents, kTask_Tag,
+        config::TaskConfig::kRadioEventStackSize / 4,  // FreeRTOS uses words
+        this, config::TaskPriorities::kRadioEventPriority, &processing_task_);
+
+    if (task_created != pdPASS) {
+        vQueueDelete(event_queue_);
+        return Error(RadioErrorCode::kMemoryError);
+    }
 
     // Create HAL module for SPI communication
     hal_module_ =
@@ -277,15 +289,24 @@ void LoraMesherSX1276::processEvents(void* parameters) {
     auto radio = static_cast<LoraMesherSX1276*>(parameters);
     uint8_t event;
 
+// For development/testing: Monitor stack usage
+#ifdef DEBUG
+    UBaseType_t minStackWords = 0;
+#endif
+
     while (true) {
         if (xQueueReceive(radio->event_queue_, &event, portMAX_DELAY) ==
             pdTRUE) {
-            // Now we can do the heavy lifting here
-            radio
-                ->handleInterrupt();  // Original interrupt handling code goes here
+            // Periodic monitoring
+            utils::TaskMonitor::monitorTask(
+                radio->processing_task_, kTask_Tag,
+                config::TaskConfig::kMinStackWatermark);
+
+            radio->handleInterrupt();
         }
     }
 }
+
 void LoraMesherSX1276::handleInterrupt() {
     if (!receive_callback_)
         return;
