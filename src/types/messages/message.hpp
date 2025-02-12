@@ -82,6 +82,18 @@ class BaseMessage {
                 const std::vector<uint8_t>& data);
 
     /**
+     * @brief Construct a new Base Message from serialized data
+     * 
+     * @param data Raw byte vector containing the serialized message
+     * 
+     * @throws std::runtime_error If deserialization fails or data is invalid
+     * @throws std::length_error If payload size exceeds MAX_PAYLOAD_SIZE
+     * @throws std::invalid_argument If addresses are invalid or message type is unsupported
+     * @throws std::out_of_range If data vector is too short to contain a valid message
+     */
+    BaseMessage(const std::vector<uint8_t>& data);
+
+    /**
      * @brief Copy constructor
      * 
      * Creates a deep copy of the message including its payload.

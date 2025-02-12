@@ -53,7 +53,7 @@ class LoraMesher {
     // std::unique_ptr<MeshProtocol> meshProtocol_;
     // std::unique_ptr<SleepManager> sleepManager_;
     // std::unique_ptr<TaskManager> taskManager_;
-    std::unique_ptr<loramesher::hal::HardwareManager> hal_;
+    std::unique_ptr<hardware::HardwareManager> hardware_manager_;
 
     // Configuration
     Config config_;

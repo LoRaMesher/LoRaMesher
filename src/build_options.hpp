@@ -4,6 +4,9 @@
 // Arduino implementations
 #include <Arduino.h>
 #include <SPI.h>
+
+#include "RadioLib.h"
+
 #define LORAMESHER_BUILD_ARDUINO
 #else
 // Native implementation

@@ -9,6 +9,17 @@ BaseMessage::BaseMessage(AddressType dest, AddressType src, MessageType type,
     payload_ = data;
 }
 
+BaseMessage::BaseMessage(const std::vector<uint8_t>& data) {
+    if (data.size() < BaseHeader::size()) {
+        throw std::out_of_range(
+            "Data vector is too short to contain a valid message");
+    }
+
+    ByteDeserializer deserializer(data);
+    baseHeader_ = deserialize(deserializer);
+    payload_ = deserializer.readBytes(baseHeader_.payloadSize);
+}
+
 BaseMessage::BaseMessage(const BaseMessage& other)
     : baseHeader_(other.baseHeader_), payload_(other.payload_) {}
 

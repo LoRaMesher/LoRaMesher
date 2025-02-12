@@ -10,7 +10,7 @@
 namespace loramesher {
 namespace hal {
 
-class NativeHal : public IHardwareManager {
+class NativeHal : public IHal {
    public:
     uint32_t millis() override;
     void delay(uint32_t ms) override;

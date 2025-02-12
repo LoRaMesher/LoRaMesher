@@ -9,17 +9,17 @@ namespace hal {
 /**
  * @brief Interface for LoraMesher hardware abstraction layer.
  */
-class IHardwareManager {
+class IHal {
    public:
     /**
      * @brief Default constructor.
      */
-    IHardwareManager() = default;
+    IHal() = default;
 
     /**
      * @brief Virtual destructor.
      */
-    virtual ~IHardwareManager() = default;
+    virtual ~IHal() = default;
 
     /**
      * @brief Get the current time in milliseconds.

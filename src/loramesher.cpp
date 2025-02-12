@@ -9,8 +9,9 @@ LoraMesher::~LoraMesher() {
 bool LoraMesher::initialize() {
     try {
         // Create HAL
-        hal_ = std::make_unique<hal::HardwareManager>();
-        if (!hal_->initialize()) {
+        hardware_manager_ = std::make_unique<hardware::HardwareManager>(
+            config_.getPinConfig(), config_.getRadioConfig());
+        if (!hardware_manager_->initialize()) {
             throw std::runtime_error("Failed to initialize HAL");
         }
 
