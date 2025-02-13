@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "types/radio/radio_error_codes.hpp"
+#include "types/error_codes/result.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -26,21 +26,21 @@ class RadioLibCodeErrors {
     static Result convertStatus(int status) {
         switch (status) {
             case RADIOLIB_ERR_NONE:
-                return Success();
+                return Result::success();
             case RADIOLIB_ERR_INVALID_FREQUENCY:
-                return Error(RadioErrorCode::kFrequencyError);
+                return Result::error(LoraMesherErrorCode::kFrequencyError);
             case RADIOLIB_ERR_INVALID_BANDWIDTH:
-                return Error(RadioErrorCode::kConfigurationError);
+                return Result::error(LoraMesherErrorCode::kConfigurationError);
             case RADIOLIB_ERR_INVALID_SPREADING_FACTOR:
-                return Error(RadioErrorCode::kConfigurationError);
+                return Result::error(LoraMesherErrorCode::kConfigurationError);
             case RADIOLIB_ERR_INVALID_CODING_RATE:
-                return Error(RadioErrorCode::kConfigurationError);
+                return Result::error(LoraMesherErrorCode::kConfigurationError);
             case RADIOLIB_ERR_INVALID_BIT_RANGE:
-                return Error(RadioErrorCode::kInvalidParameter);
+                return Result::error(LoraMesherErrorCode::kInvalidParameter);
             case RADIOLIB_ERR_INVALID_SYNC_WORD:
-                return Error(RadioErrorCode::kSyncWordError);
+                return Result::error(LoraMesherErrorCode::kSyncWordError);
             default:
-                return Error(RadioErrorCode::kHardwareError);
+                return Result::error(LoraMesherErrorCode::kHardwareError);
         }
     }
 };

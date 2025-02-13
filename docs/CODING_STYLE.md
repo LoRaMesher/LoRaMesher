@@ -20,7 +20,7 @@ We are using [Google C++ Style Guide](https://google.github.io/styleguide/cppgui
 - One class per file
 
 ### Functions & Variables
-- Use camelCase: `sendMessage()`
+- Use PascalCase: `SendMessage()`
 - Private member variables: ends with underscore `_`: `radioConfig_`
 
 ### Constants & Enums
@@ -73,7 +73,7 @@ public:
      * @param packet The packet to be transmitted.
      * @return true if the packet is successfully sent, false otherwise.
      */
-    bool sendPacket(const Packet& packet);
+    bool SendPacket(const Packet& packet);
 
 private:
     /// @brief Maximum number of retry attempts for sending a packet.

@@ -1,57 +1,55 @@
 // test/types/test_radio/radio_error_test.cpp
 #include <gtest/gtest.h>
 
-#include "types/radio/radio_error_codes.hpp"
+#include "types/error_codes/result.hpp"
 
 namespace loramesher {
-namespace radio {
 namespace test {
 
-class RadioErrorTest : public ::testing::Test {
+class LoraMesherErrorTest : public ::testing::Test {
    protected:
     void SetUp() override {}
     void TearDown() override {}
 };
 
-TEST_F(RadioErrorTest, SuccessResultTest) {
-    Result result = Success();
-    EXPECT_TRUE(result.IsSuccess());
-    EXPECT_EQ(result.GetErrorCode(), RadioErrorCode::kSuccess);
-    EXPECT_EQ(result.GetErrorMessage(), "Operation completed successfully");
+TEST_F(LoraMesherErrorTest, SuccessResultTest) {
+    Result result = Result::success();
+    EXPECT_TRUE(result.isSuccess());
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kSuccess);
+    EXPECT_EQ(result.getErrorMessage(), "Operation completed successfully");
 }
 
-TEST_F(RadioErrorTest, ErrorResultTest) {
-    Result result = Error(RadioErrorCode::kConfigurationError);
-    EXPECT_FALSE(result.IsSuccess());
-    EXPECT_EQ(result.GetErrorCode(), RadioErrorCode::kConfigurationError);
-    EXPECT_EQ(result.GetErrorMessage(), "Failed to configure radio parameters");
+TEST_F(LoraMesherErrorTest, ErrorResultTest) {
+    Result result = Result::error(LoraMesherErrorCode::kConfigurationError);
+    EXPECT_FALSE(result.isSuccess());
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kConfigurationError);
+    EXPECT_EQ(result.getErrorMessage(), "Failed to configure radio parameters");
 }
 
-TEST_F(RadioErrorTest, ErrorCategoryTest) {
-    const auto& category = RadioErrorCategory::GetInstance();
+TEST_F(LoraMesherErrorTest, ErrorCategoryTest) {
+    const auto& category = LoraMesherErrorCategory::GetInstance();
     EXPECT_EQ(category.name(), std::string("radio_error"));
 
     // Test various error messages
-    EXPECT_EQ(category.message(static_cast<int>(RadioErrorCode::kTimeout)),
+    EXPECT_EQ(category.message(static_cast<int>(LoraMesherErrorCode::kTimeout)),
               "Operation timed out");
-    EXPECT_EQ(
-        category.message(static_cast<int>(RadioErrorCode::kInvalidParameter)),
-        "Invalid parameter provided");
-    EXPECT_EQ(
-        category.message(static_cast<int>(RadioErrorCode::kBufferOverflow)),
-        "Buffer overflow detected");
+    EXPECT_EQ(category.message(
+                  static_cast<int>(LoraMesherErrorCode::kInvalidParameter)),
+              "Invalid parameter provided");
+    EXPECT_EQ(category.message(
+                  static_cast<int>(LoraMesherErrorCode::kBufferOverflow)),
+              "Buffer overflow detected");
 }
 
-TEST_F(RadioErrorTest, ErrorCodeConversionTest) {
-    Result result = Error(RadioErrorCode::kHardwareError);
-    std::error_code error_code = result.AsErrorCode();
+TEST_F(LoraMesherErrorTest, ErrorCodeConversionTest) {
+    Result result = Result::error(LoraMesherErrorCode::kHardwareError);
+    std::error_code error_code = result.asErrorCode();
 
     EXPECT_EQ(error_code.value(),
-              static_cast<int>(RadioErrorCode::kHardwareError));
+              static_cast<int>(LoraMesherErrorCode::kHardwareError));
     EXPECT_EQ(error_code.category().name(), std::string("radio_error"));
     EXPECT_EQ(error_code.message(), "Hardware-level error occurred");
 }
 
 }  // namespace test
-}  // namespace radio
 }  // namespace loramesher

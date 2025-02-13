@@ -5,13 +5,18 @@
 
 namespace loramesher {
 
-// Routing message header
-// TODO: Placeholder
+/**
+ * @brief Header structure for routing-specific information
+ */
 struct RoutingHeader {
-    AddressType nextHop;
-    uint8_t sequenceId;
-    uint16_t number;
+    AddressType next_hop; /**< Next hop address */
+    uint8_t sequence_id;  /**< Sequence identifier */
+    uint16_t number;      /**< Message number */
 
+    /**
+     * @brief Calculate the size of the routing header in bytes
+     * @return Size of the header structure in bytes
+     */
     static constexpr size_t size() {
         return sizeof(AddressType) +  // Next hop
                sizeof(uint8_t) +      // Sequence ID
@@ -19,77 +24,141 @@ struct RoutingHeader {
     }
 };
 
+/**
+ * @brief Specialized message class for routing operations
+ * 
+ * Extends BaseMessage with routing-specific functionality and header information.
+ */
 class RoutingMessage : public BaseMessage {
    public:
-    RoutingMessage(AddressType dest, AddressType src,
-                   const std::vector<uint8_t>& data)
-        : BaseMessage(dest, src, MessageType::DATA, data) {}
+    /**
+     * @brief Create a new RoutingMessage instance
+     * 
+     * @param dest Destination address
+     * @param src Source address
+     * @param data Payload data
+     * @return std::optional<RoutingMessage> Valid message if creation succeeded,
+     *         std::nullopt otherwise
+     */
+    static std::optional<RoutingMessage> Create(
+        AddressType dest, AddressType src, const std::vector<uint8_t>& data) {
+        auto base_msg =
+            BaseMessage::Create(dest, src, MessageType::ROUTING_MSG, data);
+        if (!base_msg) {
+            return std::nullopt;
+        }
 
-    void setRoutingInfo(AddressType nextHop, uint8_t seqId, uint16_t num) {
-        routingHeader_.nextHop = nextHop;
-        routingHeader_.sequenceId = seqId;
-        routingHeader_.number = num;
+        return RoutingMessage(std::move(*base_msg));
     }
 
     /**
-     * @brief Get the Routing Header object
+     * @brief Set routing information for the message
+     * 
+     * @param next_hop Next hop address
+     * @param seq_id Sequence identifier
+     * @param num Message number
      */
-    RoutingHeader getRoutingHeader() const { return routingHeader_; }
-
-    /**
-     * @brief Get the Total Size object
-     */
-    size_t getTotalSize() const {
-        return RoutingHeader::size() + BaseMessage::getTotalSize();
+    void SetRoutingInfo(AddressType next_hop, uint8_t seq_id, uint16_t num) {
+        routing_header_.next_hop = next_hop;
+        routing_header_.sequence_id = seq_id;
+        routing_header_.number = num;
     }
 
     /**
-     * @brief Serialize the message to a byte array
+     * @brief Get the routing header
+     * @return const RoutingHeader& Reference to the routing header
      */
-    std::vector<uint8_t> serialize() const {
-        std::vector<uint8_t> serialized(getTotalSize());
+    const RoutingHeader& GetRoutingHeader() const { return routing_header_; }
+
+    /**
+     * @brief Get the total size of the message including all headers
+     * @return Total size in bytes
+     */
+    size_t GetTotalSize() const {
+        return RoutingHeader::size() + BaseMessage::GetTotalSize();
+    }
+
+    /**
+     * @brief Serialize the message to a byte vector
+     * 
+     * @return std::optional<std::vector<uint8_t>> Serialized message if successful,
+     *         std::nullopt otherwise
+     */
+    std::optional<std::vector<uint8_t>> Serialize() const {
+        std::vector<uint8_t> serialized(GetTotalSize());
         utils::ByteSerializer serializer(serialized);
 
-        // Serialize headers
-        BaseMessage::serialize(serializer);
+        // Serialize base message
+        auto result = BaseMessage::Serialize(serializer);
+        if (!result) {
+            return std::nullopt;
+        }
 
-        // Serialize routing headers
-        serializer.writeUint16(routingHeader_.nextHop);
-        serializer.writeUint8(routingHeader_.sequenceId);
-        serializer.writeUint16(routingHeader_.number);
+        // Serialize routing header
+        serializer.writeUint16(routing_header_.next_hop);
+        serializer.writeUint8(routing_header_.sequence_id);
+        serializer.writeUint16(routing_header_.number);
 
         // Serialize payload
-        serializer.writeBytes(getPayload().data(), getPayload().size());
+        serializer.writeBytes(GetPayload().data(), GetPayload().size());
 
         return serialized;
     }
 
     /**
-     * @brief Deserialize a byte array to a message
+     * @brief Create a RoutingMessage from serialized data
+     * 
+     * @param data Serialized message data
+     * @return std::optional<RoutingMessage> Deserialized message if successful,
+     *         std::nullopt otherwise
      */
-    static std::unique_ptr<RoutingMessage> deserialize(
+    static std::optional<RoutingMessage> CreateFromSerialized(
         const std::vector<uint8_t>& data) {
+        if (data.size() < BaseHeader::size() + RoutingHeader::size()) {
+            return std::nullopt;
+        }
+
         utils::ByteDeserializer deserializer(data);
-        BaseHeader header = BaseMessage::deserialize(deserializer);
 
-        RoutingHeader routingHeader;
-        routingHeader.nextHop = deserializer.readUint16();
-        routingHeader.sequenceId = deserializer.readUint8();
-        routingHeader.number = deserializer.readUint16();
+        auto base_header = BaseMessage::Deserialize(deserializer);
+        if (!base_header) {
+            return std::nullopt;
+        }
 
-        std::vector<uint8_t> payload =
-            deserializer.readBytes(header.payloadSize);
+        // Read routing header
+        auto next_hop = deserializer.readUint16();
+        auto seq_id = deserializer.readUint8();
+        auto number = deserializer.readUint16();
 
-        auto msg = std::make_unique<RoutingMessage>(header.destination,
-                                                    header.source, payload);
-        msg->setRoutingInfo(routingHeader.nextHop, routingHeader.sequenceId,
-                            routingHeader.number);
+        if (!next_hop || !seq_id || !number) {
+            return std::nullopt;
+        }
 
+        auto payload = deserializer.readBytes(base_header->payloadSize);
+        if (!payload) {
+            return std::nullopt;
+        }
+
+        auto msg =
+            Create(base_header->destination, base_header->source, *payload);
+        if (!msg) {
+            return std::nullopt;
+        }
+
+        msg->SetRoutingInfo(*next_hop, *seq_id, *number);
         return msg;
     }
 
    private:
-    RoutingHeader routingHeader_;
+    /**
+     * @brief Private constructor from BaseMessage
+     * 
+     * @param base_msg Base message to construct from
+     */
+    explicit RoutingMessage(BaseMessage&& base_msg)
+        : BaseMessage(std::move(base_msg)), routing_header_() {}
+
+    RoutingHeader routing_header_; /**< Routing-specific header information */
 };
 
 }  // namespace loramesher

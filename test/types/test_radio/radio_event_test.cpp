@@ -10,9 +10,12 @@ namespace test {
 class RadioEventTest : public ::testing::Test {
    protected:
     void SetUp() override {
-        message = std::make_unique<BaseMessage>(
-            0x1234, 0x5678, MessageType::DATA,
-            std::vector<uint8_t>{0x01, 0x02, 0x03});
+        auto base_message =
+            BaseMessage::Create(0x1234, 0x5678, MessageType::DATA,
+                                std::vector<uint8_t>{0x01, 0x02, 0x03});
+        ASSERT_TRUE(base_message.has_value())
+            << "Failed to create test message";
+        message = std::make_unique<BaseMessage>(std::move(*base_message));
     }
     void TearDown() override {}
 

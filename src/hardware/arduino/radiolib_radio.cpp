@@ -15,25 +15,25 @@ constexpr uint32_t kReceiveTimeout = 100;  // ms
 // RadioLib error code to Result mapping
 Result MapRadioLibError(int code) {
     if (code == RADIOLIB_ERR_NONE) {
-        return Success();
+        return Result::success();
     }
 
     switch (code) {
         case RADIOLIB_ERR_PACKET_TOO_LONG:
         case RADIOLIB_ERR_TX_TIMEOUT:
-            return Error(RadioErrorCode::kBufferOverflow);
+            return Result::error(LoraMesherErrorCode::kBufferOverflow);
         case RADIOLIB_ERR_RX_TIMEOUT:
-            return Error(RadioErrorCode::kTimeout);
+            return Result::error(LoraMesherErrorCode::kTimeout);
         case RADIOLIB_ERR_CRC_MISMATCH:
-            return Error(RadioErrorCode::kReceptionError);
+            return Result::error(LoraMesherErrorCode::kReceptionError);
         case RADIOLIB_ERR_INVALID_BANDWIDTH:
         case RADIOLIB_ERR_INVALID_SPREADING_FACTOR:
         case RADIOLIB_ERR_INVALID_CODING_RATE:
-            return Error(RadioErrorCode::kInvalidParameter);
+            return Result::error(LoraMesherErrorCode::kInvalidParameter);
         case RADIOLIB_ERR_CHIP_NOT_FOUND:
-            return Error(RadioErrorCode::kHardwareError);
+            return Result::error(LoraMesherErrorCode::kHardwareError);
         default:
-            return Error(RadioErrorCode::kHardwareError);
+            return Result::error(LoraMesherErrorCode::kHardwareError);
     }
 }
 
@@ -55,79 +55,79 @@ Result RadioLibRadio::configure(const RadioConfig& config) {
 
     // Create appropriate radio module based on type
     if (!createRadioModule(config.getRadioType())) {
-        return Error(RadioErrorCode::kConfigurationError);
+        return Result::error(LoraMesherErrorCode::kConfigurationError);
     }
 
     // Begin radio operation
     int state = current_module_->begin();
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibError(state);
+        return MapRadioLibResult::error(state);
     }
 
     // Configure radio parameters
     state = current_module_->setFrequency(config.getFrequency());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibError(state);
+        return MapRadioLibResult::error(state);
     }
 
     state = current_module_->setSpreadingFactor(config.getSpreadingFactor());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibError(state);
+        return MapRadioLibResult::error(state);
     }
 
     state = current_module_->setBandwidth(config.getBandwidth() * 1000);
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibError(state);
+        return MapRadioLibResult::error(state);
     }
 
     state = current_module_->setCodingRate(config.getCodingRate());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibError(state);
+        return MapRadioLibResult::error(state);
     }
 
     state = current_module_->setOutputPower(config.getPower());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibError(state);
+        return MapRadioLibResult::error(state);
     }
 
     // Set up interrupt handling
     current_module_->setDio0Action(std::bind(&RadioLibRadio::handleInterrupt,
                                              this, std::placeholders::_1));
 
-    return Success();
+    return Result::success();
 }
 
 Result RadioLibRadio::send(const uint8_t* data, size_t len) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return Error(RadioErrorCode::kNotInitialized);
+        return Result::error(LoraMesherErrorCode::kNotInitialized);
     }
 
     // Transmit data
     int state = current_module_->transmit(data, len);
-    return MapRadioLibError(state);
+    return MapRadioLibResult::error(state);
 }
 
 Result RadioLibRadio::startReceive() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return Error(RadioErrorCode::kNotInitialized);
+        return Result::error(LoraMesherErrorCode::kNotInitialized);
     }
 
     // Start receive mode
     int state = current_module_->startReceive();
-    return MapRadioLibError(state);
+    return MapRadioLibResult::error(state);
 }
 
 Result RadioLibRadio::sleep() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return Error(RadioErrorCode::kNotInitialized);
+        return Result::error(LoraMesherErrorCode::kNotInitialized);
     }
 
     // Enter sleep mode
     int state = current_module_->sleep();
-    return MapRadioLibError(state);
+    return MapRadioLibResult::error(state);
 }
 
 int8_t RadioLibRadio::getRSSI() {

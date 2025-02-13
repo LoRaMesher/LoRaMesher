@@ -42,7 +42,7 @@ Result LoraMesherSX1276::initializeHardware() {
     event_queue_ = xQueueCreate(kQueueSize, sizeof(uint8_t));
 
     if (!event_queue_) {
-        return Error(RadioErrorCode::kMemoryError);
+        return Result::error(LoraMesherErrorCode::kMemoryError);
     }
 
     // Create processing task with monitored configuration
@@ -53,7 +53,7 @@ Result LoraMesherSX1276::initializeHardware() {
 
     if (task_created != pdPASS) {
         vQueueDelete(event_queue_);
-        return Error(RadioErrorCode::kMemoryError);
+        return Result::error(LoraMesherErrorCode::kMemoryError);
     }
 
     // Create HAL module for SPI communication
@@ -72,7 +72,7 @@ Result LoraMesherSX1276::initializeHardware() {
                         RISING);
     }
 
-    return Success();
+    return Result::success();
 }
 
 Result LoraMesherSX1276::begin(const RadioConfig& config) {
@@ -95,20 +95,20 @@ Result LoraMesherSX1276::configure(const RadioConfig& config) {
     // Store current configuration
     current_config_ = config;
 
-    return Success();
+    return Result::success();
 }
 
 Result LoraMesherSX1276::send(const uint8_t* data, size_t len) {
     // Check if radio is already transmitting
     if (current_state_ == RadioState::kTransmit) {
-        return Error(RadioErrorCode::kBusyError);
+        return Result::error(LoraMesherErrorCode::kBusyError);
     }
 
     // Attempt to transmit data
     int status = radio_module_->transmit(data, len);
     if (status == RADIOLIB_ERR_NONE) {
         current_state_ = RadioState::kTransmit;
-        return Success();
+        return Result::success();
     }
 
     return RadioLibCodeErrors::convertStatus(status);
@@ -117,7 +117,7 @@ Result LoraMesherSX1276::send(const uint8_t* data, size_t len) {
 Result LoraMesherSX1276::startReceive() {
     // Check if already in receive mode
     if (current_state_ == RadioState::kReceive) {
-        return Success();
+        return Result::success();
     }
 
     // We might need to suspend the processing task temporarily
@@ -134,7 +134,7 @@ Result LoraMesherSX1276::startReceive() {
         if (processing_task_) {
             vTaskResume(processing_task_);
         }
-        return Success();
+        return Result::success();
     }
 
     // If we failed, still resume the task
@@ -154,7 +154,7 @@ Result LoraMesherSX1276::sleep() {
     if (status == RADIOLIB_ERR_NONE) {
         current_state_ = RadioState::kSleep;
         // Note: We don't resume the task in sleep mode
-        return Success();
+        return Result::success();
     }
 
     // If sleep failed, resume the task
@@ -260,12 +260,12 @@ Result LoraMesherSX1276::setState(RadioState state) {
             int status = radio_module_->standby();
             if (status == RADIOLIB_ERR_NONE) {
                 current_state_ = RadioState::kIdle;
-                return Success();
+                return Result::success();
             }
             return RadioLibCodeErrors::convertStatus(status);
         }
         default:
-            return Error(RadioErrorCode::kInvalidParameter);
+            return Result::error(LoraMesherErrorCode::kInvalidParameter);
     }
 }
 

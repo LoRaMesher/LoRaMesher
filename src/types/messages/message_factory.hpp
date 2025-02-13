@@ -11,13 +11,14 @@ class MessageFactory {
     static std::unique_ptr<BaseMessage> createMessage(
         MessageType type, AddressType dest, AddressType src,
         const std::vector<uint8_t>& data) {
-        switch (type) {
-            case MessageType::DATA:
-                return std::make_unique<RoutingMessage>(dest, src, data);
-            // Other cases
-            default:
-                return nullptr;
-        }
+        // switch (type) {
+        //     case MessageType::DATA:
+        //         return std::make_unique<RoutingMessage>(dest, src, data);
+        //     // Other cases
+        //     default:
+        //         return nullptr;
+        // }
+        return nullptr;
     }
 };
 

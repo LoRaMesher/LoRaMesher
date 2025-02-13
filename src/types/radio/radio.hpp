@@ -4,10 +4,10 @@
 #include <functional>
 #include <vector>
 
-#include "radio_error_codes.hpp"
 #include "radio_event.hpp"
 #include "radio_state.hpp"
 #include "types/configurations/radio_configuration.hpp"
+#include "types/error_codes/result.hpp"
 
 namespace loramesher {
 namespace radio {

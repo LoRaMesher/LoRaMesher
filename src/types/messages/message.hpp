@@ -4,10 +4,11 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <stdexcept>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "types/error_codes/result.hpp"
 #include "utils/byte_operations.h"
 
 namespace loramesher {
@@ -19,13 +20,14 @@ using AddressType = uint16_t;
  * @brief Enumeration of possible message types in the system
  */
 enum class MessageType : uint8_t {
-    DATA = 0x01,    /**< Regular data message */
-    XL_DATA = 0x02, /**< Large data message */
-    HELLO = 0x03,   /**< Hello packet for routing */
-    ACK = 0x04,     /**< Acknowledgment */
-    LOST = 0x05,    /**< Packet loss notification */
-    SYNC = 0x06,    /**< Synchronization packet */
-    NEED_ACK = 0x07 /**< Request for acknowledgment */
+    DATA = 0x01,       /**< Regular data message */
+    XL_DATA = 0x02,    /**< Large data message */
+    HELLO = 0x03,      /**< Hello packet for routing */
+    ACK = 0x04,        /**< Acknowledgment */
+    LOST = 0x05,       /**< Packet loss notification */
+    SYNC = 0x06,       /**< Synchronization packet */
+    NEED_ACK = 0x07,   /**< Request for acknowledgment */
+    ROUTING_MSG = 0x08 /**< Routing message */
 };
 
 /**
@@ -74,24 +76,21 @@ class BaseMessage {
      * @param src Source address of the message
      * @param type Type of the message
      * @param data Payload data for the message
-     * 
-     * @throws std::length_error If data size exceeds maximum allowed size
-     * @throws std::invalid_argument If addresses are invalid or message type is unsupported
+     * @return radio::Result Success if message creation succeeded, error code otherwise
      */
-    BaseMessage(AddressType dest, AddressType src, MessageType type,
-                const std::vector<uint8_t>& data);
+    static std::optional<BaseMessage> Create(AddressType dest, AddressType src,
+                                             MessageType type,
+                                             const std::vector<uint8_t>& data);
 
     /**
      * @brief Construct a new Base Message from serialized data
      * 
      * @param data Raw byte vector containing the serialized message
-     * 
-     * @throws std::runtime_error If deserialization fails or data is invalid
-     * @throws std::length_error If payload size exceeds MAX_PAYLOAD_SIZE
-     * @throws std::invalid_argument If addresses are invalid or message type is unsupported
-     * @throws std::out_of_range If data vector is too short to contain a valid message
+     * @return std::optional<BaseMessage> Valid message if creation succeeded, 
+     *         std::nullopt otherwise
      */
-    BaseMessage(const std::vector<uint8_t>& data);
+    static std::optional<BaseMessage> CreateFromSerialized(
+        const std::vector<uint8_t>& data);
 
     /**
      * @brief Copy constructor
@@ -132,66 +131,81 @@ class BaseMessage {
     BaseMessage& operator=(BaseMessage&& other) noexcept;
 
     /**
-     * @brief Virtual destructor to ensure proper cleanup of derived classes
+     * @brief Virtual destructor
      */
     virtual ~BaseMessage() = default;
+
+    /**
+     * @brief Set the message header
+     * @return Result Success if setting the header succeeded, error code otherwise
+     */
+    Result SetBaseHeader(const BaseHeader& header);
+
+    /**
+     * @brief Set message header
+     * 
+     * @param dest Destination address
+     * @param src Source address
+     * @param type Message type
+     * @param data Payload data
+     * @return Result Success if setting the header succeeded, error code otherwise
+     */
+    Result SetBaseHeader(AddressType dest, AddressType src, MessageType type,
+                         const std::vector<uint8_t>& data);
 
     /**
      * @brief Get the message header
      * @return Const reference to the message header
      */
-    const BaseHeader& getBaseHeader() const { return baseHeader_; }
+    const BaseHeader& GetBaseHeader() const { return base_header_; }
 
     /**
      * @brief Get the message payload
      * @return Const reference to the payload data
      */
-    const std::vector<uint8_t>& getPayload() const { return payload_; }
+    const std::vector<uint8_t>& GetPayload() const { return payload_; }
 
     /**
      * @brief Get the total size of the message
      * @return Size in bytes including header and payload
      */
-    size_t getTotalSize() const { return BaseHeader::size() + payload_.size(); }
+    size_t GetTotalSize() const { return BaseHeader::size() + payload_.size(); }
 
     /**
      * @brief Serialize the message header
      * 
      * @param serializer Serializer object to write to
-     * @throws std::runtime_error If serialization fails
+     * @return Result Success if serialization succeeded, error code otherwise
      */
-    void serialize(utils::ByteSerializer& serializer) const;
+    Result Serialize(utils::ByteSerializer& serializer) const;
 
     /**
      * @brief Serialize the complete message
      * 
      * Serializes both header and payload into a byte vector.
      * 
-     * @return Vector containing the serialized message
-     * @throws std::runtime_error If serialization fails
+     * @return std::optional<std::vector<uint8_t>> Serialized message if successful,
+     *         std::nullopt otherwise
      */
-    std::vector<uint8_t> serialize() const;
+    std::optional<std::vector<uint8_t>> Serialize() const;
 
     /**
      * @brief Deserialize a message header from raw data
      * 
      * @param deserializer Deserializer containing the raw data
-     * @return Deserialized header structure
-     * @throws std::runtime_error If deserialization fails or data is invalid
+     * @return std::optional<BaseHeader> Deserialized header if successful, 
+     *         std::nullopt otherwise
      */
-    static BaseHeader deserialize(utils::ByteDeserializer& deserializer);
-
-    /**
-     * @brief Create a message from serialized data
-     * 
-     * @param data Raw byte vector containing the serialized message
-     * @return Unique pointer to the deserialized message
-     * @throws std::runtime_error If deserialization fails or data is invalid
-     */
-    static std::unique_ptr<BaseMessage> deserialize(
-        const std::vector<uint8_t>& data);
+    static std::optional<BaseHeader> Deserialize(
+        utils::ByteDeserializer& deserializer);
 
    private:
+    /**
+     * @brief Private constructor for use by Create methods
+     */
+    BaseMessage(AddressType dest, AddressType src, MessageType type,
+                const std::vector<uint8_t>& data);
+
     /**
      * @brief Validate all input parameters
      * 
@@ -199,14 +213,24 @@ class BaseMessage {
      * @param src Source address
      * @param type Message type
      * @param data Payload data
-     * @throws std::length_error If payload size exceeds MAX_PAYLOAD_SIZE
-     * @throws std::invalid_argument If addresses are invalid or message type is unsupported
+     * @return Result Success if validation passed, error code otherwise
      */
-    void validateInputs(AddressType dest, AddressType src, MessageType type,
-                        const std::vector<uint8_t>& data) const;
+    static Result ValidateInputs(AddressType dest, AddressType src,
+                                 MessageType type,
+                                 const std::vector<uint8_t>& data);
+    /**
+     * @brief Validates if the given MessageType is valid
+     * 
+     * This function checks if the provided MessageType is one of the allowed
+     * message types in the system.
+     * 
+     * @param type The MessageType to validate
+     * @return Result Success if the type is valid, error with kInvalidParameter otherwise
+     */
+    static Result IsValidMessageType(MessageType type);
 
    protected:
-    BaseHeader baseHeader_;        /**< Message header */
+    BaseHeader base_header_;       /**< Message header */
     std::vector<uint8_t> payload_; /**< Message payload */
 };
 
