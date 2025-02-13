@@ -15,25 +15,25 @@ Config::Config(const PinConfig& pins, const RadioConfig& radio,
       enableDeepSleep_(enableDeepSleep) {}
 
 void Config::setPinConfig(const PinConfig& config) {
-    if (!config.isValid()) {
+    if (!config.IsValid()) {
         throw std::invalid_argument("Invalid pin configuration: " +
-                                    config.validate());
+                                    config.Validate());
     }
     pinConfig_ = config;
 }
 
 void Config::setRadioConfig(const RadioConfig& config) {
-    if (!config.isValid()) {
+    if (!config.IsValid()) {
         throw std::invalid_argument("Invalid radio configuration: " +
-                                    config.validate());
+                                    config.Validate());
     }
     radioConfig_ = config;
 }
 
 void Config::setProtocolConfig(const ProtocolConfig& config) {
-    if (!config.isValid()) {
+    if (!config.IsValid()) {
         throw std::invalid_argument("Invalid protocol configuration: " +
-                                    config.validate());
+                                    config.Validate());
     }
     protocolConfig_ = config;
 }
@@ -49,25 +49,25 @@ void Config::setDeepSleepEnabled(bool enable) {
     enableDeepSleep_ = enable;
 }
 
-Config Config::createDefault() {
+Config Config::CreateDefault() {
     return Config{};
 }
 
-bool Config::isValid() const {
-    return pinConfig_.isValid() && radioConfig_.isValid() &&
-           protocolConfig_.isValid() && sleepDuration_ > 0;
+bool Config::IsValid() const {
+    return pinConfig_.IsValid() && radioConfig_.IsValid() &&
+           protocolConfig_.IsValid() && sleepDuration_ > 0;
 }
 
-std::string Config::validate() const {
+std::string Config::Validate() const {
     std::stringstream errors;
-    if (!pinConfig_.isValid()) {
-        errors << "Pin config errors: " << pinConfig_.validate();
+    if (!pinConfig_.IsValid()) {
+        errors << "Pin config errors: " << pinConfig_.Validate();
     }
-    if (!radioConfig_.isValid()) {
-        errors << "Radio config errors: " << radioConfig_.validate();
+    if (!radioConfig_.IsValid()) {
+        errors << "Radio config errors: " << radioConfig_.Validate();
     }
-    if (!protocolConfig_.isValid()) {
-        errors << "Protocol config errors: " << protocolConfig_.validate();
+    if (!protocolConfig_.IsValid()) {
+        errors << "Protocol config errors: " << protocolConfig_.Validate();
     }
     if (sleepDuration_ == 0) {
         errors << "Invalid sleep duration. ";

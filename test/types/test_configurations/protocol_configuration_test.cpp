@@ -8,13 +8,13 @@ namespace test {
 
 class ProtocolConfigTest : public ::testing::Test {
    protected:
-    void SetUp() override { defaultConfig = ProtocolConfig::createDefault(); }
+    void SetUp() override { defaultConfig = ProtocolConfig::CreateDefault(); }
 
     ProtocolConfig defaultConfig;
 };
 
 TEST_F(ProtocolConfigTest, DefaultConstructorCreatesValidConfig) {
-    EXPECT_TRUE(defaultConfig.isValid());
+    EXPECT_TRUE(defaultConfig.IsValid());
     EXPECT_EQ(defaultConfig.getHelloInterval(), 120000);
     EXPECT_EQ(defaultConfig.getSyncInterval(), 300000);
     EXPECT_EQ(defaultConfig.getMaxTimeouts(), 10);
@@ -35,8 +35,8 @@ TEST_F(ProtocolConfigTest, SyncIntervalMustBeGreaterThanHelloInterval) {
 
 TEST_F(ProtocolConfigTest, ValidationMessages) {
     ProtocolConfig config(500, 400, 0);
-    EXPECT_FALSE(config.isValid());
-    std::string errors = config.validate();
+    EXPECT_FALSE(config.IsValid());
+    std::string errors = config.Validate();
     EXPECT_TRUE(errors.find("Hello interval out of range") !=
                 std::string::npos);
     EXPECT_TRUE(errors.find("Sync interval must be greater") !=

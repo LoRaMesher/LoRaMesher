@@ -67,9 +67,9 @@ class RoutingMessageTest : public ::testing::Test {
 };
 
 TEST_F(RoutingMessageTest, RoutingSerializationTest) {
-    msg_ptr->SetRoutingInfo(0xABCD, 0x42, 0x0001);
+    msg_ptr->setRoutingInfo(0xABCD, 0x42, 0x0001);
 
-    ASSERT_EQ(msg_ptr->GetTotalSize(),
+    ASSERT_EQ(msg_ptr->getTotalSize(),
               RoutingHeader::size() + BaseHeader::size() + payload.size());
 
     // Serialize
@@ -100,7 +100,7 @@ TEST_F(RoutingMessageTest, RoutingSerializationTest) {
 }
 
 TEST_F(RoutingMessageTest, RoutingDeserializationTest) {
-    msg_ptr->SetRoutingInfo(0xABCD, 0x42, 0x0001);
+    msg_ptr->setRoutingInfo(0xABCD, 0x42, 0x0001);
 
     // Serialize
     std::optional<std::vector<uint8_t>> opt_serialized = msg_ptr->Serialize();
@@ -116,19 +116,19 @@ TEST_F(RoutingMessageTest, RoutingDeserializationTest) {
     RoutingMessage deserialized = *opt_deserialized;
 
     // Check header fields
-    EXPECT_EQ(deserialized.GetBaseHeader().destination, dest);
-    EXPECT_EQ(deserialized.GetBaseHeader().source, src);
-    EXPECT_EQ(deserialized.GetBaseHeader().type, MessageType::ROUTING_MSG);
-    EXPECT_EQ(deserialized.GetBaseHeader().payloadSize, payload.size());
+    EXPECT_EQ(deserialized.getBaseHeader().destination, dest);
+    EXPECT_EQ(deserialized.getBaseHeader().source, src);
+    EXPECT_EQ(deserialized.getBaseHeader().type, MessageType::ROUTING_MSG);
+    EXPECT_EQ(deserialized.getBaseHeader().payloadSize, payload.size());
 
     // Check routing header fields
-    RoutingHeader routingHeader = deserialized.GetRoutingHeader();
+    RoutingHeader routingHeader = deserialized.getRoutingHeader();
     EXPECT_EQ(routingHeader.next_hop, 0xABCD);
     EXPECT_EQ(routingHeader.sequence_id, 0x42);
     EXPECT_EQ(routingHeader.number, 0x0001);
 
     // Check payload
-    EXPECT_EQ(deserialized.GetPayload(), payload);
+    EXPECT_EQ(deserialized.getPayload(), payload);
 }
 
 // Test for routing message memory management
@@ -138,17 +138,17 @@ TEST_F(RoutingMessageTest, RoutingRoutingMessageTest) {
     const uint16_t number = 0x0001;
 
     {
-        msg_ptr->SetRoutingInfo(next_hop, seq_id, number);
+        msg_ptr->setRoutingInfo(next_hop, seq_id, number);
 
         // Test copy
         RoutingMessage copy(*msg_ptr);
-        EXPECT_EQ(copy.GetRoutingHeader().next_hop, next_hop);
-        EXPECT_NE(copy.GetPayload().data(), msg_ptr->GetPayload().data());
+        EXPECT_EQ(copy.getRoutingHeader().next_hop, next_hop);
+        EXPECT_NE(copy.getPayload().data(), msg_ptr->getPayload().data());
 
         // Test move
         RoutingMessage moved(std::move(copy));
-        EXPECT_EQ(moved.GetRoutingHeader().next_hop, next_hop);
-        EXPECT_TRUE(copy.GetPayload().empty());
+        EXPECT_EQ(moved.getRoutingHeader().next_hop, next_hop);
+        EXPECT_TRUE(copy.getPayload().empty());
     }
 }
 

@@ -28,8 +28,8 @@ class HardwareManager {
      * @param radio_config Radio configuration parameters
      */
     explicit HardwareManager(
-        const PinConfig& pin_config = PinConfig::createDefault(),
-        const RadioConfig& radio_config = RadioConfig::createDefaultSx1276());
+        const PinConfig& pin_config = PinConfig::CreateDefault(),
+        const RadioConfig& radio_config = RadioConfig::CreateDefaultSx1276());
 
     /**
      * @brief Destroy the Hardware Manager object
@@ -41,7 +41,7 @@ class HardwareManager {
      * 
      * @return bool True if initialization was successful
      */
-    bool initialize();
+    bool Initialize();
 
     /**
      * @brief Get pointer to HAL interface
@@ -55,7 +55,7 @@ class HardwareManager {
      * 
      * @return bool True if HAL is initialized
      */
-    bool isInitialized() const { return initialized_; }
+    bool IsInitialized() const { return initialized_; }
 
     /**
      * @brief Get the current pin configuration
@@ -77,7 +77,7 @@ class HardwareManager {
      * @param pin_config New pin configuration
      * @return bool True if update was successful
      */
-    bool updatePinConfig(const PinConfig& pin_config);
+    bool setPinConfig(const PinConfig& pin_config);
 
     /**
      * @brief Update the radio configuration
@@ -101,28 +101,28 @@ class HardwareManager {
      * 
      * @return bool True if platform initialization was successful
      */
-    bool initializePlatform();
+    bool InitializePlatform();
 
     /**
      * @brief Initialize hal modules
      * 
      * @return bool True if hal modules were initialized successfully
      */
-    bool initializeHalModules();
+    bool InitializeHalModules();
 
     /**
      * @brief Initialize radio module
      * 
      * @return bool True if radio module was initialized successfully
      */
-    bool initializeRadioModule();
+    bool InitializeRadioModule();
 
     /**
      * @brief Validate current configuration
      * 
      * @return bool True if both pin and radio configurations are valid
      */
-    bool validateConfiguration() const;
+    bool ValidateConfiguration() const;
 
     std::unique_ptr<hal::IHal> hal_;  ///< Pointer to HAL interface
     std::unique_ptr<radio::IRadio>

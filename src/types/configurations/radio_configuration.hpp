@@ -41,6 +41,18 @@ class RadioConfig {
                          uint8_t codingRate = 5, uint8_t power = 17);
 
     /**
+     * @brief Create default configuration for SX1276
+     * @return RadioConfig Optimized configuration for SX1276
+     */
+    static RadioConfig CreateDefaultSx1276();
+
+    /**
+     * @brief Create default configuration for SX1278
+     * @return RadioConfig Optimized configuration for SX1278
+     */
+    static RadioConfig CreateDefaultSx1278();
+
+    /**
    * @brief Get the configured radio type
    * @return RadioType Current radio hardware type
    */
@@ -123,28 +135,16 @@ class RadioConfig {
     void setPower(uint8_t power);
 
     /**
-   * @brief Create default configuration for SX1276
-   * @return RadioConfig Optimized configuration for SX1276
-   */
-    static RadioConfig createDefaultSx1276();
-
-    /**
-   * @brief Create default configuration for SX1278
-   * @return RadioConfig Optimized configuration for SX1278
-   */
-    static RadioConfig createDefaultSx1278();
-
-    /**
    * @brief Check if the configuration is valid
    * @return bool True if all parameters are within valid ranges
    */
-    bool isValid() const;
+    bool IsValid() const;
 
     /**
    * @brief Get detailed validation messages
    * @return std::string Description of any validation errors
    */
-    std::string validate() const;
+    std::string Validate() const;
 
    private:
     static constexpr float kMinFrequency = 137.0F;  ///< Minimum valid frequency

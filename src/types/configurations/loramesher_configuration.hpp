@@ -13,9 +13,9 @@ class Config {
    public:
     // Constructor
     explicit Config(
-        const PinConfig& pins = PinConfig::createDefault(),
-        const RadioConfig& radio = RadioConfig::createDefaultSx1276(),
-        const ProtocolConfig& protocol = ProtocolConfig::createDefault(),
+        const PinConfig& pins = PinConfig::CreateDefault(),
+        const RadioConfig& radio = RadioConfig::CreateDefaultSx1276(),
+        const ProtocolConfig& protocol = ProtocolConfig::CreateDefault(),
         uint32_t sleepDuration = 60000, bool enableDeepSleep = true);
 
     // Getters
@@ -23,7 +23,7 @@ class Config {
     const RadioConfig& getRadioConfig() const { return radioConfig_; }
     const ProtocolConfig& getProtocolConfig() const { return protocolConfig_; }
     uint32_t getSleepDuration() const { return sleepDuration_; }
-    bool isDeepSleepEnabled() const { return enableDeepSleep_; }
+    bool getDeepSleepEnabled() const { return enableDeepSleep_; }
 
     // Setters
     void setPinConfig(const PinConfig& config);
@@ -33,11 +33,11 @@ class Config {
     void setDeepSleepEnabled(bool enable);
 
     // Factory method
-    static Config createDefault();
+    static Config CreateDefault();
 
     // Validation
-    bool isValid() const;
-    std::string validate() const;
+    bool IsValid() const;
+    std::string Validate() const;
 
    private:
     PinConfig pinConfig_;

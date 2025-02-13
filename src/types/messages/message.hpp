@@ -18,6 +18,9 @@ using AddressType = uint16_t;
 
 /**
  * @brief Enumeration of possible message types in the system
+ * 
+ * @attention When adding more types, change the 
+ * IsValidMessageType function in message.cpp accordingly.
  */
 enum class MessageType : uint8_t {
     DATA = 0x01,       /**< Regular data message */
@@ -139,7 +142,7 @@ class BaseMessage {
      * @brief Set the message header
      * @return Result Success if setting the header succeeded, error code otherwise
      */
-    Result SetBaseHeader(const BaseHeader& header);
+    Result setBaseHeader(const BaseHeader& header);
 
     /**
      * @brief Set message header
@@ -150,26 +153,26 @@ class BaseMessage {
      * @param data Payload data
      * @return Result Success if setting the header succeeded, error code otherwise
      */
-    Result SetBaseHeader(AddressType dest, AddressType src, MessageType type,
+    Result setBaseHeader(AddressType dest, AddressType src, MessageType type,
                          const std::vector<uint8_t>& data);
 
     /**
      * @brief Get the message header
      * @return Const reference to the message header
      */
-    const BaseHeader& GetBaseHeader() const { return base_header_; }
+    const BaseHeader& getBaseHeader() const { return base_header_; }
 
     /**
      * @brief Get the message payload
      * @return Const reference to the payload data
      */
-    const std::vector<uint8_t>& GetPayload() const { return payload_; }
+    const std::vector<uint8_t>& getPayload() const { return payload_; }
 
     /**
      * @brief Get the total size of the message
      * @return Size in bytes including header and payload
      */
-    size_t GetTotalSize() const { return BaseHeader::size() + payload_.size(); }
+    size_t getTotalSize() const { return BaseHeader::size() + payload_.size(); }
 
     /**
      * @brief Serialize the message header
@@ -224,7 +227,7 @@ class BaseMessage {
      * This function checks if the provided MessageType is one of the allowed
      * message types in the system.
      * 
-     * @param type The MessageType to validate
+     * @param type The MessageType to Validate
      * @return Result Success if the type is valid, error with kInvalidParameter otherwise
      */
     static Result IsValidMessageType(MessageType type);

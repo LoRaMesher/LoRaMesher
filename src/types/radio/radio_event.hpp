@@ -45,23 +45,23 @@ class RadioEvent {
     RadioEvent& operator=(RadioEvent&&) = default;
 
     // Getters
-    RadioEventType GetType() const { return type_; }
+    RadioEventType getType() const { return type_; }
 
-    const BaseMessage* GetMessage() const { return message_.get(); }
+    const BaseMessage* getMessage() const { return message_.get(); }
 
     // Take ownership of the message
     std::unique_ptr<BaseMessage> TakeMessage() { return std::move(message_); }
 
     // RSSI and SNR setters and getters
-    void SetRssi(int8_t rssi) { rssi_ = rssi; }
-    int8_t GetRssi() const { return rssi_; }
+    void setRssi(int8_t rssi) { rssi_ = rssi; }
+    int8_t getRssi() const { return rssi_; }
 
-    void SetSnr(int8_t snr) { snr_ = snr; }
-    int8_t GetSnr() const { return snr_; }
+    void setSnr(int8_t snr) { snr_ = snr; }
+    int8_t getSnr() const { return snr_; }
 
     // Timestamp setters and getters
-    void SetTimestamp(uint32_t timestamp) { timestamp_ = timestamp; }
-    uint32_t GetTimestamp() const { return timestamp_; }
+    void setTimestamp(uint32_t timestamp) { timestamp_ = timestamp; }
+    uint32_t getTimestamp() const { return timestamp_; }
 
     // Check if event has a valid message
     bool HasMessage() const { return message_ != nullptr; }
@@ -114,9 +114,9 @@ inline std::unique_ptr<RadioEvent> CreateReceivedEvent(
     std::unique_ptr<BaseMessage> message, int8_t rssi, int8_t snr) {
     auto event = std::make_unique<RadioEvent>(RadioEventType::kReceived,
                                               std::move(message));
-    event->SetRssi(rssi);
-    event->SetSnr(snr);
-    // event->SetTimestamp(/* Get current timestamp */);
+    event->setRssi(rssi);
+    event->setSnr(snr);
+    // event->setTimestamp(/* Get current timestamp */);
     return event;
 }
 
@@ -124,13 +124,13 @@ inline std::unique_ptr<RadioEvent> CreateTransmittedEvent(
     std::unique_ptr<BaseMessage> message) {
     auto event = std::make_unique<RadioEvent>(RadioEventType::kTransmitted,
                                               std::move(message));
-    // event->SetTimestamp(/* Get current timestamp */);
+    // event->setTimestamp(/* Get current timestamp */);
     return event;
 }
 
 inline std::unique_ptr<RadioEvent> CreateTimeoutEvent() {
     auto event = std::make_unique<RadioEvent>(RadioEventType::kTimeout);
-    // event->SetTimestamp(/* Get current timestamp */);
+    // event->setTimestamp(/* Get current timestamp */);
     return event;
 }
 

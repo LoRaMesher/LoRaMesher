@@ -75,14 +75,14 @@ class LoraMesherSX1276 : public IRadio {
      * @param config Complete radio configuration parameters
      * @return Result Success if configuration was successful
      */
-    Result configure(const RadioConfig& config) override;
+    Result Configure(const RadioConfig& config) override;
 
     /**
      * @brief Initialize and begin radio operations
      * @param config Initial configuration parameters
      * @return Result Success if initialization was successful
      */
-    Result begin(const RadioConfig& config) override;
+    Result Begin(const RadioConfig& config) override;
 
     /**
      * @brief Transmit data over the radio
@@ -90,19 +90,19 @@ class LoraMesherSX1276 : public IRadio {
      * @param len Length of data in bytes
      * @return Result Success if transmission started successfully
      */
-    Result send(const uint8_t* data, size_t len) override;
+    Result Send(const uint8_t* data, size_t len) override;
 
     /**
      * @brief Start continuous receive mode
      * @return Result Success if receive mode was started successfully
      */
-    Result startReceive() override;
+    Result StartReceive() override;
 
     /**
      * @brief Enter sleep mode to conserve power
      * @return Result Success if sleep mode was entered successfully
      */
-    Result sleep() override;
+    Result Sleep() override;
 
     /**
      * @brief Set the radio frequency
@@ -188,7 +188,7 @@ class LoraMesherSX1276 : public IRadio {
      * @brief Check if the radio is currently transmitting
      * @return bool True if radio is transmitting
      */
-    bool isTransmitting() override;
+    bool IsTransmitting() override;
 
     /**
      * @brief Get the current radio frequency
@@ -248,7 +248,7 @@ class LoraMesherSX1276 : public IRadio {
      * 
      * @return Result Success if initialization was successful
      */
-    Result initializeHardware();
+    Result InitializeHardware();
 
     /**
      * @brief ISR callback for radio events
@@ -256,7 +256,7 @@ class LoraMesherSX1276 : public IRadio {
      * Handles interrupt events from the radio module, including
      * received data, transmission complete, and other events.
      */
-    void handleInterrupt();
+    void HandleInterrupt();
 
     /**
      * @brief Static ISR callback for radio events
@@ -264,7 +264,7 @@ class LoraMesherSX1276 : public IRadio {
      * Static wrapper for the interrupt handler. Required because attachInterrupt
      * only accepts static functions or plain C-style function pointers.
      */
-    static void ICACHE_RAM_ATTR handleInterruptStatic();
+    static void ICACHE_RAM_ATTR HandleInterruptStatic();
 
     /**
      * @brief Process radio events in a separate task
@@ -275,7 +275,7 @@ class LoraMesherSX1276 : public IRadio {
      * 
      * @param parameters Task parameters (unused)
      */
-    static void processEvents(void* parameters);
+    static void ProcessEvents(void* parameters);
 
     /**
      * @brief Pointer to the current instance for interrupt handling

@@ -14,18 +14,18 @@ HardwareManager::HardwareManager(const PinConfig& pin_config,
     radio_config_ = radio_config;
 }
 
-bool HardwareManager::initialize() {
+bool HardwareManager::Initialize() {
     if (initialized_) {
         return true;
     }
 
     // Initialize platform-specific hardware
-    if (!initializePlatform()) {
+    if (!InitializePlatform()) {
         return false;
     }
 
     // Initialize radio
-    if (!initializeHalModules()) {
+    if (!InitializeHalModules()) {
         return false;
     }
 
@@ -33,8 +33,8 @@ bool HardwareManager::initialize() {
     return true;
 }
 
-bool HardwareManager::updatePinConfig(const PinConfig& pin_config) {
-    if (!pin_config.isValid()) {
+bool HardwareManager::setPinConfig(const PinConfig& pin_config) {
+    if (!pin_config.IsValid()) {
         return false;
     }
 
@@ -43,7 +43,7 @@ bool HardwareManager::updatePinConfig(const PinConfig& pin_config) {
 }
 
 bool HardwareManager::updateRadioConfig(const RadioConfig& radio_config) {
-    if (!radio_config.isValid()) {
+    if (!radio_config.IsValid()) {
         return false;
     }
 
@@ -51,7 +51,7 @@ bool HardwareManager::updateRadioConfig(const RadioConfig& radio_config) {
     return true;
 }
 
-bool HardwareManager::initializePlatform() {
+bool HardwareManager::InitializePlatform() {
 #ifdef LORAMESHER_BUILD_ARDUINO
     // Initialize Arduino hardware
     // pinMode(kCsPin, OUTPUT);
@@ -62,7 +62,7 @@ bool HardwareManager::initializePlatform() {
     // digitalWrite(kResetPin, HIGH);
 
     // // Initialize SPI
-    // SPI.begin();
+    // SPI.Begin();
     // SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
 
 #elif defined(LORAMESHER_BUILD_NATIVE)
@@ -72,7 +72,7 @@ bool HardwareManager::initializePlatform() {
     return true;
 }
 
-bool HardwareManager::initializeHalModules() {
+bool HardwareManager::InitializeHalModules() {
     try {
 #ifdef LORAMESHER_BUILD_ARDUINO
         // Create hal instance for Arduino
@@ -89,16 +89,16 @@ bool HardwareManager::initializeHalModules() {
     }
 }
 
-bool HardwareManager::initializeRadioModule() {
+bool HardwareManager::InitializeRadioModule() {
 // Create radio module
 #ifdef LORAMESHER_BUILD_ARDUINO
-    // radio_ = createRadio(kCsPin, kDio0Pin, kResetPin, SPI);
+    // radio_ = CreateRadio(kCsPin, kDio0Pin, kResetPin, SPI);
     // if (!radio_module_) {
     //     return false;
     // }
 
     // // Configure radio module
-    // if (!radio_module_->configure(radio_config_)) {
+    // if (!radio_module_->Configure(radio_config_)) {
     //     return false;
     // }
 #endif
@@ -106,8 +106,8 @@ bool HardwareManager::initializeRadioModule() {
     return true;
 }
 
-bool HardwareManager::validateConfiguration() const {
-    return pin_config_.isValid() && radio_config_.isValid();
+bool HardwareManager::ValidateConfiguration() const {
+    return pin_config_.IsValid() && radio_config_.IsValid();
 }
 
 }  // namespace hardware

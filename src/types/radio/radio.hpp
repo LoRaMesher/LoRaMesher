@@ -34,14 +34,14 @@ class IRadio {
      * @param config Complete radio configuration
      * @return Result Success if configuration was successful
      */
-    virtual Result configure(const RadioConfig& config) = 0;
+    virtual Result Configure(const RadioConfig& config) = 0;
 
     /**
    * @brief Initialize the radio module
    * @param config Initial configuration parameters
    * @return true if initialization was successful, false otherwise
    */
-    virtual Result begin(const RadioConfig& config) = 0;
+    virtual Result Begin(const RadioConfig& config) = 0;
 
     /**
      * @brief Send data over the radio
@@ -50,21 +50,21 @@ class IRadio {
      * @param len Length of data in bytes
      * @return Result Success if transmission started successfully
      */
-    virtual Result send(const uint8_t* data, size_t len) = 0;
+    virtual Result Send(const uint8_t* data, size_t len) = 0;
 
     /**
      * @brief Start the radio in receive mode
      * 
      * @return Result Success if receive mode was started successfully
      */
-    virtual Result startReceive() = 0;
+    virtual Result StartReceive() = 0;
 
     /**
      * @brief Put the radio into sleep mode
      * 
      * @return Result Success if sleep mode was entered successfully
      */
-    virtual Result sleep() = 0;
+    virtual Result Sleep() = 0;
 
     ///////////////////////
     // Parameter Configuration
@@ -171,7 +171,7 @@ class IRadio {
      * 
      * @return bool True if radio is transmitting
      */
-    virtual bool isTransmitting() = 0;
+    virtual bool IsTransmitting() = 0;
 
     /**
      * @brief Get the current radio frequency

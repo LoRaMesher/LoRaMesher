@@ -8,13 +8,13 @@ namespace test {
 
 class PinConfigTest : public ::testing::Test {
    protected:
-    void SetUp() override { defaultConfig = PinConfig::createDefault(); }
+    void SetUp() override { defaultConfig = PinConfig::CreateDefault(); }
 
     PinConfig defaultConfig;
 };
 
 TEST_F(PinConfigTest, DefaultConstructorCreatesValidConfig) {
-    EXPECT_TRUE(defaultConfig.isValid());
+    EXPECT_TRUE(defaultConfig.IsValid());
     EXPECT_EQ(defaultConfig.getNss(), 18);
     EXPECT_EQ(defaultConfig.getReset(), 23);
     EXPECT_EQ(defaultConfig.getDio0(), 26);
@@ -38,8 +38,8 @@ TEST_F(PinConfigTest, SettersValidateInput) {
 
 TEST_F(PinConfigTest, ValidationWorksCorrectly) {
     PinConfig config(-1, -1, -1, -1);
-    EXPECT_FALSE(config.isValid());
-    std::string errors = config.validate();
+    EXPECT_FALSE(config.IsValid());
+    std::string errors = config.Validate();
     EXPECT_TRUE(errors.find("Invalid NSS pin") != std::string::npos);
     EXPECT_TRUE(errors.find("Invalid Reset pin") != std::string::npos);
     EXPECT_TRUE(errors.find("Invalid DIO0 pin") != std::string::npos);

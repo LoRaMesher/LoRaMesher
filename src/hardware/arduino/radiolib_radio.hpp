@@ -52,7 +52,7 @@ class RadioLibRadio : public IRadio {
      * @param config Configuration parameters
      * @return Result Success if configuration was successful
      */
-    Result configure(const RadioConfig& config) override;
+    Result Configure(const RadioConfig& config) override;
 
     /**
      * @brief Send data over the radio
@@ -61,21 +61,21 @@ class RadioLibRadio : public IRadio {
      * @param len Length of data in bytes
      * @return Result Success if transmission started successfully
      */
-    Result send(const uint8_t* data, size_t len) override;
+    Result Send(const uint8_t* data, size_t len) override;
 
     /**
      * @brief Start the radio in receive mode
      * 
      * @return Result Success if receive mode was started successfully
      */
-    Result startReceive() override;
+    Result StartReceive() override;
 
     /**
      * @brief Put the radio into sleep mode
      * 
      * @return Result Success if sleep mode was entered successfully
      */
-    Result sleep() override;
+    Result Sleep() override;
 
     /**
      * @brief Get the current RSSI value
@@ -108,7 +108,7 @@ class RadioLibRadio : public IRadio {
      * @param type Type of radio module to create
      * @return bool True if module was created successfully
      */
-    bool createRadioModule(RadioType type);
+    bool CreateRadioModule(RadioType type);
 
     /**
      * @brief Handle interrupt from radio module
@@ -118,14 +118,14 @@ class RadioLibRadio : public IRadio {
      * 
      * @param context Context pointer (unused)
      */
-    void handleInterrupt(void* context);
+    void HandleInterrupt(void* context);
 
     /**
      * @brief Process messages in the receive queue
      * 
      * Calls the receive callback for each queued message.
      */
-    void processQueuedMessages();
+    void ProcessQueuedMessages();
 
     // Hardware configuration
     const int cs_pin_;   ///< SPI Chip Select pin
@@ -155,7 +155,7 @@ class RadioLibRadio : public IRadio {
  * @param spi Reference to SPI interface
  * @return std::unique_ptr<IRadio> New radio instance
  */
-inline std::unique_ptr<IRadio> createRadio(int cs_pin, int di0_pin, int rst_pin,
+inline std::unique_ptr<IRadio> CreateRadio(int cs_pin, int di0_pin, int rst_pin,
                                            SPIClass& spi) {
     return std::make_unique<RadioLibRadio>(cs_pin, di0_pin, rst_pin, spi);
 }

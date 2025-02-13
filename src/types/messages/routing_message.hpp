@@ -58,7 +58,7 @@ class RoutingMessage : public BaseMessage {
      * @param seq_id Sequence identifier
      * @param num Message number
      */
-    void SetRoutingInfo(AddressType next_hop, uint8_t seq_id, uint16_t num) {
+    void setRoutingInfo(AddressType next_hop, uint8_t seq_id, uint16_t num) {
         routing_header_.next_hop = next_hop;
         routing_header_.sequence_id = seq_id;
         routing_header_.number = num;
@@ -68,14 +68,14 @@ class RoutingMessage : public BaseMessage {
      * @brief Get the routing header
      * @return const RoutingHeader& Reference to the routing header
      */
-    const RoutingHeader& GetRoutingHeader() const { return routing_header_; }
+    const RoutingHeader& getRoutingHeader() const { return routing_header_; }
 
     /**
      * @brief Get the total size of the message including all headers
      * @return Total size in bytes
      */
-    size_t GetTotalSize() const {
-        return RoutingHeader::size() + BaseMessage::GetTotalSize();
+    size_t getTotalSize() const {
+        return RoutingHeader::size() + BaseMessage::getTotalSize();
     }
 
     /**
@@ -85,7 +85,7 @@ class RoutingMessage : public BaseMessage {
      *         std::nullopt otherwise
      */
     std::optional<std::vector<uint8_t>> Serialize() const {
-        std::vector<uint8_t> serialized(GetTotalSize());
+        std::vector<uint8_t> serialized(getTotalSize());
         utils::ByteSerializer serializer(serialized);
 
         // Serialize base message
@@ -95,12 +95,12 @@ class RoutingMessage : public BaseMessage {
         }
 
         // Serialize routing header
-        serializer.writeUint16(routing_header_.next_hop);
-        serializer.writeUint8(routing_header_.sequence_id);
-        serializer.writeUint16(routing_header_.number);
+        serializer.WriteUint16(routing_header_.next_hop);
+        serializer.WriteUint8(routing_header_.sequence_id);
+        serializer.WriteUint16(routing_header_.number);
 
         // Serialize payload
-        serializer.writeBytes(GetPayload().data(), GetPayload().size());
+        serializer.WriteBytes(getPayload().data(), getPayload().size());
 
         return serialized;
     }
@@ -126,15 +126,15 @@ class RoutingMessage : public BaseMessage {
         }
 
         // Read routing header
-        auto next_hop = deserializer.readUint16();
-        auto seq_id = deserializer.readUint8();
-        auto number = deserializer.readUint16();
+        auto next_hop = deserializer.ReadUint16();
+        auto seq_id = deserializer.ReadUint8();
+        auto number = deserializer.ReadUint16();
 
         if (!next_hop || !seq_id || !number) {
             return std::nullopt;
         }
 
-        auto payload = deserializer.readBytes(base_header->payloadSize);
+        auto payload = deserializer.ReadBytes(base_header->payloadSize);
         if (!payload) {
             return std::nullopt;
         }
@@ -145,7 +145,7 @@ class RoutingMessage : public BaseMessage {
             return std::nullopt;
         }
 
-        msg->SetRoutingInfo(*next_hop, *seq_id, *number);
+        msg->setRoutingInfo(*next_hop, *seq_id, *number);
         return msg;
     }
 

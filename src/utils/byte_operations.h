@@ -37,7 +37,7 @@ class ByteSerializer {
       * @param value The value to write
       * @note Writes in little-endian format
       */
-    void writeUint16(uint16_t value) {
+    void WriteUint16(uint16_t value) {
         buffer_[offset_++] = value & 0xFF;
         buffer_[offset_++] = (value >> 8) & 0xFF;
     }
@@ -46,14 +46,14 @@ class ByteSerializer {
       * @brief Writes an 8-bit unsigned integer to the buffer
       * @param value The value to write
       */
-    void writeUint8(uint8_t value) { buffer_[offset_++] = value; }
+    void WriteUint8(uint8_t value) { buffer_[offset_++] = value; }
 
     /**
       * @brief Writes an array of bytes to the buffer
       * @param data Pointer to the data to write
       * @param length Number of bytes to write
       */
-    void writeBytes(const uint8_t* data, size_t length) {
+    void WriteBytes(const uint8_t* data, size_t length) {
         std::memcpy(&buffer_[offset_], data, length);
         offset_ += length;
     }
@@ -87,9 +87,9 @@ class ByteDeserializer {
       * @return The read value if successful, std::nullopt otherwise
       * @note Reads in little-endian format
       */
-    std::optional<uint16_t> readUint16() {
-        Result result = checkAvailable(2);
-        if (!result.isSuccess()) {
+    std::optional<uint16_t> ReadUint16() {
+        Result result = CheckAvailable(2);
+        if (!result.IsSuccess()) {
             return std::nullopt;
         }
         uint16_t value = static_cast<uint16_t>(buffer_[offset_]) |
@@ -102,9 +102,9 @@ class ByteDeserializer {
       * @brief Reads an 8-bit unsigned integer from the buffer
       * @return The read value if successful, std::nullopt otherwise
       */
-    std::optional<uint8_t> readUint8() {
-        Result result = checkAvailable(1);
-        if (!result.isSuccess()) {
+    std::optional<uint8_t> ReadUint8() {
+        Result result = CheckAvailable(1);
+        if (!result.IsSuccess()) {
             return std::nullopt;
         }
         return buffer_[offset_++];
@@ -115,9 +115,9 @@ class ByteDeserializer {
       * @param length Number of bytes to read
       * @return Vector containing the read bytes if successful, std::nullopt otherwise
       */
-    std::optional<std::vector<uint8_t>> readBytes(size_t length) {
-        Result result = checkAvailable(length);
-        if (!result.isSuccess()) {
+    std::optional<std::vector<uint8_t>> ReadBytes(size_t length) {
+        Result result = CheckAvailable(length);
+        if (!result.IsSuccess()) {
             return std::nullopt;
         }
         std::vector<uint8_t> vec_result(buffer_.begin() + offset_,
@@ -131,9 +131,9 @@ class ByteDeserializer {
       * @param length Number of bytes to skip
       * @return Result indicating success or failure
       */
-    Result skip(size_t length) {
-        Result result = checkAvailable(length);
-        if (!result.isSuccess()) {
+    Result Skip(size_t length) {
+        Result result = CheckAvailable(length);
+        if (!result.IsSuccess()) {
             return result;
         }
         offset_ += length;
@@ -163,11 +163,11 @@ class ByteDeserializer {
       * @param bytes Number of bytes to check
       * @return Result indicating if the bytes are available
       */
-    Result checkAvailable(size_t bytes) const {
+    Result CheckAvailable(size_t bytes) const {
         if (offset_ + bytes > buffer_.size()) {
-            return Result::error(LoraMesherErrorCode::kBufferOverflow);
+            return Result::Error(LoraMesherErrorCode::kBufferOverflow);
         }
-        return Result::success();
+        return Result::Success();
     }
 
     const std::vector<uint8_t>& buffer_;  ///< Reference to the source buffer

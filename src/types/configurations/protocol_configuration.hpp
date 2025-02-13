@@ -24,11 +24,11 @@ class ProtocolConfig {
     void setMaxTimeouts(uint32_t timeouts);
 
     // Factory method
-    static ProtocolConfig createDefault();
+    static ProtocolConfig CreateDefault();
 
     // Validation
-    bool isValid() const;
-    std::string validate() const;
+    bool IsValid() const;
+    std::string Validate() const;
 
    private:
     static constexpr uint32_t kMinHelloInterval = 1000;     // 1 second

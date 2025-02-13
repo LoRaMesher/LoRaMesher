@@ -10,10 +10,10 @@ using namespace loramesher;
 int simple_example_main() {
     try {
         // Create a LoRaMesher instance with default configurations
-        auto loraMesher = LoraMesher::Builder().build();
+        auto loraMesher = LoraMesher::Builder().Build();
 
         // Start the LoRaMesher instance
-        if (!loraMesher->start()) {
+        if (!loraMesher->Start()) {
             std::cerr << "Failed to start LoRaMesher" << std::endl;
             return 1;
         }
@@ -38,7 +38,7 @@ int simple_example_main() {
         std::cin.get();
 
         // Clean shutdown
-        loraMesher->stop();
+        loraMesher->Stop();
 
         return 0;
     } catch (const std::exception& e) {
@@ -58,7 +58,7 @@ int full_example_main() {
                                     .withSpreadingFactor(7)
                                     .withDeepSleep(true)
                                     .withSleepDuration(60000)  // 60 seconds
-                                    .build();
+                                    .Build();
 
         // Method 2: Using the Builder with full custom configuration
         RadioConfig radioConfig(RadioType::kSx1276,  // radio type
@@ -86,10 +86,10 @@ int full_example_main() {
                                         .withPinConfig(pinConfig)
                                         .withSleepDuration(60000)
                                         .withDeepSleep(true)
-                                        .build();
+                                        .Build();
 
         // Start the LoRaMesher instance
-        if (!fullCustomLoraMesher->start()) {
+        if (!fullCustomLoraMesher->Start()) {
             std::cerr << "Failed to start LoRaMesher" << std::endl;
             return 1;
         }
@@ -114,7 +114,7 @@ int full_example_main() {
         std::cin.get();
 
         // Clean shutdown
-        fullCustomLoraMesher->stop();
+        fullCustomLoraMesher->Stop();
 
         return 0;
     } catch (const std::exception& e) {
@@ -127,7 +127,7 @@ int full_example_main() {
 
 void setup() {
     Serial.begin(115200);
-    // Initialize with builder pattern
+    // Initialize with Builder pattern
     full_example_main();
 }
 

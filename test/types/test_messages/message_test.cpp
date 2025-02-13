@@ -117,7 +117,7 @@ TEST_F(MessageMemoryTest, DeserializationTest) {
     BaseMessage deserialized_msg = std::move(*opt_deserialized);
 
     // Then: Verify header fields
-    const auto& header = deserialized_msg.GetBaseHeader();
+    const auto& header = deserialized_msg.getBaseHeader();
     EXPECT_EQ(header.destination, dest) << "Incorrect deserialized destination";
     EXPECT_EQ(header.source, src) << "Incorrect deserialized source";
     EXPECT_EQ(header.type, MessageType::DATA)
@@ -126,7 +126,7 @@ TEST_F(MessageMemoryTest, DeserializationTest) {
         << "Incorrect deserialized payload size";
 
     // And: Verify payload
-    EXPECT_EQ(deserialized_msg.GetPayload(), payload)
+    EXPECT_EQ(deserialized_msg.getPayload(), payload)
         << "Incorrect deserialized payload";
 }
 
@@ -168,8 +168,8 @@ TEST_F(MessageMemoryTest, CopyConstructorTest) {
         BaseMessage copy(msg);
 
         // Verify independent copies
-        EXPECT_EQ(copy.GetPayload(), msg_ptr->GetPayload());
-        EXPECT_NE(copy.GetPayload().data(), msg_ptr->GetPayload().data());
+        EXPECT_EQ(copy.getPayload(), msg_ptr->getPayload());
+        EXPECT_NE(copy.getPayload().data(), msg_ptr->getPayload().data());
     }
     // Both objects should be properly destroyed here
 }
@@ -188,26 +188,26 @@ TEST_F(MessageMemoryTest, CopyAssignmentTest) {
         copy = msg;
 
         // Verify independent copies
-        EXPECT_EQ(copy.GetPayload(), msg_ptr->GetPayload());
-        EXPECT_NE(copy.GetPayload().data(), msg_ptr->GetPayload().data());
+        EXPECT_EQ(copy.getPayload(), msg_ptr->getPayload());
+        EXPECT_NE(copy.getPayload().data(), msg_ptr->getPayload().data());
     }
     // Copy should be destroyed, original should still be valid
-    EXPECT_EQ(msg_ptr->GetPayload(), payload);
+    EXPECT_EQ(msg_ptr->getPayload(), payload);
 }
 
 // Test move constructor
 TEST_F(MessageMemoryTest, MoveConstructorTest) {
     const uint8_t* originalDataPtr = nullptr;
     {
-        originalDataPtr = msg_ptr->GetPayload().data();
+        originalDataPtr = msg_ptr->getPayload().data();
         BaseMessage moved(std::move(*msg_ptr));
 
         // Verify moved data
-        EXPECT_EQ(moved.GetPayload().data(), originalDataPtr);
-        EXPECT_EQ(moved.GetPayload(), payload);
+        EXPECT_EQ(moved.getPayload().data(), originalDataPtr);
+        EXPECT_EQ(moved.getPayload(), payload);
 
         // Original should be in valid but unspecified state
-        EXPECT_TRUE(msg_ptr->GetPayload().empty());
+        EXPECT_TRUE(msg_ptr->getPayload().empty());
     }
 }
 
@@ -223,27 +223,27 @@ TEST_F(MessageMemoryTest, MoveAssignmentTest) {
     BaseMessage target_msg = std::move(*opt_target);
 
     // Store the original payload for comparison
-    const std::vector<uint8_t> original_payload = source_msg.GetPayload();
+    const std::vector<uint8_t> original_payload = source_msg.getPayload();
 
     // When: Moving source to target
     target_msg = std::move(source_msg);
 
     // Then: Target should have the original payload
-    EXPECT_EQ(target_msg.GetPayload(), original_payload)
+    EXPECT_EQ(target_msg.getPayload(), original_payload)
         << "Target payload doesn't match original";
 
     // And: Source should be empty but valid
-    EXPECT_TRUE(source_msg.GetPayload().empty())
+    EXPECT_TRUE(source_msg.getPayload().empty())
         << "Source message not empty after move";
 
     // And: Source and target should have different payload storage
-    EXPECT_NE(source_msg.GetPayload().data(), target_msg.GetPayload().data())
+    EXPECT_NE(source_msg.getPayload().data(), target_msg.getPayload().data())
         << "Source and target point to same storage after move";
 }
 
 // Test error safety
 TEST_F(MessageMemoryTest, CreateErrorTest) {
-    const auto originalPayload = msg_ptr->GetPayload();
+    const auto originalPayload = msg_ptr->getPayload();
 
     // Force exception by creating message with invalid data
     std::vector<uint8_t> invalidPayload;
@@ -256,7 +256,7 @@ TEST_F(MessageMemoryTest, CreateErrorTest) {
     }
 
     // Original should remain unchanged
-    EXPECT_EQ(msg_ptr->GetPayload(), originalPayload);
+    EXPECT_EQ(msg_ptr->getPayload(), originalPayload);
 }
 
 // Test chained operations
@@ -279,7 +279,7 @@ TEST_F(MessageMemoryTest, ChainedOperationsTest) {
 
     // Verify all messages are valid
     for (const auto& msg : messages) {
-        EXPECT_EQ(msg_ptr->GetPayload(), payload);
+        EXPECT_EQ(msg_ptr->getPayload(), payload);
     }
 }
 
@@ -288,11 +288,11 @@ TEST_F(MessageMemoryTest, BoundaryConditionsTest) {
     // Empty payload
     {
         Result result =
-            msg_ptr->SetBaseHeader(dest, src, MessageType::DATA, {});
-        EXPECT_TRUE(result.isSuccess());
+            msg_ptr->setBaseHeader(dest, src, MessageType::DATA, {});
+        EXPECT_TRUE(result.IsSuccess());
 
-        EXPECT_EQ(msg_ptr->GetPayload().size(), 0);
-        EXPECT_EQ(msg_ptr->GetTotalSize(), BaseHeader::size());
+        EXPECT_EQ(msg_ptr->getPayload().size(), 0);
+        EXPECT_EQ(msg_ptr->getTotalSize(), BaseHeader::size());
     }
 
     // Maximum size payload
@@ -300,9 +300,9 @@ TEST_F(MessageMemoryTest, BoundaryConditionsTest) {
         uint8_t max_payload_size = std::numeric_limits<uint8_t>::max();
         std::vector<uint8_t> max_payload(max_payload_size);
         Result result =
-            msg_ptr->SetBaseHeader(dest, src, MessageType::DATA, max_payload);
-        EXPECT_TRUE(result.isSuccess());
-        EXPECT_EQ(msg_ptr->GetPayload().size(),
+            msg_ptr->setBaseHeader(dest, src, MessageType::DATA, max_payload);
+        EXPECT_TRUE(result.IsSuccess());
+        EXPECT_EQ(msg_ptr->getPayload().size(),
                   std::numeric_limits<uint8_t>::max());
     }
 }
@@ -313,22 +313,22 @@ TEST_F(MessageMemoryTest, PayloadSizeValidationTest) {
     std::vector<uint8_t> maxPayload(BaseMessage::MAX_PAYLOAD_SIZE, 0xFF);
 
     Result result =
-        msg_ptr->SetBaseHeader(dest, src, MessageType::DATA, maxPayload);
-    EXPECT_TRUE(result.isSuccess());
+        msg_ptr->setBaseHeader(dest, src, MessageType::DATA, maxPayload);
+    EXPECT_TRUE(result.IsSuccess());
 
     // Test one byte over the limit
     std::vector<uint8_t> tooLargePayload(BaseMessage::MAX_PAYLOAD_SIZE + 1,
                                          0xFF);
     result =
-        msg_ptr->SetBaseHeader(dest, src, MessageType::DATA, tooLargePayload);
-    EXPECT_FALSE(result.isSuccess());
+        msg_ptr->setBaseHeader(dest, src, MessageType::DATA, tooLargePayload);
+    EXPECT_FALSE(result.IsSuccess());
 }
 
 TEST_F(MessageMemoryTest, MessageTypeValidationTest) {
     // Test valid message type
-    Result result = msg_ptr->SetBaseHeader(
+    Result result = msg_ptr->setBaseHeader(
         dest, src, static_cast<MessageType>(0xFF), payload);
-    EXPECT_FALSE(result.isSuccess());
+    EXPECT_FALSE(result.IsSuccess());
 }
 
 }  // namespace test

@@ -26,7 +26,7 @@ class TaskMonitor {
      * @param task_name Name of the task for logging
      * @param min_stack_watermark Minimum acceptable stack watermark in bytes
      */
-    static void monitorTask(TaskHandle_t task_handle,
+    static void MonitorTask(TaskHandle_t task_handle,
                             const std::string& task_name,
                             size_t min_stack_watermark) {
 #ifdef DEBUG
@@ -69,7 +69,7 @@ class TaskMonitor {
     /**
      * @brief Get system-wide task list and statistics
      */
-    static void monitorSystemTasks() {
+    static void MonitorSystemTasks() {
 #ifdef DEBUG
         char* task_list_buffer =
             static_cast<char*>(pvPortMalloc(configMAX_TASK_NAME_LEN * 40));

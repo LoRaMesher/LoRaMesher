@@ -9,11 +9,11 @@ namespace test {
 
 class MockRadio : public IRadio {
    public:
-    MOCK_METHOD(Result, configure, (const RadioConfig& config), (override));
-    MOCK_METHOD(Result, begin, (const RadioConfig& config), (override));
-    MOCK_METHOD(Result, send, (const uint8_t* data, size_t len), (override));
-    MOCK_METHOD(Result, startReceive, (), (override));
-    MOCK_METHOD(Result, sleep, (), (override));
+    MOCK_METHOD(Result, Configure, (const RadioConfig& config), (override));
+    MOCK_METHOD(Result, Begin, (const RadioConfig& config), (override));
+    MOCK_METHOD(Result, Send, (const uint8_t* data, size_t len), (override));
+    MOCK_METHOD(Result, StartReceive, (), (override));
+    MOCK_METHOD(Result, Sleep, (), (override));
 
     // Parameter Configuration
     MOCK_METHOD(Result, setFrequency, (float frequency), (override));
@@ -30,7 +30,7 @@ class MockRadio : public IRadio {
     MOCK_METHOD(int8_t, getSNR, (), (override));
     MOCK_METHOD(int8_t, getLastPacketRSSI, (), (override));
     MOCK_METHOD(int8_t, getLastPacketSNR, (), (override));
-    MOCK_METHOD(bool, isTransmitting, (), (override));
+    MOCK_METHOD(bool, IsTransmitting, (), (override));
     MOCK_METHOD(float, getFrequency, (), (override));
     MOCK_METHOD(uint8_t, getSpreadingFactor, (), (override));
     MOCK_METHOD(float, getBandwidth, (), (override));

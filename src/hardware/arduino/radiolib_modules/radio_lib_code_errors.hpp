@@ -23,24 +23,24 @@ class RadioLibCodeErrors {
      * @param status RadioLib status code
      * @return Result Result code
      */
-    static Result convertStatus(int status) {
+    static Result ConvertStatus(int status) {
         switch (status) {
             case RADIOLIB_ERR_NONE:
-                return Result::success();
+                return Result::Success();
             case RADIOLIB_ERR_INVALID_FREQUENCY:
-                return Result::error(LoraMesherErrorCode::kFrequencyError);
+                return Result::Error(LoraMesherErrorCode::kFrequencyError);
             case RADIOLIB_ERR_INVALID_BANDWIDTH:
-                return Result::error(LoraMesherErrorCode::kConfigurationError);
+                return Result::Error(LoraMesherErrorCode::kConfigurationError);
             case RADIOLIB_ERR_INVALID_SPREADING_FACTOR:
-                return Result::error(LoraMesherErrorCode::kConfigurationError);
+                return Result::Error(LoraMesherErrorCode::kConfigurationError);
             case RADIOLIB_ERR_INVALID_CODING_RATE:
-                return Result::error(LoraMesherErrorCode::kConfigurationError);
+                return Result::Error(LoraMesherErrorCode::kConfigurationError);
             case RADIOLIB_ERR_INVALID_BIT_RANGE:
-                return Result::error(LoraMesherErrorCode::kInvalidParameter);
+                return Result::Error(LoraMesherErrorCode::kInvalidParameter);
             case RADIOLIB_ERR_INVALID_SYNC_WORD:
-                return Result::error(LoraMesherErrorCode::kSyncWordError);
+                return Result::Error(LoraMesherErrorCode::kSyncWordError);
             default:
-                return Result::error(LoraMesherErrorCode::kHardwareError);
+                return Result::Error(LoraMesherErrorCode::kHardwareError);
         }
     }
 };

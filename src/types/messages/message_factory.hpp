@@ -8,7 +8,7 @@ namespace loramesher {
 
 class MessageFactory {
    public:
-    static std::unique_ptr<BaseMessage> createMessage(
+    static std::unique_ptr<BaseMessage> CreateMessage(
         MessageType type, AddressType dest, AddressType src,
         const std::vector<uint8_t>& data) {
         // switch (type) {

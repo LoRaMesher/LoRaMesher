@@ -32,8 +32,8 @@ class LoraMesher {
     ~LoraMesher();
 
     // Core functionality
-    [[nodiscard]] bool start();
-    void stop();
+    [[nodiscard]] bool Start();
+    void Stop();
 
     // Message sending
     // [[nodiscard]] bool sendMessage(const Message& msg);
@@ -45,7 +45,7 @@ class LoraMesher {
 
    private:
     // Initialization
-    [[nodiscard]] bool initialize();
+    [[nodiscard]] bool Initialize();
 
     // Core components
     // std::unique_ptr<RadioManager> radioManager_;
@@ -65,7 +65,7 @@ class LoraMesher {
 // Builder class implementation
 class LoraMesher::Builder {
    public:
-    Builder() : config_(Config::createDefault()) {}
+    Builder() : config_(Config::CreateDefault()) {}
 
     // Radio configuration
     Builder& withRadioConfig(const RadioConfig& config) {
@@ -111,10 +111,10 @@ class LoraMesher::Builder {
     }
 
     // Build method with validation
-    [[nodiscard]] std::unique_ptr<LoraMesher> build() {
-        if (!config_.isValid()) {
+    [[nodiscard]] std::unique_ptr<LoraMesher> Build() {
+        if (!config_.IsValid()) {
             throw std::invalid_argument("Invalid configuration: " +
-                                        config_.validate());
+                                        config_.Validate());
         }
         return std::unique_ptr<LoraMesher>(new LoraMesher(config_));
     }

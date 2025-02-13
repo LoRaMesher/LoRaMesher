@@ -9,14 +9,14 @@ namespace test {
 class RadioConfigTest : public ::testing::Test {
    protected:
     void SetUp() override {
-        defaultConfig = RadioConfig::createDefaultSx1276();
+        defaultConfig = RadioConfig::CreateDefaultSx1276();
     }
 
     RadioConfig defaultConfig;
 };
 
 TEST_F(RadioConfigTest, DefaultConstructorCreatesValidConfig) {
-    EXPECT_TRUE(defaultConfig.isValid());
+    EXPECT_TRUE(defaultConfig.IsValid());
     EXPECT_FLOAT_EQ(defaultConfig.getFrequency(), 869.900F);
     EXPECT_EQ(defaultConfig.getSpreadingFactor(), 7);
     EXPECT_FLOAT_EQ(defaultConfig.getBandwidth(), 125.0);

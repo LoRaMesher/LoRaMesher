@@ -33,27 +33,27 @@ LoraMesherSX1276::~LoraMesherSX1276() {
         vQueueDelete(event_queue_);
     }
 
-    sleep();
+    Sleep();
 }
 
-Result LoraMesherSX1276::initializeHardware() {
+Result LoraMesherSX1276::InitializeHardware() {
     // Create event queue with size based on analysis
     constexpr size_t kQueueSize = 10;  //TODO: Determine through testing
     event_queue_ = xQueueCreate(kQueueSize, sizeof(uint8_t));
 
     if (!event_queue_) {
-        return Result::error(LoraMesherErrorCode::kMemoryError);
+        return Result::Error(LoraMesherErrorCode::kMemoryError);
     }
 
     // Create processing task with monitored configuration
     BaseType_t task_created = xTaskCreate(
-        processEvents, kTask_Tag,
+        ProcessEvents, kTask_Tag,
         config::TaskConfig::kRadioEventStackSize / 4,  // FreeRTOS uses words
         this, config::TaskPriorities::kRadioEventPriority, &processing_task_);
 
     if (task_created != pdPASS) {
         vQueueDelete(event_queue_);
-        return Result::error(LoraMesherErrorCode::kMemoryError);
+        return Result::Error(LoraMesherErrorCode::kMemoryError);
     }
 
     // Create HAL module for SPI communication
@@ -68,56 +68,56 @@ Result LoraMesherSX1276::initializeHardware() {
 
     // Attach interrupt handler if IRQ pin is specified
     if (irq_pin_ >= 0) {
-        attachInterrupt(digitalPinToInterrupt(irq_pin_), handleInterruptStatic,
+        attachInterrupt(digitalPinToInterrupt(irq_pin_), HandleInterruptStatic,
                         RISING);
     }
 
-    return Result::success();
+    return Result::Success();
 }
 
-Result LoraMesherSX1276::begin(const RadioConfig& config) {
+Result LoraMesherSX1276::Begin(const RadioConfig& config) {
     // Initialize hardware first
-    Result result = initializeHardware();
+    Result result = InitializeHardware();
     if (!result)
         return result;
 
     // Begin radio module with default settings
     int status = radio_module_->begin();
     if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::convertStatus(status);
+        return RadioLibCodeErrors::ConvertStatus(status);
     }
 
     // Configure with provided settings
-    return configure(config);
+    return Configure(config);
 }
 
-Result LoraMesherSX1276::configure(const RadioConfig& config) {
+Result LoraMesherSX1276::Configure(const RadioConfig& config) {
     // Store current configuration
     current_config_ = config;
 
-    return Result::success();
+    return Result::Success();
 }
 
-Result LoraMesherSX1276::send(const uint8_t* data, size_t len) {
+Result LoraMesherSX1276::Send(const uint8_t* data, size_t len) {
     // Check if radio is already transmitting
     if (current_state_ == RadioState::kTransmit) {
-        return Result::error(LoraMesherErrorCode::kBusyError);
+        return Result::Error(LoraMesherErrorCode::kBusyError);
     }
 
     // Attempt to transmit data
     int status = radio_module_->transmit(data, len);
     if (status == RADIOLIB_ERR_NONE) {
         current_state_ = RadioState::kTransmit;
-        return Result::success();
+        return Result::Success();
     }
 
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
-Result LoraMesherSX1276::startReceive() {
+Result LoraMesherSX1276::StartReceive() {
     // Check if already in receive mode
     if (current_state_ == RadioState::kReceive) {
-        return Result::success();
+        return Result::Success();
     }
 
     // We might need to suspend the processing task temporarily
@@ -134,17 +134,17 @@ Result LoraMesherSX1276::startReceive() {
         if (processing_task_) {
             vTaskResume(processing_task_);
         }
-        return Result::success();
+        return Result::Success();
     }
 
     // If we failed, still resume the task
     if (processing_task_) {
         vTaskResume(processing_task_);
     }
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
-Result LoraMesherSX1276::sleep() {
+Result LoraMesherSX1276::Sleep() {
     // Suspend the processing task before sleep
     if (processing_task_) {
         vTaskSuspend(processing_task_);
@@ -154,7 +154,7 @@ Result LoraMesherSX1276::sleep() {
     if (status == RADIOLIB_ERR_NONE) {
         current_state_ = RadioState::kSleep;
         // Note: We don't resume the task in sleep mode
-        return Result::success();
+        return Result::Success();
     }
 
     // If sleep failed, resume the task
@@ -162,47 +162,47 @@ Result LoraMesherSX1276::sleep() {
         vTaskResume(processing_task_);
     }
 
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setFrequency(float frequency) {
     int status = radio_module_->setFrequency(frequency);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setSpreadingFactor(uint8_t sf) {
     int status = radio_module_->setSpreadingFactor(sf);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setBandwidth(float bandwidth) {
     int status = radio_module_->setBandwidth(bandwidth);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setCodingRate(uint8_t coding_rate) {
     int status = radio_module_->setCodingRate(coding_rate);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setPower(uint8_t power) {
     int status = radio_module_->setOutputPower(power);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setSyncWord(uint8_t sync_word) {
     int status = radio_module_->setSyncWord(sync_word);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setCRC(bool enable) {
     int status = radio_module_->setCRC(enable);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 Result LoraMesherSX1276::setPreambleLength(uint16_t length) {
     int status = radio_module_->setPreambleLength(length);
-    return RadioLibCodeErrors::convertStatus(status);
+    return RadioLibCodeErrors::ConvertStatus(status);
 }
 
 int8_t LoraMesherSX1276::getRSSI() {
@@ -221,7 +221,7 @@ int8_t LoraMesherSX1276::getLastPacketSNR() {
     return last_packet_snr_;
 }
 
-bool LoraMesherSX1276::isTransmitting() {
+bool LoraMesherSX1276::IsTransmitting() {
     return current_state_ == RadioState::kTransmit;
 }
 
@@ -253,19 +253,19 @@ void LoraMesherSX1276::setReceiveCallback(
 Result LoraMesherSX1276::setState(RadioState state) {
     switch (state) {
         case RadioState::kReceive:
-            return startReceive();
+            return StartReceive();
         case RadioState::kSleep:
-            return sleep();
+            return Sleep();
         case RadioState::kIdle: {
             int status = radio_module_->standby();
             if (status == RADIOLIB_ERR_NONE) {
                 current_state_ = RadioState::kIdle;
-                return Result::success();
+                return Result::Success();
             }
-            return RadioLibCodeErrors::convertStatus(status);
+            return RadioLibCodeErrors::ConvertStatus(status);
         }
         default:
-            return Result::error(LoraMesherErrorCode::kInvalidParameter);
+            return Result::Error(LoraMesherErrorCode::kInvalidParameter);
     }
 }
 
@@ -273,7 +273,7 @@ RadioState LoraMesherSX1276::getState() {
     return current_state_;
 }
 
-void ICACHE_RAM_ATTR LoraMesherSX1276::handleInterruptStatic() {
+void ICACHE_RAM_ATTR LoraMesherSX1276::HandleInterruptStatic() {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     if (instance_) {
@@ -285,7 +285,7 @@ void ICACHE_RAM_ATTR LoraMesherSX1276::handleInterruptStatic() {
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
-void LoraMesherSX1276::processEvents(void* parameters) {
+void LoraMesherSX1276::ProcessEvents(void* parameters) {
     auto radio = static_cast<LoraMesherSX1276*>(parameters);
     uint8_t event;
 
@@ -298,16 +298,16 @@ void LoraMesherSX1276::processEvents(void* parameters) {
         if (xQueueReceive(radio->event_queue_, &event, portMAX_DELAY) ==
             pdTRUE) {
             // Periodic monitoring
-            utils::TaskMonitor::monitorTask(
+            utils::TaskMonitor::MonitorTask(
                 radio->processing_task_, kTask_Tag,
                 config::TaskConfig::kMinStackWatermark);
 
-            radio->handleInterrupt();
+            radio->HandleInterrupt();
         }
     }
 }
 
-void LoraMesherSX1276::handleInterrupt() {
+void LoraMesherSX1276::HandleInterrupt() {
     if (!receive_callback_)
         return;
 

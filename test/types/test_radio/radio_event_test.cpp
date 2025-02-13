@@ -28,23 +28,23 @@ TEST_F(RadioEventTest, CreateReceivedEventTest) {
 
     auto event = CreateReceivedEvent(std::move(message), test_rssi, test_snr);
 
-    EXPECT_EQ(event->GetType(), RadioEventType::kReceived);
-    EXPECT_EQ(event->GetRssi(), test_rssi);
-    EXPECT_EQ(event->GetSnr(), test_snr);
+    EXPECT_EQ(event->getType(), RadioEventType::kReceived);
+    EXPECT_EQ(event->getRssi(), test_rssi);
+    EXPECT_EQ(event->getSnr(), test_snr);
     EXPECT_TRUE(event->HasMessage());
 }
 
 TEST_F(RadioEventTest, CreateTransmittedEventTest) {
     auto event = CreateTransmittedEvent(std::move(message));
 
-    EXPECT_EQ(event->GetType(), RadioEventType::kTransmitted);
+    EXPECT_EQ(event->getType(), RadioEventType::kTransmitted);
     EXPECT_TRUE(event->HasMessage());
 }
 
 TEST_F(RadioEventTest, CreateTimeoutEventTest) {
     auto event = CreateTimeoutEvent();
 
-    EXPECT_EQ(event->GetType(), RadioEventType::kTimeout);
+    EXPECT_EQ(event->getType(), RadioEventType::kTimeout);
     EXPECT_FALSE(event->HasMessage());
 }
 

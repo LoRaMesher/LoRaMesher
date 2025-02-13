@@ -28,57 +28,57 @@ class RadioTest : public ::testing::Test {
 
 TEST_F(RadioTest, ConfigureSuccess) {
     RadioConfig config;  // Create a test configuration
-    EXPECT_CALL(*mock_radio_, configure(::testing::_))
-        .WillOnce(::testing::Return(Result::success()));
+    EXPECT_CALL(*mock_radio_, Configure(::testing::_))
+        .WillOnce(::testing::Return(Result::Success()));
 
-    Result result = mock_radio_->configure(config);
-    EXPECT_TRUE(result.isSuccess());
+    Result result = mock_radio_->Configure(config);
+    EXPECT_TRUE(result.IsSuccess());
 }
 
 TEST_F(RadioTest, ConfigureFailure) {
     RadioConfig config;
-    EXPECT_CALL(*mock_radio_, configure(::testing::_))
+    EXPECT_CALL(*mock_radio_, Configure(::testing::_))
         .WillOnce(::testing::Return(
-            Result::error(LoraMesherErrorCode::kConfigurationError)));
+            Result::Error(LoraMesherErrorCode::kConfigurationError)));
 
-    Result result = mock_radio_->configure(config);
-    EXPECT_FALSE(result.isSuccess());
+    Result result = mock_radio_->Configure(config);
+    EXPECT_FALSE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kConfigurationError);
 }
 
 TEST_F(RadioTest, SendSuccess) {
     const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    EXPECT_CALL(*mock_radio_, send(::testing::_, 3))
-        .WillOnce(::testing::Return(Result::success()));
+    EXPECT_CALL(*mock_radio_, Send(::testing::_, 3))
+        .WillOnce(::testing::Return(Result::Success()));
 
-    Result result = mock_radio_->send(test_data, 3);
-    EXPECT_TRUE(result.isSuccess());
+    Result result = mock_radio_->Send(test_data, 3);
+    EXPECT_TRUE(result.IsSuccess());
 }
 
 TEST_F(RadioTest, SendFailure) {
     const uint8_t test_data[] = {0x01, 0x02, 0x03};
-    EXPECT_CALL(*mock_radio_, send(::testing::_, 3))
+    EXPECT_CALL(*mock_radio_, Send(::testing::_, 3))
         .WillOnce(::testing::Return(
-            Result::error(LoraMesherErrorCode::kTransmissionError)));
+            Result::Error(LoraMesherErrorCode::kTransmissionError)));
 
-    Result result = mock_radio_->send(test_data, 3);
-    EXPECT_FALSE(result.isSuccess());
+    Result result = mock_radio_->Send(test_data, 3);
+    EXPECT_FALSE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kTransmissionError);
 }
 
 TEST_F(RadioTest, StartReceiveSuccess) {
-    EXPECT_CALL(*mock_radio_, startReceive())
-        .WillOnce(::testing::Return(Result::success()));
+    EXPECT_CALL(*mock_radio_, StartReceive())
+        .WillOnce(::testing::Return(Result::Success()));
 
-    Result result = mock_radio_->startReceive();
-    EXPECT_TRUE(result.isSuccess());
+    Result result = mock_radio_->StartReceive();
+    EXPECT_TRUE(result.IsSuccess());
 }
 
 TEST_F(RadioTest, ReceiveCallback) {
     bool callback_called = false;
     auto callback = [&callback_called](RadioEvent& event) {
         callback_called = true;
-        EXPECT_EQ(event.GetType(), RadioEventType::kReceived);
+        EXPECT_EQ(event.getType(), RadioEventType::kReceived);
     };
 
     mock_radio_->setReceiveCallback(callback);

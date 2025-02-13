@@ -13,17 +13,17 @@ class LoraMesherErrorTest : public ::testing::Test {
 };
 
 TEST_F(LoraMesherErrorTest, SuccessResultTest) {
-    Result result = Result::success();
-    EXPECT_TRUE(result.isSuccess());
+    Result result = Result::Success();
+    EXPECT_TRUE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kSuccess);
-    EXPECT_EQ(result.getErrorMessage(), "Operation completed successfully");
+    EXPECT_EQ(result.GetErrorMessage(), "Operation completed successfully");
 }
 
 TEST_F(LoraMesherErrorTest, ErrorResultTest) {
-    Result result = Result::error(LoraMesherErrorCode::kConfigurationError);
-    EXPECT_FALSE(result.isSuccess());
+    Result result = Result::Error(LoraMesherErrorCode::kConfigurationError);
+    EXPECT_FALSE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kConfigurationError);
-    EXPECT_EQ(result.getErrorMessage(), "Failed to configure radio parameters");
+    EXPECT_EQ(result.GetErrorMessage(), "Failed to configure radio parameters");
 }
 
 TEST_F(LoraMesherErrorTest, ErrorCategoryTest) {
@@ -42,8 +42,8 @@ TEST_F(LoraMesherErrorTest, ErrorCategoryTest) {
 }
 
 TEST_F(LoraMesherErrorTest, ErrorCodeConversionTest) {
-    Result result = Result::error(LoraMesherErrorCode::kHardwareError);
-    std::error_code error_code = result.asErrorCode();
+    Result result = Result::Error(LoraMesherErrorCode::kHardwareError);
+    std::error_code error_code = result.AsErrorCode();
 
     EXPECT_EQ(error_code.value(),
               static_cast<int>(LoraMesherErrorCode::kHardwareError));

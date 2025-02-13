@@ -30,7 +30,7 @@ class Result {
       * 
       * @return bool True if operation succeeded
       */
-    bool isSuccess() const {
+    bool IsSuccess() const {
         return error_code_ == LoraMesherErrorCode::kSuccess;
     }
 
@@ -46,7 +46,7 @@ class Result {
       * 
       * @return std::string The error message
       */
-    std::string getErrorMessage() const {
+    std::string GetErrorMessage() const {
         return LoraMesherErrorCategory::GetInstance().message(
             static_cast<int>(error_code_));
     }
@@ -56,7 +56,7 @@ class Result {
       * 
       * @return std::error_code Standard error code
       */
-    std::error_code asErrorCode() const {
+    std::error_code AsErrorCode() const {
         return {static_cast<int>(error_code_),
                 LoraMesherErrorCategory::GetInstance()};
     }
@@ -66,14 +66,14 @@ class Result {
       * 
       * @return bool True if operation succeeded
       */
-    operator bool() const { return isSuccess(); }
+    operator bool() const { return IsSuccess(); }
 
     /**
      * @brief Create a successful Result
      * 
      * @return Result A successful Result object
      */
-    static inline Result success() { return Result(); }
+    static inline Result Success() { return Result(); }
 
     /**
      * @brief Create a Result with an error
@@ -81,7 +81,7 @@ class Result {
      * @param code The error code
      * @return Result A Result object with the specified error
      */
-    static inline Result error(LoraMesherErrorCode code) {
+    static inline Result Error(LoraMesherErrorCode code) {
         return Result(code);
     }
 
@@ -91,9 +91,9 @@ class Result {
      * @param success True for success, false for generic error
      * @return Result Success or generic error Result
      */
-    inline Result toResult(bool success) {
-        return success ? Result::success()
-                       : error(LoraMesherErrorCode::kHardwareError);
+    inline Result ToResult(bool success) {
+        return success ? Result::Success()
+                       : Error(LoraMesherErrorCode::kHardwareError);
     }
 
    private:

@@ -15,25 +15,25 @@ constexpr uint32_t kReceiveTimeout = 100;  // ms
 // RadioLib error code to Result mapping
 Result MapRadioLibError(int code) {
     if (code == RADIOLIB_ERR_NONE) {
-        return Result::success();
+        return Result::Success();
     }
 
     switch (code) {
         case RADIOLIB_ERR_PACKET_TOO_LONG:
         case RADIOLIB_ERR_TX_TIMEOUT:
-            return Result::error(LoraMesherErrorCode::kBufferOverflow);
+            return Result::Error(LoraMesherErrorCode::kBufferOverflow);
         case RADIOLIB_ERR_RX_TIMEOUT:
-            return Result::error(LoraMesherErrorCode::kTimeout);
+            return Result::Error(LoraMesherErrorCode::kTimeout);
         case RADIOLIB_ERR_CRC_MISMATCH:
-            return Result::error(LoraMesherErrorCode::kReceptionError);
+            return Result::Error(LoraMesherErrorCode::kReceptionError);
         case RADIOLIB_ERR_INVALID_BANDWIDTH:
         case RADIOLIB_ERR_INVALID_SPREADING_FACTOR:
         case RADIOLIB_ERR_INVALID_CODING_RATE:
-            return Result::error(LoraMesherErrorCode::kInvalidParameter);
+            return Result::Error(LoraMesherErrorCode::kInvalidParameter);
         case RADIOLIB_ERR_CHIP_NOT_FOUND:
-            return Result::error(LoraMesherErrorCode::kHardwareError);
+            return Result::Error(LoraMesherErrorCode::kHardwareError);
         default:
-            return Result::error(LoraMesherErrorCode::kHardwareError);
+            return Result::Error(LoraMesherErrorCode::kHardwareError);
     }
 }
 
@@ -50,84 +50,84 @@ RadioLibRadio::RadioLibRadio(int cs_pin, int di0_pin, int rst_pin,
       receive_queue_(),
       radio_mutex_() {}
 
-Result RadioLibRadio::configure(const RadioConfig& config) {
+Result RadioLibRadio::Configure(const RadioConfig& config) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
 
     // Create appropriate radio module based on type
-    if (!createRadioModule(config.getRadioType())) {
-        return Result::error(LoraMesherErrorCode::kConfigurationError);
+    if (!CreateRadioModule(config.getRadioType())) {
+        return Result::Error(LoraMesherErrorCode::kConfigurationError);
     }
 
     // Begin radio operation
-    int state = current_module_->begin();
+    int state = current_module_->Begin();
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibResult::error(state);
+        return MapRadioLibResult::Error(state);
     }
 
     // Configure radio parameters
     state = current_module_->setFrequency(config.getFrequency());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibResult::error(state);
+        return MapRadioLibResult::Error(state);
     }
 
     state = current_module_->setSpreadingFactor(config.getSpreadingFactor());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibResult::error(state);
+        return MapRadioLibResult::Error(state);
     }
 
     state = current_module_->setBandwidth(config.getBandwidth() * 1000);
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibResult::error(state);
+        return MapRadioLibResult::Error(state);
     }
 
     state = current_module_->setCodingRate(config.getCodingRate());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibResult::error(state);
+        return MapRadioLibResult::Error(state);
     }
 
     state = current_module_->setOutputPower(config.getPower());
     if (state != RADIOLIB_ERR_NONE) {
-        return MapRadioLibResult::error(state);
+        return MapRadioLibResult::Error(state);
     }
 
     // Set up interrupt handling
-    current_module_->setDio0Action(std::bind(&RadioLibRadio::handleInterrupt,
+    current_module_->setDio0Action(std::bind(&RadioLibRadio::HandleInterrupt,
                                              this, std::placeholders::_1));
 
-    return Result::success();
+    return Result::Success();
 }
 
-Result RadioLibRadio::send(const uint8_t* data, size_t len) {
+Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return Result::error(LoraMesherErrorCode::kNotInitialized);
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
     // Transmit data
     int state = current_module_->transmit(data, len);
-    return MapRadioLibResult::error(state);
+    return MapRadioLibResult::Error(state);
 }
 
-Result RadioLibRadio::startReceive() {
+Result RadioLibRadio::StartReceive() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return Result::error(LoraMesherErrorCode::kNotInitialized);
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
     // Start receive mode
-    int state = current_module_->startReceive();
-    return MapRadioLibResult::error(state);
+    int state = current_module_->StartReceive();
+    return MapRadioLibResult::Error(state);
 }
 
-Result RadioLibRadio::sleep() {
+Result RadioLibRadio::Sleep() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
-        return Result::error(LoraMesherErrorCode::kNotInitialized);
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
     // Enter sleep mode
-    int state = current_module_->sleep();
-    return MapRadioLibResult::error(state);
+    int state = current_module_->Sleep();
+    return MapRadioLibResult::Error(state);
 }
 
 int8_t RadioLibRadio::getRSSI() {
@@ -152,10 +152,10 @@ void RadioLibRadio::setReceiveCallback(
     receive_callback_ = std::move(callback);
 
     // Process any queued messages
-    processQueuedMessages();
+    ProcessQueuedMessages();
 }
 
-bool RadioLibRadio::createRadioModule(RadioType type) {
+bool RadioLibRadio::CreateRadioModule(RadioType type) {
     // Clean up existing module
     current_module_.reset();
 
@@ -177,7 +177,7 @@ bool RadioLibRadio::createRadioModule(RadioType type) {
     return true;
 }
 
-void RadioLibRadio::handleInterrupt(void* context) {
+void RadioLibRadio::HandleInterrupt(void* context) {
     if (!current_module_) {
         return;
     }
@@ -205,16 +205,16 @@ void RadioLibRadio::handleInterrupt(void* context) {
             }
             // Process queued messages if we have a callback
             if (receive_callback_) {
-                processQueuedMessages();
+                ProcessQueuedMessages();
             }
         }
     }
 
     // Restart receive mode
-    current_module_->startReceive();
+    current_module_->StartReceive();
 }
 
-void RadioLibRadio::processQueuedMessages() {
+void RadioLibRadio::ProcessQueuedMessages() {
     while (!receive_queue_.empty() && receive_callback_) {
         auto& event = receive_queue_.front();
         receive_callback_(*event);

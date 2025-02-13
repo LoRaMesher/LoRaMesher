@@ -33,17 +33,17 @@ void ProtocolConfig::setMaxTimeouts(uint32_t timeouts) {
     maxTimeouts_ = timeouts;
 }
 
-ProtocolConfig ProtocolConfig::createDefault() {
+ProtocolConfig ProtocolConfig::CreateDefault() {
     return ProtocolConfig{};
 }
 
-bool ProtocolConfig::isValid() const {
+bool ProtocolConfig::IsValid() const {
     return helloInterval_ >= kMinHelloInterval &&
            helloInterval_ <= kMaxHelloInterval &&
            syncInterval_ > helloInterval_ && maxTimeouts_ > 0;
 }
 
-std::string ProtocolConfig::validate() const {
+std::string ProtocolConfig::Validate() const {
     std::stringstream errors;
     if (helloInterval_ < kMinHelloInterval ||
         helloInterval_ > kMaxHelloInterval) {

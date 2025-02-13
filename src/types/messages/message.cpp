@@ -31,23 +31,23 @@ BaseMessage& BaseMessage::operator=(BaseMessage&& other) noexcept {
     return *this;
 }
 
-Result BaseMessage::SetBaseHeader(const BaseHeader& header) {
+Result BaseMessage::setBaseHeader(const BaseHeader& header) {
     base_header_ = header;
-    return Result::success();
+    return Result::Success();
 }
 
-Result BaseMessage::SetBaseHeader(AddressType dest, AddressType src,
+Result BaseMessage::setBaseHeader(AddressType dest, AddressType src,
                                   MessageType type,
                                   const std::vector<uint8_t>& data) {
     Result result = ValidateInputs(dest, src, type, data);
-    if (!result.isSuccess()) {
+    if (!result.IsSuccess()) {
         return result;
     }
 
     base_header_ = {dest, src, type, static_cast<uint8_t>(data.size())};
     payload_ = data;
 
-    return Result::success();
+    return Result::Success();
 }
 
 std::optional<BaseMessage> BaseMessage::Create(
@@ -55,7 +55,7 @@ std::optional<BaseMessage> BaseMessage::Create(
     const std::vector<uint8_t>& data) {
 
     auto validation_result = ValidateInputs(dest, src, type, data);
-    if (!validation_result.isSuccess()) {
+    if (!validation_result.IsSuccess()) {
         return std::nullopt;
     }
 
@@ -75,7 +75,7 @@ std::optional<BaseMessage> BaseMessage::CreateFromSerialized(
         return std::nullopt;
     }
 
-    auto payload = deserializer.readBytes(header->payloadSize);
+    auto payload = deserializer.ReadBytes(header->payloadSize);
     if (!payload) {
         return std::nullopt;
     }
@@ -84,16 +84,16 @@ std::optional<BaseMessage> BaseMessage::CreateFromSerialized(
 }
 
 Result BaseMessage::Serialize(utils::ByteSerializer& serializer) const {
-    serializer.writeUint16(base_header_.destination);
-    serializer.writeUint16(base_header_.source);
-    serializer.writeUint8(static_cast<uint8_t>(base_header_.type));
-    serializer.writeUint8(base_header_.payloadSize);
+    serializer.WriteUint16(base_header_.destination);
+    serializer.WriteUint16(base_header_.source);
+    serializer.WriteUint8(static_cast<uint8_t>(base_header_.type));
+    serializer.WriteUint8(base_header_.payloadSize);
 
-    return Result::success();
+    return Result::Success();
 }
 
 std::optional<std::vector<uint8_t>> BaseMessage::Serialize() const {
-    std::vector<uint8_t> serialized(GetTotalSize());
+    std::vector<uint8_t> serialized(getTotalSize());
     utils::ByteSerializer serializer(serialized);
 
     auto result = Serialize(serializer);
@@ -101,7 +101,7 @@ std::optional<std::vector<uint8_t>> BaseMessage::Serialize() const {
         return std::nullopt;
     }
 
-    serializer.writeBytes(payload_.data(), payload_.size());
+    serializer.WriteBytes(payload_.data(), payload_.size());
     return serialized;
 }
 
@@ -110,19 +110,19 @@ std::optional<BaseHeader> BaseMessage::Deserialize(
 
     BaseHeader header;
 
-    auto dest = deserializer.readUint16();
+    auto dest = deserializer.ReadUint16();
     if (!dest) {
         return std::nullopt;
     }
     header.destination = *dest;
 
-    auto src = deserializer.readUint16();
+    auto src = deserializer.ReadUint16();
     if (!src) {
         return std::nullopt;
     }
     header.source = *src;
 
-    auto type = deserializer.readUint8();
+    auto type = deserializer.ReadUint8();
     if (!type) {
         return std::nullopt;
     }
@@ -132,7 +132,7 @@ std::optional<BaseHeader> BaseMessage::Deserialize(
     }
     header.type = static_cast<MessageType>(*type);
 
-    auto size = deserializer.readUint8();
+    auto size = deserializer.ReadUint8();
     if (!size) {
         return std::nullopt;
     }
@@ -147,7 +147,7 @@ Result BaseMessage::ValidateInputs(AddressType dest, AddressType src,
 
     // Check payload size
     if (data.size() > MAX_PAYLOAD_SIZE) {
-        return Result::error(LoraMesherErrorCode::kBufferOverflow);
+        return Result::Error(LoraMesherErrorCode::kBufferOverflow);
     }
 
     // TODO: Validate addresses (add any specific address validation rules)
@@ -171,10 +171,10 @@ Result BaseMessage::IsValidMessageType(MessageType type) {
         std::end(kValidTypes);
 
     if (!is_valid) {
-        return Result::error(LoraMesherErrorCode::kInvalidParameter);
+        return Result::Error(LoraMesherErrorCode::kInvalidParameter);
     }
 
-    return Result::success();
+    return Result::Success();
 }
 
 }  // namespace loramesher

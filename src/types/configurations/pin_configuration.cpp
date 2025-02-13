@@ -36,15 +36,15 @@ void PinConfig::setDio1(int8_t dio1) {
     dio1_ = dio1;
 }
 
-PinConfig PinConfig::createDefault() {
+PinConfig PinConfig::CreateDefault() {
     return PinConfig{};  // Uses default constructor values
 }
 
-bool PinConfig::isValid() const {
+bool PinConfig::IsValid() const {
     return nss_ >= 0 && reset_ >= 0 && dio0_ >= 0 && dio1_ >= 0;
 }
 
-std::string PinConfig::validate() const {
+std::string PinConfig::Validate() const {
     std::stringstream errors;
     if (nss_ < 0)
         errors << "Invalid NSS pin. ";

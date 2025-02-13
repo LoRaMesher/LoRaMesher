@@ -8,18 +8,18 @@ namespace test {
 
 class ConfigTest : public ::testing::Test {
    protected:
-    void SetUp() override { defaultConfig = Config::createDefault(); }
+    void SetUp() override { defaultConfig = Config::CreateDefault(); }
 
     Config defaultConfig;
 };
 
 TEST_F(ConfigTest, DefaultConstructorCreatesValidConfig) {
-    EXPECT_TRUE(defaultConfig.isValid());
-    EXPECT_TRUE(defaultConfig.getPinConfig().isValid());
-    EXPECT_TRUE(defaultConfig.getRadioConfig().isValid());
-    EXPECT_TRUE(defaultConfig.getProtocolConfig().isValid());
+    EXPECT_TRUE(defaultConfig.IsValid());
+    EXPECT_TRUE(defaultConfig.getPinConfig().IsValid());
+    EXPECT_TRUE(defaultConfig.getRadioConfig().IsValid());
+    EXPECT_TRUE(defaultConfig.getProtocolConfig().IsValid());
     EXPECT_GT(defaultConfig.getSleepDuration(), 0);
-    EXPECT_TRUE(defaultConfig.isDeepSleepEnabled());
+    EXPECT_TRUE(defaultConfig.getDeepSleepEnabled());
 }
 
 TEST_F(ConfigTest, SettersValidateConfigs) {

@@ -25,11 +25,11 @@ class PinConfig {
     void setDio1(int8_t dio1);
 
     // Factory method
-    static PinConfig createDefault();
+    static PinConfig CreateDefault();
 
     // Validation
-    bool isValid() const;
-    std::string validate() const;
+    bool IsValid() const;
+    std::string Validate() const;
 
    private:
     int8_t nss_;

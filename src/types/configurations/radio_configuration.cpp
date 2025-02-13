@@ -14,9 +14,9 @@ RadioConfig::RadioConfig(RadioType type, float frequency,
       bandwidth_(bandwidth),
       codingRate_(codingRate),
       power_(power) {
-    if (!isValid()) {
+    if (!IsValid()) {
         throw std::invalid_argument("Invalid radio configuration:" +
-                                    validate());
+                                    Validate());
     }
 }
 
@@ -55,22 +55,22 @@ void RadioConfig::setPower(uint8_t power) {
     power_ = power;
 }
 
-RadioConfig RadioConfig::createDefaultSx1276() {
+RadioConfig RadioConfig::CreateDefaultSx1276() {
     return RadioConfig{};
 }
 
-RadioConfig RadioConfig::createDefaultSx1278() {
+RadioConfig RadioConfig::CreateDefaultSx1278() {
     return RadioConfig{RadioType::kSx1278, 433.0, 7, 125.0, 5, 20};
 }
 
-bool RadioConfig::isValid() const {
+bool RadioConfig::IsValid() const {
     return frequency_ >= kMinFrequency && frequency_ <= kMaxFrequency &&
            spreadingFactor_ >= kMinSpreadingFactor &&
            spreadingFactor_ <= kMaxSpreadingFactor && bandwidth_ > 0 &&
            codingRate_ >= 5 && codingRate_ <= 8 && power_ <= 20;
 }
 
-std::string RadioConfig::validate() const {
+std::string RadioConfig::Validate() const {
     std::stringstream errors;
     if (frequency_ < kMinFrequency || frequency_ > kMaxFrequency) {
         errors << "Frequency out of range. ";
