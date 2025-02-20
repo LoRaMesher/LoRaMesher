@@ -46,7 +46,7 @@ ColumnLimit: 80
 CompactNamespaces: false
 ContinuationIndentWidth: 4
 Cpp11BracedListStyle: true
-DerivePointerAlignment: true  # Make sure the * or & align on the left
+DerivePointerAlignment: false  # Make sure the * or & align on the left
 EmptyLineBeforeAccessModifier: LogicalBlock
 FixNamespaceComments: true
 IncludeBlocks: Preserve
