@@ -22,7 +22,13 @@
     "frameworks": "arduino",
     "platforms": "*",
     "build": {
-        "flags": "-std=c++2a"
+        "flags": [
+            "-std=c++2a",
+            "-std=gnu++2a"
+        ],
+        "unflags": [
+            "-std=gnu++11"
+        ]
     },
     "repository": {
         "type": "git",
