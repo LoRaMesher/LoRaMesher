@@ -13,6 +13,7 @@ class MockRadio : public IRadio {
     MOCK_METHOD(Result, Configure, (const RadioConfig& config), (override));
     MOCK_METHOD(Result, Begin, (const RadioConfig& config), (override));
     MOCK_METHOD(Result, Send, (const uint8_t* data, size_t len), (override));
+    MOCK_METHOD(Result, readData, (uint8_t* data, size_t len), (override));
     MOCK_METHOD(Result, StartReceive, (), (override));
     MOCK_METHOD(Result, Sleep, (), (override));
 
@@ -38,7 +39,6 @@ class MockRadio : public IRadio {
     MOCK_METHOD(uint8_t, getCodingRate, (), (override));
     MOCK_METHOD(uint8_t, getPower, (), (override));
     MOCK_METHOD(uint8_t, getPacketLength, (), (override));
-    MOCK_METHOD(Result, readData, (uint8_t* data, size_t len), (override));
 
     // Event Handling
     MOCK_METHOD(Result, setActionReceive, (void (*callback)(void)), (override));
