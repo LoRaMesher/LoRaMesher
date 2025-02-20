@@ -13,7 +13,9 @@ class MockRadio : public IRadio {
     MOCK_METHOD(Result, Configure, (const RadioConfig& config), (override));
     MOCK_METHOD(Result, Begin, (const RadioConfig& config), (override));
     MOCK_METHOD(Result, Send, (const uint8_t* data, size_t len), (override));
+    // clang-format off
     MOCK_METHOD(Result, readData, (uint8_t* data, size_t len), (override));
+    // clang-format on
     MOCK_METHOD(Result, StartReceive, (), (override));
     MOCK_METHOD(Result, Sleep, (), (override));
 

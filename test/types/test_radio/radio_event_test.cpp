@@ -17,6 +17,7 @@ class RadioEventTest : public ::testing::Test {
             << "Failed to create test message";
         message = std::make_unique<BaseMessage>(std::move(*base_message));
     }
+
     void TearDown() override {}
 
     std::unique_ptr<BaseMessage> message;

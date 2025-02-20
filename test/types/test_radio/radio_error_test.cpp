@@ -9,6 +9,7 @@ namespace test {
 class LoraMesherErrorTest : public ::testing::Test {
    protected:
     void SetUp() override {}
+
     void TearDown() override {}
 };
 

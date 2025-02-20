@@ -124,17 +124,6 @@ class HardwareManager {
     bool initialized_ = false;  ///< Initialization status
     PinConfig pin_config_;      ///< Current pin configuration
     RadioConfig radio_config_;  ///< Current radio configuration
-
-#ifdef ARDUINO
-    // Arduino-specific members
-    static constexpr int kCsPin = 10;    ///< Default SPI CS pin
-    static constexpr int kDio0Pin = 2;   ///< Default DIO0 pin
-    static constexpr int kResetPin = 9;  ///< Default reset pin
-#else
-    // Native platform specific members
-    static constexpr int kSpiChannel = 0;      ///< Default SPI channel
-    static constexpr int kSpiSpeed = 8000000;  ///< Default SPI speed
-#endif
 };
 
 }  // namespace hardware

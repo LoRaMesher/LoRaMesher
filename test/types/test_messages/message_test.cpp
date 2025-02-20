@@ -69,6 +69,7 @@ class MessageMemoryTest : public ::testing::Test {
         msg_ptr = std::make_unique<BaseMessage>(*opt_msg);
     }
 };
+
 TEST_F(MessageMemoryTest, SerializationTest) {
     // Given: A valid message
     ASSERT_TRUE(msg_ptr != nullptr);
