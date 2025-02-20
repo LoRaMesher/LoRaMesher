@@ -2,8 +2,8 @@
 
 #include <stdexcept>
 
-#include "arduino/arduino_hal.hpp"
-#include "native/native_hal.hpp"
+#include "hal_factory.hpp"
+#include "radiolib/radiolib_radio.hpp"
 
 namespace loramesher {
 namespace hardware {
@@ -17,11 +17,6 @@ HardwareManager::HardwareManager(const PinConfig& pin_config,
 bool HardwareManager::Initialize() {
     if (initialized_) {
         return true;
-    }
-
-    // Initialize platform-specific hardware
-    if (!InitializePlatform()) {
-        return false;
     }
 
     // Initialize radio
@@ -51,57 +46,34 @@ bool HardwareManager::updateRadioConfig(const RadioConfig& radio_config) {
     return true;
 }
 
-bool HardwareManager::InitializePlatform() {
-#ifdef LORAMESHER_BUILD_ARDUINO
-    // Initialize Arduino hardware
-    // pinMode(kCsPin, OUTPUT);
-    // pinMode(kDio0Pin, INPUT);
-    // pinMode(kResetPin, OUTPUT);
+bool HardwareManager::InitializeHalModules() {
+    // Create HAL module
+    hal_ = hal::HalFactory::createHal();
+    if (!hal_) {
+        return false;
+    }
 
-    // digitalWrite(kCsPin, HIGH);
-    // digitalWrite(kResetPin, HIGH);
-
-    // // Initialize SPI
-    // SPI.Begin();
-    // SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
-
-#elif defined(LORAMESHER_BUILD_NATIVE)
-// TODO: Implement native platform initialization
-#endif
+    // Create radio module
+    if (!InitializeRadioModule()) {
+        return false;
+    }
 
     return true;
 }
 
-bool HardwareManager::InitializeHalModules() {
-    try {
-#ifdef LORAMESHER_BUILD_ARDUINO
-        // Create hal instance for Arduino
-        hal_ = std::make_unique<hal::LoraMesherArduinoHal>();
-#else
-        // Create hal instance for native platform
-        hal_ = std::make_unique<hal::NativeHal>();
-#endif
-
-        return true;
-    } catch (const std::exception& e) {
-        // Log error or handle exception
+bool HardwareManager::InitializeRadioModule() {
+    // Create radio module
+    radio_ = radio::CreateRadio(pin_config_.getNss(), pin_config_.getDio0(),
+                                pin_config_.getReset(), pin_config_.getDio1(),
+                                hal_->getSPI());
+    if (!radio_) {
         return false;
     }
-}
 
-bool HardwareManager::InitializeRadioModule() {
-// Create radio module
-#ifdef LORAMESHER_BUILD_ARDUINO
-    // radio_ = CreateRadio(kCsPin, kDio0Pin, kResetPin, SPI);
-    // if (!radio_module_) {
-    //     return false;
-    // }
-
-    // // Configure radio module
-    // if (!radio_module_->Configure(radio_config_)) {
-    //     return false;
-    // }
-#endif
+    // Configure radio
+    if (!radio_->Configure(radio_config_)) {
+        return false;
+    }
 
     return true;
 }

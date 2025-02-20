@@ -1,11 +1,9 @@
 // src/config/system_config.hpp
+#pragma once
 
 #if defined(ARDUINO) && ARDUINO >= 100
 // Arduino implementations
 #include <Arduino.h>
-#include <SPI.h>
-
-#include "RadioLib.h"
 
 #define LORAMESHER_BUILD_ARDUINO
 #else

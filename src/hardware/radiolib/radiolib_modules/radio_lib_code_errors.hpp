@@ -3,11 +3,11 @@
 
 #include "config/system_config.hpp"
 
-#ifdef LORAMESHER_BUILD_ARDUINO
-
 #include <string>
 
 #include "types/error_codes/result.hpp"
+
+#include "RadioLib.h"
 
 namespace loramesher {
 namespace radio {
@@ -47,5 +47,3 @@ class RadioLibCodeErrors {
 
 }  // namespace radio
 }  // namespace loramesher
-
-#endif  // LORAMESHER_BUILD_ARDUINO

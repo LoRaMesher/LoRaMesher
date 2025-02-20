@@ -97,13 +97,6 @@ class HardwareManager {
 
    private:
     /**
-     * @brief Initialize platform-specific hardware
-     * 
-     * @return bool True if platform initialization was successful
-     */
-    bool InitializePlatform();
-
-    /**
      * @brief Initialize hal modules
      * 
      * @return bool True if hal modules were initialized successfully

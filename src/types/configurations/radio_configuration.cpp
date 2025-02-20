@@ -7,13 +7,17 @@ namespace loramesher {
 // RadioConfig Implementation
 RadioConfig::RadioConfig(RadioType type, float frequency,
                          uint8_t spreadingFactor, float bandwidth,
-                         uint8_t codingRate, uint8_t power)
+                         uint8_t codingRate, uint8_t power, uint8_t sync_word,
+                         bool crc, uint16_t preamble_length)
     : radio_type_(type),
       frequency_(frequency),
       spreadingFactor_(spreadingFactor),
       bandwidth_(bandwidth),
       codingRate_(codingRate),
-      power_(power) {
+      power_(power),
+      sync_word_(sync_word),
+      crc_(crc),
+      preamble_length_(preamble_length) {
     if (!IsValid()) {
         throw std::invalid_argument("Invalid radio configuration:" +
                                     Validate());
@@ -63,6 +67,34 @@ RadioConfig RadioConfig::CreateDefaultSx1278() {
     return RadioConfig{RadioType::kSx1278, 433.0, 7, 125.0, 5, 20};
 }
 
+std::string RadioConfig::getRadioTypeString() const {
+    switch (radio_type_) {
+        case RadioType::kSx1276:
+            return "SX1276";
+        case RadioType::kSx1278:
+            return "SX1278";
+        default:
+            return "Unknown";
+    }
+}
+
+Result RadioConfig::setSyncWord(uint8_t sync_word) {
+    // TODO: Validation
+    sync_word_ = sync_word;
+    return Result::Success();
+}
+
+Result RadioConfig::setCRC(bool enabled) {
+    crc_ = enabled;
+    return Result::Success();
+}
+
+Result RadioConfig::setPreambleLength(uint16_t preamble_length) {
+    // TODO: Validation
+    preamble_length_ = preamble_length;
+    return Result::Success();
+}
+
 bool RadioConfig::IsValid() const {
     return frequency_ >= kMinFrequency && frequency_ <= kMaxFrequency &&
            spreadingFactor_ >= kMinSpreadingFactor &&
@@ -88,6 +120,7 @@ std::string RadioConfig::Validate() const {
     if (power_ > 20) {
         errors << "Power exceeds maximum. ";
     }
+
     return errors.str();
 }
 

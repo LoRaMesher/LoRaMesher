@@ -134,6 +134,25 @@ class IRadio {
      */
     virtual Result setPreambleLength(uint16_t length) = 0;
 
+    /**
+   * @brief Sets the callback function for packet reception
+   * 
+   * @param callback Function pointer to the callback that will be executed when a packet is received.
+   * @warning Only used by the low level library. Do not use it in upper layers.
+   * @return true If the callback was set successfully
+   * @return false If there was an error setting the callback
+   */
+    virtual Result setActionReceive(void (*callback)(void)) = 0;
+
+    /**
+     * @brief Set the action to receive data
+     * 
+     * @param callback Function to call when data is received
+     * @return Result Success if action was set successfully
+     */
+    virtual Result setActionReceive(
+        std::function<void(std::unique_ptr<RadioEvent>)> callback) = 0;
+
     ///////////////////////
     // Radio Status
     ///////////////////////
@@ -208,17 +227,25 @@ class IRadio {
      */
     virtual uint8_t getPower() = 0;
 
+    /**
+     * @brief Get the length of the received packet
+     * 
+     * @return uint8_t Length of the received packet
+     */
+    virtual uint8_t getPacketLength() = 0;
+
+    /**
+     * @brief Read the received data from the radio
+     * 
+     * @param data Buffer to store received data
+     * @param len Length of data to read
+     * @return Result Success if data was read successfully
+     */
+    virtual Result readData(uint8_t* data, size_t len) = 0;
+
     ///////////////////////
     // Event Handling
     ///////////////////////
-
-    /**
-     * @brief Set callback for received messages
-     * 
-     * @param callback Function to call when data is received
-     */
-    virtual void setReceiveCallback(
-        std::function<void(RadioEvent&)> callback) = 0;
 
     /**
      * @brief Set the current radio state

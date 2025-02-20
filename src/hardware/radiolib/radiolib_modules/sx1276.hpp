@@ -1,11 +1,9 @@
 // src/hardware/arduino/radio_lib_modules/LoraMesherSX1276.hpp
 #pragma once
 
-#include "config/system_config.hpp"
-
-#ifdef LORAMESHER_BUILD_ARDUINO
-
 #include <memory>
+
+#include "RadioLib.h"
 
 #include "types/radio/radio.hpp"
 
@@ -42,7 +40,11 @@ class LoraMesherSX1276 : public IRadio {
      * @note All pin numbers should be valid for your hardware configuration
      */
     LoraMesherSX1276(int8_t cs_pin, int8_t irq_pin, int8_t reset_pin,
-                     int8_t busy_pin);
+                     int8_t busy_pin)
+        : cs_pin_(cs_pin),
+          irq_pin_(irq_pin),
+          reset_pin_(reset_pin),
+          busy_pin_(busy_pin) {}
 
     /**
      * @brief Deleted copy constructor to prevent duplicated hardware access
@@ -67,15 +69,7 @@ class LoraMesherSX1276 : public IRadio {
     /**
      * @brief Destructor ensuring proper cleanup of hardware resources
      */
-    ~LoraMesherSX1276() override;
-
-    // IRadio interface implementation
-    /**
-     * @brief Configure the radio with the specified parameters
-     * @param config Complete radio configuration parameters
-     * @return Result Success if configuration was successful
-     */
-    Result Configure(const RadioConfig& config) override;
+    ~LoraMesherSX1276() override { Sleep(); }
 
     /**
      * @brief Initialize and begin radio operations
@@ -161,6 +155,15 @@ class LoraMesherSX1276 : public IRadio {
     Result setPreambleLength(uint16_t length) override;
 
     /**
+     * @brief Sets the callback function for packet reception
+     * 
+     * @param callback Function pointer to the callback that will be executed when a packet is received
+     * @return true If the callback was set successfully
+     * @return false If there was an error setting the callback
+     */
+    Result setActionReceive(void (*callback)(void)) override;
+
+    /**
      * @brief Get the current RSSI value
      * @return int8_t Current RSSI in dBm
      */
@@ -173,71 +176,140 @@ class LoraMesherSX1276 : public IRadio {
     int8_t getSNR() override;
 
     /**
-     * @brief Get the RSSI of the last received packet
-     * @return int8_t Last packet RSSI in dBm
+     * @brief Get the length of the received packet
+     * @return size_t Length of the received packet in bytes
      */
-    int8_t getLastPacketRSSI() override;
+    uint8_t getPacketLength() override;
 
     /**
-     * @brief Get the SNR of the last received packet
-     * @return int8_t Last packet SNR in dB
+     * @brief Read the received data from the radio
+     * 
+     * @param data Buffer to store received data
+     * @param len Length of data to read
+     * @return Result Success if data was read successfully
      */
-    int8_t getLastPacketSNR() override;
+    Result readData(uint8_t* data, size_t len) override;
+
+    // Not supported functions
+
+    /**
+     * @brief Configure the radio with the given configuration
+     * @param config The radio configuration to apply
+     * @return Result Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
+     */
+    Result Configure(const RadioConfig& config) override {
+        throw std::runtime_error("Configure not supported in LoraMesherSX1276");
+    }
+
+    /**
+     * @brief Set the action to take when data is received
+     * @param callback Function to call when data is received
+     * @result Result Success if action was set successfully
+     */
+    Result setActionReceive(
+        std::function<void(std::unique_ptr<RadioEvent>)> callback) {
+        throw std::runtime_error(
+            "setActionReceive not supported in LoraMesherSX1276");
+    }
+
+    /**
+     * @brief Get the RSSI (Received Signal Strength Indicator) of the last received packet
+     * @return int8_t Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
+     */
+    int8_t getLastPacketRSSI() override {
+        throw std::runtime_error(
+            "getLastPacketRSSI not supported in LoraMesherSX1276");
+    }
+
+    /**
+     * @brief Get the SNR (Signal-to-Noise Ratio) of the last received packet
+     * @return int8_t Never returns - throws exception  
+     * @throws std::runtime_error This operation is not supported
+     */
+    int8_t getLastPacketSNR() override {
+        throw std::runtime_error(
+            "getLastPacketSNR not supported in LoraMesherSX1276");
+    }
 
     /**
      * @brief Check if the radio is currently transmitting
-     * @return bool True if radio is transmitting
+     * @return bool Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
      */
-    bool IsTransmitting() override;
+    bool IsTransmitting() override {
+        throw std::runtime_error(
+            "IsTransmitting not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Get the current radio frequency
-     * @return float Current frequency in MHz
+     * @brief Get the current frequency setting
+     * @return float Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
      */
-    float getFrequency() override;
+    float getFrequency() override {
+        throw std::runtime_error(
+            "getFrequency not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Get the current spreading factor
-     * @return uint8_t Current spreading factor
+     * @brief Get the current spreading factor setting
+     * @return uint8_t Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
      */
-    uint8_t getSpreadingFactor() override;
+    uint8_t getSpreadingFactor() override {
+        throw std::runtime_error(
+            "getSpreadingFactor not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Get the current signal bandwidth
-     * @return float Current bandwidth in kHz
+     * @brief Get the current bandwidth setting
+     * @return float Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
      */
-    float getBandwidth() override;
+    float getBandwidth() override {
+        throw std::runtime_error(
+            "getBandwidth not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Get the current coding rate
-     * @return uint8_t Current coding rate
+     * @brief Get the current coding rate setting
+     * @return uint8_t Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
      */
-    uint8_t getCodingRate() override;
+    uint8_t getCodingRate() override {
+        throw std::runtime_error(
+            "getCodingRate not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Get the current transmission power
-     * @return uint8_t Current output power in dBm
+     * @brief Get the current transmission power setting
+     * @return uint8_t Never returns - throws exception
+     * @throws std::runtime_error This operation is not supported
      */
-    uint8_t getPower() override;
+    uint8_t getPower() override {
+        throw std::runtime_error("getPower not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Set callback for received messages
-     * @param callback Function to call when data is received
-     */
-    void setReceiveCallback(std::function<void(RadioEvent&)> callback) override;
+ * @brief Set the radio state (TX, RX, standby, etc.)
+ * @param state The state to set the radio to
+ * @return Result Never returns - throws exception
+ * @throws std::runtime_error This operation is not supported
+ */
+    Result setState(RadioState state) override {
+        throw std::runtime_error("setState not supported in LoraMesherSX1276");
+    }
 
     /**
-     * @brief Set the current radio state
-     * @param state Desired radio state
-     * @return Result Success if state was changed successfully
-     */
-    Result setState(RadioState state) override;
-
-    /**
-     * @brief Get the current radio state
-     * @return RadioState Current state of the radio
-     */
-    RadioState getState() override;
+ * @brief Get the current radio state
+ * @return RadioState Never returns - throws exception
+ * @throws std::runtime_error This operation is not supported
+ */
+    RadioState getState() override {
+        throw std::runtime_error("getState not supported in LoraMesherSX1276");
+    }
 
    private:
     /**
@@ -250,41 +322,6 @@ class LoraMesherSX1276 : public IRadio {
      */
     Result InitializeHardware();
 
-    /**
-     * @brief ISR callback for radio events
-     * 
-     * Handles interrupt events from the radio module, including
-     * received data, transmission complete, and other events.
-     */
-    void HandleInterrupt();
-
-    /**
-     * @brief Static ISR callback for radio events
-     * 
-     * Static wrapper for the interrupt handler. Required because attachInterrupt
-     * only accepts static functions or plain C-style function pointers.
-     */
-    static void ICACHE_RAM_ATTR HandleInterruptStatic();
-
-    /**
-     * @brief Process radio events in a separate task
-     * 
-     * Task function to process radio events in a separate task to avoid blocking
-     * the main loop. This function reads events from the event queue and calls the
-     * receive callback for each event.
-     * 
-     * @param parameters Task parameters (unused)
-     */
-    static void ProcessEvents(void* parameters);
-
-    /**
-     * @brief Pointer to the current instance for interrupt handling
-     * 
-     * Used by the static interrupt handler to call the member function
-     * of the correct instance.
-     */
-    static LoraMesherSX1276* instance_;
-
     const int8_t cs_pin_;     ///< SPI Chip Select pin number
     const int8_t irq_pin_;    ///< Interrupt Request pin number
     const int8_t reset_pin_;  ///< Reset pin number
@@ -294,23 +331,7 @@ class LoraMesherSX1276 : public IRadio {
         hal_module_;  ///< RadioLib hardware abstraction layer
     std::unique_ptr<SX1276>
         radio_module_;  ///< RadioLib LoraMesherSX1276 instance
-
-    RadioState current_state_{RadioState::kIdle};  ///< Current radio state
-    RadioConfig current_config_;  ///< Current radio configuration
-
-    std::function<void(RadioEvent&)>
-        receive_callback_;  ///< Callback for received data, this callback
-                            ///< should move the event to a queue and
-                            ///< process it in other tasks
-
-    QueueHandle_t event_queue_;     // Queue for radio events
-    TaskHandle_t processing_task_;  // Handle to the event processing task
-
-    int8_t last_packet_rssi_{0};  ///< RSSI of last received packet
-    int8_t last_packet_snr_{0};   ///< SNR of last received packet
 };
 
 }  // namespace radio
 }  // namespace loramesher
-
-#endif  // LORAMESHER_BUILD_ARDUINO

@@ -1,8 +1,7 @@
 // src/config/task_config.hpp
 #pragma once
 
-#include <freertos/FreeRTOS.h>
-#include <cstddef>
+#include "system_config.hpp"
 
 namespace loramesher {
 namespace config {
@@ -28,11 +27,11 @@ struct TaskConfig {
  * task scheduling and prevent priority conflicts.
  */
 struct TaskPriorities {
-    static constexpr UBaseType_t kIdleTaskPriority = 0;
-    static constexpr UBaseType_t kLowPriority = 5;
-    static constexpr UBaseType_t kNormalPriority = 10;
-    static constexpr UBaseType_t kHighPriority = 15;
-    static constexpr UBaseType_t kRadioEventPriority = kHighPriority;
+    static constexpr uint32_t kIdleTaskPriority = 0;
+    static constexpr uint32_t kLowPriority = 5;
+    static constexpr uint32_t kNormalPriority = 10;
+    static constexpr uint32_t kHighPriority = 15;
+    static constexpr uint32_t kRadioEventPriority = kHighPriority;
 
     // Runtime checks for priority relationships
     static_assert(kRadioEventPriority > kNormalPriority,

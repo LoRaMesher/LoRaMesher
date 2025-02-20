@@ -1,4 +1,7 @@
-// test/types/test_configurations/test_configuration.cpp
+/**
+ * @file test/os/rtos_test.cpp
+ * @brief OS Test general
+ */
 #include <gtest/gtest.h>
 
 #if defined(ARDUINO)
