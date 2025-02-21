@@ -43,7 +43,11 @@ public:
 
         if (p) {
             //Copy the payload into the packet
-            memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, payloadSize);
+            size_t copySize = packetSize > sizeof(T) ? packetSize - sizeof(T) : 0;
+            if (payloadSize > copySize) {
+                ESP_LOGW(LM_TAG, "Payload truncated from %d to %d bytes to fit max packet size", payloadSize, copySize);
+            }
+            memcpy(reinterpret_cast<void*>((unsigned long) p + (sizeof(T))), payload, copySize);
         }
         else {
             ESP_LOGE(LM_TAG, "packet not allocated");
