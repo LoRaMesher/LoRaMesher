@@ -32,11 +32,11 @@ class LoraMesher {
     ~LoraMesher();
 
     // Core functionality
-    [[nodiscard]] bool Start();
+    [[nodiscard]] Result Start();
     void Stop();
 
     // Message sending
-    // [[nodiscard]] bool sendMessage(const Message& msg);
+    [[nodiscard]] Result sendMessage(const BaseMessage& msg);
     // [[nodiscard]] bool sendReliableMessage(const Message& msg);
 
     // Getters for internal components (if needed)
@@ -45,7 +45,7 @@ class LoraMesher {
 
    private:
     // Initialization
-    [[nodiscard]] bool Initialize();
+    [[nodiscard]] Result Initialize();
 
     // Core components
     // std::unique_ptr<RadioManager> radioManager_;

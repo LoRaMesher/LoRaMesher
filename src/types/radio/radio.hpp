@@ -60,6 +60,13 @@ class IRadio {
     virtual Result StartReceive() = 0;
 
     /**
+     * @brief Start the radio in transmit mode
+     * 
+     * @return Result Success if transmit mode was started successfully
+     */
+    virtual Result StartTransmit() = 0;
+
+    /**
      * @brief Put the radio into sleep mode
      * 
      * @return Result Success if sleep mode was entered successfully

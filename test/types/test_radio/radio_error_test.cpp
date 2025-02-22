@@ -17,7 +17,7 @@ TEST_F(LoraMesherErrorTest, SuccessResultTest) {
     Result result = Result::Success();
     EXPECT_TRUE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kSuccess);
-    EXPECT_EQ(result.GetErrorMessage(), "Operation completed successfully");
+    EXPECT_EQ(result.GetErrorMessage(), "Success");
 }
 
 TEST_F(LoraMesherErrorTest, ErrorResultTest) {

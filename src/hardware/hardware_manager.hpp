@@ -7,6 +7,7 @@
 #include "hal.hpp"
 #include "types/configurations/pin_configuration.hpp"
 #include "types/configurations/radio_configuration.hpp"
+#include "types/error_codes/result.hpp"
 #include "types/radio/radio.hpp"
 
 namespace loramesher {
@@ -39,9 +40,9 @@ class HardwareManager {
     /**
      * @brief Initialize the HAL and hardware resources
      * 
-     * @return bool True if initialization was successful
+     * @return Result Success if initialization was successful, error code otherwise
      */
-    bool Initialize();
+    Result Initialize();
 
     /**
      * @brief Get pointer to HAL interface
@@ -49,6 +50,13 @@ class HardwareManager {
      * @return IHal* Pointer to HAL interface
      */
     hal::IHal* getHal() { return hal_.get(); }
+
+    /**
+     * @brief Send a message
+     * 
+     * @return Result send message result
+     */
+    Result SendMessage();
 
     /**
      * @brief Check if HAL is initialized
@@ -75,17 +83,17 @@ class HardwareManager {
      * @brief Update the pin configuration
      * 
      * @param pin_config New pin configuration
-     * @return bool True if update was successful
+     * @return Result Success if update was successful, error code otherwise
      */
-    bool setPinConfig(const PinConfig& pin_config);
+    Result setPinConfig(const PinConfig& pin_config);
 
     /**
      * @brief Update the radio configuration
      * 
      * @param radio_config New radio configuration
-     * @return bool True if update was successful
+     * @return Result Success if update was successful, error code otherwise
      */
-    bool updateRadioConfig(const RadioConfig& radio_config);
+    Result updateRadioConfig(const RadioConfig& radio_config);
 
     // Delete copy constructor and assignment operator
     HardwareManager(const HardwareManager&) = delete;
@@ -99,23 +107,23 @@ class HardwareManager {
     /**
      * @brief Initialize hal modules
      * 
-     * @return bool True if hal modules were initialized successfully
+     * @return Result Success if hal modules were initialized successfully, error code otherwise
      */
-    bool InitializeHalModules();
+    Result InitializeHalModules();
 
     /**
      * @brief Initialize radio module
      * 
-     * @return bool True if radio module was initialized successfully
+     * @return Result Success if radio module was initialized successfully, error code otherwise
      */
-    bool InitializeRadioModule();
+    Result InitializeRadioModule();
 
     /**
      * @brief Validate current configuration
      * 
-     * @return bool True if both pin and radio configurations are valid
+     * @return Result Success if both pin and radio configurations are valid, error code otherwise
      */
-    bool ValidateConfiguration() const;
+    Result ValidateConfiguration() const;
 
     std::unique_ptr<hal::IHal> hal_;  ///< Pointer to HAL interface
     std::unique_ptr<radio::IRadio>

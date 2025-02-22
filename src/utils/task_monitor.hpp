@@ -25,35 +25,21 @@ class TaskMonitor {
      * @param task_name Name of the task for logging
      * @param min_stack_watermark Minimum acceptable stack watermark in bytes
      */
-    static void MonitorTask(os::TaskHandle_t task_handle,
-                            const std::string& task_name,
+    static void MonitorTask(os::TaskHandle_t task_handle, const char* task_name,
                             size_t min_stack_watermark) {
 #ifdef DEBUG
         if (!task_handle) {
-            printf("TaskMonitor: Invalid task handle for %s\n",
-                   task_name.c_str());
             return;
         }
 
         auto& rtos = GetRTOS();
-
-        // Monitor stack usage
         uint32_t watermark = rtos.getTaskStackWatermark(task_handle);
-        printf("TaskMonitor: [%s] Stack watermark: %u bytes\n",
-               task_name.c_str(), watermark);
 
-        // Check for critical stack levels
+        // Only log if watermark is below threshold
         if (watermark < min_stack_watermark) {
-            printf(
-                "TaskMonitor: [%s] Critical stack usage! Only %u bytes "
-                "remaining\n",
-                task_name.c_str(), watermark);
+            // Use more stack-friendly logging
+            log_stack_warning(task_name, watermark);
         }
-
-        // Task state information
-        os::TaskState state = rtos.getTaskState(task_handle);
-        printf("TaskMonitor: [%s] Current state: %s\n", task_name.c_str(),
-               os::RTOS::getTaskStateString(state));
 #endif
     }
 
@@ -76,6 +62,14 @@ class TaskMonitor {
     }
 
    private:
+    // Separate function to handle logging to avoid stack pressure in main function
+    static void log_stack_warning(const char* task_name, uint32_t watermark) {
+        static char buffer[50];  // Static buffer to avoid stack allocation
+        snprintf(buffer, sizeof(buffer), "Stack warning %s: %u\n", task_name,
+                 watermark);
+        // Use a stack-friendly print method
+        // Serial.print(buffer);  // Or your preferred logging method
+    }
 };
 
 }  // namespace utils

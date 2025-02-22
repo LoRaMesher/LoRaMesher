@@ -29,22 +29,65 @@ Result LoraMesherSX1276::InitializeHardware() {
 }
 
 Result LoraMesherSX1276::Begin(const RadioConfig& config) {
+    // Validate configuration first
+    if (!config.IsValid()) {
+        return Result::InvalidArgument(config.Validate());
+    }
+
     // Initialize hardware first
     Result result = InitializeHardware();
-    if (!result)
+    if (!result) {
         return result;
+    }
 
-    // Begin radio module with default settings
-    int status = radio_module_->begin();
+    // Begin radio module with basic frequency
+    int status = radio_module_->begin(config.getFrequency());
     if (status != RADIOLIB_ERR_NONE) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
 
-    // Configure with provided settings
+    // Configure LoRa parameters
+    status = radio_module_->setBandwidth(config.getBandwidth());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    status = radio_module_->setSpreadingFactor(config.getSpreadingFactor());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    status = radio_module_->setCodingRate(config.getCodingRate());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    status = radio_module_->setSyncWord(config.getSyncWord());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    status = radio_module_->setOutputPower(config.getPower());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    status = radio_module_->setPreambleLength(config.getPreambleLength());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    // Enable/Disable CRC based on configuration
+    status = radio_module_->setCRC(config.getCRC());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
     return Result::Success();
 }
 
 Result LoraMesherSX1276::Send(const uint8_t* data, size_t len) {
+
     // Attempt to transmit data
     int status = radio_module_->transmit(data, len);
     if (status == RADIOLIB_ERR_NONE) {
@@ -63,6 +106,12 @@ Result LoraMesherSX1276::StartReceive() {
     }
 
     return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1276::StartTransmit() {
+    radio_module_->clearDio0Action();
+
+    return Result::Success();
 }
 
 Result LoraMesherSX1276::Sleep() {

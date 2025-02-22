@@ -98,10 +98,28 @@ class RadioConfig {
     uint8_t getCodingRate() const { return codingRate_; }
 
     /**
+     * @brief Get the configured sync word
+     * @return uint8_t Sync word value
+     */
+    uint8_t getSyncWord() const { return sync_word_; }
+
+    /**
      * @brief Get the configured transmission power
      * @return uint8_t Power in dBm
      */
     uint8_t getPower() const { return power_; }
+
+    /**
+     * @brief Get the configured preamble length
+     * @return uint16_t Preamble length
+     */
+    uint16_t getPreambleLength() const { return preamble_length_; }
+
+    /**
+     * @brief Get the configurec CRC
+     * @return bool CRC
+     */
+    bool getCRC() const { return crc_; }
 
     /**
      * @brief Set the radio hardware type

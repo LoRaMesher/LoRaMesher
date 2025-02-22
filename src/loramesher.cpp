@@ -2,56 +2,48 @@
 
 namespace loramesher {
 
+LoraMesher::LoraMesher(const Config& config) : config_(config) {}
+
 LoraMesher::~LoraMesher() {
     Stop();
 }
 
-bool LoraMesher::Initialize() {
-    try {
-        // Create HAL
-        hardware_manager_ = std::make_unique<hardware::HardwareManager>(
-            config_.getPinConfig(), config_.getRadioConfig());
-        if (!hardware_manager_->Initialize()) {
-            throw std::runtime_error("Failed to Initialize HAL");
-        }
+Result LoraMesher::Initialize() {
+    // Create HAL
+    hardware_manager_ = std::make_unique<hardware::HardwareManager>(
+        config_.getPinConfig(), config_.getRadioConfig());
 
-        // Initialize managers
-        // radioManager_ = std::make_unique<RadioManager>(config_.getRadioConfig(),
-        //                                                hal_.get());
-        // meshProtocol_ =
-        //     std::make_unique<MeshProtocol>(config_.getProtocolConfig());
-        // sleepManager_ = std::make_unique<SleepManager>(
-        //     config_.getSleepDuration(), config_.getDeepSleepEnabled());
-        // taskManager_ = std::make_unique<TaskManager>();
-
-        isInitialized_ = true;
-        return true;
-    } catch (const std::exception& e) {
-        // Log error
-        return false;
+    Result result = hardware_manager_->Initialize();
+    if (!result) {
+        return result;
     }
+
+    // Initialize managers
+    // radioManager_ = std::make_unique<RadioManager>(config_.getRadioConfig(),
+    //                                                hal_.get());
+    // meshProtocol_ =
+    //     std::make_unique<MeshProtocol>(config_.getProtocolConfig());
+    // sleepManager_ = std::make_unique<SleepManager>(
+    //     config_.getSleepDuration(), config_.getDeepSleepEnabled());
+    // taskManager_ = std::make_unique<TaskManager>();
+
+    isInitialized_ = true;
+    return Result::Success();
 }
 
-bool LoraMesher::Start() {
+Result LoraMesher::Start() {
+    Result result = Initialize();
+
+    if (!result) {
+        return result;
+    }
+
     if (!isInitialized_) {
-        return false;
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
-    try {
-        // Start all components in correct order
-        // if (!radioManager_->Start())
-        //     return false;
-        // if (!meshProtocol_->Start())
-        //     return false;
-        // if (!taskManager_->Start())
-        //     return false;
-
-        isRunning_ = true;
-        return true;
-    } catch (const std::exception& e) {
-        Stop();
-        return false;
-    }
+    isRunning_ = true;
+    return Result::Success();
 }
 
 void LoraMesher::Stop() {
@@ -64,6 +56,10 @@ void LoraMesher::Stop() {
     // radioManager_->Stop();
 
     isRunning_ = false;
+}
+
+Result LoraMesher::sendMessage(const BaseMessage& msg) {
+    return hardware_manager_->SendMessage();
 }
 
 }  // namespace loramesher

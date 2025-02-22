@@ -72,6 +72,11 @@ class MockRTOS : public os::RTOS {
 
     MOCK_METHOD(void*, RegisterISR, (void (*callback)(), uint8_t pin, int mode),
                 (override));
+
+    MOCK_METHOD(void, NotifyTaskFromISR, (os::TaskHandle_t taskHandle),
+                (override));
+
+    MOCK_METHOD(os::QueueResult, WaitForNotify, (uint32_t timeout), (override));
 };
 
 }  // namespace test

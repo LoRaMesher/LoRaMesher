@@ -142,6 +142,18 @@ class RTOS {
     virtual uint32_t getQueueMessagesWaiting(QueueHandle_t queue) = 0;
 
     /**
+     * @brief Notifies the task from ISR
+     * @param task_handle TaskHandle to be notified
+     */
+    virtual void NotifyTaskFromISR(TaskHandle_t task_handle) = 0;
+
+    /**
+     * @brief Wait for notification given a timeout
+     * @param task_handle Timeout
+     */
+    virtual QueueResult WaitForNotify(uint32_t timeout) = 0;
+
+    /**
      * @brief Delay task execution
      * @param ms Delay in milliseconds
      */

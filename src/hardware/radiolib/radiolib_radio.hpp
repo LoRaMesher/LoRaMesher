@@ -247,6 +247,11 @@ class RadioLibRadio : public IRadio {
         throw std::runtime_error("readData not supported in RadioLibRadio");
     }
 
+    Result StartTransmit() override {
+        throw std::runtime_error(
+            "StartTransmit not supported in RadioLibRadio");
+    }
+
    private:
     /**
      * @brief Create appropriate radio module based on type
@@ -312,8 +317,9 @@ class RadioLibRadio : public IRadio {
     int8_t last_packet_snr_{0};   ///< SNR of last received packet
 
     // Message queue for received data
-    os::QueueHandle_t receive_queue_;   // Queue for radio events
-    os::TaskHandle_t processing_task_;  // Handle to the event processing task
+    os::QueueHandle_t receive_queue_{nullptr};  // Queue for radio events
+    os::TaskHandle_t processing_task_{
+        nullptr};  // Handle to the event processing task
 
     // Mutex for thread safety
     std::mutex radio_mutex_;

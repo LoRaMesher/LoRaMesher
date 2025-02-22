@@ -93,6 +93,13 @@ class LoraMesherSX1276 : public IRadio {
     Result StartReceive() override;
 
     /**
+     * @brief Start the radio in transmit mode
+     * 
+     * @return Result Success if transmit mode was started successfully
+     */
+    Result StartTransmit() override;
+
+    /**
      * @brief Enter sleep mode to conserve power
      * @return Result Success if sleep mode was entered successfully
      */

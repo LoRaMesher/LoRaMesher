@@ -209,6 +209,15 @@ class RTOSMock : public RTOS {
         }
     }
 
+    void NotifyTaskFromISR(TaskHandle_t task_handle) override {
+        // TODO: Implement
+    }
+
+    QueueResult WaitForNotify(uint32_t timeout) override {
+        // TODO: Implement
+        return QueueResult::kOk;
+    }
+
    private:
     struct TaskInfo {
         std::string name;
