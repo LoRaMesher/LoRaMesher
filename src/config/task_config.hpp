@@ -14,7 +14,7 @@ namespace config {
  */
 struct TaskConfig {
     static constexpr size_t kRadioEventStackSize =
-        2048;  ///< Radio event task stack
+        4096;  ///< Radio event task stack
     static constexpr size_t kMinStackWatermark =
         512;  ///< Minimum free stack threshold
     // Add other task stack sizes here as needed

@@ -7,6 +7,7 @@
 #include "hardware/hardware_manager.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/message.hpp"
+#include "utils/logger.hpp"
 
 namespace loramesher {
 

@@ -12,27 +12,26 @@ namespace loramesher {
  * Defines all possible error conditions that can occur during radio operations.
  */
 enum class LoraMesherErrorCode {
-    kSuccess = 0,          ///< Operation completed successfully
-    kConfigurationError,   ///< Failed to configure radio parameters
-    kTransmissionError,    ///< Failed to transmit data
-    kReceptionError,       ///< Failed to receive data
-    kInvalidState,         ///< Radio in invalid state for operation
-    kHardwareError,        ///< Hardware-level error occurred
-    kTimeout,              ///< Operation timed out
-    kInvalidParameter,     ///< Invalid parameter provided
-    kBufferOverflow,       ///< Buffer overflow detected
-    kNotInitialized,       ///< Radio not initialized
-    kCrcError,             ///< CRC check failed
-    kPreambleError,        ///< Preamble detection failed
-    kSyncWordError,        ///< Sync word validation failed
-    kFrequencyError,       ///< Frequency setting error
-    kCalibrationError,     ///< Calibration failed
-    kMemoryError,          ///< Memory allocation/access error
-    kBusyError,            ///< Radio busy with another operation
-    kInterruptError,       ///< Interrupt handling error
-    kModulationError,      ///< Modulation parameter error
-    kNotInitializedError,  ///< Module not initializer error
-    kInvalidArgument       ///< Invalid argument error
+    kSuccess = 0,         ///< Operation completed successfully
+    kConfigurationError,  ///< Failed to configure radio parameters
+    kTransmissionError,   ///< Failed to transmit data
+    kReceptionError,      ///< Failed to receive data
+    kInvalidState,        ///< Radio in invalid state for operation
+    kHardwareError,       ///< Hardware-level error occurred
+    kTimeout,             ///< Operation timed out
+    kInvalidParameter,    ///< Invalid parameter provided
+    kBufferOverflow,      ///< Buffer overflow detected
+    kNotInitialized,      ///< Radio not initialized
+    kCrcError,            ///< CRC check failed
+    kPreambleError,       ///< Preamble detection failed
+    kSyncWordError,       ///< Sync word validation failed
+    kFrequencyError,      ///< Frequency setting error
+    kCalibrationError,    ///< Calibration failed
+    kMemoryError,         ///< Memory allocation/access error
+    kBusyError,           ///< Radio busy with another operation
+    kInterruptError,      ///< Interrupt handling error
+    kModulationError,     ///< Modulation parameter error
+    kInvalidArgument      ///< Invalid argument error
 };
 
 /**

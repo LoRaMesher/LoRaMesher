@@ -18,7 +18,6 @@ class MockRadio : public IRadio {
     // clang-format on
     MOCK_METHOD(Result, StartReceive, (), (override));
     MOCK_METHOD(Result, Sleep, (), (override));
-    MOCK_METHOD(Result, StartTransmit, (), (override));
 
     // Parameter Configuration
     MOCK_METHOD(Result, setFrequency, (float frequency), (override));
@@ -49,6 +48,7 @@ class MockRadio : public IRadio {
                 (std::function<void(std::unique_ptr<RadioEvent>)>), (override));
     MOCK_METHOD(Result, setState, (RadioState state), (override));
     MOCK_METHOD(RadioState, getState, (), (override));
+    MOCK_METHOD(Result, ClearActionReceive, (), (override));
 };
 
 }  // namespace test

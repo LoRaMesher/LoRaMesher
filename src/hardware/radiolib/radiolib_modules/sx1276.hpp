@@ -93,13 +93,6 @@ class LoraMesherSX1276 : public IRadio {
     Result StartReceive() override;
 
     /**
-     * @brief Start the radio in transmit mode
-     * 
-     * @return Result Success if transmit mode was started successfully
-     */
-    Result StartTransmit() override;
-
-    /**
      * @brief Enter sleep mode to conserve power
      * @return Result Success if sleep mode was entered successfully
      */
@@ -169,6 +162,13 @@ class LoraMesherSX1276 : public IRadio {
      * @return false If there was an error setting the callback
      */
     Result setActionReceive(void (*callback)(void)) override;
+
+    /**
+     * @brief Clear the action receive. At this moment receiving will be disabled
+     * 
+     * @return Result Success if clearing action receive is successfully
+     */
+    Result ClearActionReceive() override;
 
     /**
      * @brief Get the current RSSI value
@@ -338,6 +338,8 @@ class LoraMesherSX1276 : public IRadio {
         hal_module_;  ///< RadioLib hardware abstraction layer
     std::unique_ptr<SX1276>
         radio_module_;  ///< RadioLib LoraMesherSX1276 instance
+
+    bool initialized_ = false;  ///< Boolean when module initialized
 };
 
 }  // namespace radio

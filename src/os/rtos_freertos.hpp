@@ -12,6 +12,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "os/rtos.hpp"
+#include "utils/logger.hpp"
 
 namespace loramesher {
 namespace os {
@@ -204,12 +205,10 @@ class RTOSFreeRTOS : public RTOS {
         if (timeout == MAX_DELAY) {
             timeout = portMAX_DELAY;
         }
-
-        Serial.printf("Starting to wait for notification");
-
+        uint32_t notificationValue;
         // Wait for notification from ISR
         BaseType_t response =
-            xTaskNotifyWait(pdTRUE, pdFALSE, NULL, portMAX_DELAY);
+            xTaskNotifyWait(0, 0xFFFFFFFF, &notificationValue, timeout);
         if (response == pdPASS) {
             return QueueResult::kOk;
         } else {

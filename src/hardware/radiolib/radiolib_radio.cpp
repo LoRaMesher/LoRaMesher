@@ -4,6 +4,7 @@
 
 #include "config/task_config.hpp"
 #include "radiolib_modules/radio_lib_code_errors.hpp"
+#include "utils/logger.hpp"
 #include "utils/task_monitor.hpp"
 
 #include "radiolib_modules/sx1276.hpp"
@@ -82,12 +83,7 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
 
     // Begin radio operation
     Result result = current_module_->Begin(config);
-    if (!result) {
-        return result;
-    }
-
-    // Set up interrupt handling
-    return current_module_->setActionReceive(HandleInterruptStatic);
+    return result;
 }
 
 Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
@@ -101,7 +97,7 @@ Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
         return Result::Error(LoraMesherErrorCode::kBusyError);
     }
 
-    Result status = current_module_->StartTransmit();
+    Result status = current_module_->ClearActionReceive();
     if (!status) {
         return status;
     }
@@ -127,6 +123,7 @@ Result RadioLibRadio::StartReceive() {
 
     // Check if already in receive mode
     if (current_state_ == RadioState::kReceive) {
+        LOG_DEBUG("Already receiving messages");
         return Result::Success();
     }
 
@@ -135,9 +132,20 @@ Result RadioLibRadio::StartReceive() {
         GetRTOS().SuspendTask(processing_task_);
     }
 
+    if (current_state_ != RadioState::kIdle) {
+        Result result = current_module_->ClearActionReceive();
+        if (!result) {
+            return result;
+        }
+    }
+
+    Result result = current_module_->setActionReceive(HandleInterruptStatic);
+    if (!result) {
+        return result;
+    }
+
     // Start continuous receive mode
     Result status = current_module_->StartReceive();
-
     if (status) {
         current_state_ = RadioState::kReceive;
         // Resume the processing task
@@ -145,13 +153,16 @@ Result RadioLibRadio::StartReceive() {
             GetRTOS().ResumeTask(processing_task_);
         }
         return Result::Success();
+    } else {
+        LOG_ERROR("Start receiving failed");
     }
 
     // If we failed, still resume the task
     if (processing_task_) {
         GetRTOS().ResumeTask(processing_task_);
     }
-    return status;
+
+    return result;
 }
 
 Result RadioLibRadio::Sleep() {
@@ -181,6 +192,7 @@ Result RadioLibRadio::Sleep() {
 }
 
 RadioState RadioLibRadio::getState() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_state_;
 }
 
@@ -201,63 +213,77 @@ int8_t RadioLibRadio::getSNR() {
 }
 
 int8_t RadioLibRadio::getLastPacketRSSI() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return last_packet_rssi_;
 }
 
 int8_t RadioLibRadio::getLastPacketSNR() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return last_packet_snr_;
 }
 
 bool RadioLibRadio::IsTransmitting() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_state_ == RadioState::kTransmit;
 }
 
 float RadioLibRadio::getFrequency() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_config_.getFrequency();
 }
 
 uint8_t RadioLibRadio::getSpreadingFactor() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_config_.getSpreadingFactor();
 }
 
 float RadioLibRadio::getBandwidth() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_config_.getBandwidth();
 }
 
 uint8_t RadioLibRadio::getCodingRate() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_config_.getCodingRate();
 }
 
 uint8_t RadioLibRadio::getPower() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     return current_config_.getPower();
 }
 
 Result RadioLibRadio::setFrequency(float frequency) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setFrequency(frequency);
     return current_module_->setFrequency(frequency);
 }
 
 Result RadioLibRadio::setSpreadingFactor(uint8_t sf) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setSpreadingFactor(sf);
     return current_module_->setSpreadingFactor(sf);
 }
 
 Result RadioLibRadio::setBandwidth(float bandwidth) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setBandwidth(bandwidth);
     return current_module_->setBandwidth(bandwidth);
 }
 
 Result RadioLibRadio::setCodingRate(uint8_t coding_rate) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setCodingRate(coding_rate);
     return current_module_->setCodingRate(coding_rate);
 }
 
 Result RadioLibRadio::setPower(uint8_t power) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setPower(power);
     return current_module_->setPower(power);
 }
 
 Result RadioLibRadio::setSyncWord(uint8_t sync_word) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     Result result = current_config_.setSyncWord(sync_word);
     if (!result) {
         return result;
@@ -266,6 +292,7 @@ Result RadioLibRadio::setSyncWord(uint8_t sync_word) {
 }
 
 Result RadioLibRadio::setCRC(bool enable) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     Result result = current_config_.setCRC(enable);
     if (!result) {
         return result;
@@ -274,6 +301,7 @@ Result RadioLibRadio::setCRC(bool enable) {
 }
 
 Result RadioLibRadio::setPreambleLength(uint16_t length) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     Result result = current_config_.setPreambleLength(length);
     if (!result) {
         return result;
@@ -332,6 +360,7 @@ ISR_ATTR RadioLibRadio::HandleInterruptStatic() {
 }
 
 void RadioLibRadio::HandleInterrupt() {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
         return;
     }
@@ -383,20 +412,21 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     uint8_t event;
 
     while (true) {
-        if (GetRTOS().WaitForNotify(MAX_DELAY) == os::QueueResult::kOk) {
-            // const char* taskName =
-            //     radio->current_config_.getRadioTypeString().c_str();
-            // // Periodic monitoring
-            // utils::TaskMonitor::MonitorTask(
-            //     radio->processing_task_, taskName,
-            //     config::TaskConfig::kMinStackWatermark);
+        os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
+        LOG_DEBUG("Current State %d", radio->current_state_);
+        if (result == os::QueueResult::kOk) {
+            const char* taskName =
+                radio->current_config_.getRadioTypeString().c_str();
+            // Periodic monitoring
+            utils::TaskMonitor::MonitorTask(
+                radio->processing_task_, taskName,
+                config::TaskConfig::kMinStackWatermark);
 
+            LOG_DEBUG("Notification received");
             // radio->HandleInterrupt();
-            // Serial.println("Notification received");
         } else {
             // TODO: Handle error/timeout
-            // Serial.println("Notification timeout");
-            GetRTOS().delay(50);
+            LOG_DEBUG("Notification timeout");
         }
     }
 }

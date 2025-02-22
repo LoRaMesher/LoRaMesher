@@ -247,9 +247,9 @@ class RadioLibRadio : public IRadio {
         throw std::runtime_error("readData not supported in RadioLibRadio");
     }
 
-    Result StartTransmit() override {
+    Result ClearActionReceive() override {
         throw std::runtime_error(
-            "StartTransmit not supported in RadioLibRadio");
+            "ClearActionReceive not supported in RadioLibRadio");
     }
 
    private:

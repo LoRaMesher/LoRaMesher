@@ -60,13 +60,6 @@ class IRadio {
     virtual Result StartReceive() = 0;
 
     /**
-     * @brief Start the radio in transmit mode
-     * 
-     * @return Result Success if transmit mode was started successfully
-     */
-    virtual Result StartTransmit() = 0;
-
-    /**
      * @brief Put the radio into sleep mode
      * 
      * @return Result Success if sleep mode was entered successfully
@@ -159,6 +152,13 @@ class IRadio {
      */
     virtual Result setActionReceive(
         std::function<void(std::unique_ptr<RadioEvent>)> callback) = 0;
+
+    /**
+     * @brief Clear the action receive. At this moment receiving will be disabled
+     * 
+     * @return Result Success if clearing action receive is successfully
+     */
+    virtual Result ClearActionReceive() = 0;
 
     ///////////////////////
     // Radio Status

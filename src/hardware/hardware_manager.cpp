@@ -25,13 +25,19 @@ Result HardwareManager::Initialize() {
         return result;
     }
 
+    // Create radio module
+    result = InitializeRadioModule();
+    if (!result) {
+        return result;
+    }
+
     initialized_ = true;
     return Result::Success();
 }
 
 Result HardwareManager::SendMessage() {
     if (!initialized_) {
-        return Result::Error(LoraMesherErrorCode::kNotInitializedError);
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
     const uint8_t* data = new uint8_t(1);
@@ -67,12 +73,6 @@ Result HardwareManager::InitializeHalModules() {
         return Result::Error(LoraMesherErrorCode::kHardwareError);
     }
 
-    // Create radio module
-    Result result = InitializeRadioModule();
-    if (!result) {
-        return result;
-    }
-
     return Result::Success();
 }
 
@@ -89,6 +89,9 @@ Result HardwareManager::InitializeRadioModule() {
     if (!radio_->Configure(radio_config_)) {
         return Result::Error(LoraMesherErrorCode::kConfigurationError);
     }
+
+    // TODO: Remove this line
+    radio_->StartReceive();
 
     return Result::Success();
 }
