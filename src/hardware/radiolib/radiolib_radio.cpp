@@ -409,8 +409,6 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         return;
     }
 
-    uint8_t event;
-
     while (true) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
         LOG_DEBUG("Current State %d", radio->current_state_);

@@ -214,18 +214,6 @@ class RadioLibRadio : public IRadio {
         std::function<void(std::unique_ptr<RadioEvent>)> callback) override;
 
     /**
-     * @brief Sets the callback function for packet reception
-     * 
-     * @param callback Function pointer to the callback that will be executed when a packet is received
-     * @return true If the callback was set successfully
-     * @return false If there was an error setting the callback
-     */
-    Result setActionReceive(void (*callback)(void)) {
-        throw std::runtime_error(
-            "setActionReceive not supported in RadioLibRadio");
-    }
-
-    /**
      * @brief Set the current radio state
      * @param state Desired radio state
      * @return Result Success if state was changed successfully
@@ -234,7 +222,24 @@ class RadioLibRadio : public IRadio {
 
     /* Unused functions */
 
+    /**
+     * @brief Sets the callback function for packet reception
+     * 
+     * @param callback Function pointer to the callback that will be executed when a packet is received
+     * @return true If the callback was set successfully
+     * @return false If there was an error setting the callback
+     */
+    Result setActionReceive(void (*callback)(void)) {
+        // Prevent unused parameter warnings
+        (void)callback;
+        throw std::runtime_error(
+            "setActionReceive not supported in RadioLibRadio");
+    }
+
     Result Begin(const RadioConfig& config) override {
+        // Prevent unused parameter warnings
+        (void)config;
+
         throw std::runtime_error("Begin not supported in RadioLibRadio");
     }
 
@@ -244,6 +249,10 @@ class RadioLibRadio : public IRadio {
     }
 
     Result readData(uint8_t* data, size_t len) override {
+        // Prevent unused parameter warnings
+        (void)data;
+        (void)len;
+
         throw std::runtime_error("readData not supported in RadioLibRadio");
     }
 

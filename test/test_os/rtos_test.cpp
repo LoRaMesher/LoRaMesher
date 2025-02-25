@@ -90,13 +90,17 @@ TEST_F(RTOSTest, QueueOperationsTest) {
 
     EXPECT_CALL(*rtosInstance,
                 ReceiveFromQueue(queueHandle, &receivedData, 100))
-        .WillOnce(DoAll(
-            Invoke([&receivedData, testData](QueueHandle_t queue, void* buffer,
-                                             uint32_t timeout) {
-                *static_cast<int*>(buffer) = testData;
-                return QueueResult::kOk;
-            }),
-            Return(QueueResult::kOk)));
+        .WillOnce(DoAll(Invoke([&receivedData, testData](QueueHandle_t queueArg,
+                                                         void* buffer,
+                                                         uint32_t timeoutArg) {
+                            // Use parameters to prevent unused variable warnings
+                            (void)queueArg;    // Explicitly mark as used
+                            (void)timeoutArg;  // Explicitly mark as used
+
+                            *static_cast<int*>(buffer) = testData;
+                            return QueueResult::kOk;
+                        }),
+                        Return(QueueResult::kOk)));
 
     EXPECT_CALL(*rtosInstance, getQueueMessagesWaiting(queueHandle))
         .WillOnce(Return(1));

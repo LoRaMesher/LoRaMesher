@@ -40,6 +40,11 @@ class TaskMonitor {
             // Use more stack-friendly logging
             log_stack_warning(task_name, watermark);
         }
+#else
+        // Prevent unused parameter warnings
+        (void)task_handle;
+        (void)task_name;
+        (void)min_stack_watermark;
 #endif
     }
 

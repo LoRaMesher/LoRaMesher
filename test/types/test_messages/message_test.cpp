@@ -280,7 +280,7 @@ TEST_F(MessageMemoryTest, ChainedOperationsTest) {
 
     // Verify all messages are valid
     for (const auto& msg : messages) {
-        EXPECT_EQ(msg_ptr->getPayload(), payload);
+        EXPECT_EQ(msg->getPayload(), payload);
     }
 }
 

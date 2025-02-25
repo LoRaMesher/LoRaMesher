@@ -31,6 +31,13 @@ class SPIClass {
     void begin(int8_t sck = -1, int8_t miso = -1, int8_t mosi = -1,
                int8_t ss = -1) {
         _initialized = true;
+
+        // Prevent unused parameter warnings
+        (void)sck;
+        (void)miso;
+        (void)mosi;
+        (void)ss;
+
         // Log mock initialization for debugging
         printf("MOCK: SPI%d initialized\n", _spi_bus);
     }
@@ -86,6 +93,9 @@ class SPIClass {
             return 0xFF;
         }
 
+        // Prevent unused parameter warnings
+        (void)data;
+
         // In mock implementation, just return some dummy data
         // Could be extended to simulate specific device responses
         return 0xA5;  // Mock response
@@ -102,6 +112,10 @@ class SPIClass {
             printf("MOCK WARNING: SPI transfer called before initialization\n");
             return;
         }
+
+        // Prevent unused parameter warnings
+        (void)data;
+        (void)size;
 
         // In real implementation, this would read/write from the buffer
         // For mock, we just show that the function was called

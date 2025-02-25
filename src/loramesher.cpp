@@ -59,6 +59,8 @@ void LoraMesher::Stop() {
 }
 
 Result LoraMesher::sendMessage(const BaseMessage& msg) {
+    // Prevent unused parameter warnings until implemented
+    (void)msg;
     return hardware_manager_->SendMessage();
 }
 

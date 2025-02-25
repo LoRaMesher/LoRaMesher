@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>  // For std::rand()
 #include <map>
 #include <mutex>
 #include <queue>
@@ -38,11 +39,29 @@ class RTOSMock : public RTOS {
     bool CreateTask(TaskFunction_t taskFunction, const char* name,
                     uint32_t stackSize, void* parameters, uint32_t priority,
                     TaskHandle_t* taskHandle) override {
+
+        // Log the task creation with its parameters for debugging
+        printf("MOCK: Creating task '%s' with stack size %u and priority %u\n",
+               name, stackSize, priority);
+
         auto* t = new std::thread(
             [taskFunction, parameters]() { taskFunction(parameters); });
 
-        std::lock_guard<std::mutex> lock(tasksMutex_);
-        tasks_.try_emplace(t, name, false);
+        // Create and store task configuration in our mock implementation
+        {
+            std::lock_guard<std::mutex> lock(tasksMutex_);
+
+            // Create a new TaskInfo object - we need to use a temporary variable
+            // because std::condition_variable doesn't support aggregate initialization
+            auto& task_info = tasks_[t];
+            task_info.name = name;
+            task_info.stack_size = stackSize;
+            task_info.priority = priority;
+            task_info.suspended = false;
+            task_info.stack_watermark = 0;
+            task_info.notification_pending = false;
+            // Note: cv and notify_cv are default-initialized
+        }
 
         if (taskHandle) {
             *taskHandle = t;
@@ -53,6 +72,7 @@ class RTOSMock : public RTOS {
     }
 
     void DeleteTask(TaskHandle_t taskHandle) override {
+
         std::lock_guard<std::mutex> lock(tasksMutex_);
         auto* thread = static_cast<std::thread*>(taskHandle);
         tasks_.erase(thread);
@@ -77,7 +97,13 @@ class RTOSMock : public RTOS {
     }
 
     QueueHandle_t CreateQueue(uint32_t length, uint32_t itemSize) override {
-        auto* q = new QueueData{.maxSize = length, .itemSize = itemSize};
+        auto* q = new QueueData{
+            .mutex = {},     // Default initialize mutex
+            .notEmpty = {},  // Default initialize condition variable
+            .notFull = {},   // Default initialize condition variable
+            .data = {},      // Default initialize queue
+            .maxSize = length,
+            .itemSize = itemSize};
         return q;
     }
 
@@ -162,8 +188,33 @@ class RTOSMock : public RTOS {
         // Nothing to do in mock implementation
     }
 
+    /**
+     * @brief Gets the minimum amount of stack space that has remained for the task since it was created
+     * 
+     * In a real RTOS, this would return the actual minimum free stack space (watermark).
+     * In this mock implementation, we track a simulated watermark level for each task.
+     * 
+     * @param taskHandle Handle to the task to be queried
+     * @return Minimum free stack space in bytes, or default value if task not found
+     */
     uint32_t getTaskStackWatermark(TaskHandle_t taskHandle) override {
-        // Mock implementation - return a reasonable value
+        std::lock_guard<std::mutex> lock(tasksMutex_);
+        auto* thread = static_cast<std::thread*>(taskHandle);
+
+        if (auto it = tasks_.find(thread); it != tasks_.end()) {
+            // If we haven't set a specific watermark for this task, simulate one
+            if (it->second.stack_watermark == 0) {
+                // Simulate a watermark between 60-90% of total stack size
+                uint32_t used_percentage =
+                    10 + (std::rand() % 30);  // 10-40% used
+                uint32_t free_percentage = 100 - used_percentage;
+                it->second.stack_watermark =
+                    (it->second.stack_size * free_percentage) / 100;
+            }
+            return it->second.stack_watermark;
+        }
+
+        // Task not found, return default value
         return 2048;
     }
 
@@ -182,11 +233,21 @@ class RTOSMock : public RTOS {
         std::lock_guard<std::mutex> lock(tasksMutex_);
 
         for (const auto& [thread, info] : tasks_) {
+            // Get the stack watermark for this task (or calculate it if not set)
+            uint32_t watermark = info.stack_watermark;
+            if (watermark == 0) {
+                // Simulate a watermark between 60-90% of total stack size
+                uint32_t used_percentage =
+                    10 + (std::rand() % 30);  // 10-40% used
+                uint32_t free_percentage = 100 - used_percentage;
+                watermark = (info.stack_size * free_percentage) / 100;
+            }
+
             stats.push_back(TaskStats{.name = info.name,
                                       .state = info.suspended
                                                    ? TaskState::kSuspended
                                                    : TaskState::kRunning,
-                                      .stackWatermark = 2048,
+                                      .stackWatermark = watermark,
                                       .runtime = 0});
         }
 
@@ -195,6 +256,11 @@ class RTOSMock : public RTOS {
 
     void* RegisterISR(void (*callback)(), uint8_t pin = 0,
                       int mode = 0) override {
+
+        // Prevent unused parameter warnings
+        (void)pin;
+        (void)mode;
+
         // Store the callback for testing purposes
         std::lock_guard<std::mutex> lock(isrMutex_);
         registeredISRs_.push_back(callback);
@@ -209,20 +275,112 @@ class RTOSMock : public RTOS {
         }
     }
 
+    /**
+     * @brief Notifies a task from an ISR context
+     * 
+     * In embedded RTOS systems, this function would typically set a notification value
+     * for the specified task and potentially wake it from a blocked state. In this mock
+     * implementation, we track the notification in the task's state and wake any task
+     * that might be waiting on notifications.
+     * 
+     * @param task_handle Handle to the task to be notified
+     */
     void NotifyTaskFromISR(TaskHandle_t task_handle) override {
-        // TODO: Implement
+        std::lock_guard<std::mutex> lock(tasksMutex_);
+        auto* thread = static_cast<std::thread*>(task_handle);
+
+        if (auto it = tasks_.find(thread); it != tasks_.end()) {
+            // Set notification flag for this task
+            it->second.notification_pending = true;
+
+            // Wake up the task if it's waiting for a notification
+            it->second.notify_cv.notify_one();
+        }
     }
 
+    /**
+     * @brief Waits for a task notification with optional timeout
+     * 
+     * This function blocks the calling task until a notification is received or
+     * the timeout expires. In a real RTOS, tasks can receive notifications directly
+     * from ISRs or other tasks.
+     * 
+     * @param timeout Maximum time to wait for notification in milliseconds
+     * @return QueueResult::kOk if notification was received, QueueResult::kTimeout if timeout occurred
+     */
     QueueResult WaitForNotify(uint32_t timeout) override {
-        // TODO: Implement
-        return QueueResult::kOk;
+        // Since std::thread doesn't provide a way to get the current thread handle,
+        // we need to use thread_local storage to track the current task
+        thread_local TaskHandle_t this_task = nullptr;
+
+        if (!this_task) {
+            // First time call from this thread, find the task handle
+            std::lock_guard<std::mutex> lock(tasksMutex_);
+
+            // Try to find this thread in our task list by comparing thread IDs
+            std::thread::id current_id = std::this_thread::get_id();
+            for (const auto& [thread_ptr, info] : tasks_) {
+                if (thread_ptr->get_id() == current_id) {
+                    this_task = thread_ptr;
+                    break;
+                }
+            }
+
+            // If we couldn't find this thread, return error
+            if (!this_task) {
+                return QueueResult::kError;
+            }
+        }
+
+        // Now use the cached task handle
+        std::unique_lock<std::mutex> lock(tasksMutex_);
+        auto it = tasks_.find(static_cast<std::thread*>(this_task));
+
+        // Double-check that the task still exists
+        if (it == tasks_.end()) {
+            this_task = nullptr;  // Reset the cache
+            return QueueResult::kError;
+        }
+
+        // If we already have a pending notification, consume it and return immediately
+        if (it->second.notification_pending) {
+            it->second.notification_pending = false;
+            return QueueResult::kOk;
+        }
+
+        // Wait for notification with timeout
+        if (timeout == 0) {
+            // Special case: don't wait if timeout is 0
+            return QueueResult::kTimeout;
+        } else {
+            // Wait with timeout
+            auto status = it->second.notify_cv.wait_for(
+                lock, std::chrono::milliseconds(timeout),
+                [&it]() { return it->second.notification_pending; });
+
+            if (status) {
+                // Notification received, consume it
+                it->second.notification_pending = false;
+                return QueueResult::kOk;
+            } else {
+                // Timeout occurred
+                return QueueResult::kTimeout;
+            }
+        }
     }
 
    private:
     struct TaskInfo {
         std::string name;
-        bool suspended;
+        bool suspended = false;
+        uint32_t stack_size = 0;
+        uint32_t priority = 0;
+        uint32_t stack_watermark = 0;  // Tracks simulated stack watermark
         std::condition_variable cv;
+
+        // For notification support
+        bool notification_pending = false;
+        std::condition_variable notify_cv;
     };
 
     struct QueueData {

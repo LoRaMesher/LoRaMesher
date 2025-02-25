@@ -206,6 +206,9 @@ class LoraMesherSX1276 : public IRadio {
      * @throws std::runtime_error This operation is not supported
      */
     Result Configure(const RadioConfig& config) override {
+        // Prevent unused parameter warnings
+        (void)config;
+
         throw std::runtime_error("Configure not supported in LoraMesherSX1276");
     }
 
@@ -216,6 +219,9 @@ class LoraMesherSX1276 : public IRadio {
      */
     Result setActionReceive(
         std::function<void(std::unique_ptr<RadioEvent>)> callback) {
+        // Prevent unused parameter warnings
+        (void)callback;
+
         throw std::runtime_error(
             "setActionReceive not supported in LoraMesherSX1276");
     }
@@ -306,6 +312,9 @@ class LoraMesherSX1276 : public IRadio {
  * @throws std::runtime_error This operation is not supported
  */
     Result setState(RadioState state) override {
+        // Prevent unused parameter warnings
+        (void)state;
+
         throw std::runtime_error("setState not supported in LoraMesherSX1276");
     }
 

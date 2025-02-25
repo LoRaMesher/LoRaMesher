@@ -11,8 +11,6 @@
 
 namespace loramesher {
 
-static const char* LM_TAG = "LoraMesher";
-
 class LoraMesher {
    public:
     class Builder;  // Forward declaration of Builder

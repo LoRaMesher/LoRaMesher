@@ -154,6 +154,9 @@ Result BaseMessage::ValidateInputs(AddressType dest, AddressType src,
     // if (dest == 0 || src == 0) {
     //     return radio::Error(radio::RadioErrorCode::kInvalidParameter);
     // }
+    // Prevent unused parameter warnings until implemented
+    (void)dest;
+    (void)src;
 
     // Validate message type
     return IsValidMessageType(type);
