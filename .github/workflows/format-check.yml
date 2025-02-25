@@ -10,9 +10,6 @@ jobs:
     
     - name: Install clang-format
       run: sudo apt-get install -y clang-format-19
-
-    - name: Debug clang-format config
-      run: clang-format -dump-config
     
     - name: Check formatting
       run: |
