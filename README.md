@@ -274,3 +274,19 @@ Please see our open access paper ["Implementation of a LoRa Mesh Library"](https
   doi={10.1109/ACCESS.2022.3217215}}
 ```
 
+
+## Cmake building
+
+```
+mkdir build && cd build
+cmake .. -DBUILD_DESKTOP=ON
+make
+```
+If using windows, instead of using `make` use `cmake --build . --target loramesher_lib`
+
+### Targets
+- `loramesher_lib` -> To build the library.
+- `build_all_tests` -> To build the tests.
+- `run_all_tests` -> To build and run the tests.
+
+Or insted use `cTest`
