@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "utils/logger.hpp"
+
 namespace loramesher {
 
 BaseMessage::BaseMessage(AddressType dest, AddressType src, MessageType type,
@@ -54,8 +56,9 @@ std::optional<BaseMessage> BaseMessage::Create(
     AddressType dest, AddressType src, MessageType type,
     const std::vector<uint8_t>& data) {
 
-    auto validation_result = ValidateInputs(dest, src, type, data);
+    Result validation_result = ValidateInputs(dest, src, type, data);
     if (!validation_result.IsSuccess()) {
+        LOG_ERROR("Failed to validate message inputs");
         return std::nullopt;
     }
 
@@ -66,17 +69,20 @@ std::optional<BaseMessage> BaseMessage::CreateFromSerialized(
     const std::vector<uint8_t>& data) {
 
     if (data.size() < BaseHeader::size()) {
+        LOG_ERROR("Invalid message size");
         return std::nullopt;
     }
 
     utils::ByteDeserializer deserializer(data);
     auto header = Deserialize(deserializer);
     if (!header) {
+        LOG_ERROR("Failed to deserialize message header");
         return std::nullopt;
     }
 
     auto payload = deserializer.ReadBytes(header->payloadSize);
     if (!payload) {
+        LOG_ERROR("Failed to read message payload");
         return std::nullopt;
     }
 
@@ -112,18 +118,21 @@ std::optional<BaseHeader> BaseMessage::Deserialize(
 
     auto dest = deserializer.ReadUint16();
     if (!dest) {
+        LOG_ERROR("Failed to read destination address");
         return std::nullopt;
     }
     header.destination = *dest;
 
     auto src = deserializer.ReadUint16();
     if (!src) {
+        LOG_ERROR("Failed to read source address");
         return std::nullopt;
     }
     header.source = *src;
 
     auto type = deserializer.ReadUint8();
     if (!type) {
+        LOG_ERROR("Failed to read message type");
         return std::nullopt;
     }
 

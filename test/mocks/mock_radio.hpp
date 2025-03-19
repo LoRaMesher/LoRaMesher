@@ -24,7 +24,7 @@ class MockRadio : public IRadio {
     MOCK_METHOD(Result, setSpreadingFactor, (uint8_t sf), (override));
     MOCK_METHOD(Result, setBandwidth, (float bandwidth), (override));
     MOCK_METHOD(Result, setCodingRate, (uint8_t codingRate), (override));
-    MOCK_METHOD(Result, setPower, (uint8_t power), (override));
+    MOCK_METHOD(Result, setPower, (int8_t power), (override));
     MOCK_METHOD(Result, setSyncWord, (uint8_t syncWord), (override));
     MOCK_METHOD(Result, setCRC, (bool enable), (override));
     MOCK_METHOD(Result, setPreambleLength, (uint16_t length), (override));

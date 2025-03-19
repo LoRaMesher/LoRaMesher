@@ -11,9 +11,21 @@ Logger::Logger() : logger_mutex_() {
 }
 
 void Logger::LogMessage(LogLevel level, const std::string& message) {
-    std::lock_guard<std::mutex> lock(logger_mutex_);
-    if (level >= min_log_level_ && handler_) {
-        handler_->Write(level, message);
+    std::unique_lock<std::mutex> lock(logger_mutex_, std::try_to_lock);
+    if (lock.owns_lock()) {
+        if (level >= min_log_level_ && handler_) {
+            handler_->Write(level, message);
+        }
+    }
+}
+
+void Logger::Reset() {
+    std::unique_lock<std::mutex> lock(logger_mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        // The mutex is already locked, which is problematic
+        // Create a new mutex to replace the locked one
+        logger_mutex_.~mutex();
+        new (&logger_mutex_) std::mutex();
     }
 }
 

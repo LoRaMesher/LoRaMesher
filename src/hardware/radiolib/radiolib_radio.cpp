@@ -2,11 +2,13 @@
 
 #include <queue>
 
+#include "config/system_config.hpp"
 #include "config/task_config.hpp"
 #include "radiolib_modules/radio_lib_code_errors.hpp"
 #include "utils/logger.hpp"
 #include "utils/task_monitor.hpp"
 
+#include "mocks/mock_radio.hpp"
 #include "radiolib_modules/sx1276.hpp"
 
 namespace loramesher {
@@ -81,32 +83,50 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
         return Result::Error(LoraMesherErrorCode::kConfigurationError);
     }
 
-    // Begin radio operation
-    Result result = current_module_->Begin(config);
-    return result;
+    // Copy the configuration
+    current_config_ = config;
+
+    return Result::Success();
 }
 
-Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
+Result RadioLibRadio::Begin(const RadioConfig& config) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
-    // Check if radio is already transmitting
-    if (current_state_ == RadioState::kTransmit) {
-        return Result::Error(LoraMesherErrorCode::kBusyError);
-    }
+    // Copy the configuration
+    current_config_ = config;
 
-    Result status = current_module_->ClearActionReceive();
-    if (!status) {
-        return status;
-    }
+    // Begin radio operation
+    return current_module_->Begin(current_config_);
+}
 
-    // Attempt to transmit data
-    status = current_module_->Send(data, len);
-    if (status) {
-        current_state_ = RadioState::kTransmit;
-        return StartReceive();
+Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
+    Result status = Result::Success();
+
+    {
+        std::lock_guard<std::mutex> lock(radio_mutex_);
+
+        if (!current_module_) {
+            return Result::Error(LoraMesherErrorCode::kNotInitialized);
+        }
+
+        // Check if radio is already transmitting
+        if (current_state_ == RadioState::kTransmit) {
+            return Result::Error(LoraMesherErrorCode::kBusyError);
+        }
+
+        status = current_module_->ClearActionReceive();
+        if (!status) {
+            return status;
+        }
+
+        // Attempt to transmit data
+        status = current_module_->Send(data, len);
+        if (status) {
+            current_state_ = RadioState::kTransmit;
+        }
     }
 
     Result start_receive_result = StartReceive();
@@ -276,7 +296,7 @@ Result RadioLibRadio::setCodingRate(uint8_t coding_rate) {
     return current_module_->setCodingRate(coding_rate);
 }
 
-Result RadioLibRadio::setPower(uint8_t power) {
+Result RadioLibRadio::setPower(int8_t power) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setPower(power);
     return current_module_->setPower(power);
@@ -338,14 +358,14 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
     // Create new module based on type
     switch (type) {
         case RadioType::kSx1276:
+#ifdef LORAMESHER_BUILD_ARDUINO
             current_module_ = std::make_unique<LoraMesherSX1276>(
                 cs_pin_, di0_pin_, rst_pin_, busy_pin_);
             break;
-        // case RadioType::kSx1278:
-        //     current_module_ =
-        //         std::make_unique<SX1278>(cs_pin_, di0_pin_, rst_pin_, spi_);
-        //     break;
-        // Add more radio types here
+#endif  // LORAMESHER_BUILD_ARDUINO
+        case RadioType::kMockRadio:
+            current_module_ = std::make_unique<MockRadio>();
+            break;
         default:
             return false;
     }
@@ -355,49 +375,75 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
 
 ISR_ATTR RadioLibRadio::HandleInterruptStatic() {
     if (instance_ && instance_->receive_queue_) {
+        LOG_DEBUG("RadioLibRadio ISR: Notify task");
         GetRTOS().NotifyTaskFromISR(instance_->processing_task_);
     }
 }
 
 void RadioLibRadio::HandleInterrupt() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    LOG_DEBUG("Handling interrupt");
+    std::unique_lock<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
+        lock.unlock();
+        current_module_->StartReceive();
         return;
     }
 
     // Check if we received data
     size_t length = current_module_->getPacketLength();
     if (length == 0) {
+        LOG_DEBUG("No data received");
+        lock.unlock();
+        current_module_->StartReceive();
         return;
     }
 
     // Read the received data
     std::vector<uint8_t> buffer(length);
     Result result = current_module_->readData(buffer.data(), length);
-    if (result) {
-        // Update last packet info
-        last_packet_rssi_ = current_module_->getRSSI();
-        last_packet_snr_ = current_module_->getSNR();
-
-        // Try to deserialize the received data into a message
-        auto message_optional = BaseMessage::CreateFromSerialized(buffer);
-        if (message_optional) {
-            std::lock_guard<std::mutex> lock(radio_mutex_);
-            // Add to queue if there's space
-            if (GetRTOS().getQueueMessagesWaiting(receive_queue_) <
-                kMaxQueueSize) {
-                auto event = CreateReceivedEvent(
-                    std::make_unique<BaseMessage>(std::move(*message_optional)),
-                    last_packet_rssi_, last_packet_snr_);
-                if (event && receive_callback_) {
-                    receive_callback_(std::move(event));
-                }
-            }
-        }
-    } else {
-        // Log error
+    if (!result) {
+        LOG_WARNING(result.GetErrorMessage().c_str());
+        lock.unlock();
+        current_module_->StartReceive();
+        return;
     }
 
+    LOG_DEBUG("Received data");
+
+    // Update last packet info
+    last_packet_rssi_ = current_module_->getRSSI();
+    last_packet_snr_ = current_module_->getSNR();
+
+    // Try to deserialize the received data into a message
+    std::optional<BaseMessage> message_optional =
+        BaseMessage::CreateFromSerialized(buffer);
+    if (!message_optional) {
+        LOG_ERROR("Failed to deserialize message");
+        lock.unlock();
+        current_module_->StartReceive();
+        return;
+    }
+
+    LOG_DEBUG("Received message");
+    // Add to queue if there's space
+    if (GetRTOS().getQueueMessagesWaiting(receive_queue_) >= kMaxQueueSize) {
+        LOG_ERROR("Receive queue full");
+        lock.unlock();
+        current_module_->StartReceive();
+        return;
+    }
+
+    LOG_DEBUG("Adding message to queue");
+
+    auto event = CreateReceivedEvent(
+        std::make_unique<BaseMessage>(std::move(*message_optional)),
+        last_packet_rssi_, last_packet_snr_);
+    if (event && receive_callback_) {
+        LOG_DEBUG("Calling receive callback");
+        receive_callback_(std::move(event));
+    }
+
+    lock.unlock();
     // Restart receive mode
     current_module_->StartReceive();
 }
@@ -408,6 +454,7 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         GetRTOS().DeleteTask(nullptr);
         return;
     }
+    GetRTOS().SuspendTask(nullptr);
 
     while (true) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
@@ -421,9 +468,12 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
                 config::TaskConfig::kMinStackWatermark);
 
             LOG_DEBUG("Notification received");
-            // radio->HandleInterrupt();
+            radio->HandleInterrupt();
+            // Periodic monitoring
+            utils::TaskMonitor::MonitorTask(
+                radio->processing_task_, taskName,
+                config::TaskConfig::kMinStackWatermark);
         } else {
-            // TODO: Handle error/timeout
             LOG_DEBUG("Notification timeout");
         }
     }

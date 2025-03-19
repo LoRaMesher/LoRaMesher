@@ -31,7 +31,8 @@ enum class LoraMesherErrorCode {
     kBusyError,           ///< Radio busy with another operation
     kInterruptError,      ///< Interrupt handling error
     kModulationError,     ///< Modulation parameter error
-    kInvalidArgument      ///< Invalid argument error
+    kInvalidArgument,     ///< Invalid argument error
+    kNotImplemented,      ///< Feature not implemented
 };
 
 /**

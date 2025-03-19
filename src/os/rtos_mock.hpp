@@ -299,16 +299,16 @@ class RTOSMock : public RTOS {
     }
 
     /**
-     * @brief Waits for a task notification with optional timeout
+     * @brief Enhanced WaitForNotify implementation that properly handles MAX_DELAY
      * 
-     * This function blocks the calling task until a notification is received or
-     * the timeout expires. In a real RTOS, tasks can receive notifications directly
-     * from ISRs or other tasks.
+     * This implementation ensures that MAX_DELAY actually waits for a notification
+     * instead of timing out immediately, which would cause excessive timeout messages
+     * and prevent other tasks from functioning correctly.
      * 
-     * @param timeout Maximum time to wait for notification in milliseconds
-     * @return QueueResult::kOk if notification was received, QueueResult::kTimeout if timeout occurred
+     * @param timeout Timeout value in milliseconds, MAX_DELAY for indefinite wait
+     * @return QueueResult::kOk if notification received, QueueResult::kTimeout if timeout occurred
      */
-    QueueResult WaitForNotify(uint32_t timeout) override {
+    QueueResult WaitForNotify(uint32_t timeout) {
         // Since std::thread doesn't provide a way to get the current thread handle,
         // we need to use thread_local storage to track the current task
         thread_local TaskHandle_t this_task = nullptr;
@@ -352,8 +352,17 @@ class RTOSMock : public RTOS {
         if (timeout == 0) {
             // Special case: don't wait if timeout is 0
             return QueueResult::kTimeout;
+        } else if (timeout == MAX_DELAY) {
+            // Special case for MAX_DELAY: wait until notification received
+            // or until thread is interrupted (common in testing scenarios)
+            it->second.notify_cv.wait(
+                lock, [&it]() { return it->second.notification_pending; });
+
+            // If we get here, we received a notification
+            it->second.notification_pending = false;
+            return QueueResult::kOk;
         } else {
-            // Wait with timeout
+            // Regular timeout case
             auto status = it->second.notify_cv.wait_for(
                 lock, std::chrono::milliseconds(timeout),
                 [&it]() { return it->second.notification_pending; });

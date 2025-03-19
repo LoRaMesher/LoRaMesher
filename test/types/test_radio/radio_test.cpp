@@ -2,7 +2,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-#include "mock_radio.hpp"
+#include "../../mocks/mock_radio.hpp"
 
 namespace loramesher {
 namespace radio {

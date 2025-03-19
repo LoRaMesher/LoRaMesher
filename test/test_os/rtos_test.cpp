@@ -1,13 +1,13 @@
 /**
- * @file test/os/rtos_test.cpp
- * @brief Unit tests for RTOS interface using Google Mock
+ * @file test/os/rtos_additional_tests.cpp
+ * @brief Additional unit tests for RTOS interface using Google Mock
  */
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #ifdef ARDUINO
 
-TEST(RTOSTest, ImplementArduinoTests) {
+TEST(RTOSAdditionalTest, ImplementArduinoTests) {
     EXPECT_TRUE(true);
 }
 
@@ -16,7 +16,7 @@ TEST(RTOSTest, ImplementArduinoTests) {
 #include <chrono>
 #include <thread>
 
-#include "mock_rtos.hpp"
+#include "../mocks/mock_rtos.hpp"
 
 using namespace loramesher;
 using namespace loramesher::os;
@@ -29,10 +29,10 @@ using ::testing::Return;
 using ::testing::SetArgPointee;
 
 /**
- * @class RTOSTest
- * @brief Test fixture for RTOS tests
+ * @class RTOSAdditionalTest
+ * @brief Test fixture for additional RTOS tests
  */
-class RTOSTest : public ::testing::Test {
+class RTOSAdditionalTest : public ::testing::Test {
    protected:
     void SetUp() override {
         // Replace the global RTOS instance with our mock
@@ -47,9 +47,107 @@ class RTOSTest : public ::testing::Test {
 };
 
 /**
- * @brief Test task creation functionality
+ * @brief Test task deletion functionality
  */
-TEST_F(RTOSTest, CreateTaskTest) {
+TEST_F(RTOSAdditionalTest, DeleteTaskTest) {
+    // Setup
+    TaskHandle_t taskHandle = reinterpret_cast<TaskHandle_t>(0x12345678);
+
+    // Expectations
+    EXPECT_CALL(*rtosInstance, DeleteTask(taskHandle)).Times(1);
+
+    // Execute
+    rtosInstance->DeleteTask(taskHandle);
+}
+
+/**
+ * @brief Test sending to queue from ISR context
+ */
+TEST_F(RTOSAdditionalTest, SendToQueueISRTest) {
+    // Setup
+    QueueHandle_t queueHandle = reinterpret_cast<QueueHandle_t>(0x87654321);
+    int testData = 42;
+
+    // Expectations
+    EXPECT_CALL(*rtosInstance, SendToQueueISR(queueHandle, &testData))
+        .WillOnce(Return(QueueResult::kOk));
+
+    // Execute
+    QueueResult result = rtosInstance->SendToQueueISR(queueHandle, &testData);
+
+    // Verify
+    EXPECT_EQ(result, QueueResult::kOk);
+}
+
+/**
+ * @brief Test task stack watermark functionality
+ */
+TEST_F(RTOSAdditionalTest, TaskStackWatermarkTest) {
+    // Setup
+    TaskHandle_t taskHandle = reinterpret_cast<TaskHandle_t>(0x12345678);
+    uint32_t expectedWatermark = 1024;
+
+    // Expectations
+    EXPECT_CALL(*rtosInstance, getTaskStackWatermark(taskHandle))
+        .WillOnce(Return(expectedWatermark));
+
+    // Execute
+    uint32_t watermark = rtosInstance->getTaskStackWatermark(taskHandle);
+
+    // Verify
+    EXPECT_EQ(watermark, expectedWatermark);
+}
+
+/**
+ * @brief Test scheduler start functionality
+ */
+TEST_F(RTOSAdditionalTest, StartSchedulerTest) {
+    // Expectations
+    EXPECT_CALL(*rtosInstance, StartScheduler()).Times(1);
+
+    // Execute
+    rtosInstance->StartScheduler();
+}
+
+/**
+ * @brief Test task notification from ISR
+ */
+TEST_F(RTOSAdditionalTest, NotifyTaskFromISRTest) {
+    // Setup
+    TaskHandle_t taskHandle = reinterpret_cast<TaskHandle_t>(0x12345678);
+
+    // Expectations
+    EXPECT_CALL(*rtosInstance, NotifyTaskFromISR(taskHandle)).Times(1);
+
+    // Execute
+    rtosInstance->NotifyTaskFromISR(taskHandle);
+}
+
+/**
+ * @brief Test wait for notification functionality
+ */
+TEST_F(RTOSAdditionalTest, WaitForNotifyTest) {
+    // Setup
+    uint32_t timeout = 100;
+
+    // Expectations
+    EXPECT_CALL(*rtosInstance, WaitForNotify(timeout))
+        .WillOnce(Return(QueueResult::kOk))
+        .WillOnce(Return(QueueResult::kTimeout));
+
+    // Execute
+    QueueResult successResult = rtosInstance->WaitForNotify(timeout);
+    QueueResult timeoutResult = rtosInstance->WaitForNotify(timeout);
+
+    // Verify
+    EXPECT_EQ(successResult, QueueResult::kOk);
+    EXPECT_EQ(timeoutResult, QueueResult::kTimeout);
+}
+
+/**
+ * @brief Test task creation failure case
+ */
+TEST_F(RTOSAdditionalTest, CreateTaskFailureTest) {
     // Setup
     TaskHandle_t taskHandle;
     auto taskFunction = [](void* param) {
@@ -59,179 +157,122 @@ TEST_F(RTOSTest, CreateTaskTest) {
 
     // Expectations
     EXPECT_CALL(*rtosInstance, CreateTask(_, _, _, _, _, _))
-        .WillOnce(
-            DoAll(SetArgPointee<5>(reinterpret_cast<TaskHandle_t>(0x12345678)),
-                  Return(true)));
+        .WillOnce(Return(false));
 
     // Execute
-    bool result = rtosInstance->CreateTask(taskFunction, "TestTask", 2048,
+    bool result = rtosInstance->CreateTask(taskFunction, "FailTask", 2048,
                                            nullptr, 1, &taskHandle);
 
     // Verify
-    EXPECT_TRUE(result);
-    EXPECT_EQ(taskHandle, reinterpret_cast<TaskHandle_t>(0x12345678));
+    EXPECT_FALSE(result);
 }
 
 /**
- * @brief Test queue operations
+ * @brief Test queue operation failures
  */
-TEST_F(RTOSTest, QueueOperationsTest) {
+TEST_F(RTOSAdditionalTest, QueueOperationFailuresTest) {
     // Setup
     QueueHandle_t queueHandle = reinterpret_cast<QueueHandle_t>(0x87654321);
     int testData = 42;
     int receivedData = 0;
 
-    // Expectations
-    EXPECT_CALL(*rtosInstance, CreateQueue(10, sizeof(int)))
-        .WillOnce(Return(queueHandle));
+    // Expectations for queue operations with different error conditions
+    EXPECT_CALL(*rtosInstance, SendToQueue(queueHandle, &testData, 0))
+        .WillOnce(Return(QueueResult::kFull));
 
     EXPECT_CALL(*rtosInstance, SendToQueue(queueHandle, &testData, 100))
-        .WillOnce(Return(QueueResult::kOk));
+        .WillOnce(Return(QueueResult::kTimeout));
+
+    EXPECT_CALL(*rtosInstance, ReceiveFromQueue(queueHandle, &receivedData, 0))
+        .WillOnce(Return(QueueResult::kEmpty));
 
     EXPECT_CALL(*rtosInstance,
                 ReceiveFromQueue(queueHandle, &receivedData, 100))
-        .WillOnce(DoAll(Invoke([&receivedData, testData](QueueHandle_t queueArg,
-                                                         void* buffer,
-                                                         uint32_t timeoutArg) {
-                            // Use parameters to prevent unused variable warnings
-                            (void)queueArg;    // Explicitly mark as used
-                            (void)timeoutArg;  // Explicitly mark as used
-
-                            *static_cast<int*>(buffer) = testData;
-                            return QueueResult::kOk;
-                        }),
-                        Return(QueueResult::kOk)));
-
-    EXPECT_CALL(*rtosInstance, getQueueMessagesWaiting(queueHandle))
-        .WillOnce(Return(1));
-
-    EXPECT_CALL(*rtosInstance, DeleteQueue(queueHandle));
+        .WillOnce(Return(QueueResult::kTimeout));
 
     // Execute and verify
-    QueueHandle_t createdQueue = rtosInstance->CreateQueue(10, sizeof(int));
-    EXPECT_EQ(createdQueue, queueHandle);
+    QueueResult sendFullResult =
+        rtosInstance->SendToQueue(queueHandle, &testData, 0);
+    EXPECT_EQ(sendFullResult, QueueResult::kFull);
 
-    QueueResult sendResult =
+    QueueResult sendTimeoutResult =
         rtosInstance->SendToQueue(queueHandle, &testData, 100);
-    EXPECT_EQ(sendResult, QueueResult::kOk);
+    EXPECT_EQ(sendTimeoutResult, QueueResult::kTimeout);
 
-    uint32_t waitingMessages =
-        rtosInstance->getQueueMessagesWaiting(queueHandle);
-    EXPECT_EQ(waitingMessages, 1);
+    QueueResult receiveEmptyResult =
+        rtosInstance->ReceiveFromQueue(queueHandle, &receivedData, 0);
+    EXPECT_EQ(receiveEmptyResult, QueueResult::kEmpty);
 
-    QueueResult receiveResult =
+    QueueResult receiveTimeoutResult =
         rtosInstance->ReceiveFromQueue(queueHandle, &receivedData, 100);
-    EXPECT_EQ(receiveResult, QueueResult::kOk);
-    EXPECT_EQ(receivedData, testData);
-
-    rtosInstance->DeleteQueue(queueHandle);
+    EXPECT_EQ(receiveTimeoutResult, QueueResult::kTimeout);
 }
 
 /**
- * @brief Test timing functions
+ * @brief Test task state transitions with multiple tasks
  */
-TEST_F(RTOSTest, TimingFunctionsTest) {
+TEST_F(RTOSAdditionalTest, MultipleTaskStateTransitionsTest) {
     // Setup
-    uint32_t currentTicks = 12345;
+    TaskHandle_t task1Handle = reinterpret_cast<TaskHandle_t>(0x12345678);
+    TaskHandle_t task2Handle = reinterpret_cast<TaskHandle_t>(0x87654321);
 
     // Expectations
-    EXPECT_CALL(*rtosInstance, getTickCount())
-        .WillOnce(Return(currentTicks))
-        .WillOnce(Return(currentTicks + 100));
+    // Task 1 transitions
+    EXPECT_CALL(*rtosInstance, getTaskState(task1Handle))
+        .WillOnce(Return(TaskState::kRunning));
+    EXPECT_CALL(*rtosInstance, SuspendTask(task1Handle));
+    EXPECT_CALL(*rtosInstance, getTaskState(task1Handle))
+        .WillOnce(Return(TaskState::kSuspended));
 
-    EXPECT_CALL(*rtosInstance, delay(100)).Times(1);
+    // Task 2 transitions
+    EXPECT_CALL(*rtosInstance, getTaskState(task2Handle))
+        .WillOnce(Return(TaskState::kBlocked));
+    EXPECT_CALL(*rtosInstance, ResumeTask(task2Handle));
+    EXPECT_CALL(*rtosInstance, getTaskState(task2Handle))
+        .WillOnce(Return(TaskState::kRunning));
 
-    // Execute and verify
-    uint32_t beforeTicks = rtosInstance->getTickCount();
-    EXPECT_EQ(beforeTicks, currentTicks);
+    // Execute and verify task 1
+    TaskState task1InitialState = rtosInstance->getTaskState(task1Handle);
+    EXPECT_EQ(task1InitialState, TaskState::kRunning);
 
-    rtosInstance->delay(100);
+    rtosInstance->SuspendTask(task1Handle);
+    TaskState task1SuspendedState = rtosInstance->getTaskState(task1Handle);
+    EXPECT_EQ(task1SuspendedState, TaskState::kSuspended);
 
-    uint32_t afterTicks = rtosInstance->getTickCount();
-    EXPECT_EQ(afterTicks, currentTicks + 100);
+    // Execute and verify task 2
+    TaskState task2InitialState = rtosInstance->getTaskState(task2Handle);
+    EXPECT_EQ(task2InitialState, TaskState::kBlocked);
+
+    rtosInstance->ResumeTask(task2Handle);
+    TaskState task2ResumedState = rtosInstance->getTaskState(task2Handle);
+    EXPECT_EQ(task2ResumedState, TaskState::kRunning);
 }
 
 /**
- * @brief Test task state management
+ * @brief Test ISR registration and task notification
  */
-TEST_F(RTOSTest, TaskStateManagementTest) {
+TEST_F(RTOSAdditionalTest, ISRRegistrationAndNotificationTest) {
     // Setup
     TaskHandle_t taskHandle = reinterpret_cast<TaskHandle_t>(0x12345678);
-
-    // Expectations
-    EXPECT_CALL(*rtosInstance, getTaskState(taskHandle))
-        .WillOnce(Return(TaskState::kRunning))
-        .WillOnce(Return(TaskState::kSuspended))
-        .WillOnce(Return(TaskState::kReady));
-
-    EXPECT_CALL(*rtosInstance, SuspendTask(taskHandle));
-    EXPECT_CALL(*rtosInstance, ResumeTask(taskHandle));
-
-    // Execute and verify
-    TaskState initialState = rtosInstance->getTaskState(taskHandle);
-    EXPECT_EQ(initialState, TaskState::kRunning);
-    EXPECT_STREQ(RTOS::getTaskStateString(initialState), "Running");
-
-    rtosInstance->SuspendTask(taskHandle);
-    TaskState suspendedState = rtosInstance->getTaskState(taskHandle);
-    EXPECT_EQ(suspendedState, TaskState::kSuspended);
-    EXPECT_STREQ(RTOS::getTaskStateString(suspendedState), "Suspended");
-
-    rtosInstance->ResumeTask(taskHandle);
-    TaskState resumedState = rtosInstance->getTaskState(taskHandle);
-    EXPECT_EQ(resumedState, TaskState::kReady);
-    EXPECT_STREQ(RTOS::getTaskStateString(resumedState), "Ready");
-}
-
-/**
- * @brief Test system statistics collection
- */
-TEST_F(RTOSTest, SystemStatisticsTest) {
-    // Setup
-    std::vector<TaskStats> mockStats = {
-        {"Task1", TaskState::kRunning, 1024, 5000},
-        {"Task2", TaskState::kBlocked, 2048, 3000},
-        {"Task3", TaskState::kReady, 4096, 1000}};
-
-    // Expectations
-    EXPECT_CALL(*rtosInstance, getSystemTaskStats())
-        .WillOnce(Return(mockStats));
-
-    // Execute
-    std::vector<TaskStats> stats = rtosInstance->getSystemTaskStats();
-
-    // Verify
-    ASSERT_EQ(stats.size(), 3);
-    EXPECT_EQ(stats[0].name, "Task1");
-    EXPECT_EQ(stats[0].state, TaskState::kRunning);
-    EXPECT_EQ(stats[0].stackWatermark, 1024);
-    EXPECT_EQ(stats[0].runtime, 5000);
-
-    EXPECT_EQ(stats[1].name, "Task2");
-    EXPECT_EQ(stats[1].state, TaskState::kBlocked);
-
-    EXPECT_EQ(stats[2].name, "Task3");
-    EXPECT_EQ(stats[2].state, TaskState::kReady);
-}
-
-/**
- * @brief Test ISR registration
- */
-TEST_F(RTOSTest, ISRRegistrationTest) {
-    // Setup
     void* isrHandle = reinterpret_cast<void*>(0xABCDEF01);
-    void (*testCallback)() = []() {
+
+    // Use a regular function pointer for ISR
+    void (*isrFuncPtr)() = []() {
     };
 
     // Expectations
-    EXPECT_CALL(*rtosInstance, RegisterISR(testCallback, 5, 1))
+    EXPECT_CALL(*rtosInstance, RegisterISR(isrFuncPtr, 5, 1))
         .WillOnce(Return(isrHandle));
 
-    // Execute
-    void* result = rtosInstance->RegisterISR(testCallback, 5, 1);
+    // When ISR is triggered, it should notify a task
+    EXPECT_CALL(*rtosInstance, NotifyTaskFromISR(taskHandle)).Times(1);
 
-    // Verify
+    // Execute - register the ISR
+    void* result = rtosInstance->RegisterISR(isrFuncPtr, 5, 1);
     EXPECT_EQ(result, isrHandle);
+
+    // Simulate ISR triggering by notifying the task
+    rtosInstance->NotifyTaskFromISR(taskHandle);
 }
 
 #endif  // ARDUINO

@@ -23,7 +23,7 @@ namespace loramesher {
  * @brief ANSI color codes for terminal output
  */
 struct Colors {
-    static constexpr const char* kReset = "\033[0m";
+    static constexpr const char* kReset = "\033[0m\r";
     static constexpr const char* kRed = "\033[31m";
     static constexpr const char* kGreen = "\033[32m";
     static constexpr const char* kYellow = "\033[33m";
@@ -222,6 +222,14 @@ class Logger {
 
         LogMessage(level, buffer);
     }
+
+    /**
+     * @brief Reset the logger state.
+     * 
+     * This method is used to reset the logger state, including the log level
+     * and any other internal state. It is useful for testing and cleanup.
+     */
+    void Reset();
 
     // Convenience methods for different log levels with formatting
     template <typename... Args>

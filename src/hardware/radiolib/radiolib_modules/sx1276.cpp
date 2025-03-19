@@ -1,5 +1,7 @@
 #include "sx1276.hpp"
 
+#ifdef LORAMESHER_BUILD_ARDUINO
+
 #include "radio_lib_code_errors.hpp"
 
 namespace loramesher {
@@ -50,45 +52,22 @@ Result LoraMesherSX1276::Begin(const RadioConfig& config) {
         return result;
     }
 
+    // float freq = (434.0F), float bw = (125.0F), uint8_t sf = (uint8_t)9U,
+    //       uint8_t cr = (uint8_t)7U, uint8_t syncWord = (uint8_t)18U,
+    //       int8_t power = (int8_t)10, uint16_t preambleLength = (uint16_t)8U,
+    //       uint8_t gain = (uint8_t)0U
+
     // Begin radio module with basic frequency
-    int status = radio_module_->begin(config.getFrequency());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
-
-    // Configure LoRa parameters
-    status = radio_module_->setBandwidth(config.getBandwidth());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
-
-    status = radio_module_->setSpreadingFactor(config.getSpreadingFactor());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
-
-    status = radio_module_->setCodingRate(config.getCodingRate());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
-
-    status = radio_module_->setSyncWord(config.getSyncWord());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
-
-    status = radio_module_->setOutputPower(config.getPower());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
-
-    status = radio_module_->setPreambleLength(config.getPreambleLength());
-    if (status != RADIOLIB_ERR_NONE) {
-        return RadioLibCodeErrors::ConvertStatus(status);
-    }
+    // int status = radio_module_->begin(
+    //     config.getFrequency(), config.getBandwidth(),
+    //     config.getSpreadingFactor(), config.getCodingRate(),
+    //     config.getSyncWord(), config.getPower(), config.getPreambleLength());
+    // if (status != RADIOLIB_ERR_NONE) {
+    //     return RadioLibCodeErrors::ConvertStatus(status);
+    // }
 
     // Enable/Disable CRC based on configuration
-    status = radio_module_->setCRC(config.getCRC());
+    int status = radio_module_->setCRC(config.getCRC());
     if (status != RADIOLIB_ERR_NONE) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
@@ -176,7 +155,7 @@ Result LoraMesherSX1276::setCodingRate(uint8_t coding_rate) {
     return RadioLibCodeErrors::ConvertStatus(status);
 }
 
-Result LoraMesherSX1276::setPower(uint8_t power) {
+Result LoraMesherSX1276::setPower(int8_t power) {
     if (!initialized_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
@@ -274,3 +253,5 @@ Result LoraMesherSX1276::readData(uint8_t* data, size_t len) {
 
 }  // namespace radio
 }  // namespace loramesher
+
+#endif  // LORAMESHER_BUILD_ARDUINO

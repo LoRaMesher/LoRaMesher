@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.14)
 project(LoRaMesher VERSION 1.0.0 LANGUAGES CXX)
 
+# Include ESP-IDF project.cmake only when not building for desktop
+if(NOT DEFINED BUILD_DESKTOP OR NOT BUILD_DESKTOP)
+    if(DEFINED ENV{PLATFORMIO})
+        include($ENV{PLATFORMIO_CMAKE_TOOLCHAIN_DIR}/project.cmake)
+    elseif(DEFINED ENV{IDF_PATH})
+        include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+    else()
+        message(STATUS "ESP-IDF path not found. Building without ESP-IDF support.")
+        # Continue without ESP-IDF for desktop builds
+    endif()
+endif()
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

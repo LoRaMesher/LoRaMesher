@@ -13,10 +13,16 @@ namespace config {
  * Values determined through stack usage analysis and testing.
  */
 struct TaskConfig {
-    static constexpr size_t kRadioEventStackSize =
-        4096;  ///< Radio event task stack
+    /**
+     * @brief Radio event task stack size in bytes. After some testing,
+     * this value was determined to be the minimum stack size required
+     * for the radio event task to run without stack overflow.
+     * After testing we get 3664 extra bytes of stack space, that's a
+     * 28% of margin.
+     */
+    static constexpr size_t kRadioEventStackSize = 13120;
     static constexpr size_t kMinStackWatermark =
-        512;  ///< Minimum free stack threshold
+        512;  ///< Minimum free stack threshold in bytes
     // Add other task stack sizes here as needed
 };
 

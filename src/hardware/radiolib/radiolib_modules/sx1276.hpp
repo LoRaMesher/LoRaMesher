@@ -1,6 +1,10 @@
 // src/hardware/arduino/radio_lib_modules/LoraMesherSX1276.hpp
 #pragma once
 
+#include "config/system_config.hpp"
+
+#ifdef LORAMESHER_BUILD_ARDUINO
+
 #include <memory>
 
 #include "RadioLib.h"
@@ -131,7 +135,7 @@ class LoraMesherSX1276 : public IRadio {
      * @param power Output power in dBm
      * @return Result Success if power was set successfully
      */
-    Result setPower(uint8_t power) override;
+    Result setPower(int8_t power) override;
 
     /**
      * @brief Set the sync word for packet recognition
@@ -353,3 +357,5 @@ class LoraMesherSX1276 : public IRadio {
 
 }  // namespace radio
 }  // namespace loramesher
+
+#endif  // LORAMESHER_BUILD_ARDUINO

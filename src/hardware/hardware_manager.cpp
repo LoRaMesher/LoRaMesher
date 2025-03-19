@@ -90,6 +90,10 @@ Result HardwareManager::InitializeRadioModule() {
         return Result::Error(LoraMesherErrorCode::kConfigurationError);
     }
 
+    if (!radio_->Begin(radio_config_)) {
+        return Result::Error(LoraMesherErrorCode::kConfigurationError);
+    }
+
     // TODO: Remove this line
     radio_->StartReceive();
 

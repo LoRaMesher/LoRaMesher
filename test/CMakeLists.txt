@@ -25,10 +25,14 @@ include_directories(
 # Define a list to track all test targets
 set(ALL_TEST_TARGETS "")
 
+# Set default test timeout (in seconds)
+set(DEFAULT_TEST_TIMEOUT 5)
+message(STATUS "Default test timeout: ${DEFAULT_TEST_TIMEOUT} seconds")
+
 # Function to find and add test executables from directories
-# Usage: add_test_suite(NAME suite_name DIRS dir1 dir2 ...)
+# Usage: add_test_suite(NAME suite_name DIRS dir1 dir2 ... [TIMEOUT seconds])
 function(add_test_suite)
-    cmake_parse_arguments(ARGS "" "NAME" "DIRS" ${ARGN})
+    cmake_parse_arguments(ARGS "" "NAME;TIMEOUT" "DIRS" ${ARGN})
     
     if(NOT ARGS_NAME)
         message(FATAL_ERROR "Test suite name not provided")
@@ -38,6 +42,11 @@ function(add_test_suite)
     if(NOT ARGS_DIRS)
         message(FATAL_ERROR "Test directories not provided for ${ARGS_NAME}")
         return()
+    endif()
+    
+    # Set test timeout - use provided value or default
+    if(NOT ARGS_TIMEOUT)
+        set(ARGS_TIMEOUT ${DEFAULT_TEST_TIMEOUT})
     endif()
     
     set(SOURCES "")
@@ -52,7 +61,7 @@ function(add_test_suite)
     
     # Only create the test target if there are sources
     if(SOURCES)
-        message(STATUS "Creating test suite '${ARGS_NAME}' with sources from: ${ARGS_DIRS}")
+        message(STATUS "Creating test suite '${ARGS_NAME}' with sources from: ${ARGS_DIRS} (timeout: ${ARGS_TIMEOUT}s)")
         
         # Create test executable
         add_executable(${ARGS_NAME} ${SOURCES})
@@ -67,8 +76,11 @@ function(add_test_suite)
             gmock_main
         )
         
-        # Discover tests
-        gtest_discover_tests(${ARGS_NAME})
+        # Discover tests with timeout property
+        gtest_discover_tests(${ARGS_NAME} 
+            PROPERTIES 
+            TIMEOUT ${ARGS_TIMEOUT}
+        )
         
         # Add to the global list of test targets
         list(APPEND ALL_TEST_TARGETS ${ARGS_NAME})
@@ -135,6 +147,24 @@ add_custom_target(
     run_all_tests
     COMMENT "Running all test suites"
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS build_all_tests
+)
+
+# Allow override of timeout when running tests
+add_custom_target(
+    run_all_tests_extended_timeout
+    COMMENT "Running all test suites with extended timeout (300s)"
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --timeout 300
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS build_all_tests
+)
+
+# Add a custom target that allows specifying a timeout at build time
+add_custom_target(
+    run_tests_with_timeout
+    COMMENT "Running all test suites with custom timeout"
+    COMMAND ${CMAKE_COMMAND} -E env CTEST_OUTPUT_ON_FAILURE=1 ${CMAKE_CTEST_COMMAND} --timeout ${TEST_TIMEOUT}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS build_all_tests
 )

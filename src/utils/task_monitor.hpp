@@ -32,6 +32,10 @@ class TaskMonitor {
             return;
         }
 
+        LOG_INFO("TaskMonitor: Monitoring task %s", task_name);
+
+        MonitorSystemTasks();
+
         auto& rtos = GetRTOS();
         uint32_t watermark = rtos.getTaskStackWatermark(task_handle);
 
@@ -56,12 +60,12 @@ class TaskMonitor {
         auto& rtos = GetRTOS();
         auto stats = rtos.getSystemTaskStats();
 
-        printf("TaskMonitor: System Task List:\n");
+        LOG_DEBUG("TaskMonitor: System Task List:");
         for (const auto& stat : stats) {
-            printf("Task: %s\n", stat.name.c_str());
-            printf("  State: %s\n", os::RTOS::getTaskStateString(stat.state));
-            printf("  Stack Watermark: %u bytes\n", stat.stackWatermark);
-            printf("  Runtime: %u\n", stat.runtime);
+            LOG_DEBUG("Task: %s", stat.name.c_str());
+            LOG_DEBUG("  State: %s", os::RTOS::getTaskStateString(stat.state));
+            LOG_DEBUG("  Stack Watermark: %u bytes", stat.stackWatermark);
+            LOG_DEBUG("  Runtime: %u", stat.runtime);
         }
 #endif
     }
@@ -72,8 +76,8 @@ class TaskMonitor {
         static char buffer[50];  // Static buffer to avoid stack allocation
         snprintf(buffer, sizeof(buffer), "Stack warning %s: %u\n", task_name,
                  watermark);
-        // Use a stack-friendly print method
-        // Serial.print(buffer);  // Or your preferred logging method
+
+        LOG_WARNING(buffer);
     }
 };
 

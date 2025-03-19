@@ -26,6 +26,17 @@ if(ESP_PLATFORM)
 elseif(BUILD_DESKTOP)
     # Desktop build - this will activate the LORAMESHER_BUILD_NATIVE sections
     
+    # Add GoogleTest/GoogleMock for desktop build
+    include(FetchContent)
+    FetchContent_Declare(
+      googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG release-1.12.1  # Use a specific release tag for stability
+    )
+    # For Windows: Prevent overriding the parent project's compiler/linker settings
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+    
     # Create library target
     add_library(loramesher_lib ${LORAMESHER_SOURCES})
     
@@ -34,10 +45,14 @@ elseif(BUILD_DESKTOP)
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/../include"
         "${radiolib_SOURCE_DIR}/src"  # RadioLib headers
+        "${gtest_SOURCE_DIR}/include"  # GTest headers
+        "${gmock_SOURCE_DIR}/include"  # GMock headers
     )
     
-    # We don't need to define LORAMESHER_BUILD_NATIVE as it's already handled
-    # in system_config.hpp when ARDUINO is not defined
+    # Link against GMock for the desktop build
+    target_link_libraries(loramesher_lib PUBLIC
+        gmock
+    )
     
     # Set output name and version properties
     set_target_properties(loramesher_lib PROPERTIES

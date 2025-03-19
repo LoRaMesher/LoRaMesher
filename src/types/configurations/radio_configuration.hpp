@@ -12,8 +12,9 @@ namespace loramesher {
  * @brief Enumeration of supported radio hardware types
  */
 enum class RadioType {
-    kSx1276,  ///< Semtech SX1276 radio module
-    kSx1278   ///< Semtech SX1278 radio module
+    kSx1276,    ///< Semtech SX1276 radio module
+    kSx1278,    ///< Semtech SX1278 radio module
+    kMockRadio  ///< Mock radio module for testing
     // TODO: Implement these types
     // kRfm95,   ///< HopeRF RFM95 radio module
     // kRfm96    ///< HopeRF RFM96 radio module
@@ -44,7 +45,7 @@ class RadioConfig {
     explicit RadioConfig(RadioType type = RadioType::kSx1276,
                          float frequency = 869.900F,
                          uint8_t spreadingFactor = 7, float bandwidth = 125.0,
-                         uint8_t codingRate = 5, uint8_t power = 17,
+                         uint8_t codingRate = 5, int8_t power = 17,
                          uint8_t sync_word = 20U, bool crc = true,
                          uint16_t preamble_length = 8U);
 
@@ -105,9 +106,9 @@ class RadioConfig {
 
     /**
      * @brief Get the configured transmission power
-     * @return uint8_t Power in dBm
+     * @return int8_t Power in dBm
      */
-    uint8_t getPower() const { return power_; }
+    int8_t getPower() const { return power_; }
 
     /**
      * @brief Get the configured preamble length
@@ -165,7 +166,7 @@ class RadioConfig {
      * @param power New power value in dBm
      * @throw std::invalid_argument if power is outside valid range
      */
-    void setPower(uint8_t power);
+    void setPower(int8_t power);
 
     /**
      * @brief Set syncronyzation word
@@ -218,7 +219,7 @@ class RadioConfig {
     uint8_t spreadingFactor_;   ///< LoRa spreading factor
     float bandwidth_;           ///< Signal bandwidth in kHz
     uint8_t codingRate_;        ///< Error coding rate
-    uint8_t power_;             ///< Transmission power in dBm
+    int8_t power_;              ///< Transmission power in dBm
     uint8_t sync_word_;         ///< Syncronyzation word
     bool crc_;                  ///< CRC enabled
     uint16_t preamble_length_;  ///< Preamble length

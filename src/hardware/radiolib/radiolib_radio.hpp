@@ -10,6 +10,8 @@
 #include "types/messages/message.hpp"
 #include "types/radio/radio.hpp"
 
+#include "../test/mocks/mock_radio.hpp"
+
 namespace loramesher {
 namespace radio {
 
@@ -54,6 +56,17 @@ class RadioLibRadio : public IRadio {
      * @return Result Success if configuration was successful
      */
     Result Configure(const RadioConfig& config) override;
+
+    /**
+     * @brief Begin radio operation
+     * 
+     * @param config Configuration parameters
+     * @return Result Success if radio was started successfully
+     * @note This function must be called after Configure
+     * @see Configure
+     * 
+     */
+    Result Begin(const RadioConfig& config) override;
 
     /**
      * @brief Send data over the radio
@@ -179,7 +192,7 @@ class RadioLibRadio : public IRadio {
      * @param power Output power in dBm
      * @return Result Success if power was set successfully
      */
-    Result setPower(uint8_t power) override;
+    Result setPower(int8_t power) override;
 
     /**
      * @brief Set the sync word for packet recognition
@@ -236,13 +249,6 @@ class RadioLibRadio : public IRadio {
             "setActionReceive not supported in RadioLibRadio");
     }
 
-    Result Begin(const RadioConfig& config) override {
-        // Prevent unused parameter warnings
-        (void)config;
-
-        throw std::runtime_error("Begin not supported in RadioLibRadio");
-    }
-
     uint8_t getPacketLength() override {
         throw std::runtime_error(
             "getPacketLength not supported in RadioLibRadio");
@@ -261,7 +267,10 @@ class RadioLibRadio : public IRadio {
             "ClearActionReceive not supported in RadioLibRadio");
     }
 
-   private:
+    // Friend declaration for the test helper function - specify full return type
+    friend test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio);
+
+   protected:
     /**
      * @brief Create appropriate radio module based on type
      * 

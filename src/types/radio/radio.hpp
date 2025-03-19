@@ -108,7 +108,7 @@ class IRadio {
      * @param power Output power in dBm
      * @return Result Success if power was set successfully
      */
-    virtual Result setPower(uint8_t power) = 0;
+    virtual Result setPower(int8_t power) = 0;
 
     /**
      * @brief Set the sync word

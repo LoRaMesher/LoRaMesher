@@ -205,10 +205,9 @@ class RTOSFreeRTOS : public RTOS {
         if (timeout == MAX_DELAY) {
             timeout = portMAX_DELAY;
         }
-        uint32_t notificationValue;
+
         // Wait for notification from ISR
-        BaseType_t response =
-            xTaskNotifyWait(0, 0xFFFFFFFF, &notificationValue, timeout);
+        BaseType_t response = xTaskNotifyWait(pdTRUE, pdFALSE, NULL, timeout);
         if (response == pdPASS) {
             return QueueResult::kOk;
         } else {

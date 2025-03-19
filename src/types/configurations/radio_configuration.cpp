@@ -7,7 +7,7 @@ namespace loramesher {
 // RadioConfig Implementation
 RadioConfig::RadioConfig(RadioType type, float frequency,
                          uint8_t spreadingFactor, float bandwidth,
-                         uint8_t codingRate, uint8_t power, uint8_t sync_word,
+                         uint8_t codingRate, int8_t power, uint8_t sync_word,
                          bool crc, uint16_t preamble_length)
     : radio_type_(type),
       frequency_(frequency),
@@ -52,7 +52,7 @@ void RadioConfig::setCodingRate(uint8_t codingRate) {
     codingRate_ = codingRate;
 }
 
-void RadioConfig::setPower(uint8_t power) {
+void RadioConfig::setPower(int8_t power) {
     if (power > 20) {  // Typical LoRa limit
         throw std::invalid_argument("Power exceeds maximum allowed value");
     }
@@ -73,6 +73,8 @@ std::string RadioConfig::getRadioTypeString() const {
             return "SX1276";
         case RadioType::kSx1278:
             return "SX1278";
+        case RadioType::kMockRadio:
+            return "MockRadio";
         default:
             return "Unknown";
     }
