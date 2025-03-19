@@ -13,6 +13,17 @@
 #include <memory>
 #include <vector>
 
+#ifndef ARDUINO
+/**
+  * @brief Test radio configuration succeeds with valid parameters
+  */
+TEST(RadioLibRadioTestMock, IgnoredTest) {
+    // This test is ignored because it requires hardware
+    // and cannot be run in the CI environment
+    GTEST_SKIP();
+}
+#else
+
 #include "hardware/SPIMock.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "os/rtos.hpp"
@@ -685,3 +696,5 @@ TEST_F(RadioLibRadioESP32MockTest, RepeatedMaxSizePacketHandling) {
 }  // namespace test
 }  // namespace radio
 }  // namespace loramesher
+
+#endif  // ARDUINO
