@@ -23,11 +23,8 @@ jobs:
     #   run: |
     #     platformio test -e native
 
-    - name: Create build environment
-      run: |
-        mkdir build
-
     - name: Test build
       run: |
+        mkdir build
         cd build
         cmake --build . --target run_all_tests
