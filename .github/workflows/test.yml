@@ -26,10 +26,8 @@ jobs:
     - name: Create build environment
       run: |
         mkdir build
-        cd build
-        cmake ..
 
     - name: Test build
       run: |
         cd build
-        cmake --build . --target run_all_tests 
+        cmake --build . --target run_all_tests
