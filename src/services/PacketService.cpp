@@ -125,7 +125,7 @@ ControlPacket* PacketService::createControlPacket(uint16_t dst, uint16_t src, ui
 }
 
 ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t seq_id, uint16_t num_packets) {
-    ControlPacket* packet = PacketFactory::createPacket<ControlPacket>(0, 0);
+    ControlPacket* packet = PacketFactory::createPacket<ControlPacket>(nullptr, 0);
     packet->dst = dst;
     packet->src = src;
     packet->type = type;
@@ -175,12 +175,12 @@ ControlPacket* PacketService::getPacketHeader(Packet<uint8_t>* p) {
     ControlPacket* ctrlPacket = new ControlPacket();
 
     if (isControlPacket(p->type)) {
-        ControlPacket* srcCtrPacket = (ControlPacket*) p;
+        ControlPacket* srcCtrPacket = (ControlPacket*)p;
         memcpy(reinterpret_cast<void*>(ctrlPacket), reinterpret_cast<void*>(srcCtrPacket), sizeof(ControlPacket));
         return ctrlPacket;
     }
     if (isDataPacket(p->type)) {
-        DataPacket* srcDataPacket = (DataPacket*) p;
+        DataPacket* srcDataPacket = (DataPacket*)p;
         memcpy(reinterpret_cast<void*>(ctrlPacket), reinterpret_cast<void*>(srcDataPacket), sizeof(DataPacket));
         return ctrlPacket;
     }
