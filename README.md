@@ -280,9 +280,8 @@ Please see our open access paper ["Implementation of a LoRa Mesh Library"](https
 ```
 mkdir build && cd build
 cmake .. -DBUILD_DESKTOP=ON
-make
+cmake --build . --target loramesher_lib
 ```
-If using windows, instead of using `make` use `cmake --build . --target loramesher_lib`
 
 ### Targets
 - `loramesher_lib` -> To build the library.
