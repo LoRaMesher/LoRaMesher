@@ -7,7 +7,7 @@
 #ifdef ARDUINO
 
 TEST(RTOSMockTest, ImplementArduinoTests) {
-    EXPECT_TRUE(true);
+    GTEST_SKIP();
 }
 
 #else
@@ -145,8 +145,12 @@ TEST_F(RTOSMockTest, TaskSuspendResumeTest) {
         std::atomic<bool>* exitPtr = params->second;
 
         while (!exitPtr->load()) {
+            if (GetRTOS().ShouldStopOrPause()) {
+                break;
+            }
             counterPtr->fetch_add(1);
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            GetRTOS().YieldTask();
         }
     };
 
