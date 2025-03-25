@@ -48,11 +48,18 @@ class LogHandler {
     virtual ~LogHandler() = default;
 
     /**
-   * @brief Write a log message.
-   * @param level The severity level of the message.
-   * @param message The message to be logged.
-   */
+     * @brief Write a log message.
+     * @param level The severity level of the message.
+     * @param message The message to be logged.
+     */
     virtual void Write(LogLevel level, const std::string& message) = 0;
+
+    /**
+     * @brief Flushes any buffered log messages.
+     * 
+     * This ensures all pending log messages are written to the output device.
+     */
+    virtual void Flush() = 0;
 
    protected:
 #ifndef LOGGER_DISABLE_COLORS
@@ -85,9 +92,9 @@ class LogHandler {
 class SerialLogHandler : public LogHandler {
    public:
     /**
-   * @brief Constructor that initializes Serial if not already done
-   * @param baud_rate The baud rate for Serial communication
-   */
+     * @brief Constructor that initializes Serial if not already done
+     * @param baud_rate The baud rate for Serial communication
+     */
     explicit SerialLogHandler(unsigned long baud_rate = 115200) {
         if (!Serial) {
             Serial.begin(baud_rate);
@@ -122,6 +129,10 @@ class SerialLogHandler : public LogHandler {
 #ifndef LOGGER_DISABLE_COLORS
         Serial.println(Colors::kReset);
 #endif
+    }
+
+    void Flush() override {
+        Serial.flush();  // This waits for TX buffer to be empty
     }
 };
 
@@ -162,6 +173,8 @@ class ConsoleLogHandler : public LogHandler {
                   << std::endl;
 #endif
     }
+
+    void Flush() override { std::cout.flush(); }
 };
 #endif
 
@@ -177,18 +190,18 @@ class Logger {
     ~Logger() = default;
 
     /**
-   * @brief Set the minimum log level to be processed.
-   * @param level The minimum log level.
-   */
+     * @brief Set the minimum log level to be processed.
+     * @param level The minimum log level.
+     */
     void SetLogLevel(LogLevel level) {
         std::lock_guard<std::mutex> lock(logger_mutex_);
         min_log_level_ = level;
     }
 
     /**
-   * @brief Set a custom log handler.
-   * @param handler Unique pointer to the log handler implementation.
-   */
+     * @brief Set a custom log handler.
+     * @param handler Unique pointer to the log handler implementation.
+     */
     void SetHandler(std::unique_ptr<LogHandler> handler) {
         std::lock_guard<std::mutex> lock(logger_mutex_);
         handler_ = std::move(handler);
@@ -230,6 +243,22 @@ class Logger {
      * and any other internal state. It is useful for testing and cleanup.
      */
     void Reset();
+
+    /**
+     * @brief Flushes all pending log messages.
+     * 
+     * This method ensures that all buffered log messages are written to 
+     * the output device before returning. It's particularly useful before 
+     * system resets or critical operations.
+     * 
+     * @thread_safety Thread-safe
+     */
+    void Flush() {
+        std::lock_guard<std::mutex> lock(logger_mutex_);
+        if (handler_) {
+            handler_->Flush();
+        }
+    }
 
     // Convenience methods for different log levels with formatting
     template <typename... Args>
@@ -274,5 +303,7 @@ extern Logger LOG;
 #define LOG_INFO(fmt, ...) loramesher::LOG.Info(fmt, ##__VA_ARGS__)
 #define LOG_WARNING(fmt, ...) loramesher::LOG.Warning(fmt, ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) loramesher::LOG.Error(fmt, ##__VA_ARGS__)
+
+#define LOG_FLUSH() loramesher::LOG.Flush()
 
 }  // namespace loramesher
