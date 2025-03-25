@@ -86,6 +86,11 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
     // Copy the configuration
     current_config_ = config;
 
+    // Wait until receive task is suspended
+    GetRTOS().SuspendTask(processing_task_);
+
+    LOG_DEBUG("Configurations set");
+
     return Result::Success();
 }
 
@@ -97,6 +102,8 @@ Result RadioLibRadio::Begin(const RadioConfig& config) {
 
     // Copy the configuration
     current_config_ = config;
+
+    LOG_DEBUG("Begin radio operation");
 
     // Begin radio operation
     return current_module_->Begin(current_config_);
@@ -384,6 +391,7 @@ void RadioLibRadio::HandleInterrupt() {
     LOG_DEBUG("Handling interrupt");
     std::unique_lock<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
+        LOG_ERROR("No radio module initialized");
         lock.unlock();
         current_module_->StartReceive();
         return;
@@ -454,9 +462,13 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         GetRTOS().DeleteTask(nullptr);
         return;
     }
-    GetRTOS().SuspendTask(nullptr);
 
+    LOG_DEBUG("Processing events");
     while (true) {
+        if (GetRTOS().ShouldStopOrPause()) {
+            break;
+        }
+
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
         LOG_DEBUG("Current State %d", radio->current_state_);
         if (result == os::QueueResult::kOk) {
@@ -476,6 +488,8 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         } else {
             LOG_DEBUG("Notification timeout");
         }
+        LOG_DEBUG("Finished processing event");
+        GetRTOS().YieldTask();
     }
 }
 
