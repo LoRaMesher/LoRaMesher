@@ -9,13 +9,16 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    - name: Create build environment
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    
+    - name: Install PlatformIO
       run: |
-        mkdir build
-        cd build
-        cmake .. -DBUILD_DESKTOP=ON
+        python -m pip install --upgrade pip
+        pip install platformio
 
-    - name: Test build
+    - name: Run Tests
       run: |
-        cd build
-        cmake --build . --target run_all_tests
+        platformio test -e native -v
