@@ -18,12 +18,14 @@ namespace os {
 using TaskHandle_t = TaskHandle_t;
 using QueueHandle_t = QueueHandle_t;
 using TaskFunction_t = TaskFunction_t;
+using SemaphoreHandle_t = SemaphoreHandle_t;
 #else
 #define ISR_ATTR void
 #define MAX_DELAY 0xFFFFFFFF
 using TaskHandle_t = void*;
 using QueueHandle_t = void*;
 using TaskFunction_t = std::function<void(void*)>;
+using SemaphoreHandle_t = void*;
 #endif
 
 /**
@@ -79,16 +81,18 @@ class RTOS {
     virtual void DeleteTask(TaskHandle_t taskHandle) = 0;
 
     /**
-     * @brief Suspend a task
-     * @param taskHandle Handle of task to suspend, nullptr for current task
+     * @brief Suspends a task's execution with confirmation
+     * @param taskHandle Handle to the task to be suspended
+     * @return true if task was successfully suspended, false otherwise
      */
-    virtual void SuspendTask(TaskHandle_t taskHandle) = 0;
+    virtual bool SuspendTask(TaskHandle_t taskHandle) = 0;
 
     /**
-     * @brief Resume a task
-     * @param taskHandle Handle of task to resume
+     * @brief Resumes a suspended task with confirmation
+     * @param taskHandle Handle to the task to be resumed
+     * @return true if task was successfully resumed, false otherwise
      */
-    virtual void ResumeTask(TaskHandle_t taskHandle) = 0;
+    virtual bool ResumeTask(TaskHandle_t taskHandle) = 0;
 
     /**
      * @brief Create a queue
@@ -250,6 +254,64 @@ class RTOS {
         // return RegisterISR(wrapper);
         return nullptr;
     }
+
+    /**
+     * @brief Creates a binary semaphore
+     * @return Handle to the created semaphore
+     */
+    virtual SemaphoreHandle_t CreateBinarySemaphore() = 0;
+
+    /**
+     * @brief Creates a counting semaphore
+     * @param maxCount Maximum count value
+     * @param initialCount Initial count value
+     * @return Handle to the created semaphore
+     */
+    virtual SemaphoreHandle_t CreateCountingSemaphore(
+        uint32_t maxCount, uint32_t initialCount) = 0;
+
+    /**
+     * @brief Deletes a semaphore
+     * @param semaphore Handle to the semaphore to delete
+     */
+    virtual void DeleteSemaphore(SemaphoreHandle_t semaphore) = 0;
+
+    /**
+     * @brief Takes (acquires) a semaphore
+     * @param semaphore Handle to the semaphore
+     * @param timeout Maximum time to wait in milliseconds
+     * @return true if semaphore was acquired, false on timeout
+     */
+    virtual bool TakeSemaphore(SemaphoreHandle_t semaphore,
+                               uint32_t timeout) = 0;
+
+    /**
+     * @brief Gives (releases) a semaphore
+     * @param semaphore Handle to the semaphore
+     * @return true if successful, false otherwise
+     */
+    virtual bool GiveSemaphore(SemaphoreHandle_t semaphore) = 0;
+
+    /**
+     * @brief Gives (releases) a semaphore from an ISR context
+     * @param semaphore Handle to the semaphore
+     * @return true if successful, false otherwise
+     */
+    virtual bool GiveSemaphoreFromISR(SemaphoreHandle_t semaphore) = 0;
+
+    /**
+     * @brief Check if current task should pause or exit
+     * 
+     * @return true if task should stop, false to continue
+     */
+    virtual bool ShouldStopOrPause() = 0;
+
+    /**
+     * @brief Cross-platform thread/task yield function
+     * 
+     * Allows a task to yield execution to other tasks of equal priority.
+     */
+    virtual void YieldTask() = 0;
 
    protected:
     RTOS() = default;
