@@ -1,4 +1,4 @@
-// include/loramesher/core/loramesher.hpp
+// src/loramesher.hpp
 #pragma once
 
 #include <memory>
