@@ -13,20 +13,9 @@
 #include <memory>
 #include <vector>
 
-#ifndef ARDUINO
-/**
-  * @brief Test radio configuration succeeds with valid parameters
-  */
-TEST(RadioLibRadioTestMock, IgnoredTest) {
-    // This test is ignored because it requires hardware
-    // and cannot be run in the CI environment
-    GTEST_SKIP();
-}
-#else
-
 #include "hardware/SPIMock.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
-#include "os/rtos.hpp"
+#include "os/os_port.hpp"
 #include "utils/logger.hpp"
 
 // Include the mocks
@@ -50,7 +39,7 @@ namespace test {
 /**
   * @brief Test fixture for RadioLibRadio tests on ESP32 using mock radio
   */
-class RadioLibRadioESP32MockTest : public ::testing::Test {
+class RadioLibRadioTest : public ::testing::Test {
    public:
     // Hardware pins for ESP32 configuration
     const int kCsPin = 5;  // GPIO pins for ESP32
@@ -105,16 +94,17 @@ class RadioLibRadioESP32MockTest : public ::testing::Test {
 
     void TearDown() override {
         // Clean up
-        radio_->Sleep();
         saved_callback_ = nullptr;
+
+        LOG_FLUSH();
 
         // Clear the message pointer
         msg_ptr.reset();
 
         // Consider fully destroying and recreating radio instance
         radio_.reset();
-        spi_.reset();
-        LOG.Reset();
+        // spi_.reset();
+        // LOG.Reset();
     }
 
     void ConfigureRadio() {
@@ -142,6 +132,8 @@ class RadioLibRadioESP32MockTest : public ::testing::Test {
             .WillRepeatedly(Return(Result::Success()));
 
         ASSERT_TRUE(radio_->Begin(test_config_));
+
+        LOG_DEBUG("Radio configured");
     }
 
     void CreateMessage() {
@@ -167,14 +159,15 @@ class RadioLibRadioESP32MockTest : public ::testing::Test {
 /**
   * @brief Test radio configuration succeeds with valid parameters
   */
-TEST_F(RadioLibRadioESP32MockTest, ConfigurationSucceeds) {
+TEST_F(RadioLibRadioTest, ConfigurationSucceeds) {
+    LOG_DEBUG("Testing radio configuration");
     EXPECT_FLOAT_EQ(radio_->getFrequency(), 868.0f);
 }
 
 /**
   * @brief Test starting reception mode
   */
-TEST_F(RadioLibRadioESP32MockTest, StartReceiveSucceeds) {
+TEST_F(RadioLibRadioTest, StartReceiveSucceeds) {
     // Test starting reception
     ASSERT_TRUE(radio_->StartReceive());
 
@@ -185,7 +178,7 @@ TEST_F(RadioLibRadioESP32MockTest, StartReceiveSucceeds) {
 /**
   * @brief Test sending data
   */
-TEST_F(RadioLibRadioESP32MockTest, SendDataSucceeds) {
+TEST_F(RadioLibRadioTest, SendDataSucceeds) {
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
 
@@ -205,7 +198,7 @@ TEST_F(RadioLibRadioESP32MockTest, SendDataSucceeds) {
 /**
   * @brief Test putting radio to sleep
   */
-TEST_F(RadioLibRadioESP32MockTest, SleepSucceeds) {
+TEST_F(RadioLibRadioTest, SleepSucceeds) {
     // Test putting radio to sleep
     ASSERT_TRUE(radio_->Sleep());
 
@@ -216,7 +209,7 @@ TEST_F(RadioLibRadioESP32MockTest, SleepSucceeds) {
 /**
   * @brief Test setting frequency
   */
-TEST_F(RadioLibRadioESP32MockTest, FrequencyGetSet) {
+TEST_F(RadioLibRadioTest, FrequencyGetSet) {
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
 
@@ -235,7 +228,7 @@ TEST_F(RadioLibRadioESP32MockTest, FrequencyGetSet) {
 /**
   * @brief Test RSSI and SNR getters
   */
-TEST_F(RadioLibRadioESP32MockTest, GetRSSIAndSNR) {
+TEST_F(RadioLibRadioTest, GetRSSIAndSNR) {
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
 
@@ -252,10 +245,10 @@ TEST_F(RadioLibRadioESP32MockTest, GetRSSIAndSNR) {
 /**
   * @brief Test setting receive callback function
   */
-TEST_F(RadioLibRadioESP32MockTest, SetActionReceive) {
+TEST_F(RadioLibRadioTest, SetActionReceive) {
     // Create a semaphore for callback synchronization
-    // TODO: Change it to an GetRTOS().CreateSemaphore() call
-    SemaphoreHandle_t callback_semaphore = xSemaphoreCreateBinary();
+    os::SemaphoreHandle_t callback_semaphore =
+        GetRTOS().CreateBinarySemaphore();
     ASSERT_NE(callback_semaphore, nullptr);
 
     // Start receiving
@@ -298,6 +291,7 @@ TEST_F(RadioLibRadioESP32MockTest, SetActionReceive) {
     auto test_callback = [&callback_called, callback_semaphore, test_packet,
                           kTestSNR,
                           kTestRSSI](std::unique_ptr<RadioEvent> event) {
+        LOG_DEBUG("Callback called");
         callback_called = true;
 
         // Check the received event
@@ -321,9 +315,10 @@ TEST_F(RadioLibRadioESP32MockTest, SetActionReceive) {
         for (size_t i = 0; i < test_packet.size(); i++) {
             EXPECT_EQ(actual_message[i], test_packet[i]);
         }
+        LOG_DEBUG("Callback completed");
 
         // Signal completion via semaphore
-        xSemaphoreGive(callback_semaphore);
+        GetRTOS().GiveSemaphore(callback_semaphore);
     };
 
     // Test setting the callback
@@ -335,20 +330,17 @@ TEST_F(RadioLibRadioESP32MockTest, SetActionReceive) {
     // Call the callback
     saved_callback_();
 
-    // Wait for the callback to complete with a timeout
-    const TickType_t timeout_ticks = pdMS_TO_TICKS(1000);  // 1 second timeout
-    BaseType_t result = xSemaphoreTake(callback_semaphore, timeout_ticks);
+    GetRTOS().YieldTask();
+
+    bool result = GetRTOS().TakeSemaphore(callback_semaphore, 1000);
+
+    ASSERT_TRUE(result) << "Callback did not complete within timeout";
 
     // Clean up
-    vSemaphoreDelete(callback_semaphore);
-
-    // Check if callback was executed within timeout
-    ASSERT_EQ(result, pdTRUE) << "Callback did not complete within timeout";
+    GetRTOS().DeleteSemaphore(callback_semaphore);
 
     // Verify the callback was called
     EXPECT_TRUE(callback_called);
-
-    delay(100);
 }
 
 /**
@@ -357,12 +349,9 @@ TEST_F(RadioLibRadioESP32MockTest, SetActionReceive) {
  * This test verifies that the radio correctly handles an empty packet
  * without calling message processing.
  */
-TEST_F(RadioLibRadioESP32MockTest, EmptyPacketHandling) {
-    Serial.println("EmptyPacketHandling");
+TEST_F(RadioLibRadioTest, EmptyPacketHandling) {
     // Start receiving
     radio_->StartReceive();
-
-    Serial.println("StartReceive");
 
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
@@ -403,10 +392,10 @@ TEST_F(RadioLibRadioESP32MockTest, EmptyPacketHandling) {
     // Call the callback
     saved_callback_();
 
+    GetRTOS().delay(100);
+
     // // Verify the callback was called
     EXPECT_FALSE(callback_called);
-
-    delay(100);
 }
 
 /**
@@ -415,9 +404,10 @@ TEST_F(RadioLibRadioESP32MockTest, EmptyPacketHandling) {
  * This test verifies that the radio correctly processes the largest packet
  * that the system can handle.
  */
-TEST_F(RadioLibRadioESP32MockTest, MaxSizePacketHandling) {
+TEST_F(RadioLibRadioTest, MaxSizePacketHandling) {
     // Create a semaphore for callback synchronization
-    SemaphoreHandle_t callback_semaphore = xSemaphoreCreateBinary();
+    os::SemaphoreHandle_t callback_semaphore =
+        GetRTOS().CreateBinarySemaphore();
     ASSERT_NE(callback_semaphore, nullptr);
 
     // Start receiving
@@ -501,7 +491,7 @@ TEST_F(RadioLibRadioESP32MockTest, MaxSizePacketHandling) {
         EXPECT_TRUE(all_bytes_match) << "Byte mismatch at index";
 
         // Signal completion via semaphore
-        xSemaphoreGive(callback_semaphore);
+        GetRTOS().GiveSemaphore(callback_semaphore);
     };
 
     // Test setting the callback
@@ -513,21 +503,15 @@ TEST_F(RadioLibRadioESP32MockTest, MaxSizePacketHandling) {
     // Call the callback
     saved_callback_();
 
-    // Wait for the callback to complete with a timeout
-    const TickType_t timeout_ticks =
-        pdMS_TO_TICKS(2000);  // 2 second timeout for max packet
-    BaseType_t result = xSemaphoreTake(callback_semaphore, timeout_ticks);
+    bool result = GetRTOS().TakeSemaphore(callback_semaphore, 1000);
+
+    ASSERT_TRUE(result) << "Callback did not complete within timeout";
 
     // Clean up
-    vSemaphoreDelete(callback_semaphore);
-
-    // Check if callback was executed within timeout
-    ASSERT_EQ(result, pdTRUE) << "Callback did not complete within timeout";
+    GetRTOS().DeleteSemaphore(callback_semaphore);
 
     // Verify the callback was called
     EXPECT_TRUE(callback_called);
-
-    delay(100);
 }
 
 /**
@@ -537,9 +521,10 @@ TEST_F(RadioLibRadioESP32MockTest, MaxSizePacketHandling) {
  * maximum-sized packets without memory leaks, task collapses, or other issues.
  * It sends the same maximum-sized packet 10 times and verifies proper handling.
  */
-TEST_F(RadioLibRadioESP32MockTest, RepeatedMaxSizePacketHandling) {
+TEST_F(RadioLibRadioTest, RepeatedMaxSizePacketHandling) {
     // Create a semaphore for callback synchronization
-    SemaphoreHandle_t callback_semaphore = xSemaphoreCreateBinary();
+    os::SemaphoreHandle_t callback_semaphore =
+        GetRTOS().CreateBinarySemaphore();
     ASSERT_NE(callback_semaphore, nullptr);
 
     // Start receiving
@@ -642,10 +627,7 @@ TEST_F(RadioLibRadioESP32MockTest, RepeatedMaxSizePacketHandling) {
         // Increment the callback counter
         int current_count = ++callback_count;
 
-        // Signal completion via semaphore on the last callback
-        if (current_count >= kNumRepetitions) {
-            xSemaphoreGive(callback_semaphore);
-        }
+        GetRTOS().GiveSemaphore(callback_semaphore);
     };
 
     // Set the callback
@@ -656,27 +638,21 @@ TEST_F(RadioLibRadioESP32MockTest, RepeatedMaxSizePacketHandling) {
 
     // Call the callback multiple times to simulate multiple packet receptions
     for (int i = 0; i < kNumRepetitions; i++) {
+        LOG_DEBUG("Calling callback %d", i + 1);
         saved_callback_();
 
-        // Add a small delay between simulated receptions
-        delay(100);
+        bool result = GetRTOS().TakeSemaphore(callback_semaphore, 500);
+        ASSERT_TRUE(result) << "Callback did not complete within timeout";
 
         // Monitor heap usage to detect memory leaks
-        if (i % 2 == 0) {
+        if (i % 3 == 0) {
             LOG_DEBUG("Heap free after %d packets: %d bytes\n", i + 1,
-                      esp_get_free_heap_size());
+                      GetRTOS().getTaskStackWatermark(nullptr));
         }
     }
 
-    // Wait for all callbacks to complete with a timeout
-    const TickType_t timeout_ticks = pdMS_TO_TICKS(5000);  // 5 second timeout
-    BaseType_t result = xSemaphoreTake(callback_semaphore, timeout_ticks);
-
     // Clean up
-    vSemaphoreDelete(callback_semaphore);
-
-    // Check if callbacks were executed within timeout
-    ASSERT_EQ(result, pdTRUE) << "Callbacks did not complete within timeout";
+    GetRTOS().DeleteSemaphore(callback_semaphore);
 
     // Verify all callbacks were called
     EXPECT_EQ(callback_count, kNumRepetitions)
@@ -687,14 +663,13 @@ TEST_F(RadioLibRadioESP32MockTest, RepeatedMaxSizePacketHandling) {
     EXPECT_TRUE(all_packets_valid) << "Some packets had validation errors";
 
     // Add a delay to ensure all cleanup is complete
-    delay(100);
+    GetRTOS().YieldTask();
 
     // Log final heap status
-    LOG_DEBUG("Final heap free: %d bytes\n", esp_get_free_heap_size());
+    LOG_DEBUG("Final heap free: %d bytes\n",
+              GetRTOS().getTaskStackWatermark(nullptr));
 }
 
 }  // namespace test
 }  // namespace radio
 }  // namespace loramesher
-
-#endif  // ARDUINO
