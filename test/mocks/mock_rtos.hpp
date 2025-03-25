@@ -33,9 +33,9 @@ class MockRTOS : public os::RTOS {
 
     MOCK_METHOD(void, DeleteTask, (os::TaskHandle_t taskHandle), (override));
 
-    MOCK_METHOD(void, SuspendTask, (os::TaskHandle_t taskHandle), (override));
+    MOCK_METHOD(bool, SuspendTask, (os::TaskHandle_t taskHandle), (override));
 
-    MOCK_METHOD(void, ResumeTask, (os::TaskHandle_t taskHandle), (override));
+    MOCK_METHOD(bool, ResumeTask, (os::TaskHandle_t taskHandle), (override));
 
     MOCK_METHOD(os::QueueHandle_t, CreateQueue,
                 (uint32_t length, uint32_t itemSize), (override));
@@ -77,6 +77,28 @@ class MockRTOS : public os::RTOS {
                 (override));
 
     MOCK_METHOD(os::QueueResult, WaitForNotify, (uint32_t timeout), (override));
+
+    MOCK_METHOD(bool, TakeSemaphore,
+                (os::SemaphoreHandle_t semaphore, uint32_t timeout),
+                (override));
+
+    MOCK_METHOD(bool, GiveSemaphore, (os::SemaphoreHandle_t semaphore),
+                (override));
+
+    MOCK_METHOD(bool, GiveSemaphoreFromISR, (os::SemaphoreHandle_t semaphore),
+                (override));
+
+    MOCK_METHOD(os::SemaphoreHandle_t, CreateBinarySemaphore, (), (override));
+
+    MOCK_METHOD(os::SemaphoreHandle_t, CreateCountingSemaphore,
+                (uint32_t maxCount, uint32_t initialCount), (override));
+
+    MOCK_METHOD(void, DeleteSemaphore, (os::SemaphoreHandle_t semaphore),
+                (override));
+
+    MOCK_METHOD(void, YieldTask, (), (override));
+
+    MOCK_METHOD(bool, ShouldStopOrPause, (), (override));
 };
 
 }  // namespace test
