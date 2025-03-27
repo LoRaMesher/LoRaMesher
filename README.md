@@ -7,6 +7,7 @@
 ## Introduction
 
 The LoRaMesher library implements a distance-vector routing protocol for communicating messages among LoRa nodes. For the interaction with the LoRa radio chip, we leverage RadioLib, a versatile communication library which supports different LoRa series modules.
+LoRaMesher library uses C++20.
 
 ### Compatibility
 At this moment, LoRaMesher has been tested within the following modules:
