@@ -8,7 +8,10 @@
 #include "utils/logger.hpp"
 #include "utils/task_monitor.hpp"
 
+#ifdef DEBUG
 #include "mocks/mock_radio.hpp"
+#endif  // DEBUG
+
 #include "radiolib_modules/sx1276.hpp"
 
 namespace loramesher {

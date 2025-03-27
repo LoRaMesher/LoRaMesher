@@ -10,7 +10,9 @@
 #include "types/messages/message.hpp"
 #include "types/radio/radio.hpp"
 
+#ifdef DEBUG
 #include "../test/mocks/mock_radio.hpp"
+#endif  // DEBUG
 
 namespace loramesher {
 namespace radio {
@@ -267,8 +269,19 @@ class RadioLibRadio : public IRadio {
             "ClearActionReceive not supported in RadioLibRadio");
     }
 
-    // Friend declaration for the test helper function - specify full return type
+#ifdef DEBUG
+    /**
+     * @brief Get the mock radio from RadioLibRadio for testing purposes
+     * 
+     * This function allows tests to access the mock radio inside RadioLibRadio
+     * to set expectations.
+     * 
+     * @param radio The RadioLibRadio instance
+     * @return test::MockRadio& Reference to the mock radio for setting expectations
+     * @throws std::runtime_error if the current module is not a MockRadio
+     */
     friend test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio);
+#endif  // DEBUG
 
    protected:
     /**

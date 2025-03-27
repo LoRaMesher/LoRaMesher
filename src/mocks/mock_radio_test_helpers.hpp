@@ -2,6 +2,8 @@
 
 #include "config/system_config.hpp"
 
+#if defined(DEBUG)
+
 #include "../test/mocks/mock_radio.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio.hpp"
@@ -43,3 +45,5 @@ test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio) {
 
 }  // namespace radio
 }  // namespace loramesher
+
+#endif  // DEBUG
