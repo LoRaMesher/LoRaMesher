@@ -2,7 +2,7 @@
 
 #include "config/system_config.hpp"
 
-#if defined(DEBUG)
+#ifdef DEBUG
 
 #include "../test/mocks/mock_radio.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"

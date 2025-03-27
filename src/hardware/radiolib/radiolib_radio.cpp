@@ -373,9 +373,11 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
                 cs_pin_, di0_pin_, rst_pin_, busy_pin_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO
+#ifdef DEBUG
         case RadioType::kMockRadio:
             current_module_ = std::make_unique<MockRadio>();
             break;
+#endif  // DEBUG
         default:
             return false;
     }
