@@ -70,7 +70,8 @@ Result HardwareManager::InitializeHalModules() {
     // Create HAL module
     hal_ = hal::HalFactory::createHal();
     if (!hal_) {
-        return Result::Error(LoraMesherErrorCode::kHardwareError);
+        return Result(LoraMesherErrorCode::kHardwareError,
+                      "Failed to create HAL module");
     }
 
     return Result::Success();
@@ -82,16 +83,18 @@ Result HardwareManager::InitializeRadioModule() {
                                 pin_config_.getReset(), pin_config_.getDio1(),
                                 hal_->getSPI());
     if (!radio_) {
-        return Result::Error(LoraMesherErrorCode::kHardwareError);
+        return Result(LoraMesherErrorCode::kHardwareError,
+                      "Failed to create radio module");
     }
 
-    // Configure radio
-    if (!radio_->Configure(radio_config_)) {
-        return Result::Error(LoraMesherErrorCode::kConfigurationError);
+    Result result = radio_->Configure(radio_config_);
+    if (!result) {
+        return result;
     }
 
-    if (!radio_->Begin(radio_config_)) {
-        return Result::Error(LoraMesherErrorCode::kConfigurationError);
+    result = radio_->Begin(radio_config_);
+    if (!result) {
+        return result;
     }
 
     // TODO: Remove this line

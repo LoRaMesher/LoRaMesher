@@ -382,6 +382,11 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
             return false;
     }
 
+    if (!current_module_) {
+        LOG_ERROR("Failed to create radio module");
+        return false;
+    }
+
     return true;
 }
 

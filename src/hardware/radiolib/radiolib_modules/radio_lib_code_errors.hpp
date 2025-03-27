@@ -40,7 +40,9 @@ class RadioLibCodeErrors {
             case RADIOLIB_ERR_INVALID_SYNC_WORD:
                 return Result::Error(LoraMesherErrorCode::kSyncWordError);
             default:
-                return Result::Error(LoraMesherErrorCode::kHardwareError);
+                return Result(LoraMesherErrorCode::kHardwareError,
+                              "RadioLib error: " + std::to_string(status) +
+                                  " - Unknown error occurred");
         }
     }
 };

@@ -13,6 +13,7 @@ namespace loramesher {
  */
 enum class LoraMesherErrorCode {
     kSuccess = 0,         ///< Operation completed successfully
+    kUnknownError,        ///< Unknown error occurred
     kConfigurationError,  ///< Failed to configure radio parameters
     kTransmissionError,   ///< Failed to transmit data
     kReceptionError,      ///< Failed to receive data
@@ -69,6 +70,8 @@ class LoraMesherErrorCategory : public std::error_category {
         switch (static_cast<LoraMesherErrorCode>(condition)) {
             case LoraMesherErrorCode::kSuccess:
                 return "Success";
+            case LoraMesherErrorCode::kUnknownError:
+                return "Unknown error occurred";
             case LoraMesherErrorCode::kConfigurationError:
                 return "Failed to configure radio parameters";
             case LoraMesherErrorCode::kTransmissionError:
