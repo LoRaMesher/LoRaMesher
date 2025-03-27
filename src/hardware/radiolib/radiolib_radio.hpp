@@ -4,6 +4,8 @@
 #include <mutex>
 #include <queue>
 
+#include "config/system_config.hpp"
+
 #include "hardware/SPIMock.hpp"
 #include "os/rtos.hpp"
 #include "types/configurations/radio_configuration.hpp"
