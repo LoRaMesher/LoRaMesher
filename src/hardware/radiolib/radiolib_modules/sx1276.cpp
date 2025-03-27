@@ -3,6 +3,7 @@
 #ifdef LORAMESHER_BUILD_ARDUINO
 
 #include "radio_lib_code_errors.hpp"
+#include "utils/logger.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -52,22 +53,17 @@ Result LoraMesherSX1276::Begin(const RadioConfig& config) {
         return result;
     }
 
-    // float freq = (434.0F), float bw = (125.0F), uint8_t sf = (uint8_t)9U,
-    //       uint8_t cr = (uint8_t)7U, uint8_t syncWord = (uint8_t)18U,
-    //       int8_t power = (int8_t)10, uint16_t preambleLength = (uint16_t)8U,
-    //       uint8_t gain = (uint8_t)0U
-
     // Begin radio module with basic frequency
-    // int status = radio_module_->begin(
-    //     config.getFrequency(), config.getBandwidth(),
-    //     config.getSpreadingFactor(), config.getCodingRate(),
-    //     config.getSyncWord(), config.getPower(), config.getPreambleLength());
-    // if (status != RADIOLIB_ERR_NONE) {
-    //     return RadioLibCodeErrors::ConvertStatus(status);
-    // }
+    int16_t status = radio_module_->begin(
+        config.getFrequency(), config.getBandwidth(),
+        config.getSpreadingFactor(), config.getCodingRate(),
+        config.getSyncWord(), config.getPower(), config.getPreambleLength());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
 
     // Enable/Disable CRC based on configuration
-    int status = radio_module_->setCRC(config.getCRC());
+    status = radio_module_->setCRC(config.getCRC());
     if (status != RADIOLIB_ERR_NONE) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
