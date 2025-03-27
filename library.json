@@ -28,7 +28,9 @@
     "examples": "",
     "dependencies": [
         {
-            "jgromes/RadioLib": "^7.1.2"
+            "owner": "Jan Gromeš",
+            "name": "RadioLib",
+            "version": "^7.1.2"
         },
         {
             "name": "googletest",
