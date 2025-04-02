@@ -34,6 +34,7 @@ enum class LoraMesherErrorCode {
     kModulationError,     ///< Modulation parameter error
     kInvalidArgument,     ///< Invalid argument error
     kNotImplemented,      ///< Feature not implemented
+    kSerializationError,  ///< Failed message serialization
 };
 
 /**
