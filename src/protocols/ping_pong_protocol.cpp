@@ -236,7 +236,7 @@ Result PingPongProtocol::ProcessReceivedRadioEvent(
     if (message_type::GetMainType(message->GetHeader().GetType()) !=
         MessageType::CONTROL_MSG) {
         return Result(LoraMesherErrorCode::kInvalidParameter,
-                      "Message is not a DATA type message");
+                      "Message is not a CONTROL_MSG type message");
     }
 
     // Serialize the message to pass to the PingPong deserializer
