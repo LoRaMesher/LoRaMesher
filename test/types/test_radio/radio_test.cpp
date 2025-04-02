@@ -13,7 +13,7 @@ class RadioTest : public ::testing::Test {
     void SetUp() override {
         mock_radio_ = std::make_unique<MockRadio>();
         auto base_message =
-            BaseMessage::Create(0x1234, 0x5678, MessageType::DATA,
+            BaseMessage::Create(0x1234, 0x5678, MessageType::PING,
                                 std::vector<uint8_t>{0x01, 0x02, 0x03});
         ASSERT_TRUE(base_message.has_value())
             << "Failed to create test message";
