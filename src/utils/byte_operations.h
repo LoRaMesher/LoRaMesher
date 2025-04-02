@@ -43,6 +43,18 @@ class ByteSerializer {
     }
 
     /**
+      * @brief Writes a 32-bit unsigned integer to the buffer
+      * @param value The value to write
+      * @note Writes in little-endian format
+      */
+    void WriteUint32(uint32_t value) {
+        buffer_[offset_++] = value & 0xFF;
+        buffer_[offset_++] = (value >> 8) & 0xFF;
+        buffer_[offset_++] = (value >> 16) & 0xFF;
+        buffer_[offset_++] = (value >> 24) & 0xFF;
+    }
+
+    /**
       * @brief Writes an 8-bit unsigned integer to the buffer
       * @param value The value to write
       */
@@ -108,6 +120,24 @@ class ByteDeserializer {
             return std::nullopt;
         }
         return buffer_[offset_++];
+    }
+
+    /**
+      * @brief Reads a 32-bit unsigned integer from the buffer
+      * @return The read value if successful, std::nullopt otherwise
+      * @note Reads in little-endian format
+      */
+    std::optional<uint32_t> ReadUint32() {
+        Result result = CheckAvailable(4);
+        if (!result.IsSuccess()) {
+            return std::nullopt;
+        }
+        uint32_t value = static_cast<uint32_t>(buffer_[offset_]) |
+                         (static_cast<uint32_t>(buffer_[offset_ + 1]) << 8) |
+                         (static_cast<uint32_t>(buffer_[offset_ + 2]) << 16) |
+                         (static_cast<uint32_t>(buffer_[offset_ + 3]) << 24);
+        offset_ += 4;
+        return value;
     }
 
     /**
