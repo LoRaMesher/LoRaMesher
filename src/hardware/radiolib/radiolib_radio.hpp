@@ -9,7 +9,7 @@
 #include "hardware/SPIMock.hpp"
 #include "os/rtos.hpp"
 #include "types/configurations/radio_configuration.hpp"
-#include "types/messages/message.hpp"
+#include "types/messages/base_message.hpp"
 #include "types/radio/radio.hpp"
 
 #ifdef DEBUG
