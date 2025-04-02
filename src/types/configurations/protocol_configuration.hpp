@@ -1,96 +1,500 @@
-// src/types/configurations/protocol_configuration.hpp
+/**
+ * @file protocol_configuration.hpp
+ * @brief Configuration classes for communication protocols
+ */
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include "types/messages/base_message.hpp"
+#include "types/protocols/protocol.hpp"
 
 namespace loramesher {
 
 /**
- * @brief Configuration class for mesh protocol parameters
- *
- * Manages timing and retry parameters for the LoRaMesher protocol,
- * including hello messages, synchronization intervals, and timeout thresholds.
+ * @brief Common base class for all protocol configurations
+ * 
+ * This class provides common configuration parameters that apply to all protocol types,
+ * while allowing protocol-specific configurations to extend it.
+ */
+class BaseProtocolConfig {
+   public:
+    /**
+     * @brief Constructor with common protocol parameters
+     * 
+     * @param node_address The node's address in the network (0 means auto-assign)
+     */
+    explicit BaseProtocolConfig(AddressType node_address = 0)
+        : node_address_(node_address) {}
+
+    /**
+     * @brief Virtual destructor
+     */
+    virtual ~BaseProtocolConfig() = default;
+
+    /**
+     * @brief Get the node address
+     * 
+     * @return AddressType The configured node address (0 if auto-assign)
+     */
+    AddressType getNodeAddress() const { return node_address_; }
+
+    /**
+     * @brief Set the node address
+     * 
+     * @param address The node address to set (0 for auto-assign)
+     */
+    void setNodeAddress(AddressType address) { node_address_ = address; }
+
+    /**
+     * @brief Get the protocol type this configuration applies to
+     * 
+     * @return protocols::ProtocolType The type of protocol
+     */
+    virtual protocols::ProtocolType getProtocolType() const = 0;
+
+    /**
+     * @brief Check if configuration is valid
+     * 
+     * @return bool True if configuration is valid
+     */
+    virtual bool IsValid() const { return true; }
+
+    /**
+     * @brief Validate the configuration and return error message if invalid
+     * 
+     * @return std::string Empty string if valid, otherwise error description
+     */
+    virtual std::string Validate() const { return ""; }
+
+   protected:
+    AddressType node_address_;  ///< The node's address in the network
+};
+
+/**
+ * @brief Configuration for the PingPong protocol
+ * 
+ * Contains specific parameters needed for the PingPong protocol operation.
+ */
+class PingPongProtocolConfig : public BaseProtocolConfig {
+   public:
+    /**
+     * @brief Constructor with PingPong-specific parameters
+     * 
+     * @param node_address The node's address in the network (0 means auto-assign)
+     * @param default_timeout Default timeout for ping requests in milliseconds
+     * @param retry_count Number of retries for failed pings
+     */
+    explicit PingPongProtocolConfig(AddressType node_address = 0,
+                                    uint32_t default_timeout = 2000,
+                                    uint8_t retry_count = 3)
+        : BaseProtocolConfig(node_address),
+          default_timeout_(default_timeout),
+          retry_count_(retry_count) {}
+
+    /**
+     * @brief Get the protocol type
+     * 
+     * @return protocols::ProtocolType Always returns kPingPong
+     */
+    protocols::ProtocolType getProtocolType() const override {
+        return protocols::ProtocolType::kPingPong;
+    }
+
+    /**
+     * @brief Get the default timeout for ping requests
+     * 
+     * @return uint32_t Timeout in milliseconds
+     */
+    uint32_t getDefaultTimeout() const { return default_timeout_; }
+
+    /**
+     * @brief Set the default timeout for ping requests
+     * 
+     * @param timeout Timeout in milliseconds
+     */
+    void setDefaultTimeout(uint32_t timeout) { default_timeout_ = timeout; }
+
+    /**
+     * @brief Get the number of retries for failed pings
+     * 
+     * @return uint8_t Number of retries
+     */
+    uint8_t getRetryCount() const { return retry_count_; }
+
+    /**
+     * @brief Set the number of retries for failed pings
+     * 
+     * @param count Number of retries
+     */
+    void setRetryCount(uint8_t count) { retry_count_ = count; }
+
+    /**
+     * @brief Check if configuration is valid
+     * 
+     * @return bool True if configuration is valid
+     */
+    bool IsValid() const override {
+        return default_timeout_ >= 100 &&    // At least 100ms timeout
+               default_timeout_ <= 30000 &&  // Maximum 30 seconds
+               retry_count_ <= 10;           // Maximum 10 retries
+    }
+
+    /**
+     * @brief Validate the configuration and return error message if invalid
+     * 
+     * @return std::string Empty string if valid, otherwise error description
+     */
+    std::string Validate() const override {
+        if (default_timeout_ < 100) {
+            return "Default timeout too short (minimum 100ms)";
+        }
+        if (default_timeout_ > 30000) {
+            return "Default timeout too long (maximum 30s)";
+        }
+        if (retry_count_ > 10) {
+            return "Too many retries (maximum 10)";
+        }
+        return "";
+    }
+
+   private:
+    uint32_t default_timeout_;  ///< Default timeout for ping requests in ms
+    uint8_t retry_count_;       ///< Number of retries for failed pings
+};
+
+/**
+ * @brief Configuration for the LoRaMesh protocol
+ * 
+ * Contains specific parameters needed for the LoRaMesh routing protocol.
+ */
+class LoRaMeshProtocolConfig : public BaseProtocolConfig {
+   public:
+    /**
+     * @brief Constructor with LoRaMesh-specific parameters
+     * 
+     * @param node_address The node's address in the network (0 means auto-assign)
+     * @param hello_interval Interval between hello messages in milliseconds
+     * @param route_timeout Time after which routes are considered stale in milliseconds
+     * @param max_hops Maximum number of hops for message routing
+     */
+    explicit LoRaMeshProtocolConfig(AddressType node_address = 0,
+                                    uint32_t hello_interval = 60000,
+                                    uint32_t route_timeout = 180000,
+                                    uint8_t max_hops = 5)
+        : BaseProtocolConfig(node_address),
+          hello_interval_(hello_interval),
+          route_timeout_(route_timeout),
+          max_hops_(max_hops) {}
+
+    /**
+     * @brief Get the protocol type
+     * 
+     * @return protocols::ProtocolType Always returns kLoraMesh
+     */
+    protocols::ProtocolType getProtocolType() const override {
+        return protocols::ProtocolType::kLoraMesh;
+    }
+
+    /**
+     * @brief Get the hello message interval
+     * 
+     * @return uint32_t Interval in milliseconds
+     */
+    uint32_t getHelloInterval() const { return hello_interval_; }
+
+    /**
+     * @brief Set the hello message interval
+     * 
+     * @param interval Interval in milliseconds
+     */
+    void setHelloInterval(uint32_t interval) { hello_interval_ = interval; }
+
+    /**
+     * @brief Get the route timeout
+     * 
+     * @return uint32_t Timeout in milliseconds
+     */
+    uint32_t getRouteTimeout() const { return route_timeout_; }
+
+    /**
+     * @brief Set the route timeout
+     * 
+     * @param timeout Timeout in milliseconds
+     */
+    void setRouteTimeout(uint32_t timeout) { route_timeout_ = timeout; }
+
+    /**
+     * @brief Get the maximum number of hops
+     * 
+     * @return uint8_t Maximum hop count
+     */
+    uint8_t getMaxHops() const { return max_hops_; }
+
+    /**
+     * @brief Set the maximum number of hops
+     * 
+     * @param hops Maximum hop count
+     */
+    void setMaxHops(uint8_t hops) { max_hops_ = hops; }
+
+    /**
+     * @brief Check if configuration is valid
+     * 
+     * @return bool True if configuration is valid
+     */
+    bool IsValid() const override {
+        return hello_interval_ >= 5000 &&     // At least 5s interval
+               hello_interval_ <= 3600000 &&  // Maximum 1 hour
+               route_timeout_ >
+                   hello_interval_ &&  // Route timeout must be greater than hello interval
+               max_hops_ > 0 &&  // At least 1 hop
+               max_hops_ <= 16;  // Maximum 16 hops
+    }
+
+    /**
+     * @brief Validate the configuration and return error message if invalid
+     * 
+     * @return std::string Empty string if valid, otherwise error description
+     */
+    std::string Validate() const override {
+        if (hello_interval_ < 5000) {
+            return "Hello interval too short (minimum 5s)";
+        }
+        if (hello_interval_ > 3600000) {
+            return "Hello interval too long (maximum 1h)";
+        }
+        if (route_timeout_ <= hello_interval_) {
+            return "Route timeout must be greater than hello interval";
+        }
+        if (max_hops_ == 0) {
+            return "Max hops must be at least 1";
+        }
+        if (max_hops_ > 16) {
+            return "Max hops too large (maximum 16)";
+        }
+        return "";
+    }
+
+   private:
+    uint32_t hello_interval_;  ///< Interval between hello messages in ms
+    uint32_t route_timeout_;   ///< Time after which routes are considered stale
+    uint8_t max_hops_;         ///< Maximum number of hops for routing
+};
+
+/**
+ * @brief Main protocol configuration class
+ * 
+ * This class serves as a container for the active protocol configuration
+ * and provides methods to access and modify it.
  */
 class ProtocolConfig {
    public:
     /**
-     * @brief Constructs a ProtocolConfig object with specified parameters
-     *
-     * @param helloInterval Interval between hello messages in milliseconds
-     * @param syncInterval Interval between synchronization messages in milliseconds
-     * @param maxTimeouts Maximum number of timeouts before considering a node unreachable
+     * @brief Default constructor with PingPong protocol
      */
-    explicit ProtocolConfig(uint32_t helloInterval = 120000,
-                            uint32_t syncInterval = 300000,
-                            uint32_t maxTimeouts = 10);
+    ProtocolConfig()
+        : protocol_type_(protocols::ProtocolType::kPingPong),
+          config_(std::make_unique<PingPongProtocolConfig>()) {}
 
     /**
-     * @brief Gets the hello message interval
-     * @return Current hello interval in milliseconds
+     * @brief Copy constructor
+     * 
+     * Creates a deep copy of the protocol configuration
+     * 
+     * @param other The ProtocolConfig to copy from
      */
-    uint32_t getHelloInterval() const { return helloInterval_; }
+    ProtocolConfig(const ProtocolConfig& other)
+        : protocol_type_(other.protocol_type_) {
+        // Deep copy the configuration based on protocol type
+        if (other.config_) {
+            if (protocol_type_ == protocols::ProtocolType::kPingPong) {
+                const auto& ping_pong_config =
+                    static_cast<const PingPongProtocolConfig&>(*other.config_);
+                config_ =
+                    std::make_unique<PingPongProtocolConfig>(ping_pong_config);
+            } else if (protocol_type_ == protocols::ProtocolType::kLoraMesh) {
+                const auto& lora_mesh_config =
+                    static_cast<const LoRaMeshProtocolConfig&>(*other.config_);
+                config_ =
+                    std::make_unique<LoRaMeshProtocolConfig>(lora_mesh_config);
+            } else {
+                // Default to PingPong if unknown type
+                config_ = std::make_unique<PingPongProtocolConfig>();
+            }
+        }
+    }
 
     /**
-     * @brief Gets the synchronization message interval
-     * @return Current sync interval in milliseconds
+     * @brief Copy assignment operator
+     * 
+     * Performs a deep copy of the protocol configuration
+     * 
+     * @param other The ProtocolConfig to copy from
+     * @return Reference to this object after assignment
      */
-    uint32_t getSyncInterval() const { return syncInterval_; }
+    ProtocolConfig& operator=(const ProtocolConfig& other) {
+        if (this != &other) {
+            protocol_type_ = other.protocol_type_;
+
+            // Deep copy the configuration based on protocol type
+            if (other.config_) {
+                if (protocol_type_ == protocols::ProtocolType::kPingPong) {
+                    const auto& ping_pong_config =
+                        static_cast<const PingPongProtocolConfig&>(
+                            *other.config_);
+                    config_ = std::make_unique<PingPongProtocolConfig>(
+                        ping_pong_config);
+                } else if (protocol_type_ ==
+                           protocols::ProtocolType::kLoraMesh) {
+                    const auto& lora_mesh_config =
+                        static_cast<const LoRaMeshProtocolConfig&>(
+                            *other.config_);
+                    config_ = std::make_unique<LoRaMeshProtocolConfig>(
+                        lora_mesh_config);
+                } else {
+                    // Default to PingPong if unknown type
+                    config_ = std::make_unique<PingPongProtocolConfig>();
+                }
+            } else {
+                config_.reset();
+            }
+        }
+        return *this;
+    }
 
     /**
-     * @brief Gets the maximum number of allowed timeouts
-     * @return Current maximum timeout threshold
+     * @brief Move constructor
+     * 
+     * @param other The ProtocolConfig to move from
      */
-    uint32_t getMaxTimeouts() const { return maxTimeouts_; }
+    ProtocolConfig(ProtocolConfig&& other) noexcept
+        : protocol_type_(other.protocol_type_),
+          config_(std::move(other.config_)) {}
 
     /**
-     * @brief Sets the hello message interval with validation
-     * @param interval New hello interval in milliseconds
+     * @brief Move assignment operator
+     * 
+     * @param other The ProtocolConfig to move from
+     * @return Reference to this object after assignment
      */
-    void setHelloInterval(uint32_t interval);
+    ProtocolConfig& operator=(ProtocolConfig&& other) noexcept {
+        if (this != &other) {
+            protocol_type_ = other.protocol_type_;
+            config_ = std::move(other.config_);
+        }
+        return *this;
+    }
 
     /**
-     * @brief Sets the synchronization message interval with validation
-     * @param interval New sync interval in milliseconds
+     * @brief Constructor with a specific protocol configuration
+     * 
+     * @param config Unique pointer to a protocol configuration
      */
-    void setSyncInterval(uint32_t interval);
+    explicit ProtocolConfig(std::unique_ptr<BaseProtocolConfig> config)
+        : protocol_type_(config->getProtocolType()),
+          config_(std::move(config)) {}
 
     /**
-     * @brief Sets the maximum number of allowed timeouts with validation
-     * @param timeouts New maximum timeout threshold
+     * @brief Get the active protocol type
+     * 
+     * @return protocols::ProtocolType The active protocol type
      */
-    void setMaxTimeouts(uint32_t timeouts);
+    protocols::ProtocolType getProtocolType() const { return protocol_type_; }
 
     /**
-     * @brief Creates a protocol configuration with default values
-     * @return Default protocol configuration object
+     * @brief Set the PingPong protocol configuration
+     * 
+     * @param config The PingPong protocol configuration
      */
-    static ProtocolConfig CreateDefault();
+    void setPingPongConfig(const PingPongProtocolConfig& config) {
+        protocol_type_ = protocols::ProtocolType::kPingPong;
+        config_ = std::make_unique<PingPongProtocolConfig>(config);
+    }
 
     /**
-     * @brief Validates the protocol configuration
-     * @return True if configuration is valid, false otherwise
+     * @brief Set the LoRaMesh protocol configuration
+     * 
+     * @param config The LoRaMesh protocol configuration
      */
-    bool IsValid() const;
+    void setLoRaMeshConfig(const LoRaMeshProtocolConfig& config) {
+        protocol_type_ = protocols::ProtocolType::kLoraMesh;
+        config_ = std::make_unique<LoRaMeshProtocolConfig>(config);
+    }
 
     /**
-     * @brief Validates the protocol configuration and provides error details
-     * @return Empty string if valid, otherwise error description
+     * @brief Get the active protocol configuration as PingPong config
+     * 
+     * @return const PingPongProtocolConfig& Reference to the PingPong config
+     * @throws std::bad_cast if current config is not PingPong
      */
-    std::string Validate() const;
+    const PingPongProtocolConfig& getPingPongConfig() const {
+        if (protocol_type_ != protocols::ProtocolType::kPingPong) {
+            throw std::bad_cast();
+        }
+        return static_cast<const PingPongProtocolConfig&>(*config_);
+    }
+
+    /**
+     * @brief Get the active protocol configuration as LoRaMesh config
+     * 
+     * @return const LoRaMeshProtocolConfig& Reference to the LoRaMesh config
+     * @throws std::bad_cast if current config is not LoRaMesh
+     */
+    const LoRaMeshProtocolConfig& getLoRaMeshConfig() const {
+        if (protocol_type_ != protocols::ProtocolType::kLoraMesh) {
+            throw std::bad_cast();
+        }
+        return static_cast<const LoRaMeshProtocolConfig&>(*config_);
+    }
+
+    /**
+     * @brief Get the node address
+     * 
+     * @return AddressType The configured node address
+     */
+    AddressType getNodeAddress() const { return config_->getNodeAddress(); }
+
+    /**
+     * @brief Set the node address
+     * 
+     * @param address The node address to set
+     */
+    void setNodeAddress(AddressType address) {
+        config_->setNodeAddress(address);
+    }
+
+    /**
+     * @brief Check if configuration is valid
+     * 
+     * @return bool True if configuration is valid
+     */
+    bool IsValid() const { return config_ && config_->IsValid(); }
+
+    /**
+     * @brief Validate the configuration and return error message if invalid
+     * 
+     * @return std::string Empty string if valid, otherwise error description
+     */
+    std::string Validate() const {
+        if (!config_) {
+            return "No protocol configuration set";
+        }
+        return config_->Validate();
+    }
+
+    /**
+     * @brief Create default protocol configuration
+     * 
+     * @return ProtocolConfig Default protocol configuration (PingPong)
+     */
+    static ProtocolConfig CreateDefault() { return ProtocolConfig(); }
 
    private:
-    static constexpr uint32_t kMinHelloInterval =
-        1000;  ///< Minimum hello interval (1 second)
-    static constexpr uint32_t kMaxHelloInterval =
-        3600000;  ///< Maximum hello interval (1 hour)
-
-    uint32_t
-        helloInterval_;  ///< Interval between hello messages in milliseconds
-    uint32_t
-        syncInterval_;  ///< Interval between synchronization messages in milliseconds
-    uint32_t
-        maxTimeouts_;  ///< Maximum number of timeouts before considering a node unreachable
+    protocols::ProtocolType protocol_type_;  ///< Active protocol type
+    std::unique_ptr<BaseProtocolConfig>
+        config_;  ///< Protocol-specific configuration
 };
 
 }  // namespace loramesher

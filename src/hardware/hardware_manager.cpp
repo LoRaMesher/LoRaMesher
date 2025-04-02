@@ -5,6 +5,7 @@
 
 #include "hal_factory.hpp"
 #include "radiolib/radiolib_radio.hpp"
+#include "utils/logger.hpp"
 
 namespace loramesher {
 namespace hardware {
@@ -16,7 +17,7 @@ HardwareManager::HardwareManager(const PinConfig& pin_config,
 }
 
 Result HardwareManager::Initialize() {
-    if (initialized_) {
+    if (is_initialized_) {
         return Result::Success();
     }
 
@@ -31,21 +32,114 @@ Result HardwareManager::Initialize() {
         return result;
     }
 
-    initialized_ = true;
+    is_initialized_ = true;
     return Result::Success();
 }
 
-Result HardwareManager::SendMessage() {
-    if (!initialized_) {
+Result HardwareManager::Start() {
+    if (!is_initialized_) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "Hardware not initialized");
+    }
+
+    if (is_running_) {
+        return Result::Success();
+    }
+
+    LOG_INFO("Starting hardware");
+
+    Result result = radio_->Begin(radio_config_);
+    if (!result) {
+        return result;
+    }
+
+    result = StartReceive();
+    if (!result) {
+        return result;
+    }
+
+    is_running_ = true;
+    return Result::Success();
+}
+
+Result HardwareManager::StartReceive() {
+    if (!is_initialized_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
-    const uint8_t* data = new uint8_t(1);
+    Result result = radio_->StartReceive();
+    if (!result) {
+        return result;
+    }
 
-    Result result = radio_->Send(data, 1);
+    return Result::Success();
+}
 
-    delete data;
-    return result;
+Result HardwareManager::Stop() {
+    if (!is_initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    if (!is_running_) {
+        return Result::Success();
+    }
+
+    LOG_INFO("Stopping hardware");
+
+    Result result = radio_->Sleep();
+    if (!result) {
+        return result;
+    }
+
+    is_running_ = false;
+    return Result::Success();
+}
+
+Result HardwareManager::setActionReceive(EventCallback callback) {
+    if (!is_initialized_) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "Hardware not initialized");
+    }
+
+    Result result = radio_->setActionReceive(callback);
+    if (!result) {
+        return result;
+    }
+
+    event_callback_ = callback;
+    return Result::Success();
+}
+
+Result HardwareManager::SendMessage(const BaseMessage& message) {
+    if (!is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Hardware not running");
+    }
+
+    LOG_DEBUG("Sending message to 0x%04X, type: %d",
+              message.GetHeader().GetDestination(),
+              static_cast<int>(message.GetHeader().GetType()));
+
+    auto serialized_data = message.Serialize();
+    if (!serialized_data) {
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Serialization error when sending a message");
+    }
+
+    Result result =
+        radio_->Send(serialized_data->data(), message.GetTotalSize());
+    if (!result) {
+        return result;
+    }
+
+    if (event_callback_) {
+        auto event = radio::CreateTransmittedEvent(
+            std::make_unique<BaseMessage>(message));
+
+        event_callback_(std::move(event));
+    }
+
+    return Result::Success();
 }
 
 Result HardwareManager::setPinConfig(const PinConfig& pin_config) {
@@ -91,14 +185,6 @@ Result HardwareManager::InitializeRadioModule() {
     if (!result) {
         return result;
     }
-
-    result = radio_->Begin(radio_config_);
-    if (!result) {
-        return result;
-    }
-
-    // TODO: Remove this line
-    radio_->StartReceive();
 
     return Result::Success();
 }

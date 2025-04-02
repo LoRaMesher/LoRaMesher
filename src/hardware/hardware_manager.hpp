@@ -8,7 +8,9 @@
 #include "types/configurations/pin_configuration.hpp"
 #include "types/configurations/radio_configuration.hpp"
 #include "types/error_codes/result.hpp"
+#include "types/hardware/i_hardware_manager.hpp"
 #include "types/radio/radio.hpp"
+#include "types/radio/radio_event.hpp"
 
 namespace loramesher {
 namespace hardware {
@@ -20,7 +22,7 @@ namespace hardware {
  * of hardware resources required by LoraMesher. It manages both pin
  * and radio configurations along with the HAL interface initialization.
  */
-class HardwareManager {
+class HardwareManager : public IHardwareManager {
    public:
     /**
      * @brief Construct a new Hardware Manager object
@@ -45,6 +47,28 @@ class HardwareManager {
     Result Initialize();
 
     /**
+     * @brief Start the hardware operation
+     * 
+     * @return Result Success if start was successful
+     */
+    Result Start();
+
+    /**
+     * @brief Stop the hardware operation
+     * 
+     * @return Result Success if stop was successful
+     */
+    Result Stop();
+
+    /**
+     * @brief Start receiving messages
+     * 
+     * @return Result Success if receiving was started successfully
+     * 
+     */
+    Result StartReceive();
+
+    /**
      * @brief Get pointer to HAL interface
      * 
      * @return IHal* Pointer to HAL interface
@@ -52,18 +76,27 @@ class HardwareManager {
     hal::IHal* getHal() { return hal_.get(); }
 
     /**
+     * @brief Set callback for radio events
+     * 
+     * @param callback Function to call for each radio event
+     * @return Result Success if callback was set successfully
+     */
+    Result setActionReceive(EventCallback callback);
+
+    /**
      * @brief Send a message
      * 
-     * @return Result send message result
+     * @param message The message to send
+     * @return Result Success if message was sent
      */
-    Result SendMessage();
+    Result SendMessage(const BaseMessage& message);
 
     /**
      * @brief Check if HAL is initialized
      * 
      * @return bool True if HAL is initialized
      */
-    bool IsInitialized() const { return initialized_; }
+    bool IsInitialized() const { return is_initialized_; }
 
     /**
      * @brief Get the current pin configuration
@@ -125,13 +158,21 @@ class HardwareManager {
      */
     Result ValidateConfiguration() const;
 
+    // Hardware components
     std::unique_ptr<hal::IHal> hal_;  ///< Pointer to HAL interface
     std::unique_ptr<radio::IRadio>
         radio_;  ///< Pointer to radio module interface
 
-    bool initialized_ = false;  ///< Initialization status
+    // Configuration
     PinConfig pin_config_;      ///< Current pin configuration
     RadioConfig radio_config_;  ///< Current radio configuration
+
+    // State
+    bool is_initialized_ = false;  ///< Whether hardware is initialized
+    bool is_running_ = false;      ///< Whether hardware is running
+
+    // Callback
+    EventCallback event_callback_ = nullptr;  ///< Callback for radio events
 };
 
 }  // namespace hardware
