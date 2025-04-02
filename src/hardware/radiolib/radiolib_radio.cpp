@@ -426,7 +426,18 @@ void RadioLibRadio::HandleInterrupt() {
         return;
     }
 
-    LOG_DEBUG("Received data");
+    LOG_DEBUG("Received data with length %d", length);
+
+    // Print buffer contents for debugging
+    if (length > 0) {
+        std::string hex_data;
+        char hex_byte[4];  // Extra space for the format
+        for (size_t i = 0; i < length; i++) {
+            snprintf(hex_byte, sizeof(hex_byte), "%02X ", buffer[i]);
+            hex_data += hex_byte;
+        }
+        LOG_DEBUG("Buffer data (hex): %s", hex_data.c_str());
+    }
 
     // Update last packet info
     last_packet_rssi_ = current_module_->getRSSI();
@@ -454,7 +465,7 @@ void RadioLibRadio::HandleInterrupt() {
     LOG_DEBUG("Adding message to queue");
 
     auto event = CreateReceivedEvent(
-        std::make_unique<BaseMessage>(std::move(*message_optional)),
+        std::make_unique<BaseMessage>(message_optional.value()),
         last_packet_rssi_, last_packet_snr_);
     if (event && receive_callback_) {
         LOG_DEBUG("Calling receive callback");
