@@ -1,6 +1,7 @@
 // src/radio/radio_event.hpp
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 
@@ -48,7 +49,11 @@ class RadioEvent {
      * @param message Unique pointer to the message associated with the event
      */
     RadioEvent(RadioEventType type, std::unique_ptr<BaseMessage> message)
-        : type_(type), message_(std::move(message)) {}
+        : type_(type),
+          message_(std::move(message)),
+          timestamp_(std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count()) {}
 
     /**
      * @brief Constructor for events without message
@@ -123,13 +128,13 @@ class RadioEvent {
      * @brief Sets the event timestamp
      * @param timestamp Event occurrence time
      */
-    void setTimestamp(uint32_t timestamp) { timestamp_ = timestamp; }
+    void setTimestamp(int32_t timestamp) { timestamp_ = timestamp; }
 
     /**
      * @brief Gets the event timestamp
      * @return Current timestamp value
      */
-    uint32_t getTimestamp() const { return timestamp_; }
+    int32_t getTimestamp() const { return timestamp_; }
 
     /**
      * @brief Checks if event has a valid message
@@ -183,10 +188,10 @@ class RadioEvent {
    private:
     RadioEventType type_;  ///< Type of radio event
     std::unique_ptr<BaseMessage>
-        message_;             ///< Optional message associated with event
-    int8_t rssi_ = 0;         ///< Received Signal Strength Indicator
-    int8_t snr_ = 0;          ///< Signal-to-Noise Ratio
-    uint32_t timestamp_ = 0;  ///< Event timestamp
+        message_;            ///< Optional message associated with event
+    int8_t rssi_ = 0;        ///< Received Signal Strength Indicator
+    int8_t snr_ = 0;         ///< Signal-to-Noise Ratio
+    int32_t timestamp_ = 0;  ///< Event timestamp
 };
 
 /**
@@ -205,7 +210,6 @@ inline std::unique_ptr<RadioEvent> CreateReceivedEvent(
                                               std::move(message));
     event->setRssi(rssi);
     event->setSnr(snr);
-    // TODO: event->setTimestamp(/* Get current timestamp */);
     return event;
 }
 
@@ -221,7 +225,6 @@ inline std::unique_ptr<RadioEvent> CreateTransmittedEvent(
     std::unique_ptr<BaseMessage> message) {
     auto event = std::make_unique<RadioEvent>(RadioEventType::kTransmitted,
                                               std::move(message));
-    // event->setTimestamp(/* Get current timestamp */);
     return event;
 }
 
