@@ -43,9 +43,9 @@ TEST_F(RadioEventTest, CreateTransmittedEventTest) {
 }
 
 TEST_F(RadioEventTest, CreateTimeoutEventTest) {
-    auto event = CreateTimeoutEvent();
+    auto event = CreateReceivedTimeoutEvent();
 
-    EXPECT_EQ(event->getType(), RadioEventType::kTimeout);
+    EXPECT_EQ(event->getType(), RadioEventType::kReceivedTimeout);
     EXPECT_FALSE(event->HasMessage());
 }
 
@@ -54,8 +54,12 @@ TEST_F(RadioEventTest, EventTypeToStringTest) {
                  "Received");
     EXPECT_STREQ(RadioEvent::EventTypeToString(RadioEventType::kTransmitted),
                  "Transmitted");
-    EXPECT_STREQ(RadioEvent::EventTypeToString(RadioEventType::kTimeout),
-                 "Timeout");
+    EXPECT_STREQ(
+        RadioEvent::EventTypeToString(RadioEventType::kReceivedTimeout),
+        "Received Timeout");
+    EXPECT_STREQ(
+        RadioEvent::EventTypeToString(RadioEventType::kTransmittedTimeout),
+        "Transmitted Timeout");
     EXPECT_STREQ(RadioEvent::EventTypeToString(RadioEventType::kCrcError),
                  "CRC Error");
 }

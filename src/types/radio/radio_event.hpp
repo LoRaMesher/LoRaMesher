@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "types/messages/message.hpp"
+#include "types/messages/base_message.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -16,19 +16,20 @@ namespace radio {
  * normal operation of the LoRa radio module.
  */
 enum class RadioEventType {
-    kReceived,          ///< Message received
-    kTransmitted,       ///< Message transmitted successfully
-    kTimeout,           ///< Reception/transmission timeout
-    kCrcError,          ///< CRC check failed
-    kPreambleDetected,  ///< Preamble detected during reception
-    kSyncWordValid,     ///< Valid sync word detected
-    kHeaderValid,       ///< Valid header received
-    kHeaderError,       ///< Header CRC error
-    kNoise,             ///< Noise floor detected
-    kCadDone,           ///< Channel activity detection completed
-    kCadDetected,       ///< Channel activity detected
-    kRxError,           ///< Reception error
-    kTxError            ///< Transmission error
+    kReceived,            ///< Message received
+    kTransmitted,         ///< Message transmitted successfully
+    kReceivedTimeout,     ///< Message reception timeout
+    kTransmittedTimeout,  ///< Message transmission timeout
+    kCrcError,            ///< CRC check failed
+    kPreambleDetected,    ///< Preamble detected during reception
+    kSyncWordValid,       ///< Valid sync word detected
+    kHeaderValid,         ///< Valid header received
+    kHeaderError,         ///< Header CRC error
+    kNoise,               ///< Noise floor detected
+    kCadDone,             ///< Channel activity detection completed
+    kCadDetected,         ///< Channel activity detected
+    kRxError,             ///< Reception error
+    kTxError              ///< Transmission error
 };
 
 /**
@@ -150,8 +151,10 @@ class RadioEvent {
                 return "Received";
             case RadioEventType::kTransmitted:
                 return "Transmitted";
-            case RadioEventType::kTimeout:
-                return "Timeout";
+            case RadioEventType::kReceivedTimeout:
+                return "Received Timeout";
+            case RadioEventType::kTransmittedTimeout:
+                return "Transmitted Timeout";
             case RadioEventType::kCrcError:
                 return "CRC Error";
             case RadioEventType::kPreambleDetected:
@@ -223,15 +226,27 @@ inline std::unique_ptr<RadioEvent> CreateTransmittedEvent(
 }
 
 /**
- * @brief Factory function for creating timeout events
+ * @brief Factory function for creating received timeout events
  * 
  * Creates a RadioEvent with type kTimeout.
  * 
  * @return Unique pointer to the created RadioEvent
  */
-inline std::unique_ptr<RadioEvent> CreateTimeoutEvent() {
-    auto event = std::make_unique<RadioEvent>(RadioEventType::kTimeout);
-    // TODO: event->setTimestamp(/* Get current timestamp */);
+inline std::unique_ptr<RadioEvent> CreateReceivedTimeoutEvent() {
+    auto event = std::make_unique<RadioEvent>(RadioEventType::kReceivedTimeout);
+    return event;
+}
+
+/**
+ * @brief Factory function for creating transmitted timeout events
+ * 
+ * Creates a RadioEvent with type kTransmittedTimeout.
+ * 
+ * @return Unique pointer to the created RadioEvent
+ */
+inline std::unique_ptr<RadioEvent> CreateTransmittedTimeoutEvent() {
+    auto event =
+        std::make_unique<RadioEvent>(RadioEventType::kTransmittedTimeout);
     return event;
 }
 
