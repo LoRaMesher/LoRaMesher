@@ -299,10 +299,38 @@ class Logger {
 extern Logger LOG;
 
 // Convenience macros for logging with format strings
+// Then modify your logging macros
+#if LORAMESHER_LOG_LEVEL <= 0
 #define LOG_DEBUG(fmt, ...) loramesher::LOG.Debug(fmt, ##__VA_ARGS__)
+#else
+#define LOG_DEBUG(fmt, ...) \
+    do {                    \
+    } while (0)  // Compiles to nothing
+#endif
+
+#if LORAMESHER_LOG_LEVEL <= 1
 #define LOG_INFO(fmt, ...) loramesher::LOG.Info(fmt, ##__VA_ARGS__)
+#else
+#define LOG_INFO(fmt, ...) \
+    do {                   \
+    } while (0)
+#endif
+
+#if LORAMESHER_LOG_LEVEL <= 2
 #define LOG_WARNING(fmt, ...) loramesher::LOG.Warning(fmt, ##__VA_ARGS__)
+#else
+#define LOG_WARNING(fmt, ...) \
+    do {                      \
+    } while (0)
+#endif
+
+#if LORAMESHER_LOG_LEVEL <= 3
 #define LOG_ERROR(fmt, ...) loramesher::LOG.Error(fmt, ##__VA_ARGS__)
+#else
+#define LOG_ERROR(fmt, ...) \
+    do {                    \
+    } while (0)
+#endif
 
 #define LOG_FLUSH() loramesher::LOG.Flush()
 

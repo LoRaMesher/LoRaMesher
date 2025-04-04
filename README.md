@@ -275,6 +275,37 @@ Please see our open access paper ["Implementation of a LoRa Mesh Library"](https
   doi={10.1109/ACCESS.2022.3217215}}
 ```
 
+## Additional configurations
+
+### Debug
+
+If you want to additional logs you can use the flag DEBUG. It will set the library for testing and it will add additional logs that monitors tasks.
+
+```// #define DEBUG  // Uncomment to enable debug functionality```
+
+### Log configuration
+#### Log Level
+
+There is 5 different log levels
+- 0 = DEBUG
+- 1 = INFO
+- 2 = WARNING
+- 3 = ERROR
+- 4 = NO_LOG
+
+```#define LORAMESHER_LOG_LEVEL 4  // 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR, 4=NO_LOG```
+
+#### Disable colors output
+
+You can disable color for your serial monitor if needed. This can be usefull if you want to store logs in a local storage and optimize memory.
+
+```//#define LOGGER_DISABLE_COLORS   // Disable color output```
+
+#### Log buffer size
+
+You can change buffer size of the log.
+
+```#define LOGGER_BUFFER_SIZE 128  // Adjust buffer size for your needs```
 
 ## Cmake building
 
