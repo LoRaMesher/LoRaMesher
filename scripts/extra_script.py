@@ -1,5 +1,5 @@
 """
-@file xtra_script.py
+@file extra_script.py
 @brief Script to automatically set platform-specific build flags when library is included.
 @details This script is executed by PlatformIO before the build process and sets
          appropriate C++ standard flags based on the target platform.
