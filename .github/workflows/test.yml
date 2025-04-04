@@ -21,4 +21,4 @@ jobs:
 
     - name: Run Tests
       run: |
-        platformio test -e native -v
+        platformio test -e test_native
