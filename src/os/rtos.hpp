@@ -8,6 +8,8 @@
 #include <functional>
 #include <string>
 
+#include "config/system_config.hpp"
+
 namespace loramesher {
 namespace os {
 
