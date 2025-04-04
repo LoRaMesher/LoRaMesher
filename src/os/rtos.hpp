@@ -68,6 +68,11 @@ struct TaskStats {
 class RTOS {
    public:
     /**
+     * @brief Get singleton instance
+     */
+    static RTOS& instance();
+
+    /**
      * @brief Create a new task
      */
     virtual bool CreateTask(TaskFunction_t taskFunction, const char* name,
@@ -193,11 +198,6 @@ class RTOS {
      * @return Vector of task statistics
      */
     virtual std::vector<TaskStats> getSystemTaskStats() = 0;
-
-    /**
-     * @brief Get singleton instance
-     */
-    static RTOS& instance();
 
     /**
      * @brief Convert task state to string representation

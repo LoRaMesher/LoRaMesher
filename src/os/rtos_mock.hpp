@@ -1003,18 +1003,13 @@ class RTOSMock : public RTOS {
     std::mutex isrMutex_;
 };
 
-inline RTOS& RTOS::instance() {
-    static RTOSMock instance;
-    return instance;
-}
-
 }  // namespace os
 
 /**  
  * @brief Provides access to the RTOS singleton instance
  * @return Reference to the RTOS singleton instance
 */
-static inline os::RTOS& GetRTOS() {
+static os::RTOS& GetRTOS() {
     return os::RTOS::instance();
 }
 
