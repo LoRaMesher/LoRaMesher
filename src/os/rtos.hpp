@@ -6,8 +6,7 @@
 
 #include <cstdint>
 #include <functional>
-
-#include "config/system_config.hpp"
+#include <string>
 
 namespace loramesher {
 namespace os {

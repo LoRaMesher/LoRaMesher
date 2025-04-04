@@ -17,6 +17,7 @@ RTOS& RTOS::instance() {
 }  // namespace loramesher
 
 #else
+#include "os/rtos_mock.hpp"
 
 namespace loramesher {
 namespace os {
