@@ -5,8 +5,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <functional>
-#include <string>
 
 #include "config/system_config.hpp"
 
