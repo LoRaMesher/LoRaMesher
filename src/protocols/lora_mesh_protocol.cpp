@@ -405,7 +405,7 @@ Result LoRaMeshProtocol::ProcessReceivedRadioEvent(
             return ProcessDiscovery(source, payload);
 
         case ProtocolState::NORMAL_OPERATION:
-        case ProtocolState::NETWORK_MANAGER:
+        case ProtocolState::NETWORK_MANAGER: {
             // In normal operation, process based on first byte of payload (message type)
             if (payload.empty()) {
                 return Result(LoraMesherErrorCode::kInvalidParameter,
@@ -413,19 +413,21 @@ Result LoRaMeshProtocol::ProcessReceivedRadioEvent(
             }
 
             // TODO: Replace with proper message type enum
-            uint8_t message_type = payload[0];
-            switch (message_type) {
-                case 0x01:  // Routing update
-                    return ProcessRoutingUpdate(source, payload);
-                case 0x02:  // Slot allocation
-                    return ProcessSlotAllocation(source, payload);
-                case 0x03:  // Control message
-                    return ProcessControlMessage(source, payload);
-                default:
-                    return Result(LoraMesherErrorCode::kInvalidParameter,
-                                  "Unknown LoRaMesh message type");
-            }
-
+            // uint8_t message_type = payload[0];
+            // switch (message_type) {
+            //     case 0x01:  // Routing update
+            //         return ProcessRoutingUpdate(source, payload);
+            //     case 0x02:  // Slot allocation
+            //         return ProcessSlotAllocation(source, payload);
+            //     case 0x03:  // Control message
+            //         return ProcessControlMessage(source, payload);
+            //     default:
+            //         return Result(LoraMesherErrorCode::kInvalidParameter,
+            //                       "Unknown LoRaMesh message type");
+            // }
+            return Result(LoraMesherErrorCode::kNotImplemented,
+                          "Message type not implemented");
+        }
         default:
             // In other states, just acknowledge receipt but don't process
             return Result::Success();
