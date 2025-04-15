@@ -59,30 +59,32 @@ Result LoraMesher::InitializeProtocol() {
 
     // Get configuration for protocol setup
     ProtocolConfig protocol_config = config_.getProtocolConfig();
-    protocols::ProtocolType protocol_type = protocol_config.getProtocolType();
 
     // Get or generate node address
     AddressType configured_address = protocol_config.getNodeAddress();
     if (configured_address == 0) {
         // Auto-generate address if not specified
-        // In a real implementation, this might use a MAC address or other unique identifier
+        // TODO: In a real implementation, this might use a MAC address or other unique identifier
         node_address_ = static_cast<AddressType>(
             os::RTOS::instance().getTickCount() & 0xFFFF);
         if (node_address_ == 0)
             node_address_ = 1;  // Avoid address 0
+
+        // Update the protocol configuration with the generated address
+        protocol_config.setNodeAddress(node_address_);
     } else {
         node_address_ = configured_address;
     }
 
     LOG_INFO("Node address set to 0x%04X", node_address_);
 
-    // Create the active protocol - passing the shared hardware manager
-    active_protocol_ = protocol_manager_->CreateProtocol(
-        protocol_type, hardware_manager_, node_address_);
+    // Create the active protocol using configuration
+    active_protocol_ = protocol_manager_->CreateProtocolWithConfig(
+        protocol_config, hardware_manager_);
+
     if (!active_protocol_) {
         return Result(LoraMesherErrorCode::kConfigurationError,
-                      "Failed to create protocol of type " +
-                          std::to_string(static_cast<int>(protocol_type)));
+                      "Failed to create protocol with configuration");
     }
 
     LOG_INFO("Protocol initialized successfully");
@@ -184,13 +186,21 @@ protocols::ProtocolType LoraMesher::GetActiveProtocolType() const {
 }
 
 std::shared_ptr<protocols::PingPongProtocol> LoraMesher::GetPingPongProtocol() {
-    if (!active_protocol_ || active_protocol_->GetProtocolType() !=
-                                 protocols::ProtocolType::kPingPong) {
+    if (!protocol_manager_) {
         return nullptr;
     }
 
-    return std::static_pointer_cast<protocols::PingPongProtocol>(
-        active_protocol_);
+    return protocol_manager_->GetProtocolAs<protocols::PingPongProtocol>(
+        protocols::ProtocolType::kPingPong);
+}
+
+std::shared_ptr<protocols::LoRaMeshProtocol> LoraMesher::GetLoRaMeshProtocol() {
+    if (!protocol_manager_) {
+        return nullptr;
+    }
+
+    return protocol_manager_->GetProtocolAs<protocols::LoRaMeshProtocol>(
+        protocols::ProtocolType::kLoraMesh);
 }
 
 void LoraMesher::OnRadioEvent(std::unique_ptr<radio::RadioEvent> event) {

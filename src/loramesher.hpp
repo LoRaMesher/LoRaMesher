@@ -9,6 +9,7 @@
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
+#include "protocols/lora_mesh_protocol.hpp"
 #include "protocols/ping_pong_protocol.hpp"
 #include "protocols/protocol_manager.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
@@ -97,6 +98,13 @@ class LoraMesher {
      * @return std::shared_ptr<protocols::PingPongProtocol> The protocol instance or nullptr
      */
     std::shared_ptr<protocols::PingPongProtocol> GetPingPongProtocol();
+
+    /**
+     * @brief Get the LoRaMesh protocol instance
+     * @return std::shared_ptr<protocols::LoRaMeshProtocol> Shared pointer to the LoRaMesh protocol,
+     *         or nullptr if not available
+     */
+    std::shared_ptr<protocols::LoRaMeshProtocol> GetLoRaMeshProtocol();
 
     /**
      * @brief Get the hardware manager
