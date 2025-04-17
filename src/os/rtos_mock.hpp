@@ -751,6 +751,43 @@ class RTOSMock : public RTOS {
         }
     }
 
+    QueueResult NotifyTask(TaskHandle_t task_handle, uint32_t value) override {
+        // Prevent unused parameter warnings
+        (void)value;
+
+        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::thread::id current_id;
+
+        if (task_handle == nullptr) {
+            current_id = std::this_thread::get_id();
+
+            // Find the task entry for the current thread
+            for (const auto& [thread, info] : tasks_) {
+                if (thread->get_id() == current_id) {
+                    // Set notification flag for this task
+                    tasks_[thread].notification_pending = true;
+
+                    // Wake up the task if it's waiting for a notification
+                    tasks_[thread].notify_cv.notify_one();
+                    return QueueResult::kOk;
+                }
+            }
+        } else {
+            auto* thread = static_cast<std::thread*>(task_handle);
+
+            if (auto it = tasks_.find(thread); it != tasks_.end()) {
+                // Set notification flag for this task
+                it->second.notification_pending = true;
+
+                // Wake up the task if it's waiting for a notification
+                it->second.notify_cv.notify_one();
+                return QueueResult::kOk;
+            }
+        }
+
+        return QueueResult::kError;
+    }
+
     QueueResult WaitForNotify(uint32_t timeout) override {
         LOG_DEBUG("MOCK: Waiting for notification with timeout %u ms", timeout);
         // Find the current task's handle

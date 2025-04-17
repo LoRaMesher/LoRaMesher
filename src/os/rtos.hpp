@@ -159,6 +159,15 @@ class RTOS {
     virtual void NotifyTaskFromISR(TaskHandle_t task_handle) = 0;
 
     /**
+     * @brief Notifies the task
+     * @param task_handle TaskHandle to be notified
+     * @param value Value to send with notification
+     * @return Operation result
+     */
+    virtual QueueResult NotifyTask(TaskHandle_t task_handle,
+                                   uint32_t value) = 0;
+
+    /**
      * @brief Wait for notification given a timeout
      * @param task_handle Timeout
      */

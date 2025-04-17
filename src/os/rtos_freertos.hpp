@@ -205,6 +205,10 @@ class RTOSFreeRTOS : public RTOS {
             portYIELD_FROM_ISR();
     }
 
+    QueueResult NotifyTask(TaskHandle_t task_handle, uint32_t value) override {
+        xTaskNotify(task_handle, value, eSetValueWithOverwrite);
+    }
+
     QueueResult WaitForNotify(uint32_t timeout) override {
         if (timeout == MAX_DELAY) {
             timeout = portMAX_DELAY;
