@@ -193,6 +193,12 @@ class LoraMesherSX1276 : public IRadio {
     uint8_t getPacketLength() override;
 
     /**
+     * @brief Get the time on air for a given length and configuration
+     * @return float Time on air in milliseconds
+     */
+    uint32_t getTimeOnAir(uint8_t length) override;
+
+    /**
      * @brief Read the received data from the radio
      * 
      * @param data Buffer to store received data

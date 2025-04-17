@@ -164,6 +164,14 @@ class RadioLibRadio : public IRadio {
     uint8_t getPower() override;
 
     /**
+     * @brief Get time on air for a given packet length
+     * @param length Length of the packet in bytes
+     * 
+     * @return uint32_t Time on air in milliseconds
+     */
+    uint32_t getTimeOnAir(uint8_t length) override;
+
+    /**
      * @brief Set the radio frequency
      * @param frequency Target frequency in MHz
      * @return Result Success if frequency was set successfully

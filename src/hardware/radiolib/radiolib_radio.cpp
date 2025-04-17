@@ -282,6 +282,15 @@ uint8_t RadioLibRadio::getPower() {
     return current_config_.getPower();
 }
 
+uint32_t RadioLibRadio::getTimeOnAir(uint8_t length) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
+    if (!current_module_) {
+        return 0;
+    }
+
+    return current_module_->getTimeOnAir(length);
+}
+
 Result RadioLibRadio::setFrequency(float frequency) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setFrequency(frequency);

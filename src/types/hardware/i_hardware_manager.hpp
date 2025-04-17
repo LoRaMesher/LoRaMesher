@@ -63,6 +63,14 @@ class IHardwareManager {
       * @return Result Success if message was sent successfully
       */
     virtual Result SendMessage(const BaseMessage& message) = 0;
+
+    /**
+     * @brief Get time on air for a given length and configuration
+     * 
+     * @param length Length of the message in bytes
+     * @return uint32_t Time on air in milliseconds
+     */
+    virtual uint32_t getTimeOnAir(uint8_t length) = 0;
 };
 
 }  // namespace hardware

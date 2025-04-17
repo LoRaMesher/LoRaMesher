@@ -142,6 +142,14 @@ Result HardwareManager::SendMessage(const BaseMessage& message) {
     return Result::Success();
 }
 
+uint32_t HardwareManager::getTimeOnAir(uint8_t length) {
+    if (!is_initialized_) {
+        return 0;
+    }
+
+    return radio_->getTimeOnAir(length);
+}
+
 Result HardwareManager::setPinConfig(const PinConfig& pin_config) {
     if (!pin_config.IsValid()) {
         return Result::Error(LoraMesherErrorCode::kInvalidParameter);

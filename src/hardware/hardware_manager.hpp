@@ -92,6 +92,14 @@ class HardwareManager : public IHardwareManager {
     Result SendMessage(const BaseMessage& message);
 
     /**
+     * @brief Get time on air for a given length and configuration
+     * 
+     * @param length Length of the message in bytes
+     * @return uint32_t Time on air in milliseconds
+     */
+    uint32_t getTimeOnAir(uint8_t length);
+
+    /**
      * @brief Check if HAL is initialized
      * 
      * @return bool True if HAL is initialized

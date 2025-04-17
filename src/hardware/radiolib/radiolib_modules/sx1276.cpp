@@ -234,6 +234,19 @@ uint8_t LoraMesherSX1276::getPacketLength() {
     return radio_module_->getPacketLength();
 }
 
+uint32_t LoraMesherSX1276::getTimeOnAir(uint8_t length) {
+    if (!initialized_) {
+        return 0;
+    }
+
+    RadioLibTime_t time_on_air = radio_module_->getTimeOnAir(length);
+    if (time_on_air == 0) {
+        return 0;
+    }
+
+    return static_cast<uint32_t>(time_on_air);
+}
+
 Result LoraMesherSX1276::readData(uint8_t* data, size_t len) {
     if (!initialized_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);

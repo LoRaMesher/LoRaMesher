@@ -242,6 +242,14 @@ class IRadio {
     virtual uint8_t getPacketLength() = 0;
 
     /**
+     * @brief Get the time on air for a given length and configuration
+     * 
+     * @param length Length of the packet in bytes
+     * @return uint32_t Time on air in milliseconds
+     */
+    virtual uint32_t getTimeOnAir(uint8_t length) = 0;
+
+    /**
      * @brief Read the received data from the radio
      * 
      * @param data Buffer to store received data

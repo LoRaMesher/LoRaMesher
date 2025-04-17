@@ -178,15 +178,18 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param hello_interval Interval between hello messages in milliseconds
      * @param route_timeout Time after which routes are considered stale in milliseconds
      * @param max_hops Maximum number of hops for message routing
+     * @param max_packet_size Maximum packet size for messages
      */
     explicit LoRaMeshProtocolConfig(AddressType node_address = 0,
                                     uint32_t hello_interval = 60000,
                                     uint32_t route_timeout = 180000,
-                                    uint8_t max_hops = 5)
+                                    uint8_t max_hops = 5,
+                                    uint8_t max_packet_size = 255)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),
-          max_hops_(max_hops) {}
+          max_hops_(max_hops),
+          max_packet_size_(max_packet_size) {}
 
     /**
      * @brief Get the protocol type
@@ -240,6 +243,20 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     void setMaxHops(uint8_t hops) { max_hops_ = hops; }
 
     /**
+     * @brief Get the maximum packet size
+     * 
+     * @return uint8_t Maximum packet size
+     */
+    uint8_t getMaxPacketSize() const { return max_packet_size_; }
+
+    /**
+     * @brief Set the maximum packet size
+     * 
+     * @param size Maximum packet size
+     */
+    void setMaxPacketSize(uint8_t size) { max_packet_size_ = size; }
+
+    /**
      * @brief Check if configuration is valid
      * 
      * @return bool True if configuration is valid
@@ -281,6 +298,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint32_t hello_interval_;  ///< Interval between hello messages in ms
     uint32_t route_timeout_;   ///< Time after which routes are considered stale
     uint8_t max_hops_;         ///< Maximum number of hops for routing
+    uint8_t max_packet_size_;  ///< Maximum packet size
 };
 
 /**
