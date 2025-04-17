@@ -6,6 +6,7 @@
 
 #include "types/error_codes/result.hpp"
 #include "types/radio/radio.hpp"
+#include "types/radio/radio_state.hpp"
 
 namespace loramesher {
 
@@ -71,6 +72,13 @@ class IHardwareManager {
      * @return uint32_t Time on air in milliseconds
      */
     virtual uint32_t getTimeOnAir(uint8_t length) = 0;
+
+    /**
+     * @brief Set the current radio state
+     * @param state Desired radio state
+     * @return Result Success if state was changed successfully
+     */
+    virtual Result setState(radio::RadioState state) = 0;
 };
 
 }  // namespace hardware
