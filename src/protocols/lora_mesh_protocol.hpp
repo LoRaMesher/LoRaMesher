@@ -87,15 +87,6 @@ class LoRaMeshProtocol : public Protocol {
     Result Stop() override;
 
     /**
-     * @brief Process a received radio event
-     * 
-     * @param event The radio event to be processed
-     * @return Result Success if message was processed successfully, error details otherwise
-     */
-    Result ProcessReceivedRadioEvent(
-        std::unique_ptr<radio::RadioEvent> event) override;
-
-    /**
      * @brief Send a message using the LoRaMesh protocol
      * 
      * This is a generic message sending method inherited from Protocol.
@@ -113,6 +104,11 @@ class LoRaMeshProtocol : public Protocol {
     void SetRouteUpdateCallback(RouteUpdateCallback callback);
 
    private:
+    /**
+    * @brief Set up a new network
+    */
+    void SetupNewNetwork();
+
     /**
      * @brief Structure representing a routing table entry
      */
@@ -140,27 +136,27 @@ class LoRaMeshProtocol : public Protocol {
      */
     struct SlotAllocation {
         enum class SlotType {
-            TX,         ///< Transmission slot
-            RX,         ///< Reception slot
-            SLEEP,      ///< Sleep slot
-            DISCOVERY,  ///< Discovery slot
-            CONTROL     ///< Control slot
+            TX,            ///< Transmission slot
+            RX,            ///< Reception slot
+            SLEEP,         ///< Sleep slot
+            DISCOVERY_RX,  ///< Discovery slot
+            DISCOVERY_TX,  ///< Discovery slot
+            CONTROL_RX,    ///< Control slot
+            CONTROL_TX,    ///< Control slot
         };
 
-        uint16_t slot_number;     ///< Slot number in the superframe
-        SlotType type;            ///< Type of slot
-        AddressType source;       ///< For RX slots, the expected source
-        AddressType destination;  ///< For TX slots, the target destination
+        uint16_t slot_number;  ///< Slot number in the superframe
+        SlotType type;         ///< Type of slot
     };
 
     /**
      * @brief Structure for a superframe
      */
     struct Superframe {
-        uint16_t total_slots;            ///< Total number of slots
-        uint16_t data_slots;             ///< Number of data slots
-        uint16_t discovery_slots;        ///< Number of discovery slots
-        uint16_t control_slots;          ///< Number of control slots
+        uint16_t total_slots;      ///< Total number of slots
+        uint16_t data_slots;       ///< Number of data slots
+        uint16_t discovery_slots;  ///< Number of discovery slots
+        uint16_t control_slots;    ///< Number of control slots (Routing tables)
         uint32_t slot_duration_ms;       ///< Duration of each slot in ms
         uint32_t superframe_start_time;  ///< Start time of current superframe
     };
@@ -177,29 +173,42 @@ class LoRaMeshProtocol : public Protocol {
         FAULT_RECOVERY     ///< Attempting to recover from fault
     };
 
+    /**
+     * @brief Enum for message types
+     */
+    enum class MessageType {
+        DISCOVERY,        ///< Discovery message
+        SYNC,             ///< Synchronization message
+        ROUTING_TABLE,    ///< Routing table update message
+        SLOT_REQUEST,     ///< Slot request message
+        SLOT_ALLOCATION,  ///< Slot allocation message
+        DATA,             ///< Data message
+        CONTROL           ///< Control message (e.g., ACK)
+    };
+
     // Task handlers
     os::TaskHandle_t radio_task_handle_;  ///< Handle for radio events task
     os::TaskHandle_t
         slot_manager_task_handle_;  ///< Handle for slot management task
-    os::TaskHandle_t protocol_task_handle_;  ///< Handle for protocol logic task
 
     // Queue handlers
-    os::QueueHandle_t radio_event_queue_;     ///< Queue for radio events
-    os::QueueHandle_t protocol_event_queue_;  ///< Queue for protocol events
+    os::QueueHandle_t protocol_event_queue_;  ///< Queue for radio events
 
     // Protocol state
-    ProtocolState state_;          ///< Current protocol state
-    bool stop_tasks_;              ///< Flag to stop all tasks
-    uint16_t current_slot_;        ///< Current slot in superframe
-    bool is_synchronized_;         ///< Whether node is synchronized
-    AddressType network_manager_;  ///< Current network manager
-    uint32_t last_sync_time_;      ///< Last time sync was received
+    ProtocolState state_;            ///< Current protocol state
+    bool stop_tasks_;                ///< Flag to stop all tasks
+    uint16_t current_slot_;          ///< Current slot in superframe
+    bool is_synchronized_;           ///< Whether node is synchronized
+    AddressType network_manager_;    ///< Current network manager
+    uint32_t last_sync_time_;        ///< Last time sync was received
+    Superframe current_superframe_;  ///< Current superframe structure
 
     // Protocol data structures
     std::vector<RoutingEntry> routing_table_;  ///< Routing table
     std::vector<NetworkNode> network_nodes_;   ///< Known network nodes
     std::vector<SlotAllocation> slot_table_;   ///< Slot allocation table
-    Superframe current_superframe_;            ///< Current superframe structure
+    std::unordered_map<MessageType, std::vector<std::unique_ptr<BaseMessage>>>
+        message_queue_;  ///< Queue for incoming messages
 
     // Configuration
     LoRaMeshProtocolConfig config_;  ///< Protocol configuration
@@ -229,44 +238,39 @@ class LoRaMeshProtocol : public Protocol {
     static void ProtocolLogicTaskFunction(void* parameters);
 
     /**
-     * @brief Process a routing update
+     * @brief Logic for discovery phase
      * 
-     * @param source Source address of update
-     * @param data Routing data
-     * @return Result Success if update was processed, error details otherwise
+     * @return Result Success if logic executed successfully, error details otherwise
      */
-    Result ProcessRoutingUpdate(AddressType source,
-                                const std::vector<uint8_t>& data);
+    Result LogicDiscovery();
 
     /**
-     * @brief Process a slot allocation message
+     * @brief Logic for normal operation phase
      * 
-     * @param source Source address of message
-     * @param data Slot allocation data
-     * @return Result Success if allocation was processed, error details otherwise
+     * @return Result Success if logic executed successfully, error details otherwise
      */
-    Result ProcessSlotAllocation(AddressType source,
-                                 const std::vector<uint8_t>& data);
+    Result LogicNormalOperation();
 
     /**
-     * @brief Process a discovery message
+     * @brief Logic for network manager phase
      * 
-     * @param source Source address of message
-     * @param data Discovery data
-     * @return Result Success if discovery was processed, error details otherwise
+     * @return Result Success if logic executed successfully, error details otherwise
      */
-    Result ProcessDiscovery(AddressType source,
-                            const std::vector<uint8_t>& data);
+    Result LogicNetworkManager();
 
     /**
-     * @brief Process a control message
+     * @brief Logic for fault recovery phase
      * 
-     * @param source Source address of message
-     * @param data Control data
-     * @return Result Success if control message was processed, error details otherwise
+     * @return Result Success if logic executed successfully, error details otherwise
      */
-    Result ProcessControlMessage(AddressType source,
-                                 const std::vector<uint8_t>& data);
+    Result LogicFaultRecovery();
+
+    /**
+     * @brief Logic for joining phase
+     * 
+     * @return Result Success if logic executed successfully, error details otherwise
+     */
+    Result LogicJoining();
 
     /**
      * @brief Send a routing table update
@@ -291,11 +295,11 @@ class LoRaMeshProtocol : public Protocol {
     Result SendDiscoveryMessage();
 
     /**
-     * @brief Send a synchronization message
+     * @brief Send a control message
      * 
-     * @return Result Success if sync was sent, error details otherwise
+     * @return Result Success if control was sent, error details otherwise
      */
-    Result SendSyncMessage();
+    Result SendControlMessage();
 
     /**
      * @brief Find the best route to a destination
@@ -319,6 +323,23 @@ class LoRaMeshProtocol : public Protocol {
      */
     uint32_t GetCurrentTime() const;
 
+    /**
+     * @brief Add a message to the queue
+     * 
+     * @param type Message type
+     * @param message Unique pointer to the message
+     */
+    void AddMessageToMessageQueue(MessageType type,
+                                  std::unique_ptr<BaseMessage> message);
+
+    /**
+     * @brief Extract the first message of a specific type from the queue
+     * 
+     * @param type Message type to retrieve
+     * @return std::unique_ptr<BaseMessage> The extracted message, or nullptr if none found
+     */
+    std::unique_ptr<BaseMessage> ExtractMessageQueueOfType(MessageType type);
+
     // Constants
     static constexpr uint32_t RADIO_TASK_STACK_SIZE = 2048;
     static constexpr uint32_t SLOT_MANAGER_TASK_STACK_SIZE = 2048;
@@ -327,8 +348,10 @@ class LoRaMeshProtocol : public Protocol {
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
     static constexpr size_t PROTOCOL_QUEUE_SIZE = 10;
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS = 100;
-    static constexpr uint32_t DEFAULT_SLOT_DURATION_MS = 100;
+    static constexpr uint32_t DEFAULT_SLOT_DURATION_MS = 1000;
+    static constexpr uint32_t DEFAULT_SLOT_EXTRA_DURATION_MS = 100;
     static constexpr uint16_t DEFAULT_SLOTS_PER_SUPERFRAME = 100;
+    static constexpr uint8_t DEFAULT_SUPERFRAMES_TO_CREATE_NEW_NETWORK = 3;
     static constexpr uint8_t MAX_LINK_QUALITY = 100;
 };
 
