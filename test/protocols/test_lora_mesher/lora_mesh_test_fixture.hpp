@@ -1,0 +1,903 @@
+/**
+ * @file lora_mesh_test_fixture.hpp
+ * @brief Complete test fixture for LoRaMesh protocol using real HardwareManager
+ */
+#pragma once
+
+#include <gtest/gtest.h>
+#include <functional>
+#include <map>
+#include <memory>
+#include <vector>
+
+#include "../test/utils/network_testing_impl.hpp"
+#include "hardware/hardware_manager.hpp"
+#include "hardware/radiolib/radiolib_radio.hpp"
+#include "mocks/mock_radio_test_helpers.hpp"
+#include "os/os_port.hpp"
+#include "protocols/lora_mesh_protocol.hpp"
+#include "types/configurations/protocol_configuration.hpp"
+
+using ::testing::A;
+
+namespace loramesher {
+namespace test {
+
+// Forward declaration
+class NetworkConnectedMockRadio;
+
+/**
+ * @brief Test fixture for LoRaMesh protocol tests
+ * 
+ * This fixture sets up a test environment with simulated radio communication
+ * between LoRaMesh protocol instances, using the real HardwareManager but
+ * with mocked radios and a virtual network.
+ */
+class LoRaMeshTestFixture : public ::testing::Test {
+   protected:
+    struct TestNode {
+        std::string name;
+        AddressType address;
+        PinConfig pin_config;
+        RadioConfig radio_config;
+        std::shared_ptr<hardware::HardwareManager> hardware_manager;
+        std::unique_ptr<protocols::LoRaMeshProtocol> protocol;
+        std::vector<BaseMessage> received_messages;
+        radio::test::MockRadio* mock_radio;
+    };
+
+    VirtualNetwork virtual_network_;
+    VirtualTimeController time_controller_;
+    std::vector<std::shared_ptr<TestNode>> nodes_;
+    std::map<AddressType, std::vector<BaseMessage>> message_log_;
+
+    LoRaMeshTestFixture() : time_controller_(virtual_network_) {}
+
+    void SetUp() override {
+        // Nothing else needed here as we initialize in the constructor
+    }
+
+    void TearDown() override {
+        // Stop and clean up all nodes
+        for (auto& node : nodes_) {
+            if (node->protocol) {
+                node->protocol.reset();
+            }
+            node->hardware_manager.reset();
+        }
+        nodes_.clear();
+        message_log_.clear();
+    }
+
+    /**
+     * @brief Create a test node with the given configuration
+     * 
+     * @param name Node name for debugging
+     * @param address Node address
+     * @param pin_config Pin configuration (default: unique pins based on index)
+     * @param radio_config Radio configuration (default: mock radio)
+     * @return TestNode& Reference to the created node
+     */
+    TestNode& CreateNode(const std::string& name, AddressType address,
+                         const PinConfig& pin_config = PinConfig(),
+                         const RadioConfig& radio_config = RadioConfig()) {
+        // Create a node with unique address and pin configuration
+        auto node = std::make_shared<TestNode>();
+        node->name = name;
+        node->address = address;
+
+        // Use provided pin config or create a unique one
+        if (pin_config.getNss() == 0) {
+            // Create a unique pin configuration
+            PinConfig unique_pins;
+            int index = nodes_.size();
+            unique_pins.setNss(10 + index * 10);    // 10, 20, 30, ...
+            unique_pins.setDio0(11 + index * 10);   // 11, 21, 31, ...
+            unique_pins.setReset(12 + index * 10);  // 12, 22, 32, ...
+            unique_pins.setDio1(13 + index * 10);   // 13, 23, 33, ...
+            node->pin_config = unique_pins;
+        } else {
+            node->pin_config = pin_config;
+        }
+
+        // Use provided radio config or create one with MockRadio type
+        // TODO: This is needed?
+        // if (radio_config.getRadioType() == RadioType::kUnknown) {
+        //     RadioConfig mock_config;
+        //     mock_config.setRadioType(RadioType::kMockRadio);
+        //     mock_config.setFrequency(868.0f);
+        //     mock_config.setSpreadingFactor(7);
+        //     mock_config.setBandwidth(125.0f);
+        //     mock_config.setCodingRate(5);  // 4/5
+        //     mock_config.setPower(17);      // 17 dBm
+        //     mock_config.setSyncWord(0x12);
+        //     mock_config.setCRC(true);
+        //     mock_config.setPreambleLength(8);
+        //     node->radio_config = mock_config;
+        // } else {
+        node->radio_config = radio_config;
+        // }
+
+        // Create and initialize the hardware manager with our pin and radio config
+        node->hardware_manager = std::make_shared<hardware::HardwareManager>(
+            node->pin_config, node->radio_config);
+
+        Result result = node->hardware_manager->Initialize();
+        if (!result) {
+            std::cerr << "Failed to initialize hardware manager for " << name
+                      << ": " << result.GetErrorMessage() << std::endl;
+            // Create an empty node as failure
+            auto empty_node = std::make_shared<TestNode>();
+            nodes_.push_back(empty_node);
+            return *empty_node;
+        }
+
+        // Get the mock radio and connect it to our virtual network
+        auto* radio_ptr = dynamic_cast<radio::RadioLibRadio*>(
+            node->hardware_manager->getRadio());
+        if (!radio_ptr) {
+            std::cerr << "Failed to get RadioLibRadio instance for " << name
+                      << std::endl;
+            auto empty_node = std::make_shared<TestNode>();
+            nodes_.push_back(empty_node);
+            return *empty_node;
+        }
+
+        // Get the mock radio from RadioLibRadio
+        node->mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
+
+        // Connect the mock radio to our virtual network
+        ConnectRadioToNetwork(*node->mock_radio, node->address);
+
+        // Create the protocol instance
+        node->protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+
+        // Override time function for protocol to use our virtual time
+        InjectTimeFunction(*node->protocol, time_controller_.GetTimeProvider());
+
+        // Initialize the protocol with our hardware manager
+        result = node->protocol->Init(node->hardware_manager, address);
+        if (!result) {
+            std::cerr << "Failed to initialize protocol for " << name << ": "
+                      << result.GetErrorMessage() << std::endl;
+            // Return an empty node as failure
+            auto empty_node = std::make_shared<TestNode>();
+            nodes_.push_back(empty_node);
+            return *empty_node;
+        }
+
+        // Configure the protocol with default configuration
+        LoRaMeshProtocolConfig config(address);
+        result = node->protocol->Configure(config);
+        if (!result) {
+            std::cerr << "Failed to configure protocol for " << name << ": "
+                      << result.GetErrorMessage() << std::endl;
+        }
+
+        // Set up message reception tracking
+        SetupMessageTracking(*node);
+
+        // Add the node to our collection and return a reference to it
+        nodes_.push_back(node);
+        return *node;
+    }
+
+    /**
+     * @brief Connect a mock radio to the virtual network
+     * 
+     * @param mock_radio Mock radio to connect
+     * @param address Node address to use
+     */
+    void ConnectRadioToNetwork(radio::test::MockRadio& mock_radio,
+                               AddressType address) {
+        // Register the node with the virtual network
+        virtual_network_.RegisterNode(
+            address,
+            new RadioToNetworkAdapter(mock_radio, virtual_network_, address));
+
+        // Set up expectations for the mock radio
+        EXPECT_CALL(mock_radio, Send(testing::_, testing::_))
+            .WillRepeatedly(testing::Invoke(
+                [this, address](const uint8_t* data, size_t len) -> Result {
+                    // Convert data to vector for convenience
+                    std::vector<uint8_t> packet(data, data + len);
+
+                    // Transmit via the virtual network
+                    virtual_network_.TransmitMessage(address, packet);
+
+                    return Result::Success();
+                }));
+    }
+
+    /**
+     * @brief Adapter class to connect MockRadio to VirtualNetwork
+     */
+    class RadioToNetworkAdapter : public IRadioReceiver {
+       public:
+        RadioToNetworkAdapter(radio::test::MockRadio& radio,
+                              VirtualNetwork& network, AddressType address)
+            : radio_(radio), network_(network), address_(address) {
+            // Set up original callback saving
+            EXPECT_CALL(radio_, setActionReceive(A<void (*)(void)>()))
+                .WillRepeatedly(
+                    testing::DoAll(testing::SaveArg<0>(&original_callback_),
+                                   testing::Return(Result::Success())));
+
+            // Set up packet data storage
+            EXPECT_CALL(radio_, getPacketLength())
+                .WillRepeatedly(testing::Invoke(
+                    [this]() -> size_t { return received_data_.size(); }));
+
+            EXPECT_CALL(radio_, getRSSI())
+                .WillRepeatedly(testing::Return(rssi_));
+
+            EXPECT_CALL(radio_, getSNR()).WillRepeatedly(testing::Return(snr_));
+
+            EXPECT_CALL(radio_, readData(testing::_, testing::_))
+                .WillRepeatedly(testing::Invoke(
+                    [this](uint8_t* data, size_t len) -> Result {
+                        if (received_data_.empty()) {
+                            return Result(LoraMesherErrorCode::kHardwareError,
+                                          "No data received");
+                        }
+
+                        if (len < received_data_.size()) {
+                            return Result(LoraMesherErrorCode::kBufferOverflow,
+                                          "Buffer too small");
+                        }
+
+                        std::copy(received_data_.begin(), received_data_.end(),
+                                  data);
+                        return Result::Success();
+                    }));
+            EXPECT_CALL(radio_, getTimeOnAir(testing::_))
+                .WillRepeatedly(
+                    testing::Invoke([this](uint8_t length) -> uint32_t {
+                        return length * 100;  // TODO: Mock time on air
+                    }));                      // Default value
+            // EXPECT_CALL(mock_radio, ClearActionReceive())
+            //     .WillRepeatedly(
+            //         DoAll(Invoke([this]() { this->saved_callback_ = nullptr; }),
+            //               Return(Result::Success())));
+            EXPECT_CALL(radio_, Sleep())
+                .WillRepeatedly(testing::Return(Result::Success()));
+
+            EXPECT_CALL(radio_, StartReceive())
+                .WillRepeatedly(testing::Return(Result::Success()));
+            EXPECT_CALL(radio_, Begin(testing::_))
+                .WillOnce(testing::Return(Result::Success()));
+        }
+
+        ~RadioToNetworkAdapter() override { network_.UnregisterNode(address_); }
+
+        void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
+                            int8_t snr) override {
+            // Store parameters for the mock radio to use
+            received_data_ = data;
+            rssi_ = rssi;
+            snr_ = snr;
+
+            // Call the original callback if set
+            if (original_callback_) {
+                original_callback_();
+            }
+        }
+
+       private:
+        radio::test::MockRadio& radio_;
+        VirtualNetwork& network_;
+        AddressType address_;
+        std::vector<uint8_t> received_data_;
+        int8_t rssi_{-65};
+        int8_t snr_{8};
+        void (*original_callback_)() = nullptr;
+    };
+
+    /**
+     * @brief Start a node
+     * 
+     * @param node Node to start
+     * @return Result Success if started successfully, error details otherwise
+     */
+    Result StartNode(TestNode& node) {
+        if (!node.protocol) {
+            return Result(LoraMesherErrorCode::kInvalidState,
+                          "Protocol not initialized");
+        }
+        return node.protocol->Start();
+    }
+
+    /**
+     * @brief Stop a node
+     * 
+     * @param node Node to stop
+     * @return Result Success if stopped successfully, error details otherwise
+     */
+    Result StopNode(TestNode& node) {
+        if (!node.protocol) {
+            return Result(LoraMesherErrorCode::kInvalidState,
+                          "Protocol not initialized");
+        }
+        return node.protocol->Stop();
+    }
+
+    /**
+ * @brief Waits for a condition to be met while advancing simulated time
+ *
+ * This function periodically advances the simulation time and checks if a
+ * specified condition is met. It continues checking until either the condition
+ * is satisfied or a timeout occurs.
+ *
+ * @param time_ms Total time to advance in milliseconds
+ * @param timeout_ms Maximum time to wait for the condition in milliseconds (0 = no timeout)
+ * @param check_interval_ms Interval between condition checks in milliseconds (constant)
+ * @param real_sleep_ms Real sleep time between iterations in milliseconds
+ * @param condition Function returning true when the wait condition is met (nullptr = no condition)
+ * @return bool True if the condition was met, false if timeout occurred
+ */
+    bool AdvanceTime(uint32_t time_ms, uint32_t timeout_ms = 0,
+                     uint32_t check_interval_ms = 10,
+                     uint32_t real_sleep_ms = 10,
+                     std::function<bool()> condition = nullptr) {
+        // If no condition was provided, nothing to wait for
+        if (!condition) {
+            time_controller_.AdvanceTime(time_ms);
+
+            if (real_sleep_ms > 0) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(real_sleep_ms));
+            }
+
+            return true;
+        }
+
+        // Calculate the time step for each check iteration
+        const uint32_t kTimeStepMs =
+            (check_interval_ms > 0) ? check_interval_ms : 1;
+
+        // Calculate how much simulated time to advance in each step
+        const uint32_t kSimTimePerStepMs =
+            (time_ms > 0) ? std::max(time_ms / (timeout_ms / kTimeStepMs),
+                                     static_cast<uint32_t>(1))
+                          : 0;
+
+        uint32_t elapsed_ms = 0;
+        const uint32_t kEffectiveTimeoutMs =
+            (timeout_ms > 0) ? timeout_ms : time_ms;
+
+        // Check the condition immediately before starting the loop
+        if (condition()) {
+            return true;
+        }
+
+        // Continue checking until timeout
+        while (elapsed_ms < kEffectiveTimeoutMs) {
+            // Advance simulation time
+            time_controller_.AdvanceTime(kSimTimePerStepMs);
+            elapsed_ms += kTimeStepMs;
+
+            // Real sleep to allow tasks to execute
+            if (real_sleep_ms > 0) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(real_sleep_ms));
+            }
+
+            // Check if condition is met
+            if (condition()) {
+                return true;
+            }
+        }
+
+        return false;  // Timeout occurred
+    }
+
+    /**
+     * @brief Get the discovery timeout period used by the protocol
+     * 
+     * @return Discovery timeout in milliseconds
+     */
+    uint32_t GetDiscoveryTimeout() const {
+        return protocols::LoRaMeshProtocol::GetDiscoveryTimeout();
+    }
+
+    /**
+     * @brief Get the slot duration used by the protocol
+     * 
+     * @return Slot duration in milliseconds
+     */
+    uint32_t GetSlotDuration() const {
+#ifdef DEBUG
+        return protocols::LoRaMeshProtocol::DEFAULT_SLOT_DURATION_MS;
+#else
+#warning "Slot duration is not set in release mode"
+        return 0;
+#endif
+    }
+
+    /**
+     * @brief Set link status between two nodes
+     * 
+     * @param node1 First node
+     * @param node2 Second node
+     * @param active Whether the link should be active
+     */
+    void SetLinkStatus(const TestNode& node1, const TestNode& node2,
+                       bool active) {
+        virtual_network_.SetLinkStatus(node1.address, node2.address, active);
+    }
+
+    /**
+     * @brief Set message delay between two nodes
+     * 
+     * @param node1 First node
+     * @param node2 Second node
+     * @param delay_ms Delay in milliseconds
+     */
+    void SetMessageDelay(const TestNode& node1, const TestNode& node2,
+                         uint32_t delay_ms) {
+        virtual_network_.SetMessageDelay(node1.address, node2.address,
+                                         delay_ms);
+    }
+
+    /**
+     * @brief Set packet loss rate for the entire network
+     * 
+     * @param rate Loss rate (0.0 = no loss, 1.0 = all packets lost)
+     */
+    void SetPacketLossRate(float rate) {
+        virtual_network_.SetPacketLossRate(rate);
+    }
+
+    /**
+     * @brief Set up message tracking for a node
+     * 
+     * This sets up a callback to track messages received by the node.
+     * 
+     * @param node Node to set up message tracking for
+     */
+    void SetupMessageTracking(TestNode& node) {
+        // Set up message callback to track received messages
+        node.protocol->SetMessageReceivedCallback(
+            [this, address = node.address,
+             name = node.name](const BaseMessage& message) {
+                // Find the node in our collection
+                for (auto& node_ptr : nodes_) {
+                    if (node_ptr->address == address) {
+                        // Store the message in the node's received messages
+                        node_ptr->received_messages.push_back(message);
+                        break;
+                    }
+                }
+
+                // Also store in the global message log
+                message_log_[address].push_back(message);
+
+                // Log for debugging
+                std::cout << name << " received message from " << std::hex
+                          << message.GetSource() << " to "
+                          << message.GetDestination()
+                          << " type: " << static_cast<int>(message.GetType())
+                          << std::dec << std::endl;
+            });
+    }
+
+    /**
+     * @brief Send a message from one node to another
+     * 
+     * @param from Source node
+     * @param to Destination node
+     * @param type Message type
+     * @param payload Message payload
+     * @return Result Success if message was sent successfully, error details otherwise
+     */
+    Result SendMessage(TestNode& from, TestNode& to, MessageType type,
+                       const std::vector<uint8_t>& payload) {
+        auto message_opt =
+            BaseMessage::Create(to.address, from.address, type, payload);
+        if (!message_opt.has_value()) {
+            return Result(LoraMesherErrorCode::kSerializationError,
+                          "Failed to create message");
+        }
+
+        return from.protocol->SendMessage(message_opt.value());
+    }
+
+    /**
+     * @brief Check if a node has received a message from another node
+     * 
+     * @param node Node to check
+     * @param from Source node address
+     * @param type Message type (default: any type)
+     * @return bool True if message was received, false otherwise
+     */
+    bool HasReceivedMessageFrom(const TestNode& node, AddressType from,
+                                MessageType type = MessageType::ANY) {
+        for (const auto& msg : node.received_messages) {
+            if (msg.GetSource() == from &&
+                (type == MessageType::ANY || msg.GetType() == type)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @brief Get messages received by a node
+     * 
+     * @param node Node to get messages for
+     * @param from Source node address (default: any source)
+     * @param type Message type (default: any type)
+     * @return std::vector<BaseMessage> Matching messages
+     */
+    std::vector<BaseMessage> GetReceivedMessages(
+        const TestNode& node, AddressType from = 0,
+        MessageType type = MessageType::ANY) {
+        std::vector<BaseMessage> result;
+
+        for (const auto& msg : node.received_messages) {
+            if ((from == 0 || msg.GetSource() == from) &&
+                (type == MessageType::ANY || msg.GetType() == type)) {
+                result.push_back(msg);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * @brief Generate a fully connected mesh topology
+     * 
+     * @param num_nodes Number of nodes to create
+     * @param base_address Base address for nodes (default: 0x1000)
+     * @param name_prefix Prefix for node names (default: "Node")
+     * @return std::vector<TestNode*> Pointers to the created nodes
+     */
+    std::vector<TestNode*> GenerateFullMeshTopology(
+        int num_nodes, AddressType base_address = 0x1000,
+        const std::string& name_prefix = "Node") {
+        std::vector<TestNode*> result;
+
+        // Create nodes with unique addresses and pin configurations
+        for (int i = 0; i < num_nodes; i++) {
+            std::string name = name_prefix + std::to_string(i + 1);
+            AddressType address = base_address + i;
+
+            // Create the node with default unique pin configuration
+            TestNode& node_ref = CreateNode(name, address);
+
+            // Find the pointer to the created node
+            for (auto& node_ptr : nodes_) {
+                if (node_ptr->address == address) {
+                    result.push_back(node_ptr.get());
+                    break;
+                }
+            }
+        }
+
+        // Connect all nodes to each other (fully connected mesh)
+        for (size_t i = 0; i < result.size(); i++) {
+            for (size_t j = i + 1; j < result.size(); j++) {
+                SetLinkStatus(*result[i], *result[j], true);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * @brief Generate a line topology where each node only connects to its neighbors
+     * 
+     * @param num_nodes Number of nodes to create
+     * @param base_address Base address for nodes (default: 0x1000)
+     * @param name_prefix Prefix for node names (default: "Node")
+     * @return std::vector<TestNode*> Pointers to the created nodes
+     */
+    std::vector<TestNode*> GenerateLineTopology(
+        int num_nodes, AddressType base_address = 0x1000,
+        const std::string& name_prefix = "Node") {
+        std::vector<TestNode*> result;
+
+        // Create nodes with unique addresses and pin configurations
+        for (int i = 0; i < num_nodes; i++) {
+            std::string name = name_prefix + std::to_string(i + 1);
+            AddressType address = base_address + i;
+
+            // Create the node with default unique pin configuration
+            TestNode& node_ref = CreateNode(name, address);
+
+            // Find the pointer to the created node
+            for (auto& node_ptr : nodes_) {
+                if (node_ptr->address == address) {
+                    result.push_back(node_ptr.get());
+                    break;
+                }
+            }
+        }
+
+        // First disable all connections
+        for (size_t i = 0; i < result.size(); i++) {
+            for (size_t j = 0; j < result.size(); j++) {
+                if (i != j) {
+                    SetLinkStatus(*result[i], *result[j], false);
+                }
+            }
+        }
+
+        // Connect nodes in a line (each node connected only to neighbors)
+        for (size_t i = 0; i < result.size() - 1; i++) {
+            SetLinkStatus(*result[i], *result[i + 1], true);
+        }
+
+        return result;
+    }
+
+    /**
+     * @brief Generate a star topology with one central node connected to all others
+     * 
+     * @param num_nodes Total number of nodes including the central node
+     * @param central_node_index Index of the central node (default: 0)
+     * @param base_address Base address for nodes (default: 0x1000)
+     * @param name_prefix Prefix for node names (default: "Node")
+     * @return std::vector<TestNode*> Pointers to the created nodes
+     */
+    std::vector<TestNode*> GenerateStarTopology(
+        int num_nodes, int central_node_index = 0,
+        AddressType base_address = 0x1000,
+        const std::string& name_prefix = "Node") {
+        std::vector<TestNode*> result;
+
+        // Create nodes with unique addresses and pin configurations
+        for (int i = 0; i < num_nodes; i++) {
+            std::string name = name_prefix + std::to_string(i + 1);
+            AddressType address = base_address + i;
+
+            // Create the node with default unique pin configuration
+            TestNode& node_ref = CreateNode(name, address);
+
+            // Find the pointer to the created node
+            for (auto& node_ptr : nodes_) {
+                if (node_ptr->address == address) {
+                    result.push_back(node_ptr.get());
+                    break;
+                }
+            }
+        }
+
+        // First disable all connections
+        for (size_t i = 0; i < result.size(); i++) {
+            for (size_t j = 0; j < result.size(); j++) {
+                if (i != j) {
+                    SetLinkStatus(*result[i], *result[j], false);
+                }
+            }
+        }
+
+        // Connect central node to all others
+        for (size_t i = 0; i < result.size(); i++) {
+            if (i != central_node_index) {
+                SetLinkStatus(*result[central_node_index], *result[i], true);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * @brief Create a partitioned network with two separated groups
+     * 
+     * @param group1_size Number of nodes in first group
+     * @param group2_size Number of nodes in second group
+     * @param group1_base_address Base address for group 1 (default: 0x1000)
+     * @param group2_base_address Base address for group 2 (default: 0x2000)
+     * @return std::pair<std::vector<TestNode*>, std::vector<TestNode*>> Pointers to nodes in each group
+     */
+    std::pair<std::vector<TestNode*>, std::vector<TestNode*>>
+    CreatePartitionedNetwork(int group1_size, int group2_size,
+                             AddressType group1_base_address = 0x1000,
+                             AddressType group2_base_address = 0x2000) {
+        std::vector<TestNode*> group1;
+        std::vector<TestNode*> group2;
+
+        // Create first group
+        for (int i = 0; i < group1_size; i++) {
+            std::string name = "Group1_Node" + std::to_string(i + 1);
+            AddressType address = group1_base_address + i;
+
+            // Create the node with default unique pin configuration
+            TestNode& node_ref = CreateNode(name, address);
+
+            // Find the pointer to the created node
+            for (auto& node_ptr : nodes_) {
+                if (node_ptr->address == address) {
+                    group1.push_back(node_ptr.get());
+                    break;
+                }
+            }
+        }
+
+        // Create second group
+        for (int i = 0; i < group2_size; i++) {
+            std::string name = "Group2_Node" + std::to_string(i + 1);
+            AddressType address = group2_base_address + i;
+
+            // Create the node with default unique pin configuration
+            TestNode& node_ref = CreateNode(name, address);
+
+            // Find the pointer to the created node
+            for (auto& node_ptr : nodes_) {
+                if (node_ptr->address == address) {
+                    group2.push_back(node_ptr.get());
+                    break;
+                }
+            }
+        }
+
+        // Connect nodes within each group
+        for (size_t i = 0; i < group1.size(); i++) {
+            for (size_t j = i + 1; j < group1.size(); j++) {
+                SetLinkStatus(*group1[i], *group1[j], true);
+            }
+        }
+
+        for (size_t i = 0; i < group2.size(); i++) {
+            for (size_t j = i + 1; j < group2.size(); j++) {
+                SetLinkStatus(*group2[i], *group2[j], true);
+            }
+        }
+
+        // Ensure no connections between groups
+        for (auto* node1 : group1) {
+            for (auto* node2 : group2) {
+                SetLinkStatus(*node1, *node2, false);
+            }
+        }
+
+        return {group1, group2};
+    }
+
+    /**
+     * @brief Create a bridge connection between two partitioned groups
+     * 
+     * @param group1 First group of nodes
+     * @param group2 Second group of nodes
+     * @param bridge_node1_index Index of node in first group to connect
+     * @param bridge_node2_index Index of node in second group to connect
+     */
+    void CreateBridgeBetweenGroups(const std::vector<TestNode*>& group1,
+                                   const std::vector<TestNode*>& group2,
+                                   size_t bridge_node1_index = 0,
+                                   size_t bridge_node2_index = 0) {
+        if (bridge_node1_index >= group1.size() ||
+            bridge_node2_index >= group2.size()) {
+            std::cerr << "Invalid bridge node indices" << std::endl;
+            return;
+        }
+
+        // Create a link between the bridge nodes
+        SetLinkStatus(*group1[bridge_node1_index], *group2[bridge_node2_index],
+                      true);
+    }
+
+    /**
+     * @brief Find the network manager node in a collection of nodes
+     * 
+     * @param nodes Collection of nodes to search
+     * @return TestNode* Pointer to the network manager node, or nullptr if none found
+     */
+    TestNode* FindNetworkManager(const std::vector<TestNode*>& nodes) {
+        for (auto* node : nodes) {
+            if (node->protocol->GetState() ==
+                protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+                return node;
+            }
+        }
+        return nullptr;
+    }
+
+    /**
+     * @brief Wait for network formation to complete
+     * 
+     * This advances time until the network has formed with the expected
+     * number of nodes in NORMAL_OPERATION state.
+     * 
+     * @param nodes Nodes to check
+     * @param expected_normal_nodes Number of nodes expected to be in NORMAL_OPERATION state
+     * @param timeout_ms Maximum time to wait (default: 2x discovery timeout)
+     * @param check_interval_ms Interval between checks (default: 100ms)
+     * @return bool True if network formed as expected, false otherwise
+     */
+    bool WaitForNetworkFormation(const std::vector<TestNode*>& nodes,
+                                 int expected_normal_nodes,
+                                 uint32_t timeout_ms = 0,
+                                 uint32_t check_interval_ms = 100) {
+        if (timeout_ms == 0) {
+            timeout_ms = GetDiscoveryTimeout() * 2;
+        }
+
+        uint32_t elapsed = 0;
+
+        while (elapsed < timeout_ms) {
+            // Count nodes in each state
+            int network_manager_count = 0;
+            int normal_operation_count = 0;
+
+            for (auto* node : nodes) {
+                auto state = node->protocol->GetState();
+                if (state == protocols::LoRaMeshProtocol::ProtocolState::
+                                 NETWORK_MANAGER) {
+                    network_manager_count++;
+                } else if (state == protocols::LoRaMeshProtocol::ProtocolState::
+                                        NORMAL_OPERATION) {
+                    normal_operation_count++;
+                }
+            }
+
+            // Check if network has formed as expected
+            if (network_manager_count == 1 &&
+                normal_operation_count == expected_normal_nodes) {
+                return true;
+            }
+
+            // Advance time and try again
+            AdvanceTime(check_interval_ms);
+            elapsed += check_interval_ms;
+        }
+
+        return false;
+    }
+
+    /**
+     * @brief Simulate node failure by disconnecting it from the network
+     * 
+     * @param node Node to disconnect
+     */
+    void SimulateNodeFailure(TestNode& node) {
+        // Disconnect node from all others
+        for (auto& other_node : nodes_) {
+            if (other_node->address != node.address) {
+                SetLinkStatus(node, *(other_node.get()), false);
+            }
+        }
+    }
+
+    /**
+     * @brief Simulate node recovery by reconnecting it to the network
+     * 
+     * @param node Node to reconnect
+     * @param connect_to_all Whether to connect to all nodes or just neighbors
+     */
+    void SimulateNodeRecovery(TestNode& node, bool connect_to_all = true) {
+        if (connect_to_all) {
+            // Connect node to all others
+            for (auto& other_node : nodes_) {
+                if (other_node->address != node.address) {
+                    SetLinkStatus(node, *(other_node.get()), true);
+                }
+            }
+        } else {
+            // Find the node index in our nodes vector
+            int node_index = -1;
+            for (size_t i = 0; i < nodes_.size(); i++) {
+                if (nodes_[i]->address == node.address) {
+                    node_index = static_cast<int>(i);
+                    break;
+                }
+            }
+
+            if (node_index == -1) {
+                return;
+            }
+
+            // Connect only to adjacent nodes if they exist
+            if (node_index > 0) {
+                SetLinkStatus(node, *(nodes_[node_index - 1].get()), true);
+            }
+            if (node_index < static_cast<int>(nodes_.size()) - 1) {
+                SetLinkStatus(node, *(nodes_[node_index + 1].get()), true);
+            }
+        }
+    }
+};
+
+}  // namespace test
+}  // namespace loramesher

@@ -164,10 +164,6 @@ Result LoRaMeshProtocol::Start() {
         return hw_result;
     }
 
-    // Update state to discovery
-    state_ = ProtocolState::DISCOVERY;
-    current_superframe_.superframe_start_time = GetCurrentTime();
-
     // TODO: Send initial discovery messages to find network
 
     return Result::Success();
@@ -212,6 +208,11 @@ void LoRaMeshProtocol::ProtocolLogicTaskFunction(void* parameters) {
 
     Result result = Result::Success();
 
+    // Update state to discovery
+    protocol->state_ = ProtocolState::DISCOVERY;
+    protocol->current_superframe_.superframe_start_time =
+        protocol->GetCurrentTime();
+
     // Task loop
     while (!protocol->stop_tasks_ && !rtos.ShouldStopOrPause()) {
         // Handle protocol state machine
@@ -239,6 +240,8 @@ void LoRaMeshProtocol::ProtocolLogicTaskFunction(void* parameters) {
                 // Handle network manager state
                 break;
             default:
+                LOG_ERROR("Invalid protocol state: %d",
+                          static_cast<int>(protocol->state_));
                 // Invalid state, log error and exit
                 protocol->Stop();
                 return;
@@ -249,6 +252,13 @@ void LoRaMeshProtocol::ProtocolLogicTaskFunction(void* parameters) {
 
     // Task cleanup
     rtos.DeleteTask(nullptr);  // Delete self
+}
+
+Result LoRaMeshProtocol::ProcessReceivedRadioEvent(
+    std::unique_ptr<radio::RadioEvent> event) {
+    // TODO: Implement
+    return Result(LoraMesherErrorCode::kNotImplemented,
+                  "ProcessReceivedRadioEvent not implemented yet");
 }
 
 void LoRaMeshProtocol::SlotManagerTaskFunction(void* parameters) {
@@ -325,20 +335,17 @@ void LoRaMeshProtocol::SetRouteUpdateCallback(RouteUpdateCallback callback) {
 }
 
 Result LoRaMeshProtocol::LogicDiscovery() {
-    uint32_t superframe_duration_ms =
-        current_superframe_.total_slots * current_superframe_.slot_duration_ms;
-
     // Set radio to receive mode
     Result result = hardware_->setState(radio::RadioState::kReceive);
     if (!result) {
         return result;
     }
 
-    LOG_INFO("Starting discovery phase, listening for %d superframes",
-             DEFAULT_SUPERFRAMES_TO_CREATE_NEW_NETWORK);
-
     uint32_t discovery_timeout_ms =
-        DEFAULT_SUPERFRAMES_TO_CREATE_NEW_NETWORK * superframe_duration_ms;
+        GetDiscoveryTimeout();  // Get discovery timeout from config
+
+    LOG_INFO("Starting discovery phase, listening for %d superframes (%d ms)",
+             DEFAULT_SUPERFRAMES_TO_CREATE_NEW_NETWORK, discovery_timeout_ms);
 
     auto& rtos = GetRTOS();
 
@@ -379,6 +386,11 @@ Result LoRaMeshProtocol::LogicDiscovery() {
 
             delete event_ptr;
         }
+    }
+
+    if (stop_tasks_) {
+        LOG_INFO("Discovery phase stopped by user request");
+        return Result::Success();
     }
 
     // No message received, check for timeout
@@ -432,6 +444,11 @@ void LoRaMeshProtocol::SetupNewNetwork() {
 
 //     return Result::Success();
 // }
+
+Result LoRaMeshProtocol::LogicJoining() {
+    return Result(LoraMesherErrorCode::kNotImplemented,
+                  "TODO: LogicJoining not implemented yet");
+}
 
 Result LoRaMeshProtocol::SendRoutingTableUpdate() {
     // TODO: Implement routing table update sending
@@ -568,7 +585,12 @@ void LoRaMeshProtocol::HandleSlotTransition(uint16_t slot_number) {
 }
 
 uint32_t LoRaMeshProtocol::GetCurrentTime() const {
-    // Use system time for timestamps
+#ifdef DEBUG
+    if (get_time_function_) {
+        return get_time_function_();
+    }
+#endif
+    // Original implementation
     return static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())

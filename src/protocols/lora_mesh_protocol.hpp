@@ -103,12 +103,53 @@ class LoRaMeshProtocol : public Protocol {
      */
     void SetRouteUpdateCallback(RouteUpdateCallback callback);
 
-   private:
+    /**
+     * @brief Enum for protocol state
+     */
+    enum class ProtocolState {
+        INITIALIZING,      ///< Protocol is initializing
+        DISCOVERY,         ///< Looking for existing network
+        JOINING,           ///< Attempting to join network
+        NORMAL_OPERATION,  ///< Normal network operation
+        NETWORK_MANAGER,   ///< Acting as network manager
+        FAULT_RECOVERY     ///< Attempting to recover from fault
+    };
+
+    ProtocolState GetState() const { return state_; }
+
+    bool IsSynchronized() const { return is_synchronized_; }
+
+    AddressType GetNetworkManager() const { return network_manager_; }
+
+    uint16_t GetCurrentSlot() const { return current_slot_; }
+
+    uint32_t GetSlotDurationMs() const {
+        return current_superframe_.slot_duration_ms;
+    }
+
+    /**
+     * @brief Get the discovery timeout period used by the protocol
+     * 
+     * @return Discovery timeout in milliseconds
+     */
+    static const uint32_t GetDiscoveryTimeout() {
+        return DEFAULT_SUPERFRAMES_TO_CREATE_NEW_NETWORK *
+               DEFAULT_SLOTS_PER_SUPERFRAME * DEFAULT_SLOT_DURATION_MS;
+    }
+
+#ifdef DEBUG
+    void SetTimeFunction(std::function<uint32_t()> time_function) {
+        get_time_function_ = time_function;
+    }
+#endif
+
+   protected:
     /**
     * @brief Set up a new network
     */
     void SetupNewNetwork();
 
+   private:
     /**
      * @brief Structure representing a routing table entry
      */
@@ -162,18 +203,6 @@ class LoRaMeshProtocol : public Protocol {
     };
 
     /**
-     * @brief Enum for protocol state
-     */
-    enum class ProtocolState {
-        INITIALIZING,      ///< Protocol is initializing
-        DISCOVERY,         ///< Looking for existing network
-        JOINING,           ///< Attempting to join network
-        NORMAL_OPERATION,  ///< Normal network operation
-        NETWORK_MANAGER,   ///< Acting as network manager
-        FAULT_RECOVERY     ///< Attempting to recover from fault
-    };
-
-    /**
      * @brief Enum for message types
      */
     enum class MessageType {
@@ -207,14 +236,27 @@ class LoRaMeshProtocol : public Protocol {
     std::vector<RoutingEntry> routing_table_;  ///< Routing table
     std::vector<NetworkNode> network_nodes_;   ///< Known network nodes
     std::vector<SlotAllocation> slot_table_;   ///< Slot allocation table
-    std::unordered_map<MessageType, std::vector<std::unique_ptr<BaseMessage>>>
+    std::unordered_map<MessageType,
+                       std::vector<std::unique_ptr<BaseMessage>>>
         message_queue_;  ///< Queue for incoming messages
 
     // Configuration
     LoRaMeshProtocolConfig config_;  ///< Protocol configuration
+#ifdef DEBUG
+    std::function<uint32_t()>
+        get_time_function_;  ///< Function to get current time (for testing)
+#endif
 
     // Callbacks
     RouteUpdateCallback route_update_callback_;  ///< Route update callback
+
+    /**
+      * @brief Process a received radio event according to LoRaMesh protocol
+      * 
+      * @param event The radio event to be processed
+      * @return Result Success if message was processed successfully, error details otherwise
+      */
+    Result ProcessReceivedRadioEvent(std::unique_ptr<radio::RadioEvent> event);
 
     /**
      * @brief Static task function for radio event handling
@@ -339,6 +381,10 @@ class LoRaMeshProtocol : public Protocol {
      * @return std::unique_ptr<BaseMessage> The extracted message, or nullptr if none found
      */
     std::unique_ptr<BaseMessage> ExtractMessageQueueOfType(MessageType type);
+
+#ifdef DEBUG
+   public:
+#endif
 
     // Constants
     static constexpr uint32_t RADIO_TASK_STACK_SIZE = 2048;
