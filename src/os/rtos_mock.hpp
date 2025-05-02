@@ -13,10 +13,12 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <vector>
 
 #include "os/rtos.hpp"
 #include "utils/logger.hpp"
@@ -30,6 +32,169 @@ namespace os {
  */
 class RTOSMock : public RTOS {
    public:
+    /**
+     * @brief Struct representing a timer callback registration
+     */
+    struct TimerCallback {
+        std::function<void()>
+            callback;         ///< Function to call when timer expires
+        uint64_t expiryTime;  ///< Virtual time when the timer expires
+        uint32_t period;      ///< Period for repeating timers (0 for one-shot)
+        bool active;          ///< Whether the timer is active
+    };
+
+    /**
+     * @brief Enum defining time modes available in the RTOS mock
+     */
+    enum class TimeMode {
+        kRealTime,    ///< Use system real-time clock
+        kVirtualTime  ///< Use virtual time that can be manually advanced
+    };
+
+    /**
+     * @brief Constructor initializes with real-time mode by default
+     */
+    RTOSMock()
+        : timeMode_(TimeMode::kRealTime),
+          virtualTimeMs_(0),
+          timeMutex_(),
+          waitingTasks_(),
+          timerCallbacks_() {}
+
+    /**
+     * @brief Sets the time mode for the RTOS mock
+     * 
+     * @param mode The time mode to use (real or virtual)
+     */
+    void setTimeMode(TimeMode mode) {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+
+        // If switching to real time, sync the virtual time with real time
+        if (mode == TimeMode::kRealTime &&
+            timeMode_ == TimeMode::kVirtualTime) {
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            virtualTimeMs_ =
+                std::chrono::duration_cast<std::chrono::milliseconds>(duration)
+                    .count();
+            LOG_DEBUG(
+                "MOCK: Switching to real time mode, synced virtual time to "
+                "%llu ms",
+                (unsigned long long)virtualTimeMs_);
+        }
+        // If switching to virtual time, initialize with current real time
+        else if (mode == TimeMode::kVirtualTime &&
+                 timeMode_ == TimeMode::kRealTime) {
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            virtualTimeMs_ =
+                std::chrono::duration_cast<std::chrono::milliseconds>(duration)
+                    .count();
+            LOG_DEBUG(
+                "MOCK: Switching to virtual time mode, initialized to %llu ms",
+                (unsigned long long)virtualTimeMs_);
+        }
+
+        timeMode_ = mode;
+    }
+
+    /**
+     * @brief Gets the current time mode
+     * 
+     * @return Current time mode (real or virtual)
+     */
+    TimeMode getTimeMode() const { return timeMode_; }
+
+    /**
+     * @brief Advances the virtual time by the specified number of milliseconds
+     * 
+     * This method only has an effect in virtual time mode. It advances the
+     * virtual time counter and wakes up any tasks or timers that should
+     * be triggered by this time advancement.
+     * 
+     * @param ms Number of milliseconds to advance
+     * @return The new virtual time value in milliseconds
+     */
+    uint64_t advanceTime(uint32_t ms) {
+        if (timeMode_ != TimeMode::kVirtualTime) {
+            LOG_WARNING("MOCK: Cannot advance time in real-time mode");
+            return getTickCount();
+        }
+
+        std::vector<std::pair<std::condition_variable*, uint64_t>> tasksToWake;
+        std::vector<TimerCallback*> timersToTrigger;
+
+        // First, advance the time and identify tasks and timers to wake up
+        {
+            std::lock_guard<std::mutex> lock(timeMutex_);
+
+            uint64_t oldTime = virtualTimeMs_;
+            virtualTimeMs_ += ms;
+
+            LOG_DEBUG("MOCK: Advancing virtual time from %llu to %llu ms",
+                      (unsigned long long)oldTime,
+                      (unsigned long long)virtualTimeMs_);
+
+            // Find tasks that should wake up within the new time window
+            auto it = waitingTasks_.begin();
+            while (it != waitingTasks_.end()) {
+                if (it->second <= virtualTimeMs_) {
+                    tasksToWake.push_back({it->first, it->second});
+                    it = waitingTasks_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // Find timers that should trigger
+            for (auto& timer : timerCallbacks_) {
+                if (timer.active && timer.expiryTime <= virtualTimeMs_) {
+                    timersToTrigger.push_back(&timer);
+
+                    // If it's a periodic timer, schedule the next trigger
+                    if (timer.period > 0) {
+                        // Calculate how many periods have passed and set next expiry time
+                        uint64_t periods =
+                            (virtualTimeMs_ - timer.expiryTime) / timer.period +
+                            1;
+                        timer.expiryTime += periods * timer.period;
+                    } else {
+                        // One-shot timer - disable it
+                        timer.active = false;
+                    }
+                }
+            }
+        }
+
+        // Now wake up tasks (outside the lock to prevent deadlocks)
+        for (auto& task : tasksToWake) {
+            LOG_DEBUG("MOCK: Waking up task waiting until %llu ms",
+                      (unsigned long long)task.second);
+            task.first->notify_all();
+        }
+
+        // Trigger timers (also outside the lock)
+        for (auto timer : timersToTrigger) {
+            LOG_DEBUG("MOCK: Triggering timer callback at %llu ms",
+                      (unsigned long long)timer->expiryTime);
+            if (timer->callback) {
+                timer->callback();
+            }
+        }
+
+        return virtualTimeMs_;
+    }
+
+    /**
+     * @brief Gets the current virtual time value
+     * 
+     * @return Current virtual time in milliseconds
+     */
+    uint64_t getVirtualTime() const {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        return virtualTimeMs_;
+    }
+
     /**
      * @brief Creates a new task in the RTOS mock
      * 
@@ -286,8 +451,9 @@ class RTOSMock : public RTOS {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Wait with a reasonable timeout (500ms)
-            bool acknowledged = task_info->suspend_ack_cv.wait_for(
-                lock, std::chrono::milliseconds(500), [task_info]() {
+            // Use our waitFor helper that respects virtual time
+            bool acknowledged =
+                waitFor(task_info->suspend_ack_cv, lock, 500, [task_info]() {
                     return task_info->suspension_acknowledged ||
                            task_info->stop_requested;
                 });
@@ -382,8 +548,9 @@ class RTOSMock : public RTOS {
 
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
-            bool acknowledged = task_info->resume_ack_cv.wait_for(
-                lock, std::chrono::milliseconds(500), [task_info]() {
+            // Use our waitFor helper that respects virtual time
+            bool acknowledged =
+                waitFor(task_info->resume_ack_cv, lock, 500, [task_info]() {
                     return task_info->resume_acknowledged ||
                            task_info->stop_requested;
                 });
@@ -468,8 +635,9 @@ class RTOSMock : public RTOS {
             task_info->suspend_ack_cv.notify_all();
 
             // Wait with timeout to prevent indefinite blocking
-            auto status = task_info->cv.wait_for(
-                lock, std::chrono::milliseconds(500), [task_info]() {
+            // Use our waitFor helper that respects virtual time
+            bool status = waitFor(
+                task_info->cv, lock, 500 /* 500ms timeout */, [task_info]() {
                     return !task_info->suspended || task_info->stop_requested;
                 });
 
@@ -538,11 +706,12 @@ class RTOSMock : public RTOS {
                 return QueueResult::kFull;
             }
 
-            auto status = q->notFull.wait_for(
-                lock, std::chrono::milliseconds(timeout),
-                [q]() { return q->data.size() < q->maxSize; });
+            // Use our waitFor helper that respects virtual time
+            bool success = waitFor(q->notFull, lock, timeout, [q]() {
+                return q->data.size() < q->maxSize;
+            });
 
-            if (!status) {
+            if (!success) {
                 return QueueResult::kTimeout;
             }
         }
@@ -567,11 +736,11 @@ class RTOSMock : public RTOS {
                 return QueueResult::kEmpty;
             }
 
-            auto status =
-                q->notEmpty.wait_for(lock, std::chrono::milliseconds(timeout),
-                                     [q]() { return !q->data.empty(); });
+            // Use our waitFor helper that respects virtual time
+            bool success = waitFor(q->notEmpty, lock, timeout,
+                                   [q]() { return !q->data.empty(); });
 
-            if (!status) {
+            if (!success) {
                 return QueueResult::kTimeout;
             }
         }
@@ -589,15 +758,72 @@ class RTOSMock : public RTOS {
         return static_cast<uint32_t>(q->data.size());
     }
 
+    /**
+     * @brief Delays the current task for the specified time
+     * 
+     * In real-time mode, this uses actual thread sleep
+     * In virtual time mode, this registers a wait that can be unblocked by advanceTime
+     * 
+     * @param ms Number of milliseconds to delay
+     */
     void delay(uint32_t ms) override {
-        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        if (timeMode_ == TimeMode::kRealTime) {
+            // In real-time mode, use actual sleep
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            return;
+        }
+
+        // In virtual time mode, calculate wake time and wait conditionally
+        std::condition_variable cv;
+        std::mutex m;
+        std::unique_lock<std::mutex> lock(m);
+
+        uint64_t wakeTimeMs;
+
+        // Register this task as waiting until the wake time
+        {
+            std::lock_guard<std::mutex> timeLock(timeMutex_);
+            wakeTimeMs = virtualTimeMs_ + ms;
+            waitingTasks_[&cv] = wakeTimeMs;
+            LOG_DEBUG("MOCK: Task will wait until virtual time %llu ms",
+                      (unsigned long long)wakeTimeMs);
+        }
+
+        // Wait until either the virtual time advances beyond our wake time,
+        // or we are explicitly woken up by advanceTime
+        cv.wait(lock, [this, wakeTimeMs]() {
+            std::lock_guard<std::mutex> timeLock(timeMutex_);
+            return virtualTimeMs_ >= wakeTimeMs;
+        });
+
+        // Clean up (in case we were woken by something other than advanceTime)
+        {
+            std::lock_guard<std::mutex> timeLock(timeMutex_);
+            waitingTasks_.erase(&cv);
+        }
     }
 
+    /**
+     * @brief Gets the current tick count (time)
+     * 
+     * In real-time mode, returns actual system time
+     * In virtual time mode, returns the virtual time counter
+     * 
+     * @return Current time in milliseconds
+     */
     uint32_t getTickCount() override {
-        auto now = std::chrono::steady_clock::now();
-        auto duration = now.time_since_epoch();
-        return std::chrono::duration_cast<std::chrono::milliseconds>(duration)
-            .count();
+        if (timeMode_ == TimeMode::kRealTime) {
+            // In real-time mode, use actual system time
+            auto now = std::chrono::steady_clock::now();
+            auto duration = now.time_since_epoch();
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       duration)
+                .count();
+        } else {
+            // In virtual time mode, return the virtual time
+            std::lock_guard<std::mutex> lock(timeMutex_);
+            return static_cast<uint32_t>(virtualTimeMs_);
+        }
     }
 
     void StartScheduler() override {
@@ -852,23 +1078,21 @@ class RTOSMock : public RTOS {
         // We only lock the individual task's mutex
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
+            bool notification_received = false;
 
             if (timeout == MAX_DELAY) {
-                // Wait until notification received or stop requested
-                bool wait_result = task_info->notify_cv.wait_for(
-                    lock, std::chrono::seconds(60), [task_info]() {
+                // Use our waitFor helper with a very long timeout
+                notification_received = waitFor(
+                    task_info->notify_cv, lock,
+                    3600 * 1000,  // 1 hour timeout as MAX_DELAY equivalent
+                    [task_info]() {
                         return task_info->notification_pending ||
                                task_info->stop_requested;
                     });
-
-                if (!wait_result) {
-                    LOG_DEBUG(
-                        "MOCK: Maximum wait timeout in WaitForNotify (60s)");
-                }
             } else {
                 // Regular timeout case
-                task_info->notify_cv.wait_for(
-                    lock, std::chrono::milliseconds(timeout), [task_info]() {
+                notification_received =
+                    waitFor(task_info->notify_cv, lock, timeout, [task_info]() {
                         return task_info->notification_pending ||
                                task_info->stop_requested;
                     });
@@ -1011,6 +1235,117 @@ class RTOSMock : public RTOS {
      */
     inline void YieldTask() override { std::this_thread::yield(); }
 
+    /**
+     * @brief Registers a timer callback that will be called when time advances
+     * 
+     * This method is only relevant in virtual time mode.
+     * 
+     * @param callback Function to call when timer expires
+     * @param delayMs Delay before first trigger in milliseconds
+     * @param periodMs Repeat period (0 for one-shot timer)
+     * @return Timer ID for later management
+     */
+    uint32_t createTimer(std::function<void()> callback, uint32_t delayMs,
+                         uint32_t periodMs = 0) {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+
+        TimerCallback timer;
+        timer.callback = callback;
+        timer.expiryTime = virtualTimeMs_ + delayMs;
+        timer.period = periodMs;
+        timer.active = true;
+
+        uint32_t timerId = static_cast<uint32_t>(timerCallbacks_.size());
+        timerCallbacks_.push_back(timer);
+
+        LOG_DEBUG("MOCK: Created timer %u, expires at %llu ms, period %u ms",
+                  timerId, (unsigned long long)timer.expiryTime, periodMs);
+
+        return timerId;
+    }
+
+    /**
+     * @brief Stops a previously created timer
+     * 
+     * @param timerId ID of the timer to stop
+     * @return true if timer was found and stopped, false otherwise
+     */
+    bool stopTimer(uint32_t timerId) {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+
+        if (timerId >= timerCallbacks_.size()) {
+            LOG_WARNING("MOCK: Invalid timer ID %u", timerId);
+            return false;
+        }
+
+        timerCallbacks_[timerId].active = false;
+        LOG_DEBUG("MOCK: Stopped timer %u", timerId);
+        return true;
+    }
+
+    /**
+     * @brief Updates or replaces all condition variable wait_for operations
+     * to be compatible with virtual time
+     * 
+     * @param cv The condition variable to wait on
+     * @param lock The unique lock protecting the condition variable
+     * @param relTimeMs The relative time to wait in milliseconds
+     * @param pred The predicate function that determines when to stop waiting
+     * @return true if predicate became true, false if timeout occurred
+     */
+    template <typename Predicate>
+    bool waitFor(std::condition_variable& cv,
+                 std::unique_lock<std::mutex>& lock, uint32_t relTimeMs,
+                 Predicate pred) {
+        if (timeMode_ == TimeMode::kRealTime) {
+            // In real-time mode, use standard wait_for
+            return cv.wait_for(lock, std::chrono::milliseconds(relTimeMs),
+                               pred);
+        }
+
+        // In virtual time mode, we need to register this wait
+        uint64_t wakeTimeMs;
+
+        // Fast path: check predicate before waiting
+        if (pred()) {
+            return true;
+        }
+
+        // Register this task as waiting until the wake time
+        {
+            std::lock_guard<std::mutex> timeLock(timeMutex_);
+            wakeTimeMs = virtualTimeMs_ + relTimeMs;
+            waitingTasks_[&cv] = wakeTimeMs;
+            LOG_DEBUG("MOCK: Conditional wait until virtual time %llu ms",
+                      (unsigned long long)wakeTimeMs);
+        }
+
+        // Wait until either:
+        // 1. The predicate becomes true
+        // 2. The virtual time advances beyond our wake time
+        bool result = cv.wait_until(
+            lock, std::chrono::steady_clock::now() + std::chrono::hours(1),
+            [this, wakeTimeMs, &pred]() {
+                // Check if the predicate is true (normal wake up)
+                if (pred()) {
+                    return true;
+                }
+
+                // Check if we've reached the virtual timeout
+                std::lock_guard<std::mutex> timeLock(timeMutex_);
+                return virtualTimeMs_ >= wakeTimeMs;
+            });
+
+        // Clean up our wait registration
+        {
+            std::lock_guard<std::mutex> timeLock(timeMutex_);
+            waitingTasks_.erase(&cv);
+        }
+
+        // Return true only if the predicate is satisfied
+        return pred();
+    }
+
    private:
     struct TaskInfo {
         std::string name;
@@ -1034,6 +1369,15 @@ class RTOSMock : public RTOS {
         std::condition_variable suspend_ack_cv;
         std::condition_variable resume_ack_cv;
     };
+
+    TimeMode timeMode_;       ///< Current time mode (real or virtual)
+    uint64_t virtualTimeMs_;  ///< Virtual time counter in milliseconds
+    mutable std::mutex
+        timeMutex_;  ///< Mutex protecting time-related operations
+
+    std::map<std::condition_variable*, uint64_t>
+        waitingTasks_;  ///< Tasks waiting for time to advance
+    std::vector<TimerCallback> timerCallbacks_;  ///< Timer callbacks
 
     std::map<std::thread*, TaskInfo> tasks_;
     std::mutex tasksMutex_;
