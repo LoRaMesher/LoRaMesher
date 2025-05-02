@@ -159,18 +159,12 @@ class ConsoleLogHandler : public LogHandler {
                 break;
         }
 
-        // Get current time
-        time_t now = time(nullptr);
-        char timestamp[32];
-        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S",
-                 localtime(&now));
 #ifndef LOGGER_DISABLE_COLORS
         const char* color = GetColorForLevel(level);
-        std::cout << color << timestamp << " [" << level_str << "] " << message
+        std::cout << color << " [" << level_str << "] " << message
                   << Colors::kReset << std::endl;
 #else
-        std::cout << timestamp << " [" << level_str << "] " << message
-                  << std::endl;
+        std::cout << " [" << level_str << "] " << message << std::endl;
 #endif
     }
 
