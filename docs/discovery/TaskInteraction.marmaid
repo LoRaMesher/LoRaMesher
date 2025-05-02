@@ -1,0 +1,55 @@
+flowchart TD
+    subgraph "Initialization"
+        A[Start Application] --> B[Initialize Protocol]
+        B --> C[Create Tasks]
+        C --> D[Set Initial State to DISCOVERY]
+    end
+    
+    subgraph "Protocol Logic Task"
+        PL1[Monitor Protocol State]
+        PL2[Process Messages]
+        PL3[Make Discovery/Network Decisions]
+        PL4[Update Routing Tables]
+        
+        PL1 --> PL2
+        PL2 --> PL3
+        PL3 --> PL4
+        PL4 --> PL1
+    end
+    
+    subgraph "Slot Manager Task"
+        SM1[Track Superframe Timing]
+        SM2[Signal Slot Boundaries]
+        SM3[Monitor Discovery Timeout]
+        SM4[Control Radio Power States]
+        
+        SM1 --> SM2
+        SM2 --> SM3
+        SM3 --> SM4
+        SM4 --> SM1
+    end
+    
+    subgraph "Radio Event Handler Task"
+        RH1[Process Radio Interrupts]
+        RH2[Validate Received Packets]
+        RH3[Queue Valid Packets]
+        RH4[Manage Transmission Requests]
+        
+        RH1 --> RH2
+        RH2 --> RH3
+        RH3 --> RH4
+        RH4 --> RH1
+    end
+    
+    RH3 -.-> |Queue Message| PL2
+    PL3 -.-> |Request TX| RH4
+    PL1 -.-> |Set Radio Mode| SM4
+    SM3 -.-> |Discovery Timeout| PL3
+    
+    classDef protocol fill:#f9f,stroke:#333,stroke-width:2px
+    classDef slot fill:#bbf,stroke:#333,stroke-width:2px
+    classDef radio fill:#bfb,stroke:#333,stroke-width:2px
+    
+    class PL1,PL2,PL3,PL4 protocol
+    class SM1,SM2,SM3,SM4 slot
+    class RH1,RH2,RH3,RH4 radio

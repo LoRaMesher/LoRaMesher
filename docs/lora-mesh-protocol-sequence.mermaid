@@ -1,0 +1,31 @@
+sequenceDiagram
+    participant NA as Node A (New)
+    participant NB as Node B (Manager)
+    participant NC as Node C
+    participant ND as Node D
+    
+    Note over NA,ND: Initialization Phase
+    NA->>NA: Listen for network activity
+    NA->>NB: Send JOIN_REQUEST in discovery slot (CSMA/CA)
+    NB->>NC: Broadcast routing table update with Node A
+    NB->>ND: Broadcast routing table update with Node A
+    
+    Note over NA,ND: Control Slot Phase
+    NB->>NA: Send slot allocation
+    NB->>NC: Send slot allocation
+    NB->>ND: Send slot allocation
+    NB->>NA: Time synchronization
+    
+    Note over NA,ND: Data Transmission Phase
+    NA->>NA: Sleep during non-relevant slots
+    NB->>NA: Data transmission in allocated slot
+    NA->>NC: Forward data in allocated slot
+    NA->>NA: Sleep during remaining slots
+    
+    Note over NA,ND: Network Maintenance
+    NA->>NB: Send KEEP_ALIVE with link quality metrics
+    NC->>NA: Send ROUTE_UPDATE (path degradation)
+    
+    Note over NA,ND: Next Superframe
+    NA->>NA: Request more TX slots for next superframe
+    NB->>NA: Approve slot request in control phase

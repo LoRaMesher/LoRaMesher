@@ -1,0 +1,43 @@
+stateDiagram-v2
+    [*] --> Initialization
+    
+    Initialization --> Discovery: Initialize complete
+    
+    state Discovery {
+        [*] --> Listening
+        Listening --> Listening: No valid packet
+        Listening --> PacketReceived: Packet detected
+        PacketReceived --> NetworkFound: Validate mesh packet
+        PacketReceived --> Listening: Invalid packet
+        Listening --> Timeout: 3 superframes elapsed
+    }
+    
+    Discovery --> Joining: Network found
+    Discovery --> NetworkCreation: Timeout with no network
+    
+    state Joining {
+        [*] --> WaitForDiscoverySlot
+        WaitForDiscoverySlot --> SendJoinRequest: Discovery slot active
+        SendJoinRequest --> WaitForResponse: JOIN_REQUEST sent
+        WaitForResponse --> JoinAccepted: Received JOIN_RESPONSE
+        WaitForResponse --> JoinRejected: Join timeout/rejected
+        JoinAccepted --> JoinSuccess: Sync with network
+    }
+    
+    state NetworkCreation {
+        [*] --> CreateSuperframe
+        CreateSuperframe --> SetupManager: Generate network parameters
+        SetupManager --> BroadcastAnnouncement: Become network manager
+    }
+    
+    JoinSuccess --> NormalOperation: Start normal operations
+    BroadcastAnnouncement --> NormalOperation: Network established
+    JoinRejected --> Discovery: Retry discovery
+    
+    state NormalOperation {
+        [*] --> CommunicationLoop
+        CommunicationLoop --> DataTransmission: Data ready
+        DataTransmission --> CommunicationLoop: Transmission complete
+    }
+    
+    NormalOperation --> [*]

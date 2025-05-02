@@ -1,0 +1,42 @@
+graph TB
+    subgraph "Network Architecture"
+        A[Node A] <--> B[Node B]
+        B <--> C[Node C]
+        C <--> D[Node D]
+        A <--> E[Node E]
+        E <--> D[Node D]
+    end
+
+    subgraph "Superframe Structure"
+        SF[Superframe] --> DT[Data Transmission Phase]
+        SF --> DS[Discovery Slots]
+        SF --> CS[Control Slots]
+        
+        DT --> TX[TX Slots]
+        DT --> RX[RX Slots]
+        DT --> SL[Sleep Slots]
+    end
+
+    subgraph "Node States"
+        INIT[Initialization] --> DISC[Discovery]
+        DISC --> NORM[Normal Operation]
+        NORM --> COORD[Coordination Role]
+        NORM --> SLEEP[Sleep Mode]
+        NORM --> FAULT[Fault Recovery]
+        FAULT --> DISC
+    end
+
+    subgraph "Message Types"
+        MT[Message Types] --> DATA[Data Message]
+        MT --> SYNC[Sync Message]
+        MT --> ROUTE[Route Update]
+        MT --> SLOT[Slot Request]
+        MT --> KEEP[Keep-Alive]
+        MT --> JOIN[Join Request]
+        
+        DATA --> ACK[With Acknowledgment]
+        DATA --> NOACK[Without Acknowledgment]
+    end
+
+    style SF fill:#f9f,stroke:#333,stroke-width:2px
+    style MT fill:#bbf,stroke:#333,stroke-width:2px

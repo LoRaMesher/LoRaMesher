@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant SF as Superframe Start
+    participant DT as Data Transmission Phase
+    participant DS as Discovery Slots
+    participant CS as Control Slots
+    participant NSF as Next Superframe
+    
+    SF->>DT: Ordered node transmission/reception (per routing table)
+    Note over DT: Nodes transmit/receive in pre-assigned slots<br/>Sleep when not scheduled
+    DT->>DS: Network open for new nodes
+    Note over DS: All nodes must listen<br/>Uses CSMA/CA to avoid collisions<br/>Limited number of slots
+    DS->>CS: Network configuration
+    Note over CS: All nodes must listen<br/>Slot requests processed<br/>Network manager role assignment<br/>Time synchronization
+    CS->>NSF: Begin next superframe

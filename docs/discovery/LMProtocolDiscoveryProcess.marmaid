@@ -1,0 +1,43 @@
+sequenceDiagram
+    participant App as Application
+    participant PL as Protocol Logic Task
+    participant SM as Slot Manager Task
+    participant RH as Radio Event Handler Task
+    participant Radio as LoRa Radio
+    
+    Note over App,Radio: Initialization Phase
+    App->>PL: Initialize protocol
+    PL->>SM: Initialize slot timing
+    PL->>RH: Initialize radio handler
+    PL->>PL: Set state = DISCOVERY
+    
+    Note over App,Radio: Discovery Phase
+    PL->>SM: Start discovery timer (3 superframes)
+    SM->>RH: Set radio to RX mode
+    
+    alt Packet Received During Discovery
+        Radio->>RH: RX interrupt (packet received)
+        RH->>RH: Validate packet format
+        RH->>PL: Forward valid mesh packet
+        PL->>PL: Process discovery packet
+        PL->>PL: Set state = JOINING
+        PL->>SM: Adjust timing to match network
+    else No Packet Received
+        SM->>PL: Discovery timeout (3 superframes)
+        PL->>PL: Set state = NORMAL_OPERATION
+        PL->>PL: Create new network
+        PL->>PL: Become network manager
+        PL->>SM: Setup initial superframe structure
+    end
+    
+    Note over App,Radio: After Discovery
+    alt Joining Existing Network
+        PL->>SM: Wait for discovery slot
+        SM->>PL: Discovery slot active
+        PL->>RH: Send JOIN_REQUEST
+        RH->>Radio: Transmit JOIN_REQUEST
+    else Creating New Network
+        PL->>SM: Configure superframe structure
+        PL->>RH: Broadcast network announcement
+        RH->>Radio: Transmit NETWORK_ANNOUNCEMENT
+    end
