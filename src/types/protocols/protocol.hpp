@@ -31,6 +31,11 @@ enum class ProtocolType {
 class Protocol {
    public:
     /**
+     * @brief Callback type for received messages
+     */
+    using MessageReceivedCallback = std::function<void(const BaseMessage&)>;
+
+    /**
     * @brief Virtual destructor to ensure proper cleanup in derived classes
     */
     virtual ~Protocol() = default;
@@ -62,15 +67,6 @@ class Protocol {
     virtual Result Stop() = 0;
 
     /**
-    * @brief Process a received radio event according to PingPong protocol
-    * 
-    * @param event The radio event to be processed
-    * @return Result Success if message was processed successfully, error details otherwise
-    */
-    virtual Result ProcessReceivedRadioEvent(
-        std::unique_ptr<radio::RadioEvent> event) = 0;
-
-    /**
     * @brief Send a message using this protocol
     * 
     * @param message The message to be sent
@@ -91,6 +87,13 @@ class Protocol {
     * @return AddressType The address of this node
     */
     AddressType GetNodeAddress() const { return node_address_; }
+
+    /**
+     * @brief Set received message callback
+     */
+    void SetMessageReceivedCallback(MessageReceivedCallback callback) {
+        message_received_callback_ = callback;
+    }
 
    protected:
     /**
@@ -115,6 +118,11 @@ class Protocol {
     * @brief The address of this node in the network
     */
     AddressType node_address_;
+
+    /**
+     * @brief Callback for received messages
+     */
+    MessageReceivedCallback message_received_callback_;
 };
 
 }  // namespace protocols

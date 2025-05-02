@@ -80,8 +80,7 @@ class PingPongProtocol : public Protocol {
       * @param event The radio event to be processed
       * @return Result Success if message was processed successfully, error details otherwise
       */
-    Result ProcessReceivedRadioEvent(
-        std::unique_ptr<radio::RadioEvent> event) override;
+    Result ProcessReceivedRadioEvent(std::unique_ptr<radio::RadioEvent> event);
 
     /**
       * @brief Send a message using the PingPong protocol
