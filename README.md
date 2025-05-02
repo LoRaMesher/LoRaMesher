@@ -321,3 +321,88 @@ cmake --build . --target loramesher_lib
 - `run_all_tests` -> To build and run the tests.
 
 Or insted use `cTest`
+
+
+# Building the new Protocol using BMX6 and node syncrhonization
+
+## States
+
+The nodes have 6 protocol states:
+
+1. Initialization: System startup and initial configuration
+
+2. Discovery: Searching for or establishing a network.
+    - Discovery will set the radio to listening and will wait to a full default super frame to see if it listens a loramesher packet.
+        - If it discovers a packet it will pass to next joining state.
+        - If no packet is being detectet, start a new network.
+
+3. Joining: Process of connecting to an existing network
+    - It will wait until the discovery slot, then it will send the actual routing table.
+
+4. Normal Operation: Regular network activity (sending/receiving data)
+    - After defining the routing table order, it will define the TX and RX slots. 
+        - RX slots will be defined by the order of the routing table. If the node is slot 2, it will capable of sending when slot time is 2.
+        - TX slots will be defined by the RX nodes of the neighbour nodes.
+        - If neither RX/TX slot in the frame, it will set the radio sleep and do a light sleep if possible.
+
+5. Network Manager: Special state when acting as network manager
+    - In this state the the node will send routing table updates and link quality. The order of RX/TX will be accordingly to the previous slots.
+    - After finishing this state, the RX/TX will define the next super frame order.
+
+6. Fault Recovery: Handling connection issues and recovering.
+    - If a node has lost their conection to all the nodes, it will start a fault recovery. If after a time it does not capable of reconnect it will start again, creating or joining a network.
+
+## Super fram structure
+
+### Data Transmission Phase
+
+- Ordered transmission/reception based on routing table
+- Nodes follow a predetermined schedule for TX/RX/sleep
+- Schedule follows prioritization that changes each superframe
+- Only active nodes during their assigned slots need to be awake
+
+### Discovery Slots
+
+- All nodes must listen during these slots
+- Limited number of slots for new nodes to join
+- Uses CSMA/CA to minimize collision during join requests
+- All nodes retransmit the message to all the network.
+- The slots are defined by:
+    - #Devices + 1
+
+
+### Control Slots
+
+- All nodes must listen during these slots
+- Used for slot allocation requests
+- Synchronization information distribution
+- Network manager role assignment
+- Routing table updates 
+
+## Packet types
+
+- DISCOVERY (new node announcement)
+- JOIN_REQUEST (request to join network)
+- JOIN_RESPONSE (acceptance into network)
+- ROUTING_UPDATE (routing table information)
+- SLOT_REQUEST (request for transmission slots)
+- SLOT_ALLOCATION (slot assignments)
+- SYNC (time synchronization)
+- DATA (application payload)
+- KEEP_ALIVE (link maintenance)
+- FAULT_RECOVERY (reconnection attempt)
+
+## Tasks
+
+- Protocol Logic Task: Makes decisions about messages, manages routing, and interfaces with applications
+- Slot Manager Task: Handles timing and synchronization, determines when actions should occur
+- Radio Event Handler Task: Interfaces with the physical radio, processes radio events
+
+# Questions:
+- What happen when two networks are being joined? We need a process to decide which one is the main one and which is the secondary and need to join.
+- How many message types we need and what should contain.
+    - Routing table update
+    - 
+- I would like to have an inversed order of the routing table to distribute better the messages up and down. This could lead to a complete desyncrhonization of the nodes and should be carefully implemented.
+
+ - What happen if two devices start their discovery at once?
