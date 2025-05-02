@@ -76,6 +76,13 @@ class HardwareManager : public IHardwareManager {
     hal::IHal* getHal() { return hal_.get(); }
 
     /**
+     * @brief Get pointer to radio module interface
+     * 
+     * @return IRadio* Pointer to radio module interface
+     */
+    radio::IRadio* getRadio() { return radio_.get(); }
+
+    /**
      * @brief Set callback for radio events
      * 
      * @param callback Function to call for each radio event
@@ -127,6 +134,13 @@ class HardwareManager : public IHardwareManager {
      * @return Result Success if update was successful, error code otherwise
      */
     Result setPinConfig(const PinConfig& pin_config);
+
+    /**
+     * @brief Set the current radio state
+     * @param state Desired radio state
+     * @return Result Success if state was changed successfully
+     */
+    Result setState(radio::RadioState state) override;
 
     /**
      * @brief Update the radio configuration

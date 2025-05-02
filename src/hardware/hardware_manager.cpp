@@ -159,6 +159,20 @@ Result HardwareManager::setPinConfig(const PinConfig& pin_config) {
     return Result::Success();
 }
 
+Result HardwareManager::setState(radio::RadioState state) {
+    if (!is_initialized_) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "Hardware not initialized");
+    }
+
+    Result result = radio_->setState(state);
+    if (!result) {
+        return result;
+    }
+
+    return Result::Success();
+}
+
 Result HardwareManager::updateRadioConfig(const RadioConfig& radio_config) {
     if (!radio_config.IsValid()) {
         return Result::Error(LoraMesherErrorCode::kInvalidParameter);
