@@ -131,10 +131,6 @@ class RTOSMock : public RTOS {
             uint64_t oldTime = virtualTimeMs_;
             virtualTimeMs_ += ms;
 
-            LOG_DEBUG("MOCK: Advancing virtual time from %llu to %llu ms",
-                      (unsigned long long)oldTime,
-                      (unsigned long long)virtualTimeMs_);
-
             // Find tasks that should wake up within the new time window
             auto it = waitingTasks_.begin();
             while (it != waitingTasks_.end()) {
@@ -579,7 +575,6 @@ class RTOSMock : public RTOS {
      * @return true if the task should stop, false to continue
      */
     bool ShouldStopOrPause() override {
-        LOG_DEBUG("MOCK: Checking if task should stop or pause");
         std::thread::id thread_id = std::this_thread::get_id();
         std::string task_name = "current";
         TaskInfo* task_info = nullptr;
@@ -611,9 +606,6 @@ class RTOSMock : public RTOS {
                 thread_id);
             return false;
         }
-
-        LOG_DEBUG("MOCK: Checking task '%s' with thread ID %p",
-                  task_name.c_str(), thread_id);
 
         // If stop requested, return immediately
         if (should_stop) {
@@ -795,6 +787,9 @@ class RTOSMock : public RTOS {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
             return virtualTimeMs_ >= wakeTimeMs;
         });
+
+        LOG_DEBUG("MOCK: Task woke up after waiting until %llu ms",
+                  (unsigned long long)wakeTimeMs);
 
         // Clean up (in case we were woken by something other than advanceTime)
         {
@@ -1316,8 +1311,6 @@ class RTOSMock : public RTOS {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
             wakeTimeMs = virtualTimeMs_ + relTimeMs;
             waitingTasks_[&cv] = wakeTimeMs;
-            LOG_DEBUG("MOCK: Conditional wait until virtual time %llu ms",
-                      (unsigned long long)wakeTimeMs);
         }
 
         // Wait until either:
