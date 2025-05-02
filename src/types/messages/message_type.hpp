@@ -22,6 +22,8 @@ namespace loramesher {
  * in base_header.cpp accordingly.
  */
 enum class MessageType : uint8_t {
+    ANY = 0x00,  ///< 0000 0000: Any message type (not used in practice)
+
     // Main categories (high nibble)
     DATA_MSG = 0x10,     ///< 0001 xxxx: Data message category
     CONTROL_MSG = 0x20,  ///< 0010 xxxx: Control message category
