@@ -154,6 +154,29 @@ class BaseMessage {
      */
     std::optional<std::vector<uint8_t>> Serialize() const;
 
+    /**
+     * @bief Gets the destination address of the message
+     * 
+     * @return AddressType Destination address
+     */
+    const AddressType GetDestination() const {
+        return header_.GetDestination();
+    }
+
+    /**
+     * @brief Gets the source address of the message
+     * 
+     * @return AddressType Source address
+     */
+    const AddressType GetSource() const { return header_.GetSource(); }
+
+    /**
+     * @brief Gets the message type
+     * 
+     * @return MessageType Type of the message
+     */
+    const MessageType GetType() const { return header_.GetType(); }
+
    private:
     /**
      * @brief Validates all input parameters
