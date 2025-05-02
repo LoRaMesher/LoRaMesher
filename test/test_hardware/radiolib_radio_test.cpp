@@ -19,7 +19,7 @@
 #include "utils/logger.hpp"
 
 // Include the mocks
-#include "../test/mocks/mock_radio.hpp"
+#include "../test/utils/mock_radio.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
 
 using namespace loramesher;

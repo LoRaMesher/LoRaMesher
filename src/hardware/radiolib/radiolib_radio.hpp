@@ -13,7 +13,7 @@
 #include "types/radio/radio.hpp"
 
 #ifdef DEBUG
-#include "../test/mocks/mock_radio.hpp"
+#include "../test/utils/mock_radio.hpp"
 #endif  // DEBUG
 
 namespace loramesher {

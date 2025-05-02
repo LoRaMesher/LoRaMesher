@@ -1,5 +1,5 @@
 /**
- * @file test/os/rtos_mock.hpp
+ * @file test/utils/mock_rtos.hpp
  * @brief Google Mock implementation for RTOS interface
  */
 #pragma once
@@ -75,6 +75,9 @@ class MockRTOS : public os::RTOS {
 
     MOCK_METHOD(void, NotifyTaskFromISR, (os::TaskHandle_t taskHandle),
                 (override));
+
+    MOCK_METHOD(os::QueueResult, NotifyTask,
+                (os::TaskHandle_t taskHandle, uint32_t value), (override));
 
     MOCK_METHOD(os::QueueResult, WaitForNotify, (uint32_t timeout), (override));
 

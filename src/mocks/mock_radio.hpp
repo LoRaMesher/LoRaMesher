@@ -59,6 +59,7 @@ class MockRadio : public IRadio {
     uint8_t getCodingRate() override;
     uint8_t getPower() override;
     uint8_t getPacketLength() override;
+    uint32_t getTimeOnAir(uint8_t length) override;
 
     // Event Handling
     Result setActionReceive(void (*callback)(void)) override;

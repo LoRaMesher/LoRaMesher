@@ -1,6 +1,6 @@
 #include "mocks/mock_radio.hpp"
 
-#include "../test/mocks/mock_radio.hpp"
+#include "../test/utils/mock_radio.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -116,6 +116,10 @@ uint8_t MockRadio::getPower() {
 
 uint8_t MockRadio::getPacketLength() {
     return pimpl_->mock.getPacketLength();
+}
+
+uint32_t MockRadio::getTimeOnAir(uint8_t length) {
+    return pimpl_->mock.getTimeOnAir(length);
 }
 
 Result MockRadio::setActionReceive(void (*callback)(void)) {

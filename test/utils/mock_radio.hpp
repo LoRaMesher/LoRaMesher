@@ -1,4 +1,4 @@
-// test/types/test_radio/mock_radio.hpp
+// test/utils/mock_radio.hpp
 #pragma once
 
 #include <gmock/gmock.h>
@@ -41,6 +41,7 @@ class MockRadio : public IRadio {
     MOCK_METHOD(uint8_t, getCodingRate, (), (override));
     MOCK_METHOD(uint8_t, getPower, (), (override));
     MOCK_METHOD(uint8_t, getPacketLength, (), (override));
+    MOCK_METHOD(uint32_t, getTimeOnAir, (uint8_t length), (override));
 
     // Event Handling
     MOCK_METHOD(Result, setActionReceive, (void (*callback)(void)), (override));

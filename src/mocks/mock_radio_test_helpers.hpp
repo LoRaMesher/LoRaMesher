@@ -4,7 +4,7 @@
 
 #ifdef DEBUG
 
-#include "../test/mocks/mock_radio.hpp"
+#include "../test/utils/mock_radio.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio.hpp"
 
