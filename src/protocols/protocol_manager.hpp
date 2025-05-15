@@ -105,7 +105,7 @@ class ProtocolManager {
         if (!protocol) {
             return nullptr;
         }
-        return std::dynamic_pointer_cast<T>(protocol);
+        return std::static_pointer_cast<T>(protocol);
     }
 
     /**

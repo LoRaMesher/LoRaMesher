@@ -152,7 +152,7 @@ Result ProtocolManager::ConfigureProtocol(ProtocolType type,
         case ProtocolType::kPingPong: {
             // Cast to PingPong protocol
             auto ping_pong =
-                std::dynamic_pointer_cast<PingPongProtocol>(it->second);
+                std::static_pointer_cast<PingPongProtocol>(it->second);
             if (!ping_pong) {
                 return Result(LoraMesherErrorCode::kInvalidState,
                               "Failed to cast to PingPong protocol");
@@ -174,7 +174,7 @@ Result ProtocolManager::ConfigureProtocol(ProtocolType type,
         case ProtocolType::kLoraMesh: {
             // Cast to LoRaMesh protocol
             auto lora_mesh =
-                std::dynamic_pointer_cast<LoRaMeshProtocol>(it->second);
+                std::static_pointer_cast<LoRaMeshProtocol>(it->second);
             if (!lora_mesh) {
                 return Result(LoraMesherErrorCode::kInvalidState,
                               "Failed to cast to LoRaMesh protocol");

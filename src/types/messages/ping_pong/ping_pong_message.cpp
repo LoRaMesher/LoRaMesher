@@ -118,14 +118,10 @@ BaseMessage PingPongMessage::ToBaseMessage() const {
 }
 
 std::optional<std::vector<uint8_t>> PingPongMessage::Serialize() const {
-    // Create a buffer for the serialized message
-    std::vector<uint8_t> serialized(GetTotalSize());
-    utils::ByteSerializer serializer(serialized);
-
-    // Serialize the header directly (includes both base and PingPong fields)
-    Result result = header_.Serialize(serializer);
-    if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to serialize PingPong header");
+    BaseMessage base_message = ToBaseMessage();
+    auto serialized = base_message.Serialize();
+    if (!serialized) {
+        LOG_ERROR("Failed to serialize PingPong message");
         return std::nullopt;
     }
 

@@ -1,0 +1,115 @@
+/**
+ * @file routing_table_header.hpp
+ * @brief Header definition for routing table messages
+ */
+
+#pragma once
+
+#include "types/messages/base_header.hpp"
+
+namespace loramesher {
+
+/**
+  * @brief Header for routing table messages
+  * 
+  * Extends BaseHeader with routing table specific fields: network ID,
+  * table version, and entry count.
+  */
+class RoutingTableHeader : public BaseHeader {
+   public:
+    /**
+      * @brief Default constructor
+      */
+    RoutingTableHeader() = default;
+
+    /**
+      * @brief Constructor with all fields
+      * 
+      * @param dest Destination address
+      * @param src Source address
+      * @param network_id Network identifier
+      * @param table_version Version of the routing table (increments with changes)
+      * @param entry_count Number of routing entries in the message
+      */
+    RoutingTableHeader(AddressType dest, AddressType src, uint16_t network_id,
+                       uint8_t table_version, uint8_t entry_count);
+
+    /**
+      * @brief Gets the network ID
+      * 
+      * @return uint16_t The network identifier
+      */
+    uint16_t GetNetworkId() const { return network_id_; }
+
+    /**
+      * @brief Gets the table version
+      * 
+      * @return uint8_t The table version
+      */
+    uint8_t GetTableVersion() const { return table_version_; }
+
+    /**
+      * @brief Gets the entry count
+      * 
+      * @return uint8_t Number of routing table entries
+      */
+    uint8_t GetEntryCount() const { return entry_count_; }
+
+    /**
+      * @brief Sets the routing table specific information
+      * 
+      * @param network_id Network identifier
+      * @param table_version Version of the routing table
+      * @param entry_count Number of routing entries
+      * @return Result Success if setting succeeded, error code otherwise
+      */
+    Result SetRoutingTableInfo(uint16_t network_id, uint8_t table_version,
+                               uint8_t entry_count);
+
+    /**
+      * @brief Serializes the header to a byte serializer
+      * 
+      * Extends the base header serialization with routing table specific fields.
+      * 
+      * @param serializer Serializer to write the header to
+      * @return Result Success if serialization succeeded, error code otherwise
+      */
+    Result Serialize(utils::ByteSerializer& serializer) const override;
+
+    /**
+      * @brief Deserializes a routing table header from a byte deserializer
+      * 
+      * @param deserializer Deserializer containing the header data
+      * @return std::optional<RoutingTableHeader> Deserialized header if successful,
+      *         std::nullopt otherwise
+      */
+    static std::optional<RoutingTableHeader> Deserialize(
+        utils::ByteDeserializer& deserializer);
+
+    /**
+      * @brief Calculates the size of the routing table specific header extension
+      * 
+      * @return size_t Size of the routing table header fields in bytes
+      */
+    static constexpr size_t RoutingTableFieldsSize() {
+        return sizeof(uint16_t) +  // Network ID
+               sizeof(uint8_t) +   // Table version
+               sizeof(uint8_t);    // Entry count
+    }
+
+    /**
+      * @brief Gets the total size of this header type
+      * 
+      * @return size_t Size of the header in bytes (base + routing table specific fields)
+      */
+    size_t GetSize() const override {
+        return BaseHeader::Size() + RoutingTableFieldsSize();
+    }
+
+   private:
+    uint16_t network_id_ = 0;    ///< Network identifier
+    uint8_t table_version_ = 0;  ///< Version of the routing table
+    uint8_t entry_count_ = 0;    ///< Number of routing entries
+};
+
+}  // namespace loramesher

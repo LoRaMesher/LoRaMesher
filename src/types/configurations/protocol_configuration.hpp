@@ -179,17 +179,23 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param route_timeout Time after which routes are considered stale in milliseconds
      * @param max_hops Maximum number of hops for message routing
      * @param max_packet_size Maximum packet size for messages
+     * @param data_slots Number of data slots in the superframe
+     * @param joining_timeout_ms Timeout for joining the network in milliseconds
+     * @param max_network_nodes Maximum number of nodes in the network
      */
-    explicit LoRaMeshProtocolConfig(AddressType node_address = 0,
-                                    uint32_t hello_interval = 60000,
-                                    uint32_t route_timeout = 180000,
-                                    uint8_t max_hops = 5,
-                                    uint8_t max_packet_size = 255)
+    explicit LoRaMeshProtocolConfig(
+        AddressType node_address = 0, uint32_t hello_interval = 60000,
+        uint32_t route_timeout = 180000, uint8_t max_hops = 5,
+        uint8_t max_packet_size = 255, uint8_t default_data_slots = 1,
+        uint8_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),
           max_hops_(max_hops),
-          max_packet_size_(max_packet_size) {}
+          max_packet_size_(max_packet_size),
+          default_data_slots_(default_data_slots),
+          joining_timeout_ms_(joining_timeout_ms),
+          max_network_nodes_(max_network_nodes) {}
 
     /**
      * @brief Get the protocol type
@@ -257,6 +263,54 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     void setMaxPacketSize(uint8_t size) { max_packet_size_ = size; }
 
     /**
+     * @brief Get the default number of data slots in the superframe
+     * 
+     * @return uint8_t Number of data slots
+     */
+    uint8_t getDefaultDataSlots() const { return default_data_slots_; }
+
+    /**
+     * @brief Sets the default number of slots to request when joining
+     * 
+     * @param num_slots Number of slots to request
+     */
+    void setDefaultDataSlots(uint8_t num_slots) {
+        default_data_slots_ = num_slots;
+    }
+
+    /**
+     * @brief Gets the joining timeout in milliseconds
+     * 
+     * @return uint32_t Timeout in milliseconds
+     */
+    uint32_t getJoiningTimeout() const { return joining_timeout_ms_; }
+
+    /**
+     * @brief Sets the joining timeout in milliseconds
+     * 
+     * @param timeout_ms Timeout in milliseconds
+     */
+    void setJoiningTimeout(uint32_t timeout_ms) {
+        joining_timeout_ms_ = timeout_ms;
+    }
+
+    /**
+     * @brief Get the maximum number of nodes in the network
+     * 
+     * @return uint8_t Maximum number of nodes
+     */
+    uint8_t getMaxNetworkNodes() const { return max_network_nodes_; }
+
+    /**
+     * @brief Set the maximum number of nodes in the network
+     * 
+     * @param max_nodes Maximum number of nodes
+     */
+    void setMaxNetworkNodes(uint8_t max_nodes) {
+        max_network_nodes_ = max_nodes;
+    }
+
+    /**
      * @brief Check if configuration is valid
      * 
      * @return bool True if configuration is valid
@@ -299,6 +353,10 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint32_t route_timeout_;   ///< Time after which routes are considered stale
     uint8_t max_hops_;         ///< Maximum number of hops for routing
     uint8_t max_packet_size_;  ///< Maximum packet size
+    uint8_t
+        default_data_slots_;  ///< Default Number of data slots in the superframe
+    uint8_t joining_timeout_ms_;  ///< Joining timeout in ms
+    uint8_t max_network_nodes_;   ///< Maximum number of nodes in the network
 };
 
 /**

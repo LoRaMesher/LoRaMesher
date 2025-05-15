@@ -15,6 +15,11 @@
 #include "hardware/hardware_manager.hpp"
 #include "os/rtos.hpp"
 #include "types/configurations/protocol_configuration.hpp"
+#include "types/messages/loramesher/join_response_header.hpp"
+#include "types/protocols/lora_mesh/network_node.hpp"
+#include "types/protocols/lora_mesh/routing_entry.hpp"
+#include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/protocols/lora_mesh/superframe.hpp"
 #include "types/protocols/protocol.hpp"
 
 namespace loramesher {
@@ -150,71 +155,6 @@ class LoRaMeshProtocol : public Protocol {
     void SetupNewNetwork();
 
    private:
-    /**
-     * @brief Structure representing a routing table entry
-     */
-    struct RoutingEntry {
-        AddressType destination;  ///< Destination node address
-        AddressType next_hop;     ///< Next hop to reach destination
-        uint8_t hop_count;        ///< Number of hops to destination
-        uint8_t link_quality;     ///< Link quality metric (0-100%)
-        uint32_t last_updated;    ///< Timestamp of last update
-        bool is_active;           ///< Whether this route is active
-    };
-
-    /**
-     * @brief Structure representing a node in the network
-     */
-    struct NetworkNode {
-        AddressType address;      ///< Node address
-        uint8_t battery_level;    ///< Battery level (0-100%)
-        uint32_t last_seen;       ///< Timestamp when last heard from
-        bool is_network_manager;  ///< Whether this node is a network manager
-    };
-
-    /**
-     * @brief Structure representing a slot allocation
-     */
-    struct SlotAllocation {
-        enum class SlotType {
-            TX,            ///< Transmission slot
-            RX,            ///< Reception slot
-            SLEEP,         ///< Sleep slot
-            DISCOVERY_RX,  ///< Discovery slot
-            DISCOVERY_TX,  ///< Discovery slot
-            CONTROL_RX,    ///< Control slot
-            CONTROL_TX,    ///< Control slot
-        };
-
-        uint16_t slot_number;  ///< Slot number in the superframe
-        SlotType type;         ///< Type of slot
-    };
-
-    /**
-     * @brief Structure for a superframe
-     */
-    struct Superframe {
-        uint16_t total_slots;      ///< Total number of slots
-        uint16_t data_slots;       ///< Number of data slots
-        uint16_t discovery_slots;  ///< Number of discovery slots
-        uint16_t control_slots;    ///< Number of control slots (Routing tables)
-        uint32_t slot_duration_ms;       ///< Duration of each slot in ms
-        uint32_t superframe_start_time;  ///< Start time of current superframe
-    };
-
-    /**
-     * @brief Enum for message types
-     */
-    enum class MessageType {
-        DISCOVERY,        ///< Discovery message
-        SYNC,             ///< Synchronization message
-        ROUTING_TABLE,    ///< Routing table update message
-        SLOT_REQUEST,     ///< Slot request message
-        SLOT_ALLOCATION,  ///< Slot allocation message
-        DATA,             ///< Data message
-        CONTROL           ///< Control message (e.g., ACK)
-    };
-
     // Task handlers
     os::TaskHandle_t radio_task_handle_;  ///< Handle for radio events task
     os::TaskHandle_t
@@ -224,19 +164,23 @@ class LoRaMeshProtocol : public Protocol {
     os::QueueHandle_t protocol_event_queue_;  ///< Queue for radio events
 
     // Protocol state
-    ProtocolState state_;            ///< Current protocol state
-    bool stop_tasks_;                ///< Flag to stop all tasks
-    uint16_t current_slot_;          ///< Current slot in superframe
-    bool is_synchronized_;           ///< Whether node is synchronized
-    AddressType network_manager_;    ///< Current network manager
-    uint32_t last_sync_time_;        ///< Last time sync was received
-    Superframe current_superframe_;  ///< Current superframe structure
+    ProtocolState state_;          ///< Current protocol state
+    bool stop_tasks_;              ///< Flag to stop all tasks
+    uint16_t current_slot_;        ///< Current slot in superframe
+    bool is_synchronized_;         ///< Whether node is synchronized
+    AddressType network_manager_;  ///< Current network manager
+    uint32_t last_sync_time_;      ///< Last time sync was received
+    types::protocols::lora_mesh::Superframe
+        current_superframe_;  ///< Current superframe structure
 
     // Protocol data structures
-    std::vector<RoutingEntry> routing_table_;  ///< Routing table
-    std::vector<NetworkNode> network_nodes_;   ///< Known network nodes
-    std::vector<SlotAllocation> slot_table_;   ///< Slot allocation table
-    std::unordered_map<MessageType,
+    std::vector<types::protocols::lora_mesh::RoutingEntry>
+        routing_table_;  ///< Routing table
+    std::vector<types::protocols::lora_mesh::NetworkNode>
+        network_nodes_;  ///< Known network nodes
+    std::vector<types::protocols::lora_mesh::SlotAllocation>
+        slot_table_;  ///< Slot allocation table
+    std::unordered_map<types::protocols::lora_mesh::SlotAllocation::SlotType,
                        std::vector<std::unique_ptr<BaseMessage>>>
         message_queue_;  ///< Queue for incoming messages
 
@@ -257,13 +201,6 @@ class LoRaMeshProtocol : public Protocol {
       * @return Result Success if message was processed successfully, error details otherwise
       */
     Result ProcessReceivedRadioEvent(std::unique_ptr<radio::RadioEvent> event);
-
-    /**
-     * @brief Static task function for radio event handling
-     * 
-     * @param parameters Pointer to the LoRaMeshProtocol instance
-     */
-    static void RadioEventTaskFunction(void* parameters);
 
     /**
      * @brief Static task function for slot management
@@ -344,6 +281,13 @@ class LoRaMeshProtocol : public Protocol {
     Result SendControlMessage();
 
     /**
+     * @brief Send a data message
+     * 
+     * @return Result Success if data was sent, error details otherwise
+     */
+    Result SendDataMessage();
+
+    /**
      * @brief Find the best route to a destination
      * 
      * @param destination Destination address
@@ -371,8 +315,9 @@ class LoRaMeshProtocol : public Protocol {
      * @param type Message type
      * @param message Unique pointer to the message
      */
-    void AddMessageToMessageQueue(MessageType type,
-                                  std::unique_ptr<BaseMessage> message);
+    void AddMessageToMessageQueue(
+        types::protocols::lora_mesh::SlotAllocation::SlotType type,
+        std::unique_ptr<BaseMessage> message);
 
     /**
      * @brief Extract the first message of a specific type from the queue
@@ -380,7 +325,175 @@ class LoRaMeshProtocol : public Protocol {
      * @param type Message type to retrieve
      * @return std::unique_ptr<BaseMessage> The extracted message, or nullptr if none found
      */
-    std::unique_ptr<BaseMessage> ExtractMessageQueueOfType(MessageType type);
+    std::unique_ptr<BaseMessage> ExtractMessageQueueOfType(
+        types::protocols::lora_mesh::SlotAllocation::SlotType type);
+
+    /**
+     * @brief Initialize the slot table for a network with routing awareness
+     * 
+     * @param is_network_manager Whether this node is the network manager
+     * @return Result Success if initialization was successful, error details otherwise
+     */
+    Result InitializeSlotTable(bool is_network_manager);
+
+    /**
+     * @brief Allocate data slots based on routing table information
+     * 
+     * @param is_network_manager Whether this node is the network manager
+     * @param available_data_slots Number of data slots available to allocate
+     */
+    void AllocateDataSlotsBasedOnRouting(bool is_network_manager,
+                                         uint16_t available_data_slots);
+
+    /**
+     * @brief Find the next available slot starting from a given position
+     * 
+     * @param start_slot Starting slot number to search from
+     * @return uint16_t Next available slot, or UINT16_MAX if none found
+     */
+    uint16_t FindNextAvailableSlot(uint16_t start_slot);
+
+    /**
+     * @brief Updates a routing entry based on received information
+     * 
+     * @param source Source of the routing update
+     * @param destination Destination address in the route
+     * @param hop_count Hop count reported by the source
+     * @param link_quality Link quality reported by the source
+     * @param allocated_slots Slots allocated to the destination
+     * @return bool True if routing table was changed significantly
+     */
+    bool UpdateRoutingEntry(AddressType source, AddressType destination,
+                            uint8_t hop_count, uint8_t link_quality,
+                            uint8_t allocated_slots);
+
+    /**
+     * @brief Creates a routing table message for broadcast
+     * 
+     * @return std::unique_ptr<BaseMessage> The routing table message to send
+     */
+    std::unique_ptr<BaseMessage> CreateRoutingTableMessage();
+
+    /**
+     * @brief Calculate link quality to a neighbor based on signal strength, history, etc.
+     * 
+     * @param neighbor_address Address of the neighbor
+     * @return uint8_t Link quality (0-100)
+     */
+    uint8_t CalculateLinkQuality(AddressType neighbor_address);
+
+    /**
+     * @brief Join an existing network
+     * 
+     * @param network_manager_address Address of the network manager
+     * @return Result Success if join was successful, error details otherwise
+     */
+    Result JoinNetwork(AddressType network_manager_address);
+
+    /**
+     * @brief Update information about a network node
+     * 
+     * @param node_address Address of the node
+     * @param battery_level Optional battery level update (0-100)
+     * @return bool True if the node was newly added to our network
+     */
+    bool UpdateNetworkNodeInfo(AddressType node_address, uint8_t battery_level);
+
+    /**
+     * @brief Sends a join request to the network
+     * 
+     * @param manager_address Address of the network manager to join
+     * @param requested_slots Number of data slots requested
+     * @return Result Success if request was sent, error otherwise
+     */
+    Result SendJoinRequest(AddressType manager_address,
+                           uint8_t requested_slots);
+
+    /**
+     * @brief Process a join request from a node
+     * 
+     * @param message The join request message
+     * @return Result Success if processed successfully, error otherwise
+     */
+    Result ProcessJoinRequest(const BaseMessage& message);
+
+    /**
+     * @brief Process a join response from the network manager
+     * 
+     * @param message The join response message
+     * @return Result Success if processed successfully, error otherwise
+     */
+    Result ProcessJoinResponse(const BaseMessage& message);
+
+    /**
+     * @brief Process a slot request from a node
+     * 
+     * @param message The slot request message
+     * @return Result Success if processed successfully, error otherwise
+     */
+    Result ProcessSlotRequest(const BaseMessage& message);
+
+    /**
+     * @brief Process a slot allocation message
+     * 
+     * @param message The slot allocation message
+     * @return Result Success if processed successfully, error otherwise
+     */
+    Result ProcessSlotAllocation(const BaseMessage& message);
+
+    /**
+     * @brief Process a routing table message
+     * 
+     * @param message The routing table message
+     * @return Result Success if processed successfully, error otherwise
+     */
+    Result ProcessRoutingTableMessage(const BaseMessage& message);
+
+    /**
+     * @brief Determines if a join request should be accepted
+     * 
+     * @param node_address Address of the requesting node
+     * @param capabilities Node capabilities
+     * @param requested_slots Number of requested slots
+     * @return std::pair<bool, uint8_t> First element is true if accepted, 
+     *         second element is the number of allocated slots
+     */
+    std::pair<bool, uint8_t> ShouldAcceptJoin(AddressType node_address,
+                                              uint8_t capabilities,
+                                              uint8_t requested_slots);
+
+    /**
+     * @brief Sends a join response to a node
+     * 
+     * @param dest Address of the node that requested to join
+     * @param status Response status (accepted/rejected)
+     * @param allocated_slots Number of slots allocated (if accepted)
+     * @return Result Success if response was sent, error otherwise
+     */
+    Result SendJoinResponse(AddressType dest,
+                            JoinResponseHeader::ResponseStatus status,
+                            uint8_t allocated_slots);
+
+    /**
+     * @brief Update slot allocation for all nodes in the network
+     * 
+     * @return Result Success if update was successful, error otherwise
+     */
+    Result UpdateSlotAllocation();
+
+    /**
+     * @brief Broadcast slot allocation to all nodes in the network
+     * 
+     * @return Result Success if broadcast was successful, error otherwise
+     */
+    Result BroadcastSlotAllocation();
+
+    /**
+     * @brief Get the allocated data slots from the routing table
+     * 
+     * @return uint8_t Number of allocated data slots
+     */
+    uint8_t GetAlocatedDataSlotsFromRoutingTable();
 
 #ifdef DEBUG
    public:
@@ -399,6 +512,10 @@ class LoRaMeshProtocol : public Protocol {
     static constexpr uint16_t DEFAULT_SLOTS_PER_SUPERFRAME = 100;
     static constexpr uint8_t DEFAULT_SUPERFRAMES_TO_CREATE_NEW_NETWORK = 3;
     static constexpr uint8_t MAX_LINK_QUALITY = 100;
+    static constexpr AddressType BROADCAST_ADDRESS = 0xFFFF;
+    static constexpr uint8_t MAX_HOP_COUNT = 10;
+    static constexpr uint8_t MAX_DEVICES = 50;
+    static constexpr uint8_t MAX_DATA_SLOTS = 100;
 };
 
 }  // namespace protocols

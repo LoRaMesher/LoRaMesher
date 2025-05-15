@@ -33,24 +33,25 @@ enum class MessageType : uint8_t {
     // Predefined complete message types
 
     // Data messages (0x1x)
-    // DATA = 0x11,     ///< 0001 0001: Regular data message
+    DATA = 0x11,  ///< 0001 0001: Regular data message
     // XL_DATA = 0x12,  ///< 0001 0010: Large data message
 
     // Control messages (0x2x)
-    // ACK = 0x21,       ///< 0010 0001: Acknowledgment
+    ACK = 0x21,  ///< 0010 0001: Acknowledgment
     // NEED_ACK = 0x22,  ///< 0010 0010: Request for acknowledgment
     PING = 0x23,  ///< 0010 0011: Ping request
     PONG = 0x24,  ///< 0010 0100: Pong response
 
     // Routing messages (0x3x)
-    HELLO = 0x31,  ///< 0011 0001: Hello packet for routing
-    // ROUTING_MSG = 0x32,    ///< 0011 0010: Routing message
-    // ROUTE_REQUEST = 0x33,  ///< 0011 0011: Route request
-    // ROUTE_REPLY = 0x34,    ///< 0011 0100: Route reply
+    HELLO = 0x31,        ///< 0011 0001: Hello packet for routing
+    ROUTE_TABLE = 0x32,  ///< 0011 0010: Routing table update
 
     // System messages (0x4x)
-    // SYNC = 0x41,  ///< 0100 0001: Synchronization packet
-    // LOST = 0x42   ///< 0100 0010: Packet loss notification
+    SYNC = 0x41,             ///< 0100 0001: Synchronization packet
+    JOIN_REQUEST = 0x42,     ///< 0100 0010: Request to join network
+    JOIN_RESPONSE = 0x43,    ///< 0100 0011: Response to join request
+    SLOT_REQUEST = 0x44,     ///< 0100 0100: Request for slot allocation
+    SLOT_ALLOCATION = 0x45,  ///< 0100 0101: Slot allocation response
 };
 
 /**

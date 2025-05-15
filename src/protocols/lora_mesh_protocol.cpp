@@ -10,7 +10,16 @@
 
 #include "lora_mesh_protocol.hpp"
 #include "os/os_port.hpp"
+#include "types/messages/loramesher/join_request_message.hpp"
+#include "types/messages/loramesher/join_response_message.hpp"
+#include "types/messages/loramesher/routing_table_message.hpp"
+#include "types/messages/loramesher/slot_allocation_message.hpp"
+#include "types/messages/loramesher/slot_request_message.hpp"
 #include "types/radio/radio_event.hpp"
+
+namespace {
+using namespace loramesher::types::protocols::lora_mesh;
+}
 
 namespace loramesher {
 namespace protocols {
@@ -256,9 +265,62 @@ void LoRaMeshProtocol::ProtocolLogicTaskFunction(void* parameters) {
 
 Result LoRaMeshProtocol::ProcessReceivedRadioEvent(
     std::unique_ptr<radio::RadioEvent> event) {
-    // TODO: Implement
-    return Result(LoraMesherErrorCode::kNotImplemented,
-                  "ProcessReceivedRadioEvent not implemented yet");
+    if (!event) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Empty radio event");
+    }
+
+    // Extract basic event info
+    const auto& message = event->getMessage();
+    AddressType source = message->GetSource();
+
+    // TODO: Check if the message is for us or broadcast
+    // TODO: If we are next hop, we need to check if the message is for us or broadcast
+    // TODO: If we are next hop and not destination, we need to forward the message
+    // TODO: Add a conversion of message type to slot and add it to the slot to be send in the next available slot
+
+    // Process based on message type
+    switch (message->GetType()) {
+        case MessageType::ROUTE_TABLE: {
+            // Handle routing table message
+            Result result = ProcessRoutingTableMessage(*message);
+            if (!result) {
+                LOG_ERROR("Failed to process routing table message: %s",
+                          result.GetErrorMessage().c_str());
+                return result;
+            }
+
+            return result;
+        }
+        case MessageType::DATA_MSG: {
+            // Handle data message - route it if needed
+            AddressType destination = message->GetDestination();
+
+            // If message is for us, process it locally
+            if (destination == node_address_ ||
+                destination == BROADCAST_ADDRESS) {
+                // TODO: Process the data message locally
+                // ...
+            } else {
+                // Message needs to be forwarded
+                AddressType next_hop = FindNextHop(destination);
+                if (next_hop != 0) {
+                    // Forward the message at the next appropriate TX slot
+                    // Create a copy of the message and add to queue
+                    auto data_message = std::make_unique<BaseMessage>(*message);
+                    AddMessageToMessageQueue(SlotAllocation::SlotType::TX,
+                                             std::move(data_message));
+                }
+            }
+            break;
+        }
+        default:
+            LOG_WARNING("Unknown message type: %d",
+                        static_cast<int>(message->GetType()));
+            break;
+    }
+
+    return Result::Success();
 }
 
 void LoRaMeshProtocol::SlotManagerTaskFunction(void* parameters) {
@@ -278,6 +340,8 @@ void LoRaMeshProtocol::SlotManagerTaskFunction(void* parameters) {
     uint16_t current_slot = protocol->current_slot_;
     uint32_t last_slot_time = protocol->GetCurrentTime();
     uint32_t slot_duration = protocol->current_superframe_.slot_duration_ms;
+
+    protocol->HandleSlotTransition(protocol->current_slot_);
 
     // Task loop
     while (!protocol->stop_tasks_ && !rtos.ShouldStopOrPause()) {
@@ -419,52 +483,173 @@ void LoRaMeshProtocol::SetupNewNetwork() {
 }
 
 // Result LoRaMeshProtocol::ProcessRoutingUpdate(
-//     AddressType source, const std::vector<uint8_t>& data) {
-//     // TODO: Implement proper routing table update logic
-//     // For now, just acknowledge receipt
+//     AddressType source, const std::vector<uint8_t>& routing_data) {
+//     bool routing_changed = false;
 
-//     // Stub implementation - just record that we've seen this node
-//     bool found = false;
-//     for (auto& node : network_nodes_) {
-//         if (node.address == source) {
-//             node.last_seen = GetCurrentTime();
-//             found = true;
-//             break;
-//         }
+//     utils::ByteDeserializer deserializer(routing_data);
+
+//     // Read header information (network_id, version, entry_count)
+//     auto network_id = deserializer.ReadUint16();
+//     auto table_version = deserializer.ReadUint8();
+//     auto entry_count = deserializer.ReadUint8();
+
+//     if (!network_id || !table_version || !entry_count) {
+//         LOG_ERROR("Failed to read routing table header");
+//         return Result(LoraMesherErrorCode::kSerializationError,
+//                       "Failed to parse routing table header");
 //     }
 
-//     if (!found) {
-//         NetworkNode new_node;
-//         new_node.address = source;
-//         new_node.battery_level = 100;  // Default to full battery
-//         new_node.last_seen = GetCurrentTime();
-//         new_node.is_network_manager = false;
-//         network_nodes_.push_back(new_node);
+//     LOG_INFO(
+//         "Received routing table update from 0x%04X: version %d, %d entries",
+//         source, *table_version, *entry_count);
+
+//     // Process each entry
+//     for (uint8_t i = 0; i < *entry_count; i++) {
+//         auto entry = RoutingTableEntry::Deserialize(deserializer);
+//         if (!entry) {
+//             LOG_ERROR("Failed to deserialize routing entry %d", i);
+//             continue;
+//         }
+
+//         // Skip entries for ourselves
+//         if (entry->destination == node_address_) {
+//             continue;
+//         }
+
+//         // Process the entry and track if routing changed
+//         bool entry_changed =
+//             UpdateRoutingEntry(source, entry->destination, entry->hop_count,
+//                                entry->link_quality, entry->allocated_slots);
+
+//         routing_changed |= entry_changed;
+//     }
+
+//     // Record that we've seen this node
+//     UpdateNetworkNodeInfo(source);
+
+//     // If routing changed significantly, reallocate slots
+//     if (routing_changed) {
+//         LOG_INFO("Routing table updated from node 0x%04X, reallocating slots",
+//                  source);
+//         InitializeSlotTable(network_manager_ == node_address_);
 //     }
 
 //     return Result::Success();
 // }
 
 Result LoRaMeshProtocol::LogicJoining() {
-    return Result(LoraMesherErrorCode::kNotImplemented,
-                  "TODO: LogicJoining not implemented yet");
-}
+    LOG_INFO("Starting joining phase");
 
-Result LoRaMeshProtocol::SendRoutingTableUpdate() {
-    // TODO: Implement routing table update sending
-    // For now, return success without doing anything
+    // Set radio to receive mode to listen for network information
+    Result result = hardware_->setState(radio::RadioState::kReceive);
+    if (!result) {
+        return result;
+    }
+
+    auto& rtos = GetRTOS();
+    std::unique_ptr<radio::RadioEvent>* event_ptr = nullptr;
+
+    // Wait for control messages from network manager
+    uint32_t joining_timeout_ms = config_.getJoiningTimeout();
+    uint32_t start_time = GetCurrentTime();
+    uint32_t end_time = start_time + joining_timeout_ms;
+    AddressType detected_network_manager = 0;
+    uint16_t network_id = 0;
+
+    while (!stop_tasks_ && !rtos.ShouldStopOrPause() &&
+           GetCurrentTime() < end_time && detected_network_manager == 0) {
+
+        joining_timeout_ms = end_time - GetCurrentTime();
+        if (joining_timeout_ms < 0) {
+            joining_timeout_ms = 0;
+        }
+
+        // Check for messages from radio event handler
+        if (rtos.ReceiveFromQueue(protocol_event_queue_, &event_ptr,
+                                  joining_timeout_ms) == os::QueueResult::kOk) {
+
+            // Process the received message
+            const auto& message = (*event_ptr)->getMessage();
+
+            if (message->GetType() == MessageType::ROUTE_TABLE) {
+                // Extract network information from routing table message
+                auto routing_message_opt =
+                    RoutingTableMessage::CreateFromSerialized(
+                        *message->Serialize());
+                if (routing_message_opt) {
+                    // We found a valid routing message - use it to join the network
+                    detected_network_manager = routing_message_opt->GetSource();
+                    network_id = routing_message_opt->GetNetworkId();
+
+                    LOG_INFO(
+                        "Found network manager 0x%04X with network ID 0x%04X",
+                        detected_network_manager, network_id);
+                }
+            }
+
+            // Clean up event pointer
+            delete event_ptr;
+        }
+    }
+
+    if (stop_tasks_) {
+        LOG_INFO("Joining phase stopped by user request");
+        return Result::Success();
+    }
+
+    if (detected_network_manager == 0) {
+        LOG_INFO("Joining timeout - no valid network manager detected");
+        // Fall back to discovery mode
+        state_ = ProtocolState::DISCOVERY;
+        return Result::Success();
+    }
+
+    // Join the detected network
+    Result join_result = JoinNetwork(detected_network_manager);
+    if (!join_result) {
+        LOG_ERROR("Failed to join network: %s",
+                  join_result.GetErrorMessage().c_str());
+        // Fall back to discovery mode
+        state_ = ProtocolState::DISCOVERY;
+        return join_result;
+    }
+
+    // Request slot allocation from the network manager
+    Result slot_request_result = SendSlotRequest(config_.getDefaultDataSlots());
+    if (!slot_request_result) {
+        LOG_WARNING("Failed to send slot request: %s",
+                    slot_request_result.GetErrorMessage().c_str());
+        // Continue anyway - we'll use default allocation
+    }
+
+    // Successfully joined network
+    LOG_INFO("Successfully joined network with manager 0x%04X",
+             detected_network_manager);
+    state_ = ProtocolState::NORMAL_OPERATION;
+
     return Result::Success();
 }
 
-Result LoRaMeshProtocol::SendSlotRequest(uint8_t num_slots) {
-    // TODO: Implement slot request sending
-    // For now, return success without doing anything
+Result LoRaMeshProtocol::SendRoutingTableUpdate() {
+    // Create a routing table message
+    auto message = CreateRoutingTableMessage();
+    if (!message) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create routing table message");
+    }
+
+    // Add the message to the control message queue
+    AddMessageToMessageQueue(SlotAllocation::SlotType::CONTROL_TX,
+                             std::move(message));
+
+    LOG_DEBUG("Routing table update message queued for transmission");
     return Result::Success();
 }
 
 Result LoRaMeshProtocol::SendDiscoveryMessage() {
     // Get the first discovery message
-    auto discovery_message = ExtractMessageQueueOfType(MessageType::DISCOVERY);
+    auto discovery_message =
+        ExtractMessageQueueOfType(SlotAllocation::SlotType::DISCOVERY_TX);
     if (!discovery_message) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Discovery message queue is empty, nothing to send");
@@ -479,19 +664,53 @@ Result LoRaMeshProtocol::SendDiscoveryMessage() {
     return Result::Success();
 }
 
+Result LoRaMeshProtocol::SendDataMessage() {
+    // Get the first discovery message
+    auto data_message = ExtractMessageQueueOfType(SlotAllocation::SlotType::TX);
+    if (!data_message) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Discovery message queue is empty, nothing to send");
+    }
+
+    // Send the discovery message
+    Result result = SendMessage(*data_message);
+    if (!result) {
+        return result;
+    }
+
+    return Result::Success();
+}
+
 Result LoRaMeshProtocol::SendControlMessage() {
     // TODO: This should send at the begining the routing table.
     // TODO: Maybe here it will need to create the routing table and send it.
     // TODO: Maybe the protocol should check if the routing table is empty and create it.
     // Get the first control message
-    auto control_message = ExtractMessageQueueOfType(MessageType::CONTROL);
+    // First check if there's a routing table update to send
+    // if (GetCurrentTime() - last_routing_update_time_ >=
+    //     routing_update_interval_ms_) {
+    // Time to send a routing update
+    // TODO: Send periodically the routing table?
+    Result result = SendRoutingTableUpdate();
+    if (!result) {
+        LOG_ERROR("Failed to send routing table update: %s",
+                  result.GetErrorMessage().c_str());
+    }
+    //  else {
+    //     last_routing_update_time_ = GetCurrentTime();
+    // }
+    // }
+
+    // Then handle other control messages
+    auto control_message =
+        ExtractMessageQueueOfType(SlotAllocation::SlotType::CONTROL_TX);
     if (!control_message) {
         LOG_DEBUG("Control message queue is empty, nothing to send");
         return Result::Success();
     }
 
-    // Send the discovery message
-    Result result = SendMessage(*control_message);
+    // Send the control message
+    result = SendMessage(*control_message);
     if (!result) {
         return result;
     }
@@ -543,25 +762,25 @@ void LoRaMeshProtocol::HandleSlotTransition(uint16_t slot_number) {
 
     // Handle based on slot type
     switch (slot_type) {
-        case SlotAllocation::SlotType::TX:
-        case SlotAllocation::SlotType::DISCOVERY_TX:
-        case SlotAllocation::SlotType::CONTROL_TX:
-            result = hardware_->setState(radio::RadioState::kTransmit);
+        case SlotAllocation::SlotType::RX:
+        case SlotAllocation::SlotType::DISCOVERY_RX:
+        case SlotAllocation::SlotType::CONTROL_RX:
+            result = hardware_->setState(radio::RadioState::kReceive);
             if (!result) {
                 LOG_ERROR("Failed to set radio to transmit state: %s",
                           result.GetErrorMessage().c_str());
             }
             break;
 
-        case SlotAllocation::SlotType::RX:
-            result = hardware_->setState(radio::RadioState::kReceive);
+        case SlotAllocation::SlotType::TX:
+            result = SendDataMessage();
             if (!result) {
-                LOG_ERROR("Failed to set radio to receive state: %s",
+                LOG_ERROR("Failed to send data message: %s",
                           result.GetErrorMessage().c_str());
             }
             break;
 
-        case SlotAllocation::SlotType::DISCOVERY_RX:
+        case SlotAllocation::SlotType::DISCOVERY_TX:
             result = SendDiscoveryMessage();
             if (!result) {
                 LOG_ERROR("Failed to send discovery message: %s",
@@ -569,8 +788,12 @@ void LoRaMeshProtocol::HandleSlotTransition(uint16_t slot_number) {
             }
             break;
 
-        case SlotAllocation::SlotType::CONTROL_RX:
-            SendControlMessage();
+        case SlotAllocation::SlotType::CONTROL_TX:
+            result = SendControlMessage();
+            if (!result) {
+                LOG_ERROR("Failed to send control message: %s",
+                          result.GetErrorMessage().c_str());
+            }
             break;
 
         case SlotAllocation::SlotType::SLEEP:
@@ -598,12 +821,12 @@ uint32_t LoRaMeshProtocol::GetCurrentTime() const {
 }
 
 void LoRaMeshProtocol::AddMessageToMessageQueue(
-    MessageType type, std::unique_ptr<BaseMessage> message) {
+    SlotAllocation::SlotType type, std::unique_ptr<BaseMessage> message) {
     message_queue_[type].push_back(std::move(message));
 }
 
 std::unique_ptr<BaseMessage> LoRaMeshProtocol::ExtractMessageQueueOfType(
-    MessageType type) {
+    SlotAllocation::SlotType type) {
     auto it = message_queue_.find(type);
     if (it != message_queue_.end() && !it->second.empty()) {
         // Get the first message
@@ -618,6 +841,1033 @@ std::unique_ptr<BaseMessage> LoRaMeshProtocol::ExtractMessageQueueOfType(
 
     // No message found
     return nullptr;
+}
+
+Result LoRaMeshProtocol::InitializeSlotTable(bool is_network_manager) {
+    // Clear existing slot table
+    slot_table_.clear();
+
+    // Calculate slot counts based on superframe configuration
+    uint16_t total_slots = current_superframe_.total_slots;
+    uint16_t data_slots = current_superframe_.data_slots;
+    uint16_t discovery_slots = current_superframe_.discovery_slots;
+    uint16_t control_slots = current_superframe_.control_slots;
+
+    // Validate slot counts
+    if (data_slots + discovery_slots + control_slots > total_slots) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Sum of slot types exceeds total slots");
+    }
+
+    // Create sleep slots as default (fill entire table with sleep first)
+    for (uint16_t i = 0; i < total_slots; i++) {
+        SlotAllocation slot;
+        slot.slot_number = i;
+        slot.type = SlotAllocation::SlotType::SLEEP;
+        slot_table_.push_back(slot);
+    }
+
+    // Distribute control slots evenly through the superframe
+    // Network manager sends, others receive
+    if (control_slots > 0) {
+        uint16_t control_interval = total_slots / control_slots;
+        for (uint16_t i = 0; i < control_slots; i++) {
+            uint16_t slot_num = i * control_interval;
+            slot_table_[slot_num].type =
+                is_network_manager ? SlotAllocation::SlotType::CONTROL_TX
+                                   : SlotAllocation::SlotType::CONTROL_RX;
+        }
+    }
+
+    // Distribute discovery slots evenly through the superframe
+    // All nodes need both TX and RX for discovery
+    if (discovery_slots > 0) {
+        uint16_t discovery_interval = total_slots / discovery_slots;
+        for (uint16_t i = 0; i < discovery_slots; i++) {
+            uint16_t slot_num =
+                (i * discovery_interval) + (discovery_interval / 2);
+            slot_num %= total_slots;  // Ensure we stay within bounds
+
+            // Skip if this slot is already assigned
+            if (slot_table_[slot_num].type != SlotAllocation::SlotType::SLEEP) {
+                continue;
+            }
+
+            // Alternate between TX and RX for discovery
+            slot_table_[slot_num].type =
+                (i % 2 == 0) ? SlotAllocation::SlotType::DISCOVERY_TX
+                             : SlotAllocation::SlotType::DISCOVERY_RX;
+        }
+    }
+
+    // Allocate data slots based on routing table and network topology
+    AllocateDataSlotsBasedOnRouting(is_network_manager, data_slots);
+
+    // Log slot allocation for debugging
+    LOG_DEBUG(
+        "Slot table initialized with %d total slots (%d data, %d discovery, %d "
+        "control)",
+        total_slots, data_slots, discovery_slots, control_slots);
+
+    return Result::Success();
+}
+
+void LoRaMeshProtocol::AllocateDataSlotsBasedOnRouting(
+    bool is_network_manager, uint16_t available_data_slots) {
+    uint16_t total_slots = current_superframe_.total_slots;
+
+    // If no routing table exists yet, use simple allocation
+    if (routing_table_.empty() || network_nodes_.size() <= 1) {
+        // For a new network or single node, use minimal allocation
+        uint16_t min_data_slots =
+            std::min(available_data_slots, static_cast<uint16_t>(10));
+        uint16_t data_interval = total_slots / min_data_slots;
+
+        for (uint16_t i = 0; i < min_data_slots; i++) {
+            uint16_t slot_num = (i * data_interval) + (data_interval / 4);
+            slot_num %= total_slots;  // Ensure we stay within bounds
+
+            // Skip if this slot is already assigned
+            if (slot_table_[slot_num].type != SlotAllocation::SlotType::SLEEP) {
+                continue;
+            }
+
+            // For single node networks, alternate between TX and RX for basic communication
+            slot_table_[slot_num].type = (i % 2 == 0)
+                                             ? SlotAllocation::SlotType::TX
+                                             : SlotAllocation::SlotType::RX;
+        }
+        return;
+    }
+
+    // Count total allocated slots from routing table
+    uint16_t total_allocated_slots = 0;
+    for (const auto& entry : routing_table_) {
+        if (entry.is_active) {
+            total_allocated_slots += entry.allocated_slots;
+        }
+    }
+
+    // Ensure we don't exceed available slots
+    if (total_allocated_slots > available_data_slots) {
+        LOG_WARNING(
+            "Total allocated slots (%d) exceeds available data slots (%d), "
+            "scaling down",
+            total_allocated_slots, available_data_slots);
+
+        // Scale down allocated slots proportionally
+        float scale_factor =
+            static_cast<float>(available_data_slots) / total_allocated_slots;
+        total_allocated_slots = 0;
+
+        // Apply scaling to each entry
+        for (auto& entry : routing_table_) {
+            if (entry.is_active) {
+                uint8_t scaled_slots = std::max(
+                    uint8_t(1),
+                    static_cast<uint8_t>(entry.allocated_slots * scale_factor));
+                entry.allocated_slots = scaled_slots;
+                total_allocated_slots += scaled_slots;
+
+                // Ensure we don't exceed available slots
+                if (total_allocated_slots > available_data_slots) {
+                    entry.allocated_slots -=
+                        (total_allocated_slots - available_data_slots);
+                    total_allocated_slots = available_data_slots;
+                }
+            }
+        }
+    }
+
+    // Calculate slot spacing based on total allocated slots
+    uint16_t slot_interval = total_slots / total_allocated_slots;
+
+    // Allocate TX and RX slots based on routing table
+    uint16_t current_position = 0;
+
+    // First, allocate RX slots for nodes that need to transmit to us
+    for (const auto& entry : routing_table_) {
+        if (!entry.is_active)
+            continue;
+
+        // If this node is a direct neighbor that sends to us
+        if (entry.hop_count == 1 && entry.next_hop == entry.destination) {
+            // Allocate RX slots for this node based on its allocated slots
+            for (uint8_t i = 0; i < entry.allocated_slots; i++) {
+                uint16_t slot_num =
+                    (current_position * slot_interval) % total_slots;
+
+                // Skip if this slot is already assigned
+                if (slot_table_[slot_num].type !=
+                    SlotAllocation::SlotType::SLEEP) {
+                    slot_num = FindNextAvailableSlot(slot_num);
+                    if (slot_num == UINT16_MAX)
+                        continue;  // No available slots
+                }
+
+                // Set this slot as RX to listen for this neighbor
+                slot_table_[slot_num].type = SlotAllocation::SlotType::RX;
+
+                current_position++;
+            }
+        }
+    }
+
+    // Then, allocate TX slots for nodes we need to transmit to
+    for (const auto& entry : routing_table_) {
+        if (!entry.is_active)
+            continue;
+
+        // If we send directly to this node (we are the next hop for someone else)
+        bool we_transmit_to_node = false;
+        for (const auto& other_entry : routing_table_) {
+            if (other_entry.is_active &&
+                other_entry.next_hop == entry.destination) {
+                we_transmit_to_node = true;
+                break;
+            }
+        }
+
+        if (we_transmit_to_node) {
+            // Allocate TX slots for this node based on its allocated slots
+            for (uint8_t i = 0; i < entry.allocated_slots; i++) {
+                uint16_t slot_num =
+                    (current_position * slot_interval) % total_slots;
+
+                // Skip if this slot is already assigned
+                if (slot_table_[slot_num].type !=
+                    SlotAllocation::SlotType::SLEEP) {
+                    slot_num = FindNextAvailableSlot(slot_num);
+                    if (slot_num == UINT16_MAX)
+                        continue;  // No available slots
+                }
+
+                // Set this slot as TX to send to this neighbor
+                slot_table_[slot_num].type = SlotAllocation::SlotType::TX;
+
+                current_position++;
+            }
+        }
+    }
+}
+
+uint16_t LoRaMeshProtocol::FindNextAvailableSlot(uint16_t start_slot) {
+    uint16_t total_slots = current_superframe_.total_slots;
+
+    // Search from start_slot to the end
+    for (uint16_t i = start_slot; i < total_slots; i++) {
+        if (slot_table_[i].type == SlotAllocation::SlotType::SLEEP) {
+            return i;
+        }
+    }
+
+    // If not found, search from beginning to start_slot
+    for (uint16_t i = 0; i < start_slot; i++) {
+        if (slot_table_[i].type == SlotAllocation::SlotType::SLEEP) {
+            return i;
+        }
+    }
+
+    // No available slots
+    return UINT16_MAX;
+}
+
+bool LoRaMeshProtocol::UpdateRoutingEntry(AddressType source,
+                                          AddressType destination,
+                                          uint8_t hop_count,
+                                          uint8_t link_quality,
+                                          uint8_t allocated_slots) {
+    // Calculate the actual hop count from this node
+    // (source's hop count + 1 hop through source)
+    uint8_t actual_hop_count = hop_count + 1;
+
+    // Calculate the actual link quality
+    // (minimum of reported quality and our link to source)
+    uint8_t source_link_quality = CalculateLinkQuality(source);
+    uint8_t actual_link_quality = std::min(link_quality, source_link_quality);
+
+    // Don't consider routes that exceed max hops
+    if (actual_hop_count > config_.getMaxHops()) {
+        return false;
+    }
+
+    bool entry_exists = false;
+    bool routing_changed = false;
+
+    // Check if this entry already exists in our table
+    for (auto& entry : routing_table_) {
+        if (entry.destination == destination) {
+            entry_exists = true;
+
+            // Update only if the new route is better or the existing one is inactive
+            bool route_is_better = false;
+
+            // First, prefer active routes over inactive ones
+            if (!entry.is_active) {
+                route_is_better = true;
+            }
+            // Then, prefer routes with fewer hops
+            else if (actual_hop_count < entry.hop_count) {
+                route_is_better = true;
+            }
+            // If hop counts are equal, prefer better link quality
+            else if (actual_hop_count == entry.hop_count &&
+                     actual_link_quality > entry.link_quality) {
+                route_is_better = true;
+            }
+
+            if (route_is_better) {
+                // Track if next hop changed (this affects slot allocation)
+                bool next_hop_changed = (entry.next_hop != source);
+
+                // Update the entry
+                entry.next_hop = source;
+                entry.hop_count = actual_hop_count;
+                entry.link_quality = actual_link_quality;
+                entry.last_updated = GetCurrentTime();
+                entry.is_active = true;
+
+                // Always update allocated slots, even if route isn't better
+                entry.allocated_slots = allocated_slots;
+
+                routing_changed = next_hop_changed;
+
+                // Call the route update callback if provided
+                if (route_update_callback_) {
+                    route_update_callback_(true, destination, source,
+                                           actual_hop_count);
+                }
+            } else {
+                // Even if the route isn't better, update the allocated slots
+                // This ensures slot allocation info is consistent across the network
+                bool slots_changed = (entry.allocated_slots != allocated_slots);
+                entry.allocated_slots = allocated_slots;
+
+                routing_changed |= slots_changed;
+            }
+
+            break;
+        }
+    }
+
+    // If entry doesn't exist, add it
+    if (!entry_exists) {
+        RoutingEntry new_entry;
+        new_entry.destination = destination;
+        new_entry.next_hop = source;
+        new_entry.hop_count = actual_hop_count;
+        new_entry.link_quality = actual_link_quality;
+        new_entry.last_updated = GetCurrentTime();
+        new_entry.is_active = true;
+        new_entry.allocated_slots = allocated_slots;
+
+        routing_table_.push_back(new_entry);
+        routing_changed = true;
+
+        // Call the callback if provided
+        if (route_update_callback_) {
+            route_update_callback_(true, destination, source, actual_hop_count);
+        }
+    }
+
+    return routing_changed;
+}
+
+std::unique_ptr<BaseMessage> LoRaMeshProtocol::CreateRoutingTableMessage() {
+    // Collect active routes
+    std::vector<RoutingTableEntry> entries_to_share;
+
+    for (const auto& entry : routing_table_) {
+        if (entry.is_active) {
+            // Create an entry with the information to share
+            RoutingTableEntry shared_entry(entry.destination, entry.hop_count,
+                                           entry.link_quality,
+                                           entry.allocated_slots);
+
+            entries_to_share.push_back(shared_entry);
+        }
+    }
+
+    // Generate a new routing table version
+    static uint8_t table_version = 0;
+    table_version++;  // Increment for each new message
+
+    if (table_version > 255) {
+        table_version = 0;  // Wrap around if needed
+    }
+
+    auto routing_table_msg = RoutingTableMessage::Create(
+        network_manager_, node_address_, network_manager_, table_version,
+        entries_to_share);
+    if (!routing_table_msg) {
+        LOG_ERROR("Failed to create routing table message");
+        return nullptr;
+    }
+
+    // Return as unique pointer
+    return std::make_unique<BaseMessage>(routing_table_msg->ToBaseMessage());
+}
+
+uint8_t LoRaMeshProtocol::CalculateLinkQuality(AddressType neighbor_address) {
+    // TODO: This is a placeholder - in a real implementation you'd use signal strength,
+    // packet loss rate, etc. to determine link quality
+
+    // For now, return a default value
+    return 80;  // 80% quality
+}
+
+Result LoRaMeshProtocol::SendSlotRequest(uint8_t num_slots) {
+    // Create a simple slot request message (just contains number of slots requested)
+    std::vector<uint8_t> payload = {num_slots};
+
+    auto message =
+        BaseMessage::Create(network_manager_,  // Send to network manager
+                            node_address_,     // From this node
+                            MessageType::SLOT_REQUEST, payload);
+
+    if (!message) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create slot request message");
+    }
+
+    // Add to the message queue for transmission in the next appropriate slot
+    AddMessageToMessageQueue(SlotAllocation::SlotType::CONTROL_TX,
+                             std::make_unique<BaseMessage>(*message));
+
+    LOG_INFO(
+        "Slot request message queued for transmission, requesting %d slots",
+        num_slots);
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::JoinNetwork(AddressType network_manager_address) {
+    // Set up as a regular node
+    state_ = ProtocolState::NORMAL_OPERATION;
+    network_manager_ = network_manager_address;
+    is_synchronized_ = true;  // Assume synchronized for now
+    last_sync_time_ = GetCurrentTime();
+    current_superframe_.superframe_start_time = last_sync_time_;
+
+    // Initialize the slot table for a regular node
+    Result init_result = InitializeSlotTable(false);
+    if (!init_result) {
+        return init_result;
+    }
+
+    // Notify the slot manager task to start the superframe
+    auto result = GetRTOS().NotifyTask(slot_manager_task_handle_, 0);
+    if (result != os::QueueResult::kOk) {
+        return Result(LoraMesherErrorCode::kInterruptError,
+                      "Failed to notify slot manager task");
+    }
+
+    LOG_INFO("Joined network, manager address: 0x%04X",
+             network_manager_address);
+    return Result::Success();
+}
+
+bool LoRaMeshProtocol::UpdateNetworkNodeInfo(AddressType node_address,
+                                             uint8_t battery_level) {
+    bool found = false;
+    bool new_node = false;
+
+    // Don't track ourselves as a separate node
+    if (node_address == node_address_) {
+        return false;
+    }
+
+    for (auto& node : network_nodes_) {
+        if (node.address == node_address) {
+            node.last_seen = GetCurrentTime();
+
+            // Only update battery level if a new value was provided
+            if (battery_level > 0) {
+                node.battery_level = battery_level;
+            }
+
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        NetworkNode new_node_entry;
+        new_node_entry.address = node_address;
+        new_node_entry.battery_level = (battery_level > 0)
+                                           ? battery_level
+                                           : 100;  // Default to full battery
+        new_node_entry.last_seen = GetCurrentTime();
+        new_node_entry.is_network_manager = (node_address == network_manager_);
+
+        network_nodes_.push_back(new_node_entry);
+        new_node = true;
+
+        LOG_INFO("New node 0x%04X discovered in the network", node_address);
+    }
+
+    return new_node;
+}
+
+/**
+ * @brief Sends a join request to the network
+ * 
+ * @param manager_address Address of the network manager to join
+ * @param requested_slots Number of data slots requested
+ * @return Result Success if request was sent, error otherwise
+ */
+Result LoRaMeshProtocol::SendJoinRequest(AddressType manager_address,
+                                         uint8_t requested_slots) {
+    // Determine the appropriate capabilities for this node
+    uint8_t capabilities = 0;
+
+    // Add router capability if we have routes to share
+    if (!routing_table_.empty()) {
+        capabilities |= JoinRequestHeader::ROUTER;
+    }
+
+    // TODO: Set other capabilities based on node configuration
+    // if (config_.isGateway()) {
+    //     capabilities |= JoinRequestHeader::GATEWAY;
+    // }
+
+    // TODO: Get actual battery level from hardware if available
+    uint8_t battery_level = 100;
+
+    // Create the join request message
+    auto join_request = JoinRequestMessage::Create(
+        manager_address,  // Destination is the manager
+        node_address_,    // From this node
+        capabilities,     // Node capabilities
+        battery_level,    // Battery level
+        requested_slots   // Requested number of data slots
+    );
+
+    if (!join_request) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create join request message");
+    }
+
+    // Convert to base message for transmission
+    BaseMessage base_message = join_request->ToBaseMessage();
+
+    // Send the message
+    Result result = SendMessage(base_message);
+    if (!result) {
+        return result;
+    }
+
+    LOG_INFO("Join request sent to manager 0x%04X, requesting %d slots",
+             manager_address, requested_slots);
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::ProcessJoinRequest(const BaseMessage& message) {
+    // Only the network manager should process join requests
+    if (network_manager_ != node_address_) {
+        LOG_WARNING("Ignoring join request as we are not the network manager");
+        return Result::Success();  // Not an error, just not our job
+    }
+
+    auto opt_serialized = message.Serialize();
+    if (!opt_serialized) {
+        LOG_ERROR("Failed to serialize join request message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to serialize join request message");
+    }
+
+    auto procces_join_req_opt =
+        JoinRequestMessage::CreateFromSerialized(*opt_serialized);
+
+    if (!procces_join_req_opt) {
+        LOG_ERROR("Failed to deserialize join request message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize join request message");
+    }
+
+    AddressType node_address = message.GetSource();
+
+    auto capabilities = procces_join_req_opt->GetCapabilities();
+    auto battery_level = procces_join_req_opt->GetBatteryLevel();
+    auto requested_slots = procces_join_req_opt->GetRequestedSlots();
+
+    LOG_INFO(
+        "Received join request from 0x%04X: capabilities=0x%02X, battery=%d%%, "
+        "slots=%d",
+        node_address, capabilities, battery_level, requested_slots);
+
+    // Determine if the node should be allowed to join
+    auto [accepted, allocated_slots] =
+        ShouldAcceptJoin(node_address, capabilities, requested_slots);
+
+    // Update network node information
+    UpdateNetworkNodeInfo(node_address, battery_level);
+
+    // Send join response
+    JoinResponseHeader::ResponseStatus status =
+        accepted ? JoinResponseHeader::ACCEPTED : JoinResponseHeader::REJECTED;
+
+    Result response_result =
+        SendJoinResponse(node_address, status, allocated_slots);
+    if (!response_result) {
+        LOG_ERROR("Failed to send join response: %s",
+                  response_result.GetErrorMessage().c_str());
+        return response_result;
+    }
+
+    // If accepted, update routing and slot tables
+    if (accepted) {
+        LOG_INFO("Node 0x%04X accepted into network with %d slots",
+                 node_address, allocated_slots);
+
+        // Update slot allocation for the entire network
+        UpdateSlotAllocation();
+
+        // Notify all nodes about the updated slot allocation
+        BroadcastSlotAllocation();
+    } else {
+        LOG_INFO("Node 0x%04X rejected from network", node_address);
+    }
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::ProcessJoinResponse(const BaseMessage& message) {
+    // Only nodes attempting to join should process join responses
+    if (state_ != ProtocolState::JOINING) {
+        LOG_WARNING("Ignoring join response as we are not in joining state");
+        return Result::Success();  // Not an error, just unexpected
+    }
+
+    auto opt_serialized = message.Serialize();
+    if (!opt_serialized) {
+        LOG_ERROR("Failed to serialize join response message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to serialize join response message");
+    }
+
+    auto join_response_opt =
+        JoinResponseMessage::CreateFromSerialized(*opt_serialized);
+    if (!join_response_opt) {
+        LOG_ERROR("Failed to deserialize join response message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize join response message");
+    }
+
+    // Convert raw status to enum
+    auto status = join_response_opt->GetStatus();
+    auto network_id = join_response_opt->GetNetworkId();
+    auto allocated_slots = join_response_opt->GetAllocatedSlots();
+
+    AddressType manager_address = message.GetSource();
+
+    LOG_INFO(
+        "Received join response from manager 0x%04X: status=%d, "
+        "network=0x%04X, slots=%d",
+        manager_address, status, network_id, allocated_slots);
+
+    // Process based on join status
+    if (status == JoinResponseHeader::ACCEPTED) {
+        LOG_INFO("Join request accepted! Joining network 0x%04X with %d slots",
+                 network_id, allocated_slots);
+
+        // Update our network state
+        network_manager_ = manager_address;
+        is_synchronized_ = true;
+        last_sync_time_ = GetCurrentTime();
+
+        // Transition to normal operation
+        state_ = ProtocolState::NORMAL_OPERATION;
+
+        // Initialize slot table based on our position in the network
+        Result init_result = InitializeSlotTable(false);
+        if (!init_result) {
+            LOG_ERROR("Failed to initialize slot table: %s",
+                      init_result.GetErrorMessage().c_str());
+        }
+
+        // Start the slot manager
+        auto result = GetRTOS().NotifyTask(slot_manager_task_handle_, 0);
+        if (result != os::QueueResult::kOk) {
+            LOG_ERROR("Failed to notify slot manager task");
+        }
+    } else {
+        LOG_WARNING("Join request rejected with status %d", status);
+
+        // Handle specific rejection reasons
+        switch (status) {
+            case JoinResponseHeader::CAPACITY_EXCEEDED:
+                LOG_WARNING("Network at capacity, cannot join");
+                break;
+
+            case JoinResponseHeader::AUTHENTICATION_FAILED:
+                LOG_WARNING("Authentication failed, cannot join");
+                break;
+
+            case JoinResponseHeader::RETRY_LATER:
+                LOG_INFO("Network busy, retry joining later");
+                // TODO: Implement retry mechanism with backoff
+                break;
+
+            default:
+                LOG_WARNING("Join request rejected for unknown reason");
+                break;
+        }
+
+        // Return to discovery state
+        state_ = ProtocolState::DISCOVERY;
+    }
+
+    return Result::Success();
+}
+
+std::pair<bool, uint8_t> LoRaMeshProtocol::ShouldAcceptJoin(
+    AddressType node_address, uint8_t capabilities, uint8_t requested_slots) {
+    // TODO: Implement application-defined callback for join acceptance
+    // if (join_acceptance_callback_) {
+    //     return join_acceptance_callback_(node_address, capabilities, requested_slots);
+    // }
+
+    // Default implementation: accept all nodes
+
+    // Check network capacity
+    if (network_nodes_.size() >= config_.getMaxNetworkNodes()) {
+        LOG_WARNING("Network at capacity (%zu nodes), rejecting join request",
+                    network_nodes_.size());
+        return {false, 0};
+    }
+
+    // Check if slots are available
+    uint8_t available_slots =
+        MAX_DATA_SLOTS - GetAlocatedDataSlotsFromRoutingTable();
+
+    uint8_t allocated_slots = std::min(requested_slots, available_slots);
+
+    if (allocated_slots == 0) {
+        LOG_WARNING(
+            "No slots available for allocation, rejecting join request");
+        return {false, 0};
+    }
+
+    if (allocated_slots < requested_slots) {
+        LOG_WARNING("Not enough slots available (requested %d, allocated %d)",
+                    requested_slots, allocated_slots);
+    }
+
+    // Accept with requested slots
+    return {true, allocated_slots};
+}
+
+Result LoRaMeshProtocol::SendJoinResponse(
+    AddressType dest, JoinResponseHeader::ResponseStatus status,
+    uint8_t allocated_slots) {
+    // Only the network manager should send join responses
+    if (network_manager_ != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Only network manager can send join responses");
+    }
+
+    // Create superframe information to share with the node
+    // std::vector<uint8_t> superframe_info(8);
+    // utils::ByteSerializer serializer(superframe_info);
+
+    // // Serialize superframe configuration
+    // serializer.WriteUint16(current_superframe_.total_slots);
+    // serializer.WriteUint16(current_superframe_.data_slots);
+    // serializer.WriteUint16(current_superframe_.discovery_slots);
+    // serializer.WriteUint16(current_superframe_.control_slots);
+
+    // Create the join response message
+    auto join_response = JoinResponseMessage::Create(
+        dest,              // Destination is the joining node
+        node_address_,     // From this node (network manager)
+        network_manager_,  // Network ID
+        allocated_slots,   // Allocated data slots
+        status             // Response status
+        // ,
+        // superframe_info    // Superframe configuration
+    );
+
+    if (!join_response) {
+        return Result(LoraMesherErrorCode::kHardwareError,
+                      "Failed to create join response message");
+    }
+
+    // Convert to base message for transmission
+    BaseMessage base_message = join_response->ToBaseMessage();
+
+    // Send the message
+    Result result = SendMessage(base_message);
+    if (!result) {
+        return result;
+    }
+
+    LOG_INFO("Join response sent to node 0x%04X: status=%d, slots=%d", dest,
+             static_cast<int>(status), allocated_slots);
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::ProcessSlotRequest(const BaseMessage& message) {
+    // Only the network manager should process slot requests
+    if (network_manager_ != node_address_) {
+        LOG_WARNING("Ignoring slot request as we are not the network manager");
+        return Result::Success();  // Not an error, just not our job
+    }
+
+    auto opt_serialized = message.Serialize();
+    if (!opt_serialized) {
+        LOG_ERROR("Failed to serialize slot request message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to serialize slot request message");
+    }
+
+    auto slot_request =
+        SlotRequestMessage::CreateFromSerialized(*opt_serialized);
+    if (!slot_request) {
+        LOG_ERROR("Failed to deserialize slot request message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize slot request message");
+    }
+
+    auto requested_slots = slot_request->GetRequestedSlots();
+
+    AddressType node_address = message.GetSource();
+
+    LOG_INFO("Received slot request from 0x%04X: requested %d slots",
+             node_address, requested_slots);
+
+    // Check if node is part of the network
+    bool is_known_node = false;
+    for (const auto& node : network_nodes_) {
+        if (node.address == node_address) {
+            is_known_node = true;
+            break;
+        }
+    }
+
+    if (!is_known_node) {
+        LOG_WARNING("Slot request from unknown node 0x%04X, ignoring",
+                    node_address);
+        return Result::Success();
+    }
+
+    // Determine how many slots to allocate
+    uint8_t available_slots =
+        MAX_DATA_SLOTS - GetAlocatedDataSlotsFromRoutingTable();
+    uint8_t allocated_slots = std::min(requested_slots, available_slots);
+
+    if (allocated_slots == 0) {
+        LOG_WARNING(
+            "No slots available for allocation, rejecting slot request");
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "No slots available for allocation");
+    }
+
+    if (allocated_slots < requested_slots) {
+        LOG_WARNING("Not enough slots available (requested %d, allocated %d)",
+                    requested_slots, allocated_slots);
+    }
+
+    // Update slot allocation for the node
+    // TODO: Update node-specific slot allocation tracking
+    // TODO: Send slot allocation message to the node
+
+    // Update slot allocation for the entire network
+    UpdateSlotAllocation();
+
+    // Notify all nodes about the updated slot allocation
+    BroadcastSlotAllocation();
+
+    LOG_INFO("Allocated %d slots to node 0x%04X", allocated_slots,
+             node_address);
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::UpdateSlotAllocation() {
+    // Only the network manager should update slot allocation
+    if (network_manager_ != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Only network manager can update slot allocation");
+    }
+
+    // Reinitialize slot table for the entire network
+    Result result = InitializeSlotTable(true);
+    if (!result) {
+        return result;
+    }
+
+    // TODO: Update any internal state tracking slot allocation
+
+    LOG_INFO("Slot allocation updated for the network");
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::BroadcastSlotAllocation() {
+    // Only the network manager should broadcast slot allocation
+    if (network_manager_ != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Only network manager can broadcast slot allocation");
+    }
+
+    // Get total number of active nodes in the network
+    uint8_t total_nodes =
+        static_cast<uint8_t>(network_nodes_.size() + 1);  // +1 for manager
+
+    // For each node in the network, send a slot allocation message
+    for (const auto& node : network_nodes_) {
+        // TODO: Get actual allocated slots for this node
+        uint8_t allocated_slots = 1;  // Default to 1 slot per node
+
+        // Create slot allocation message
+        auto slot_allocation = SlotAllocationMessage::Create(
+            node.address,      // Destination is the node
+            node_address_,     // From this node (network manager)
+            network_manager_,  // Network ID
+            allocated_slots,   // Allocated data slots
+            total_nodes        // Total nodes in network
+        );
+
+        if (!slot_allocation) {
+            LOG_ERROR(
+                "Failed to create slot allocation message for node 0x%04X",
+                node.address);
+            continue;
+        }
+
+        // Convert to base message for transmission
+        BaseMessage base_message = slot_allocation->ToBaseMessage();
+
+        // Send the message
+        Result result = SendMessage(base_message);
+        if (!result) {
+            LOG_ERROR("Failed to send slot allocation to node 0x%04X: %s",
+                      node.address, result.GetErrorMessage().c_str());
+        } else {
+            LOG_INFO("Slot allocation sent to node 0x%04X: %d slots",
+                     node.address, allocated_slots);
+        }
+    }
+
+    return Result::Success();
+}
+
+uint8_t LoRaMeshProtocol::GetAlocatedDataSlotsFromRoutingTable() {
+    // Count the number of active routes in the routing table
+    uint8_t allocated_slots = 0;
+    for (const auto& entry : routing_table_) {
+        if (entry.is_active) {
+            allocated_slots++;
+        }
+    }
+
+    return allocated_slots;
+}
+
+Result LoRaMeshProtocol::ProcessSlotAllocation(const BaseMessage& message) {
+    // Only accept slot allocation from the network manager
+    if (message.GetSource() != network_manager_) {
+        LOG_WARNING("Ignoring slot allocation from non-manager node 0x%04X",
+                    message.GetSource());
+        return Result::Success();  // Not an error, just unexpected
+    }
+
+    auto opt_serialized = message.Serialize();
+    if (!opt_serialized) {
+        LOG_ERROR("Failed to serialize slot allocation message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to serialize slot allocation message");
+    }
+
+    auto slot_allocation_msg =
+        SlotAllocationMessage::CreateFromSerialized(*opt_serialized);
+    if (!slot_allocation_msg) {
+        LOG_ERROR("Failed to deserialize slot allocation message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize slot allocation message");
+    }
+
+    auto network_id = slot_allocation_msg->GetNetworkId();
+    auto allocated_slots = slot_allocation_msg->GetAllocatedSlots();
+    auto total_nodes = slot_allocation_msg->GetTotalNodes();
+    auto source = slot_allocation_msg->GetSource();
+
+    LOG_INFO(
+        "Received slot allocation: network=0x%04X, slots=%d, total_nodes=%d",
+        network_id, allocated_slots, total_nodes);
+
+    // Update our slot allocation
+    // TODO: Update any internal state tracking slot allocation
+
+    // Reinitialize slot table based on our position in the network
+    Result init_result = InitializeSlotTable(false);
+    if (!init_result) {
+        LOG_ERROR("Failed to initialize slot table: %s",
+                  init_result.GetErrorMessage().c_str());
+        return init_result;
+    }
+
+    LOG_INFO("Slot table updated with %d allocated slots", allocated_slots);
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::ProcessRoutingTableMessage(
+    const BaseMessage& message) {
+    auto opt_serialized = message.Serialize();
+    if (!opt_serialized) {
+        LOG_ERROR("Failed to serialize routing message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to serialize routing message");
+    }
+
+    auto routing_msg =
+        RoutingTableMessage::CreateFromSerialized(*opt_serialized);
+    if (!routing_msg) {
+        LOG_ERROR("Failed to deserialize routing message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize routing message");
+    }
+
+    auto source = message.GetSource();
+    auto table_version = routing_msg->GetTableVersion();
+    auto entries = routing_msg->GetEntries();
+
+    LOG_INFO(
+        "Received routing table update from 0x%04X: version %d, %d entries",
+        source, table_version, entries.size());
+
+    // Process routing entries
+    bool routing_changed = false;
+
+    for (uint8_t i = 0; i < entries.size(); i++) {
+
+        const auto& entry = entries[i];
+        auto dest = entry.destination;
+        auto hop_count = entry.hop_count;
+        auto link_quality = entry.link_quality;
+        auto allocated_slots = entry.allocated_slots;
+
+        // Skip entries for ourselves
+        if (dest == node_address_) {
+            continue;
+        }
+
+        // Update routing entry and track changes
+        bool entry_changed = UpdateRoutingEntry(source, dest, hop_count,
+                                                link_quality, allocated_slots);
+
+        routing_changed |= entry_changed;
+    }
+
+    // If routing changed significantly, reallocate slots
+    if (routing_changed) {
+        LOG_INFO("Routing table updated from node 0x%04X, reallocating slots",
+                 source);
+        InitializeSlotTable(network_manager_ == node_address_);
+    }
 }
 
 }  // namespace protocols
