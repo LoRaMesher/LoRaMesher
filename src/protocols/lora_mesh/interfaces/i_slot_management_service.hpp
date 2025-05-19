@@ -1,5 +1,5 @@
 /**
- * @file slot_management_service.hpp
+ * @file i_slot_management_service.hpp
  * @brief Interface for TDMA slot management
  */
 
@@ -8,27 +8,10 @@
 #include <vector>
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
+#include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
 namespace protocols {
-
-/**
- * @brief Structure representing a slot allocation
- */
-struct SlotAllocation {
-    enum class SlotType {
-        TX,            ///< Transmission slot
-        RX,            ///< Reception slot
-        SLEEP,         ///< Sleep slot
-        DISCOVERY_RX,  ///< Discovery slot
-        DISCOVERY_TX,  ///< Discovery slot
-        CONTROL_RX,    ///< Control slot
-        CONTROL_TX,    ///< Control slot
-    };
-
-    uint16_t slot_number;  ///< Slot number in the superframe
-    SlotType type;         ///< Type of slot
-};
 
 /**
  * @brief Interface for slot management service
@@ -105,7 +88,8 @@ class ISlotManagementService {
      * 
      * @return const std::vector<SlotAllocation>& Reference to slot table
      */
-    virtual const std::vector<SlotAllocation>& GetSlotTable() const = 0;
+    virtual const std::vector<types::protocols::lora_mesh::SlotAllocation>&
+    GetSlotTable() const = 0;
 };
 
 }  // namespace protocols

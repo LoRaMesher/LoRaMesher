@@ -1,5 +1,5 @@
 /**
- * @file join_service.hpp
+ * @file i_join_service.hpp
  * @brief Interface for network join functionality
  */
 

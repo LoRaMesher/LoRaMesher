@@ -1,5 +1,5 @@
 /**
- * @file message_queue_service.hpp
+ * @file i_message_queue_service.hpp
  * @brief Interface for message queue management
  */
 

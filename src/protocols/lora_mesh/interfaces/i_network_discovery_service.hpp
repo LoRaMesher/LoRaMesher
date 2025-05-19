@@ -1,5 +1,5 @@
 /**
- * @file network_discovery_service.hpp
+ * @file i_network_discovery_service.hpp
  * @brief Interface for network discovery functionality
  */
 
