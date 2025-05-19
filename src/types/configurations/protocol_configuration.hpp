@@ -187,7 +187,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         AddressType node_address = 0, uint32_t hello_interval = 60000,
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
         uint8_t max_packet_size = 255, uint8_t default_data_slots = 1,
-        uint8_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50)
+        uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),
@@ -355,8 +355,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint8_t max_packet_size_;  ///< Maximum packet size
     uint8_t
         default_data_slots_;  ///< Default Number of data slots in the superframe
-    uint8_t joining_timeout_ms_;  ///< Joining timeout in ms
-    uint8_t max_network_nodes_;   ///< Maximum number of nodes in the network
+    uint32_t joining_timeout_ms_;  ///< Joining timeout in ms
+    uint8_t max_network_nodes_;    ///< Maximum number of nodes in the network
 };
 
 /**
