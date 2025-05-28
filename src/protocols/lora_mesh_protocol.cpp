@@ -554,7 +554,7 @@ Result LoRaMeshProtocol::LogicJoining() {
     uint32_t start_time = GetCurrentTime();
     uint32_t end_time = start_time + joining_timeout_ms;
     AddressType detected_network_manager = 0;
-    uint16_t network_id = 0;
+    AddressType network_mng_addr = 0;
 
     while (!stop_tasks_ && !rtos.ShouldStopOrPause() &&
            GetCurrentTime() < end_time && detected_network_manager == 0) {
@@ -579,11 +579,12 @@ Result LoRaMeshProtocol::LogicJoining() {
                 if (routing_message_opt) {
                     // We found a valid routing message - use it to join the network
                     detected_network_manager = routing_message_opt->GetSource();
-                    network_id = routing_message_opt->GetNetworkId();
+                    network_mng_addr = routing_message_opt->GetNetworkManager();
 
                     LOG_INFO(
-                        "Found network manager 0x%04X with network ID 0x%04X",
-                        detected_network_manager, network_id);
+                        "Found network manager 0x%04X with network Manager "
+                        "Address 0x%04X",
+                        detected_network_manager, network_mng_addr);
                 }
             }
 
@@ -1174,38 +1175,39 @@ bool LoRaMeshProtocol::UpdateRoutingEntry(AddressType source,
 }
 
 std::unique_ptr<BaseMessage> LoRaMeshProtocol::CreateRoutingTableMessage() {
-    // Collect active routes
-    std::vector<RoutingTableEntry> entries_to_share;
+    // // Collect active routes
+    // std::vector<RoutingTableEntry> entries_to_share;
 
-    for (const auto& entry : routing_table_) {
-        if (entry.is_active) {
-            // Create an entry with the information to share
-            RoutingTableEntry shared_entry(entry.destination, entry.hop_count,
-                                           entry.link_quality,
-                                           entry.allocated_slots);
+    // for (const auto& entry : routing_table_) {
+    //     if (entry.is_active) {
+    //         // Create an entry with the information to share
+    //         RoutingTableEntry shared_entry(entry.destination, entry.hop_count,
+    //                                        entry.link_quality,
+    //                                        entry.allocated_slots);
 
-            entries_to_share.push_back(shared_entry);
-        }
-    }
+    //         entries_to_share.push_back(shared_entry);
+    //     }
+    // }
 
-    // Generate a new routing table version
-    static uint8_t table_version = 0;
-    table_version++;  // Increment for each new message
+    // // Generate a new routing table version
+    // static uint8_t table_version = 0;
+    // table_version++;  // Increment for each new message
 
-    if (table_version > 255) {
-        table_version = 0;  // Wrap around if needed
-    }
+    // if (table_version > 255) {
+    //     table_version = 0;  // Wrap around if needed
+    // }
 
-    auto routing_table_msg = RoutingTableMessage::Create(
-        network_manager_, node_address_, network_manager_, table_version,
-        entries_to_share);
-    if (!routing_table_msg) {
-        LOG_ERROR("Failed to create routing table message");
-        return nullptr;
-    }
+    // auto routing_table_msg = RoutingTableMessage::Create(
+    //     network_manager_, node_address_, network_manager_, table_version,
+    //     entries_to_share);
+    // if (!routing_table_msg) {
+    //     LOG_ERROR("Failed to create routing table message");
+    //     return nullptr;
+    // }
 
-    // Return as unique pointer
-    return std::make_unique<BaseMessage>(routing_table_msg->ToBaseMessage());
+    // // Return as unique pointer
+    // return std::make_unique<BaseMessage>(routing_table_msg->ToBaseMessage());
+    return nullptr;  // Placeholder for now
 }
 
 uint8_t LoRaMeshProtocol::CalculateLinkQuality(AddressType neighbor_address) {
@@ -1845,7 +1847,7 @@ Result LoRaMeshProtocol::ProcessRoutingTableMessage(
     for (uint8_t i = 0; i < entries.size(); i++) {
 
         const auto& entry = entries[i];
-        auto dest = entry.destination;
+        auto dest = entry.address;
         auto hop_count = entry.hop_count;
         auto link_quality = entry.link_quality;
         auto allocated_slots = entry.allocated_slots;

@@ -8,19 +8,19 @@
 namespace loramesher {
 
 RoutingTableHeader::RoutingTableHeader(AddressType dest, AddressType src,
-                                       uint16_t network_id,
+                                       AddressType network_manager_addr,
                                        uint8_t table_version,
                                        uint8_t entry_count)
     : BaseHeader(dest, src, MessageType::ROUTE_TABLE,
                  0),  // Payload size set later
-      network_id_(network_id),
+      network_manager_addr_(network_manager_addr),
       table_version_(table_version),
       entry_count_(entry_count) {}
 
-Result RoutingTableHeader::SetRoutingTableInfo(uint16_t network_id,
+Result RoutingTableHeader::SetRoutingTableInfo(AddressType network_manager_addr,
                                                uint8_t table_version,
                                                uint8_t entry_count) {
-    network_id_ = network_id;
+    network_manager_addr_ = network_manager_addr;
     table_version_ = table_version;
     entry_count_ = entry_count;
 
@@ -35,7 +35,7 @@ Result RoutingTableHeader::Serialize(utils::ByteSerializer& serializer) const {
     }
 
     // Then serialize routing table specific fields
-    serializer.WriteUint16(network_id_);
+    serializer.WriteUint16(network_manager_addr_);
     serializer.WriteUint8(table_version_);
     serializer.WriteUint8(entry_count_);
 

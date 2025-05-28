@@ -27,19 +27,22 @@ class RoutingTableHeader : public BaseHeader {
       * 
       * @param dest Destination address
       * @param src Source address
-      * @param network_id Network identifier
+      * @param network_manager_addr Network identifier
       * @param table_version Version of the routing table (increments with changes)
       * @param entry_count Number of routing entries in the message
       */
-    RoutingTableHeader(AddressType dest, AddressType src, uint16_t network_id,
-                       uint8_t table_version, uint8_t entry_count);
+    RoutingTableHeader(AddressType dest, AddressType src,
+                       AddressType network_manager_addr, uint8_t table_version,
+                       uint8_t entry_count);
 
     /**
-      * @brief Gets the network ID
-      * 
-      * @return uint16_t The network identifier
-      */
-    uint16_t GetNetworkId() const { return network_id_; }
+     * @brief Get the network manager address
+     * 
+     * @return AddressType The network manager address
+     */
+    AddressType GetNetworkManagerAddress() const {
+        return network_manager_addr_;
+    }
 
     /**
       * @brief Gets the table version
@@ -58,13 +61,13 @@ class RoutingTableHeader : public BaseHeader {
     /**
       * @brief Sets the routing table specific information
       * 
-      * @param network_id Network identifier
+      * @param network_manager_addr Network manager address
       * @param table_version Version of the routing table
       * @param entry_count Number of routing entries
       * @return Result Success if setting succeeded, error code otherwise
       */
-    Result SetRoutingTableInfo(uint16_t network_id, uint8_t table_version,
-                               uint8_t entry_count);
+    Result SetRoutingTableInfo(AddressType network_manager_addr,
+                               uint8_t table_version, uint8_t entry_count);
 
     /**
       * @brief Serializes the header to a byte serializer
@@ -92,9 +95,9 @@ class RoutingTableHeader : public BaseHeader {
       * @return size_t Size of the routing table header fields in bytes
       */
     static constexpr size_t RoutingTableFieldsSize() {
-        return sizeof(uint16_t) +  // Network ID
-               sizeof(uint8_t) +   // Table version
-               sizeof(uint8_t);    // Entry count
+        return sizeof(AddressType) +  // Network manager address
+               sizeof(uint8_t) +      // Table version
+               sizeof(uint8_t);       // Entry count
     }
 
     /**
@@ -107,9 +110,9 @@ class RoutingTableHeader : public BaseHeader {
     }
 
    private:
-    uint16_t network_id_ = 0;    ///< Network identifier
-    uint8_t table_version_ = 0;  ///< Version of the routing table
-    uint8_t entry_count_ = 0;    ///< Number of routing entries
+    AddressType network_manager_addr_ = 0;  ///< Network manager address
+    uint8_t table_version_ = 0;             ///< Version of the routing table
+    uint8_t entry_count_ = 0;               ///< Number of routing entries
 };
 
 }  // namespace loramesher

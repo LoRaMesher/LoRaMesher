@@ -206,7 +206,14 @@ class RTOSFreeRTOS : public RTOS {
     }
 
     QueueResult NotifyTask(TaskHandle_t task_handle, uint32_t value) override {
-        xTaskNotify(task_handle, value, eSetValueWithOverwrite);
+        BaseType_t response =
+            xTaskNotify(task_handle, value, eSetValueWithOverwrite);
+
+        if (response == pdPASS) {
+            return QueueResult::kOk;
+        } else {
+            return QueueResult::kError;
+        }
     }
 
     QueueResult WaitForNotify(uint32_t timeout) override {

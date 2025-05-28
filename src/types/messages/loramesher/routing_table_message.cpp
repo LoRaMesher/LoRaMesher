@@ -4,17 +4,20 @@
  */
 
 #include "routing_table_message.hpp"
+#include "routing_table_entry.hpp"
 
 namespace loramesher {
 
+using namespace types::protocols::lora_mesh;
+
 RoutingTableMessage::RoutingTableMessage(
     const RoutingTableHeader& header,
-    const std::vector<RoutingTableEntry>& entries)
+    const std::vector<NetworkNodeRoute>& entries)
     : header_(header), entries_(entries) {}
 
 std::optional<RoutingTableMessage> RoutingTableMessage::Create(
-    AddressType dest, AddressType src, uint16_t network_id,
-    uint8_t table_version, const std::vector<RoutingTableEntry>& entries) {
+    AddressType dest, AddressType src, AddressType network_manager_addr,
+    uint8_t table_version, const std::vector<NetworkNodeRoute>& entries) {
 
     // Check if the number of entries fits in a uint8_t
     if (entries.size() > UINT8_MAX) {
@@ -23,7 +26,7 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     }
 
     // Create the header with the correct number of entries
-    RoutingTableHeader header(dest, src, network_id, table_version,
+    RoutingTableHeader header(dest, src, network_manager_addr, table_version,
                               static_cast<uint8_t>(entries.size()));
 
     return RoutingTableMessage(header, entries);
@@ -32,6 +35,7 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
 std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromSerialized(
     const std::vector<uint8_t>& data) {
 
+    // Calculate minimum size for header plus network manager address
     static constexpr size_t kMinHeaderSize =
         RoutingTableHeader::RoutingTableFieldsSize() + BaseHeader::Size();
 
@@ -52,23 +56,14 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromSerialized(
     }
 
     // Read the entries based on the count in the header
-    std::vector<RoutingTableEntry> entries;
+    std::vector<NetworkNodeRoute> entries;
     uint8_t entry_count = header->GetEntryCount();
 
-    // Validate that we have enough data for all entries
-    size_t required_size =
-        kMinHeaderSize + entry_count * RoutingTableEntry::Size();
-    if (data.size() < required_size) {
-        LOG_ERROR("Not enough data for all routing table entries: %zu < %zu",
-                  data.size(), required_size);
-        return std::nullopt;
-    }
-
-    // Deserialize each entry
+    // Deserialize each network node route entry
     for (uint8_t i = 0; i < entry_count; i++) {
-        auto entry = RoutingTableEntry::Deserialize(deserializer);
+        auto entry = NetworkNodeRoute::Deserialize(deserializer);
         if (!entry) {
-            LOG_ERROR("Failed to deserialize routing table entry %d", i);
+            LOG_ERROR("Failed to deserialize network node route %d", i);
             return std::nullopt;
         }
         entries.push_back(*entry);
@@ -77,15 +72,15 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromSerialized(
     return RoutingTableMessage(*header, entries);
 }
 
-uint16_t RoutingTableMessage::GetNetworkId() const {
-    return header_.GetNetworkId();
+AddressType RoutingTableMessage::GetNetworkManager() const {
+    return header_.GetNetworkManagerAddress();
 }
 
 uint8_t RoutingTableMessage::GetTableVersion() const {
     return header_.GetTableVersion();
 }
 
-const std::vector<RoutingTableEntry>& RoutingTableMessage::GetEntries() const {
+const std::vector<NetworkNodeRoute>& RoutingTableMessage::GetEntries() const {
     return entries_;
 }
 
@@ -101,28 +96,48 @@ const RoutingTableHeader& RoutingTableMessage::GetHeader() const {
     return header_;
 }
 
+uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
+    // Find the node entry with the specified address
+    for (const auto& entry : entries_) {
+        if (entry.address == node_address) {
+            return entry.link_quality;
+        }
+    }
+
+    // Node not found
+    return 0;
+}
+
 size_t RoutingTableMessage::GetTotalSize() const {
-    return header_.GetSize() + (entries_.size() * RoutingTableEntry::Size());
+    // Base size: header + network manager + entry count
+    size_t size = header_.GetSize();
+
+    // Add size of all network node route entries
+    for (const auto& entry : entries_) {
+        // For simplicity, we'll use a fixed size per entry
+        // In a real implementation, you may need a more sophisticated calculation
+        size += RoutingTableEntry::Size();
+    }
+
+    return size;
 }
 
 BaseMessage RoutingTableMessage::ToBaseMessage() const {
-    // Calculate total payload size needed for:
-    // - Network ID (2 bytes)
-    // - Table version (1 byte)
-    // - Entry count (1 byte)
-    // - All routing entries (each entry size * number of entries)
-    size_t payload_size = RoutingTableHeader::RoutingTableFieldsSize() +
-                          (entries_.size() * RoutingTableEntry::Size());
-    std::vector<uint8_t> payload(payload_size);
+    // Calculate total payload size
+    size_t payload_size = GetTotalSize();
 
+    std::vector<uint8_t> payload(payload_size);
     utils::ByteSerializer serializer(payload);
 
-    // Serialize the header-specific fields into the payload
-    serializer.WriteUint16(header_.GetNetworkId());
-    serializer.WriteUint8(header_.GetTableVersion());
-    serializer.WriteUint8(static_cast<uint8_t>(entries_.size()));
+    // Serialize the header-specific fields
+    Result result = header_.Serialize(serializer);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to serialize routing table header");
+        return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                           MessageType::ROUTE_TABLE, {});
+    }
 
-    // Serialize all routing entries
+    // Serialize all network node routes
     for (const auto& entry : entries_) {
         entry.Serialize(serializer);
     }
@@ -158,7 +173,7 @@ std::optional<std::vector<uint8_t>> RoutingTableMessage::Serialize() const {
     for (const auto& entry : entries_) {
         result = entry.Serialize(serializer);
         if (!result.IsSuccess()) {
-            LOG_ERROR("Failed to serialize routing table entry");
+            LOG_ERROR("Failed to serialize network node route");
             return std::nullopt;
         }
     }

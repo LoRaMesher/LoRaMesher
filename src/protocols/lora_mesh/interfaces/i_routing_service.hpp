@@ -8,22 +8,10 @@
 #include <vector>
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
+#include "types/protocols/lora_mesh/routing_entry.hpp"
 
 namespace loramesher {
 namespace protocols {
-
-/**
- * @brief Structure representing a routing table entry
- */
-struct RoutingEntry {
-    AddressType destination;  ///< Destination node address
-    AddressType next_hop;     ///< Next hop to reach destination
-    uint8_t hop_count;        ///< Number of hops to destination
-    uint8_t allocated_slots;  ///< Number of data slots allocated
-    uint8_t link_quality;     ///< Link quality metric (0-100%)
-    uint32_t last_updated;    ///< Timestamp of last update
-    bool is_active;           ///< Whether this route is active
-};
 
 /**
  * @brief Interface for routing service
@@ -76,7 +64,8 @@ class IRoutingService {
      * 
      * @return const std::vector<RoutingEntry>& Reference to routing entries
      */
-    virtual const std::vector<RoutingEntry>& GetRoutingEntries() const = 0;
+    virtual const std::vector<types::protocols::lora_mesh::RoutingEntry>&
+    GetRoutingEntries() const = 0;
 };
 
 }  // namespace protocols

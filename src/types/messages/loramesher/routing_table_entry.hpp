@@ -20,17 +20,17 @@ namespace loramesher {
 struct RoutingTableEntry {
     AddressType destination;  ///< Destination address
     uint8_t hop_count;        ///< Number of hops to destination
-    uint8_t link_quality;     ///< Link quality metric (0-100%)
+    uint8_t link_quality;     ///< Link quality metric (0-255)
     uint8_t allocated_slots;  ///< Number of data slots allocated to this node
 
     /**
-   * @brief Constructor with all fields
-   * 
-   * @param dest Destination address
-   * @param hops Hop count to destination
-   * @param quality Link quality metric
-   * @param slots Allocated data slots
-   */
+     * @brief Constructor with all fields
+     * 
+     * @param dest Destination address
+     * @param hops Hop count to destination
+     * @param quality Link quality metric
+     * @param slots Allocated data slots
+     */
     RoutingTableEntry(AddressType dest, uint8_t hops, uint8_t quality,
                       uint8_t slots)
         : destination(dest),
@@ -39,15 +39,15 @@ struct RoutingTableEntry {
           allocated_slots(slots) {}
 
     /**
-   * @brief Default constructor
-   */
+     * @brief Default constructor
+     */
     RoutingTableEntry() = default;
 
     /**
-   * @brief Size of an entry in bytes
-   * 
-   * @return size_t Size of the entry
-   */
+     * @brief Size of an entry in bytes
+     * 
+     * @return size_t Size of the entry
+     */
     static constexpr size_t Size() {
         return sizeof(AddressType) +  // Destination address
                sizeof(uint8_t) +      // Hop count
@@ -56,11 +56,11 @@ struct RoutingTableEntry {
     }
 
     /**
-   * @brief Serialize the entry to a byte serializer
-   * 
-   * @param serializer The serializer to write to
-   * @return Result Success if serialization succeeded
-   */
+     * @brief Serialize the entry to a byte serializer
+     * 
+     * @param serializer The serializer to write to
+     * @return Result Success if serialization succeeded
+     */
     Result Serialize(utils::ByteSerializer& serializer) const {
         serializer.WriteUint16(destination);
         serializer.WriteUint8(hop_count);
@@ -70,11 +70,11 @@ struct RoutingTableEntry {
     }
 
     /**
-   * @brief Deserialize an entry from a byte deserializer
-   * 
-   * @param deserializer The deserializer to read from
-   * @return std::optional<RoutingTableEntry> The entry if successful, nullopt otherwise
-   */
+     * @brief Deserialize an entry from a byte deserializer
+     * 
+     * @param deserializer The deserializer to read from
+     * @return std::optional<RoutingTableEntry> The entry if successful, nullopt otherwise
+     */
     static std::optional<RoutingTableEntry> Deserialize(
         utils::ByteDeserializer& deserializer) {
 
