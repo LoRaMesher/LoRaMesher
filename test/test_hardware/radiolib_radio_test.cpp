@@ -37,8 +37,8 @@ namespace radio {
 namespace test {
 
 /**
-   * @brief Test fixture for RadioLibRadio tests on ESP32 using mock radio
-   */
+ * @brief Test fixture for RadioLibRadio tests on ESP32 using mock radio
+ */
 class RadioLibRadioTest : public ::testing::Test {
    public:
     // Hardware pins for ESP32 configuration
@@ -164,16 +164,16 @@ class RadioLibRadioTest : public ::testing::Test {
 };
 
 /**
-   * @brief Test radio configuration succeeds with valid parameters
-   */
+ * @brief Test radio configuration succeeds with valid parameters
+ */
 TEST_F(RadioLibRadioTest, ConfigurationSucceeds) {
     LOG_DEBUG("Testing radio configuration");
     EXPECT_FLOAT_EQ(radio_->getFrequency(), 868.0f);
 }
 
 /**
-   * @brief Test starting reception mode
-   */
+ * @brief Test starting reception mode
+ */
 TEST_F(RadioLibRadioTest, StartReceiveSucceeds) {
     // Test starting reception
     ASSERT_TRUE(radio_->StartReceive());
@@ -183,8 +183,8 @@ TEST_F(RadioLibRadioTest, StartReceiveSucceeds) {
 }
 
 /**
-   * @brief Test sending data
-   */
+ * @brief Test sending data
+ */
 TEST_F(RadioLibRadioTest, SendDataSucceeds) {
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
@@ -203,8 +203,8 @@ TEST_F(RadioLibRadioTest, SendDataSucceeds) {
 }
 
 /**
-   * @brief Test putting radio to sleep
-   */
+ * @brief Test putting radio to sleep
+ */
 TEST_F(RadioLibRadioTest, SleepSucceeds) {
     // Test putting radio to sleep
     ASSERT_TRUE(radio_->Sleep());
@@ -214,8 +214,8 @@ TEST_F(RadioLibRadioTest, SleepSucceeds) {
 }
 
 /**
-   * @brief Test setting frequency
-   */
+ * @brief Test setting frequency
+ */
 TEST_F(RadioLibRadioTest, FrequencyGetSet) {
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
@@ -233,8 +233,8 @@ TEST_F(RadioLibRadioTest, FrequencyGetSet) {
 }
 
 /**
-   * @brief Test RSSI and SNR getters
-   */
+ * @brief Test RSSI and SNR getters
+ */
 TEST_F(RadioLibRadioTest, GetRSSIAndSNR) {
     // Get access to the mock radio
     auto& mock_radio = GetRadioLibMockForTesting(*radio_);
@@ -250,8 +250,8 @@ TEST_F(RadioLibRadioTest, GetRSSIAndSNR) {
 }
 
 /**
-   * @brief Test setting receive callback function
-   */
+ * @brief Test setting receive callback function
+ */
 TEST_F(RadioLibRadioTest, SetActionReceive) {
     // Create a semaphore for callback synchronization
     os::SemaphoreHandle_t callback_semaphore =
@@ -354,11 +354,11 @@ TEST_F(RadioLibRadioTest, SetActionReceive) {
 }
 
 /**
-  * @brief Test handling an empty packet
-  * 
-  * This test verifies that the radio correctly handles an empty packet
-  * without calling message processing.
-  */
+ * @brief Test handling an empty packet
+ * 
+ * This test verifies that the radio correctly handles an empty packet
+ * without calling message processing.
+ */
 TEST_F(RadioLibRadioTest, EmptyPacketHandling) {
     // Start receiving
     radio_->StartReceive();
@@ -409,11 +409,11 @@ TEST_F(RadioLibRadioTest, EmptyPacketHandling) {
 }
 
 /**
-  * @brief Test handling a maximum-sized packet
-  * 
-  * This test verifies that the radio correctly processes the largest packet
-  * that the system can handle.
-  */
+ * @brief Test handling a maximum-sized packet
+ * 
+ * This test verifies that the radio correctly processes the largest packet
+ * that the system can handle.
+ */
 TEST_F(RadioLibRadioTest, MaxSizePacketHandling) {
     // Create a semaphore for callback synchronization
     os::SemaphoreHandle_t callback_semaphore =
@@ -530,12 +530,12 @@ TEST_F(RadioLibRadioTest, MaxSizePacketHandling) {
 }
 
 /**
-  * @brief Test handling multiple maximum-sized packets in sequence
-  * 
-  * This test verifies that the radio correctly processes multiple consecutive
-  * maximum-sized packets without memory leaks, task collapses, or other issues.
-  * It sends the same maximum-sized packet 10 times and verifies proper handling.
-  */
+ * @brief Test handling multiple maximum-sized packets in sequence
+ * 
+ * This test verifies that the radio correctly processes multiple consecutive
+ * maximum-sized packets without memory leaks, task collapses, or other issues.
+ * It sends the same maximum-sized packet 10 times and verifies proper handling.
+ */
 TEST_F(RadioLibRadioTest, RepeatedMaxSizePacketHandling) {
     // Create a semaphore for callback synchronization
     os::SemaphoreHandle_t callback_semaphore =

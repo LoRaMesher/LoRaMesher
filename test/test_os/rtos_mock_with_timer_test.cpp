@@ -23,9 +23,9 @@ namespace loramesher {
 namespace test {
 
 /**
-  * @class RTOSMockTimeTest
-  * @brief Test fixture for testing the virtual time functionality in RTOSMock
-  */
+ * @class RTOSMockTimeTest
+ * @brief Test fixture for testing the virtual time functionality in RTOSMock
+ */
 class RTOSMockTimeTest : public ::testing::Test {
    protected:
     void SetUp() override {
@@ -71,19 +71,19 @@ class RTOSMockTimeTest : public ::testing::Test {
     }
 
     /**
-      * @brief Wait for tasks to execute
-      * 
-      * This helper function waits a short time to allow tasks to run and
-      * process any events before continuing. It helps ensure proper test
-      * sequencing, especially when virtual time is used.
-      */
+     * @brief Wait for tasks to execute
+     * 
+     * This helper function waits a short time to allow tasks to run and
+     * process any events before continuing. It helps ensure proper test
+     * sequencing, especially when virtual time is used.
+     */
     void WaitForTasksToExecute() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
     /**
-      * @brief Helper method to safely create a task and track its handle
-      */
+     * @brief Helper method to safely create a task and track its handle
+     */
     template <typename Func>
     os::TaskHandle_t CreateTrackedTask(Func taskFunc, const char* name,
                                        uint32_t stackSize, void* params,
@@ -98,8 +98,8 @@ class RTOSMockTimeTest : public ::testing::Test {
     }
 
     /**
-      * @brief Helper method to safely create a queue and track its handle
-      */
+     * @brief Helper method to safely create a queue and track its handle
+     */
     os::QueueHandle_t CreateTrackedQueue(uint32_t length, uint32_t itemSize) {
         os::QueueHandle_t handle = rtos_->CreateQueue(length, itemSize);
         if (handle) {
@@ -109,8 +109,8 @@ class RTOSMockTimeTest : public ::testing::Test {
     }
 
     /**
-      * @brief Helper method to safely create a semaphore and track its handle
-      */
+     * @brief Helper method to safely create a semaphore and track its handle
+     */
     os::SemaphoreHandle_t CreateTrackedSemaphore() {
         os::SemaphoreHandle_t handle = rtos_->CreateBinarySemaphore();
         if (handle) {
@@ -135,8 +135,8 @@ class RTOSMockTimeTest : public ::testing::Test {
 };
 
 /**
-  * @brief Basic test for virtual time operation
-  */
+ * @brief Basic test for virtual time operation
+ */
 TEST_F(RTOSMockTimeTest, BasicVirtualTimeOperation) {
     // Verify initial mode
     ASSERT_EQ(rtosMock_->getTimeMode(), os::RTOSMock::TimeMode::kVirtualTime);
@@ -154,8 +154,8 @@ TEST_F(RTOSMockTimeTest, BasicVirtualTimeOperation) {
 }
 
 /**
-  * @brief Test that delay responds to virtual time
-  */
+ * @brief Test that delay responds to virtual time
+ */
 TEST_F(RTOSMockTimeTest, SimpleDelayWithVirtualTime) {
     // Create a shared state object with proper memory management
     struct SharedState {
@@ -217,8 +217,8 @@ TEST_F(RTOSMockTimeTest, SimpleDelayWithVirtualTime) {
 }
 
 /**
-  * @brief Test a simple queue operation with virtual time
-  */
+ * @brief Test a simple queue operation with virtual time
+ */
 TEST_F(RTOSMockTimeTest, SimpleQueueOperation) {
     // Create a queue
     os::QueueHandle_t queue = CreateTrackedQueue(1, sizeof(int));

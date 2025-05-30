@@ -53,36 +53,33 @@ void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
 
 // NetworkNodeRoute implementation
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint32_t time)
-    : address(addr), last_updated(time), last_seen(time) {}
+    : routing_entry(addr, 0, 0, 0), last_updated(time), last_seen(time) {}
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
                                    uint32_t time, bool is_manager, uint8_t caps,
                                    uint8_t slots)
-    : address(addr),
+    : routing_entry(addr, 0, 0, slots),
       battery_level(battery),
       last_seen(time),
       last_updated(time),
       is_network_manager(is_manager),
-      capabilities(caps),
-      allocated_slots(slots) {}
+      capabilities(caps) {}
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
                                    uint8_t hops, uint8_t quality, uint32_t time)
-    : address(dest),
+    : routing_entry(dest, hops, quality, 0),
       next_hop(next),
-      hop_count(hops),
-      link_quality(quality),
       last_updated(time),
       last_seen(time),
       is_active(true) {}
 
 bool NetworkNodeRoute::IsExpired(uint32_t current_time,
                                  uint32_t timeout_ms) const {
-    return (current_time - last_updated) > timeout_ms;
+    return (current_time - last_seen) > timeout_ms;
 }
 
 bool NetworkNodeRoute::IsDirectNeighbor() const {
-    return hop_count == 1 && is_active;
+    return routing_entry.hop_count == 1 && is_active;
 }
 
 bool NetworkNodeRoute::IsBetterRouteThan(const NetworkNodeRoute& other) const {
@@ -94,13 +91,8 @@ bool NetworkNodeRoute::IsBetterRouteThan(const NetworkNodeRoute& other) const {
         return false;
     }
 
-    // If both active or both inactive, compare by hop count
-    if (hop_count != other.hop_count) {
-        return hop_count < other.hop_count;  // Fewer hops is better
-    }
-
-    // If hop counts are equal, compare by link quality
-    return link_quality > other.link_quality;  // Higher quality is better
+    return routing_entry.link_quality >
+           other.routing_entry.link_quality;  // Higher quality is better
 }
 
 void NetworkNodeRoute::UpdateLastSeen(uint32_t current_time) {
@@ -131,8 +123,8 @@ bool NetworkNodeRoute::UpdateNodeInfo(uint8_t battery, bool is_manager,
     }
 
     // Update allocated slots if provided
-    if (slots != 0 && allocated_slots != slots) {
-        allocated_slots = slots;
+    if (slots != 0 && routing_entry.allocated_slots != slots) {
+        routing_entry.allocated_slots = slots;
         changed = true;
     }
 
@@ -153,14 +145,14 @@ bool NetworkNodeRoute::UpdateRouteInfo(AddressType new_next_hop,
         changed = true;
     }
 
-    if (hop_count != new_hop_count) {
-        hop_count = new_hop_count;
+    if (routing_entry.hop_count != new_hop_count) {
+        routing_entry.hop_count = new_hop_count;
         changed = true;
     }
 
     // Update link quality based on parameter
-    if (link_quality != new_link_quality) {
-        link_quality = new_link_quality;
+    if (routing_entry.link_quality != new_link_quality) {
+        routing_entry.link_quality = new_link_quality;
         changed = true;
     }
 
@@ -170,9 +162,9 @@ bool NetworkNodeRoute::UpdateRouteInfo(AddressType new_next_hop,
     return changed;
 }
 
-bool NetworkNodeRoute::UpdateFromRoutingEntry(const RoutingTableEntry& entry,
-                                              AddressType next_hop_addr,
-                                              uint32_t current_time) {
+bool NetworkNodeRoute::UpdateFromRoutingTableEntry(
+    const RoutingTableEntry& entry, AddressType next_hop_addr,
+    uint32_t current_time) {
     bool changed = false;
 
     // Update routing information
@@ -181,18 +173,18 @@ bool NetworkNodeRoute::UpdateFromRoutingEntry(const RoutingTableEntry& entry,
         changed = true;
     }
 
-    if (hop_count != entry.hop_count) {
-        hop_count = entry.hop_count;
+    if (routing_entry.hop_count != entry.hop_count) {
+        routing_entry.hop_count = entry.hop_count;
         changed = true;
     }
 
-    if (link_quality != entry.link_quality) {
-        link_quality = entry.link_quality;
+    if (routing_entry.link_quality != entry.link_quality) {
+        routing_entry.link_quality = entry.link_quality;
         changed = true;
     }
 
-    if (allocated_slots != entry.allocated_slots) {
-        allocated_slots = entry.allocated_slots;
+    if (routing_entry.allocated_slots != entry.allocated_slots) {
+        routing_entry.allocated_slots = entry.allocated_slots;
         changed = true;
     }
 
@@ -203,15 +195,49 @@ bool NetworkNodeRoute::UpdateFromRoutingEntry(const RoutingTableEntry& entry,
     return changed;
 }
 
-NetworkNodeRoute::RoutingTableEntry NetworkNodeRoute::ToRoutingEntry() const {
-    return RoutingTableEntry(address, hop_count, link_quality, allocated_slots);
+bool NetworkNodeRoute::UpdateBatteryLevel(uint8_t new_battery,
+                                          uint32_t current_time) {
+    if (new_battery > 100) {
+        return false;  // Invalid battery level
+    }
+    if (battery_level != new_battery) {
+        battery_level = new_battery;
+        last_seen = current_time;  // Update last seen time on battery change
+        return true;               // Battery level changed
+    }
+    return false;  // No change
+}
+
+bool NetworkNodeRoute::UpdateAllocatedSlots(uint8_t new_slots,
+                                            uint32_t current_time) {
+    if (routing_entry.allocated_slots != new_slots) {
+        routing_entry.allocated_slots = new_slots;
+        last_seen = current_time;  // Update last seen time on slots change
+        return true;               // Slots changed
+    }
+    return false;  // No change
+}
+
+RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
+    return routing_entry;
+}
+
+bool NetworkNodeRoute::UpdateCapabilities(uint8_t new_capabilities,
+                                          uint32_t current_time) {
+    if (capabilities != new_capabilities) {
+        capabilities = new_capabilities;
+        last_seen =
+            current_time;  // Update last seen time on capabilities change
+        return true;       // Capabilities changed
+    }
+    return false;  // No change
 }
 
 void NetworkNodeRoute::ExpectRoutingMessage() {
     link_stats.ExpectMessage();
 
     // Update link quality from statistics
-    link_quality = link_stats.CalculateQuality();
+    routing_entry.link_quality = link_stats.CalculateQuality();
 }
 
 void NetworkNodeRoute::ReceivedRoutingMessage(uint8_t remote_quality,
@@ -220,14 +246,14 @@ void NetworkNodeRoute::ReceivedRoutingMessage(uint8_t remote_quality,
     link_stats.UpdateRemoteQuality(remote_quality);
 
     // Update link quality from statistics
-    link_quality = link_stats.CalculateQuality();
+    routing_entry.link_quality = link_stats.CalculateQuality();
 
     // Update last seen time
     last_seen = current_time;
 }
 
 uint8_t NetworkNodeRoute::GetLinkQuality() const {
-    return link_quality;
+    return routing_entry.link_quality;
 }
 
 uint8_t NetworkNodeRoute::GetRemoteLinkQuality() const {
@@ -280,17 +306,14 @@ std::string NetworkNodeRoute::GetCapabilitiesString() const {
 
 Result NetworkNodeRoute::Serialize(utils::ByteSerializer& serializer) const {
     // Node identity and status information
-    serializer.WriteUint16(address);
+    serializer.WriteUint16(routing_entry.destination);
     serializer.WriteUint8(battery_level);
     serializer.WriteUint32(last_seen);
     serializer.WriteUint8(is_network_manager ? 1 : 0);
     serializer.WriteUint8(capabilities);
-    serializer.WriteUint8(allocated_slots);
 
     // Routing information
     serializer.WriteUint16(next_hop);
-    serializer.WriteUint8(hop_count);
-    serializer.WriteUint8(link_quality);
     serializer.WriteUint32(last_updated);
     serializer.WriteUint8(is_active ? 1 : 0);
 
@@ -306,19 +329,15 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
     auto last_seen = deserializer.ReadUint32();
     auto is_manager_raw = deserializer.ReadUint8();
     auto capabilities = deserializer.ReadUint8();
-    auto allocated_slots = deserializer.ReadUint8();
 
     // Read routing information
     auto next_hop = deserializer.ReadUint16();
-    auto hop_count = deserializer.ReadUint8();
-    auto link_quality = deserializer.ReadUint8();
     auto last_updated = deserializer.ReadUint32();
     auto is_active_raw = deserializer.ReadUint8();
 
     // Check if all reads were successful
     if (!address || !battery_level || !last_seen || !is_manager_raw ||
-        !capabilities || !allocated_slots || !next_hop || !hop_count ||
-        !link_quality || !last_updated || !is_active_raw) {
+        !capabilities || !next_hop || !last_updated || !is_active_raw) {
         return std::nullopt;
     }
 
@@ -326,17 +345,14 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
     NetworkNodeRoute node_route;
 
     // Set node identity and status
-    node_route.address = *address;
+    node_route.routing_entry = RoutingTableEntry(*address, 0, 0, 0);
     node_route.battery_level = *battery_level;
     node_route.last_seen = *last_seen;
     node_route.is_network_manager = (*is_manager_raw != 0);
     node_route.capabilities = *capabilities;
-    node_route.allocated_slots = *allocated_slots;
 
     // Set routing information
     node_route.next_hop = *next_hop;
-    node_route.hop_count = *hop_count;
-    node_route.link_quality = *link_quality;
     node_route.last_updated = *last_updated;
     node_route.is_active = (*is_active_raw != 0);
 
@@ -344,7 +360,7 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
 }
 
 bool NetworkNodeRoute::operator==(const NetworkNodeRoute& other) const {
-    return address == other.address;
+    return routing_entry.destination == other.routing_entry.destination;
 }
 
 bool NetworkNodeRoute::operator!=(const NetworkNodeRoute& other) const {
@@ -352,7 +368,7 @@ bool NetworkNodeRoute::operator!=(const NetworkNodeRoute& other) const {
 }
 
 bool NetworkNodeRoute::operator<(const NetworkNodeRoute& other) const {
-    return address < other.address;
+    return routing_entry.destination < other.routing_entry.destination;
 }
 
 }  // namespace lora_mesh

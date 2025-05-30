@@ -10,6 +10,7 @@
 #include <string>
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
+#include "types/messages/loramesher/routing_table_entry.hpp"
 #include "utils/byte_operations.h"
 
 namespace loramesher {
@@ -64,31 +65,6 @@ class NetworkNodeRoute {
          * @param quality Link quality as reported by peer
          */
         void UpdateRemoteQuality(uint8_t quality);
-    };
-
-    /**
-     * @brief Routing table entry structure for updates
-     */
-    struct RoutingTableEntry {
-        AddressType destination;  ///< Destination address
-        uint8_t hop_count;        ///< Number of hops to destination
-        uint8_t link_quality;     ///< Link quality metric (0-255)
-        uint8_t allocated_slots;  ///< Number of data slots allocated
-
-        /**
-         * @brief Constructor
-         */
-        RoutingTableEntry(AddressType dest, uint8_t hops, uint8_t quality,
-                          uint8_t slots)
-            : destination(dest),
-              hop_count(hops),
-              link_quality(quality),
-              allocated_slots(slots) {}
-
-        /**
-         * @brief Default constructor
-         */
-        RoutingTableEntry() = default;
     };
 
     /**
@@ -194,15 +170,46 @@ class NetworkNodeRoute {
      * @param current_time Current timestamp
      * @return bool True if significant updates were made
      */
-    bool UpdateFromRoutingEntry(const RoutingTableEntry& entry,
-                                AddressType next_hop, uint32_t current_time);
+    bool UpdateFromRoutingTableEntry(const RoutingTableEntry& entry,
+                                     AddressType next_hop,
+                                     uint32_t current_time);
+
+    /**
+     * @brief Update battery level
+     * 
+     * @param new_battery New battery level (0-100%)
+     * @param current_time Current timestamp
+     * 
+     * @return bool True if battery level changed
+     */
+    bool UpdateBatteryLevel(uint8_t new_battery, uint32_t current_time);
+
+    /**
+     * @brief Update node capabilities
+     * 
+     * @param new_capabilities New capabilities bitmap
+     * @param current_time Current timestamp
+     * 
+     * @return bool True if capabilities changed
+     */
+    bool UpdateCapabilities(uint8_t new_capabilities, uint32_t current_time);
+
+    /**
+     * @brief Update allocated slots for this node
+     * 
+     * @param new_slots New number of allocated slots
+     * @param current_time Current timestamp
+     * 
+     * @return bool True if slots changed
+     */
+    bool UpdateAllocatedSlots(uint8_t new_slots, uint32_t current_time);
 
     /**
      * @brief Create routing table entry from this node
      * 
      * @return RoutingTableEntry Routing entry for network sharing
      */
-    RoutingTableEntry ToRoutingEntry() const;
+    RoutingTableEntry ToRoutingTableEntry() const;
 
     /**
      * @brief Register expected routing message
@@ -262,10 +269,7 @@ class NetworkNodeRoute {
                sizeof(uint32_t) +     // Last seen
                sizeof(uint8_t) +      // Is network manager (as uint8_t)
                sizeof(uint8_t) +      // Capabilities
-               sizeof(uint8_t) +      // Allocated slots
                sizeof(AddressType) +  // Next hop
-               sizeof(uint8_t) +      // Hop count
-               sizeof(uint8_t) +      // Link quality
                sizeof(uint32_t) +     // Last updated
                sizeof(uint8_t);       // Is active (as uint8_t)
     }
@@ -288,19 +292,16 @@ class NetworkNodeRoute {
         utils::ByteDeserializer& deserializer);
 
     // Node identity information
-    AddressType address = 0;  ///< Node address (destination for routes)
+    RoutingTableEntry routing_entry;  ///< Routing entry for this node
 
     // Node status information
     uint8_t battery_level = 100;      ///< Battery level (0-100%)
     uint32_t last_seen = 0;           ///< Last time node was seen
     bool is_network_manager = false;  ///< Whether node is network manager
     uint8_t capabilities = 0;         ///< Node capabilities bitmap
-    uint8_t allocated_slots = 0;      ///< Number of slots allocated to node
 
     // Routing information
     AddressType next_hop = 0;   ///< Next hop to reach this node
-    uint8_t hop_count = 0;      ///< Number of hops to this node
-    uint8_t link_quality = 0;   ///< Link quality metric (0-255)
     uint32_t last_updated = 0;  ///< Last route update time
     bool is_active = false;     ///< Whether route is active
 

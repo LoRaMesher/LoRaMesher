@@ -40,9 +40,7 @@ class RoutingTableHeader : public BaseHeader {
      * 
      * @return AddressType The network manager address
      */
-    AddressType GetNetworkManagerAddress() const {
-        return network_manager_addr_;
-    }
+    AddressType GetNetworkManager() const { return network_manager_addr_; }
 
     /**
       * @brief Gets the table version

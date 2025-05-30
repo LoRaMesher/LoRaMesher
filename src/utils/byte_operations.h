@@ -18,6 +18,25 @@
 namespace loramesher {
 namespace utils {
 
+class ByteOperations {
+   public:
+    /**
+      * @brief Checks if the requested number of bytes is available in the buffer
+      * @param buffer The buffer to check
+      * @param offset The starting position in the buffer
+      * @param bytes The number of bytes to check
+      * 
+      *  @return Result indicating if the bytes are available
+      */
+    static const Result CheckAvailable(const std::vector<uint8_t>& buffer,
+                                       size_t offset, size_t bytes) {
+        if (offset + bytes > buffer.size()) {
+            return Result::Error(LoraMesherErrorCode::kBufferOverflow);
+        }
+        return Result::Success();
+    }
+};
+
 /**
   * @brief Helper class for serializing data into a byte buffer
   * @details Provides methods to write different types of data into a provided buffer
@@ -38,6 +57,10 @@ class ByteSerializer {
       * @note Writes in little-endian format
       */
     void WriteUint16(uint16_t value) {
+        Result result = ByteOperations::CheckAvailable(buffer_, offset_, 2);
+        if (!result.IsSuccess()) {
+            throw std::runtime_error("Buffer overflow during write");
+        }
         buffer_[offset_++] = value & 0xFF;
         buffer_[offset_++] = (value >> 8) & 0xFF;
     }
@@ -48,6 +71,10 @@ class ByteSerializer {
       * @note Writes in little-endian format
       */
     void WriteUint32(uint32_t value) {
+        Result result = ByteOperations::CheckAvailable(buffer_, offset_, 4);
+        if (!result.IsSuccess()) {
+            throw std::runtime_error("Buffer overflow during write");
+        }
         buffer_[offset_++] = value & 0xFF;
         buffer_[offset_++] = (value >> 8) & 0xFF;
         buffer_[offset_++] = (value >> 16) & 0xFF;
@@ -58,7 +85,13 @@ class ByteSerializer {
       * @brief Writes an 8-bit unsigned integer to the buffer
       * @param value The value to write
       */
-    void WriteUint8(uint8_t value) { buffer_[offset_++] = value; }
+    void WriteUint8(uint8_t value) {
+        Result result = ByteOperations::CheckAvailable(buffer_, offset_, 1);
+        if (!result.IsSuccess()) {
+            throw std::runtime_error("Buffer overflow during write");
+        }
+        buffer_[offset_++] = value;
+    }
 
     /**
       * @brief Writes an array of bytes to the buffer
@@ -66,6 +99,11 @@ class ByteSerializer {
       * @param length Number of bytes to write
       */
     void WriteBytes(const uint8_t* data, size_t length) {
+        Result result =
+            ByteOperations::CheckAvailable(buffer_, offset_, length);
+        if (!result.IsSuccess()) {
+            throw std::runtime_error("Buffer overflow during write");
+        }
         std::memcpy(&buffer_[offset_], data, length);
         offset_ += length;
     }
@@ -100,7 +138,7 @@ class ByteDeserializer {
       * @note Reads in little-endian format
       */
     std::optional<uint16_t> ReadUint16() {
-        Result result = CheckAvailable(2);
+        Result result = ByteOperations::CheckAvailable(buffer_, offset_, 2);
         if (!result.IsSuccess()) {
             return std::nullopt;
         }
@@ -115,7 +153,7 @@ class ByteDeserializer {
       * @return The read value if successful, std::nullopt otherwise
       */
     std::optional<uint8_t> ReadUint8() {
-        Result result = CheckAvailable(1);
+        Result result = ByteOperations::CheckAvailable(buffer_, offset_, 1);
         if (!result.IsSuccess()) {
             return std::nullopt;
         }
@@ -128,7 +166,7 @@ class ByteDeserializer {
       * @note Reads in little-endian format
       */
     std::optional<uint32_t> ReadUint32() {
-        Result result = CheckAvailable(4);
+        Result result = ByteOperations::CheckAvailable(buffer_, offset_, 4);
         if (!result.IsSuccess()) {
             return std::nullopt;
         }
@@ -146,7 +184,9 @@ class ByteDeserializer {
       * @return Vector containing the read bytes if successful, std::nullopt otherwise
       */
     std::optional<std::vector<uint8_t>> ReadBytes(size_t length) {
-        Result result = CheckAvailable(length);
+        Result result =
+            ByteOperations::CheckAvailable(buffer_, offset_, length);
+
         if (!result.IsSuccess()) {
             return std::nullopt;
         }
@@ -162,7 +202,8 @@ class ByteDeserializer {
       * @return Result indicating success or failure
       */
     Result Skip(size_t length) {
-        Result result = CheckAvailable(length);
+        Result result =
+            ByteOperations::CheckAvailable(buffer_, offset_, length);
         if (!result.IsSuccess()) {
             return result;
         }
@@ -188,18 +229,6 @@ class ByteDeserializer {
     bool hasMore() const { return offset_ < buffer_.size(); }
 
    private:
-    /**
-      * @brief Checks if the requested number of bytes is available
-      * @param bytes Number of bytes to check
-      * @return Result indicating if the bytes are available
-      */
-    Result CheckAvailable(size_t bytes) const {
-        if (offset_ + bytes > buffer_.size()) {
-            return Result::Error(LoraMesherErrorCode::kBufferOverflow);
-        }
-        return Result::Success();
-    }
-
     const std::vector<uint8_t>& buffer_;  ///< Reference to the source buffer
     size_t offset_;                       ///< Current position in the buffer
 };

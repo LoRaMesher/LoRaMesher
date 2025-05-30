@@ -19,8 +19,8 @@ namespace loramesher {
 namespace test {
 
 /**
-  * @brief Test fixture for JoinResponseMessage tests
-  */
+ * @brief Test fixture for JoinResponseMessage tests
+ */
 class JoinResponseMessageTest : public ::testing::Test {
    protected:
     // Common test data
@@ -79,8 +79,8 @@ class JoinResponseMessageTest : public ::testing::Test {
 };
 
 /**
-  * @brief Test creating a JoinResponseMessage with valid parameters
-  */
+ * @brief Test creating a JoinResponseMessage with valid parameters
+ */
 TEST_F(JoinResponseMessageTest, CreationTest) {
     // Given: Test parameters
     const AddressType test_dest = 0xABCD;
@@ -109,8 +109,8 @@ TEST_F(JoinResponseMessageTest, CreationTest) {
 }
 
 /**
-  * @brief Test creating a JoinResponseMessage with no superframe info
-  */
+ * @brief Test creating a JoinResponseMessage with no superframe info
+ */
 TEST_F(JoinResponseMessageTest, CreationWithoutSuperframeInfoTest) {
     // When: Creating a message without superframe info
     auto opt_msg = JoinResponseMessage::Create(dest, src, network_id,
@@ -125,8 +125,8 @@ TEST_F(JoinResponseMessageTest, CreationWithoutSuperframeInfoTest) {
 }
 
 /**
-  * @brief Test serializing a JoinResponseMessage
-  */
+ * @brief Test serializing a JoinResponseMessage
+ */
 TEST_F(JoinResponseMessageTest, SerializationTest) {
     // Given: A valid message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -145,8 +145,8 @@ TEST_F(JoinResponseMessageTest, SerializationTest) {
 }
 
 /**
-  * @brief Test deserializing a JoinResponseMessage
-  */
+ * @brief Test deserializing a JoinResponseMessage
+ */
 TEST_F(JoinResponseMessageTest, DeserializationTest) {
     // Given: A serialized message
     auto opt_serialized = msg_ptr->Serialize();
@@ -172,8 +172,8 @@ TEST_F(JoinResponseMessageTest, DeserializationTest) {
 }
 
 /**
-  * @brief Test deserializing a JoinResponseMessage with invalid data
-  */
+ * @brief Test deserializing a JoinResponseMessage with invalid data
+ */
 TEST_F(JoinResponseMessageTest, DeserializationFailureTest) {
     // Test: Empty data
     {
@@ -207,8 +207,8 @@ TEST_F(JoinResponseMessageTest, DeserializationFailureTest) {
 }
 
 /**
-  * @brief Test conversion to BaseMessage
-  */
+ * @brief Test conversion to BaseMessage
+ */
 TEST_F(JoinResponseMessageTest, ConversionToBaseMessageTest) {
     // Given: A JoinResponse message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -243,8 +243,8 @@ TEST_F(JoinResponseMessageTest, ConversionToBaseMessageTest) {
 }
 
 /**
-  * @brief Test GetTotalSize() returns the correct value
-  */
+ * @brief Test GetTotalSize() returns the correct value
+ */
 TEST_F(JoinResponseMessageTest, GetTotalSizeTest) {
     // Given: A JoinResponse message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -259,8 +259,8 @@ TEST_F(JoinResponseMessageTest, GetTotalSizeTest) {
 }
 
 /**
-  * @brief Test retrieving the header directly
-  */
+ * @brief Test retrieving the header directly
+ */
 TEST_F(JoinResponseMessageTest, GetHeaderTest) {
     // Given: A JoinResponse message
     ASSERT_TRUE(msg_ptr != nullptr);

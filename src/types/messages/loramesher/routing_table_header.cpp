@@ -4,6 +4,7 @@
  */
 
 #include "routing_table_header.hpp"
+#include "routing_table_entry.hpp"
 
 namespace loramesher {
 
@@ -11,8 +12,9 @@ RoutingTableHeader::RoutingTableHeader(AddressType dest, AddressType src,
                                        AddressType network_manager_addr,
                                        uint8_t table_version,
                                        uint8_t entry_count)
-    : BaseHeader(dest, src, MessageType::ROUTE_TABLE,
-                 0),  // Payload size set later
+    : BaseHeader(
+          dest, src, MessageType::ROUTE_TABLE,
+          RoutingTableFieldsSize() + RoutingTableEntry::Size() * entry_count),
       network_manager_addr_(network_manager_addr),
       table_version_(table_version),
       entry_count_(entry_count) {}

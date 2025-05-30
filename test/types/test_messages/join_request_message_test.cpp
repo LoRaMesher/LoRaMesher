@@ -19,8 +19,8 @@ namespace loramesher {
 namespace test {
 
 /**
-  * @brief Test fixture for JoinRequestMessage tests
-  */
+ * @brief Test fixture for JoinRequestMessage tests
+ */
 class JoinRequestMessageTest : public ::testing::Test {
    protected:
     // Common test data
@@ -81,8 +81,8 @@ class JoinRequestMessageTest : public ::testing::Test {
 };
 
 /**
-  * @brief Test creating a JoinRequestMessage with valid parameters
-  */
+ * @brief Test creating a JoinRequestMessage with valid parameters
+ */
 TEST_F(JoinRequestMessageTest, CreationTest) {
     // Given: Test parameters
     const AddressType test_dest = 0xABCD;
@@ -112,8 +112,8 @@ TEST_F(JoinRequestMessageTest, CreationTest) {
 }
 
 /**
-  * @brief Test failing to create a JoinRequestMessage with invalid battery level
-  */
+ * @brief Test failing to create a JoinRequestMessage with invalid battery level
+ */
 TEST_F(JoinRequestMessageTest, InvalidCreationTest) {
     // Battery level should be between 0-100
     auto opt_msg = JoinRequestMessage::Create(dest, src, capabilities, 101,
@@ -124,8 +124,8 @@ TEST_F(JoinRequestMessageTest, InvalidCreationTest) {
 }
 
 /**
-  * @brief Test creating a JoinRequestMessage with no additional info
-  */
+ * @brief Test creating a JoinRequestMessage with no additional info
+ */
 TEST_F(JoinRequestMessageTest, CreationWithoutAdditionalInfoTest) {
     // When: Creating a message without additional info
     auto opt_msg = JoinRequestMessage::Create(dest, src, capabilities,
@@ -140,8 +140,8 @@ TEST_F(JoinRequestMessageTest, CreationWithoutAdditionalInfoTest) {
 }
 
 /**
-  * @brief Test serializing a JoinRequestMessage
-  */
+ * @brief Test serializing a JoinRequestMessage
+ */
 TEST_F(JoinRequestMessageTest, SerializationTest) {
     // Given: A valid message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -163,8 +163,8 @@ TEST_F(JoinRequestMessageTest, SerializationTest) {
 }
 
 /**
-  * @brief Test deserializing a JoinRequestMessage
-  */
+ * @brief Test deserializing a JoinRequestMessage
+ */
 TEST_F(JoinRequestMessageTest, DeserializationTest) {
     // Given: A serialized message
     auto opt_serialized = msg_ptr->Serialize();
@@ -188,8 +188,8 @@ TEST_F(JoinRequestMessageTest, DeserializationTest) {
 }
 
 /**
-  * @brief Test deserializing a JoinRequestMessage with invalid data
-  */
+ * @brief Test deserializing a JoinRequestMessage with invalid data
+ */
 TEST_F(JoinRequestMessageTest, DeserializationFailureTest) {
     // Test: Empty data
     {
@@ -222,8 +222,8 @@ TEST_F(JoinRequestMessageTest, DeserializationFailureTest) {
 }
 
 /**
-  * @brief Test conversion to BaseMessage
-  */
+ * @brief Test conversion to BaseMessage
+ */
 TEST_F(JoinRequestMessageTest, ConversionToBaseMessageTest) {
     // Given: A JoinRequest message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -254,8 +254,8 @@ TEST_F(JoinRequestMessageTest, ConversionToBaseMessageTest) {
 }
 
 /**
-  * @brief Test GetTotalSize() returns the correct value
-  */
+ * @brief Test GetTotalSize() returns the correct value
+ */
 TEST_F(JoinRequestMessageTest, GetTotalSizeTest) {
     // Given: A JoinRequest message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -270,8 +270,8 @@ TEST_F(JoinRequestMessageTest, GetTotalSizeTest) {
 }
 
 /**
-  * @brief Test retrieving the header directly
-  */
+ * @brief Test retrieving the header directly
+ */
 TEST_F(JoinRequestMessageTest, GetHeaderTest) {
     // Given: A JoinRequest message
     ASSERT_TRUE(msg_ptr != nullptr);

@@ -1,7 +1,7 @@
 // /**
-//  * @file lora_mesh_discovery_tests.cpp
-//  * @brief Test suite for LoRaMesh protocol discovery and network formation
-//  */
+// * @file lora_mesh_discovery_tests.cpp
+// * @brief Test suite for LoRaMesh protocol discovery and network formation
+// */
 
 // #include <gtest/gtest.h>
 // #include <chrono>
@@ -15,8 +15,8 @@
 // namespace test {
 
 // /**
-//    * @brief Test suite for LoRaMesh protocol discovery and network formation
-//    */
+//   * @brief Test suite for LoRaMesh protocol discovery and network formation
+//   */
 // class LoRaMeshDiscoveryTests : public LoRaMeshTestFixture {
 //    protected:
 //     void SetUp() override { LoRaMeshTestFixture::SetUp(); }
@@ -24,12 +24,12 @@
 //     void TearDown() override { LoRaMeshTestFixture::TearDown(); }
 
 //     /**
-//       * @brief Wait for tasks to execute
-//       *
-//       * This helper function waits a short time to allow tasks to run and
-//       * process any events before continuing. It helps ensure proper test
-//       * sequencing, especially when virtual time is used.
-//       */
+//      * @brief Wait for tasks to execute
+//      *
+//      * This helper function waits a short time to allow tasks to run and
+//      * process any events before continuing. It helps ensure proper test
+//      * sequencing, especially when virtual time is used.
+//      */
 //     void WaitForTasksToExecute() {
 // #ifdef LORAMESHER_BUILD_ARDUINO
 //         GetRTOS().delay(20);
@@ -40,11 +40,11 @@
 // };
 
 // /**
-//    * @brief Test single node discovery
-//    *
-//    * This test verifies that a single node properly transitions to network manager state
-//    * after the discovery timeout when no other nodes are present.
-//    */
+//   * @brief Test single node discovery
+//   *
+//   * This test verifies that a single node properly transitions to network manager state
+//   * after the discovery timeout when no other nodes are present.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
 //     // Create a single node
 //     auto& node = CreateNode("Node1", 0x1001);
@@ -72,11 +72,11 @@
 // }
 
 // /**
-//    * @brief Test two node network formation with sequential start
-//    *
-//    * This test verifies that when two nodes are within range and started sequentially,
-//    * the first node becomes network manager and the second node joins the network.
-//    */
+//   * @brief Test two node network formation with sequential start
+//   *
+//   * This test verifies that when two nodes are within range and started sequentially,
+//   * the first node becomes network manager and the second node joins the network.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, TwoNodeSequentialStart) {
 //     // Create two nodes
 //     auto& node1 = CreateNode("Node1", 0x1001);
@@ -134,11 +134,11 @@
 // }
 
 // /**
-//    * @brief Test two node network formation with simultaneous start
-//    *
-//    * This test verifies that when two nodes are within range and started simultaneously,
-//    * only one becomes the network manager.
-//    */
+//   * @brief Test two node network formation with simultaneous start
+//   *
+//   * This test verifies that when two nodes are within range and started simultaneously,
+//   * only one becomes the network manager.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, TwoNodeSimultaneousStart) {
 //     // Create two nodes
 //     auto& node1 = CreateNode("Node1", 0x1001);
@@ -209,10 +209,10 @@
 // }
 
 // /**
-//    * @brief Test multi-node network formation with fully connected topology
-//    *
-//    * This test verifies that a network can form with multiple nodes in a fully connected topology.
-//    */
+//   * @brief Test multi-node network formation with fully connected topology
+//   *
+//   * This test verifies that a network can form with multiple nodes in a fully connected topology.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, MultiNodeFullyConnected) {
 //     // Create a fully connected network of 5 nodes
 //     auto nodes = GenerateFullMeshTopology(5);
@@ -284,11 +284,11 @@
 // }
 
 // /**
-//    * @brief Test multi-node network formation with line topology
-//    *
-//    * This test verifies that a network can form with multiple nodes in a line topology
-//    * where each node can only communicate with its neighbors.
-//    */
+//   * @brief Test multi-node network formation with line topology
+//   *
+//   * This test verifies that a network can form with multiple nodes in a line topology
+//   * where each node can only communicate with its neighbors.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, MultiNodeLineTopology) {
 //     // Create a line topology of 5 nodes (A - B - C - D - E)
 //     auto nodes = GenerateLineTopology(5);
@@ -355,11 +355,11 @@
 // }
 
 // /**
-//    * @brief Test handling of isolated nodes
-//    *
-//    * This test verifies that isolated nodes (with no connection to others)
-//    * become network managers of their own isolated networks.
-//    */
+//   * @brief Test handling of isolated nodes
+//   *
+//   * This test verifies that isolated nodes (with no connection to others)
+//   * become network managers of their own isolated networks.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, IsolatedNodes) {
 //     // Create three nodes with no connections between them
 //     auto& node1 = CreateNode("Node1", 0x1001);
@@ -414,11 +414,11 @@
 // }
 
 // /**
-//    * @brief Test network partitioning and merging
-//    *
-//    * This test verifies that separate networks can form when partitioned,
-//    * and then merge when a connection becomes available.
-//    */
+//   * @brief Test network partitioning and merging
+//   *
+//   * This test verifies that separate networks can form when partitioned,
+//   * and then merge when a connection becomes available.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, NetworkPartitionAndMerge) {
 //     // Create two separate network partitions
 //     auto [group1, group2] = CreatePartitionedNetwork(3, 3);
@@ -555,11 +555,11 @@
 // }
 
 // /**
-//    * @brief Test network manager failure and recovery
-//    *
-//    * This test verifies that the network can recover when the network manager fails
-//    * by electing a new network manager.
-//    */
+//   * @brief Test network manager failure and recovery
+//   *
+//   * This test verifies that the network can recover when the network manager fails
+//   * by electing a new network manager.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, NetworkManagerFailure) {
 //     // Create a fully connected network of 5 nodes
 //     auto nodes = GenerateFullMeshTopology(5);
@@ -673,11 +673,11 @@
 // }
 
 // /**
-//    * @brief Test node rejoining after temporary disconnection
-//    *
-//    * This test verifies that a node can rejoin the network after being temporarily
-//    * disconnected.
-//    */
+//   * @brief Test node rejoining after temporary disconnection
+//   *
+//   * This test verifies that a node can rejoin the network after being temporarily
+//   * disconnected.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, NodeRejoin) {
 //     // Create a fully connected network of 5 nodes
 //     auto nodes = GenerateFullMeshTopology(5);
@@ -760,11 +760,11 @@
 // }
 
 // /**
-//    * @brief Test staggered node startup
-//    *
-//    * This test verifies that nodes can join an existing network when started
-//    * at different times.
-//    */
+//   * @brief Test staggered node startup
+//   *
+//   * This test verifies that nodes can join an existing network when started
+//   * at different times.
+//   */
 // TEST_F(LoRaMeshDiscoveryTests, StaggeredStartup) {
 //     // Create 5 nodes but don't start them yet
 //     auto& node1 = CreateNode("Node1", 0x1001);

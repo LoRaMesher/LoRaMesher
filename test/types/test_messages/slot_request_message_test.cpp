@@ -19,8 +19,8 @@ namespace loramesher {
 namespace test {
 
 /**
-  * @brief Test fixture for SlotRequestMessage tests
-  */
+ * @brief Test fixture for SlotRequestMessage tests
+ */
 class SlotRequestMessageTest : public ::testing::Test {
    protected:
     // Common test data
@@ -74,8 +74,8 @@ class SlotRequestMessageTest : public ::testing::Test {
 };
 
 /**
-  * @brief Test creating a SlotRequestMessage with valid parameters
-  */
+ * @brief Test creating a SlotRequestMessage with valid parameters
+ */
 TEST_F(SlotRequestMessageTest, CreationTest) {
     // Given: Test parameters
     const AddressType test_dest = 0xABCD;
@@ -95,8 +95,8 @@ TEST_F(SlotRequestMessageTest, CreationTest) {
 }
 
 /**
-  * @brief Test serializing and deserializing a SlotRequestMessage
-  */
+ * @brief Test serializing and deserializing a SlotRequestMessage
+ */
 TEST_F(SlotRequestMessageTest, SerializationTest) {
     // Given: A valid message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -116,8 +116,8 @@ TEST_F(SlotRequestMessageTest, SerializationTest) {
 }
 
 /**
-  * @brief Test deserializing a SlotRequestMessage
-  */
+ * @brief Test deserializing a SlotRequestMessage
+ */
 TEST_F(SlotRequestMessageTest, DeserializationTest) {
     // Given: A serialized message
     auto opt_serialized = msg_ptr->Serialize();
@@ -137,8 +137,8 @@ TEST_F(SlotRequestMessageTest, DeserializationTest) {
 }
 
 /**
-  * @brief Test deserializing a SlotRequestMessage with invalid data
-  */
+ * @brief Test deserializing a SlotRequestMessage with invalid data
+ */
 TEST_F(SlotRequestMessageTest, DeserializationFailureTest) {
     // Test: Empty data
     {
@@ -149,8 +149,8 @@ TEST_F(SlotRequestMessageTest, DeserializationFailureTest) {
 }
 
 /**
-  * @brief Test conversion to BaseMessage
-  */
+ * @brief Test conversion to BaseMessage
+ */
 TEST_F(SlotRequestMessageTest, ConversionToBaseMessageTest) {
     // Given: A SlotRequest message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -170,8 +170,8 @@ TEST_F(SlotRequestMessageTest, ConversionToBaseMessageTest) {
 }
 
 /**
-  * @brief Test that GetTotalSize() returns the correct value
-  */
+ * @brief Test that GetTotalSize() returns the correct value
+ */
 TEST_F(SlotRequestMessageTest, GetTotalSizeTest) {
     // Given: A SlotRequest message
     ASSERT_TRUE(msg_ptr != nullptr);

@@ -6,9 +6,9 @@
 #pragma once
 
 #include <vector>
+#include "routing_table_entry.hpp"
 #include "routing_table_header.hpp"
 #include "types/messages/base_message.hpp"
-#include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "utils/byte_operations.h"
 #include "utils/logger.hpp"
 
@@ -24,6 +24,11 @@ namespace loramesher {
 class RoutingTableMessage : public IConvertibleToBaseMessage {
    public:
     /**
+     * @brief Default constructor
+     */
+    RoutingTableMessage(const BaseMessage& message);
+
+    /**
      * @brief Creates a new routing table message
      * 
      * @param dest Destination address for the message
@@ -36,9 +41,7 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      */
     static std::optional<RoutingTableMessage> Create(
         AddressType dest, AddressType src, AddressType network_manager_addr,
-        uint8_t table_version,
-        const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-            entries);
+        uint8_t table_version, const std::vector<RoutingTableEntry>& entries);
 
     /**
      * @brief Creates a routing table message from serialized data
@@ -69,8 +72,7 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * 
      * @return const std::vector<NetworkNodeRoute>& The network node routes
      */
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetEntries() const;
+    const std::vector<RoutingTableEntry>& GetEntries() const;
 
     /**
      * @brief Gets the source address
@@ -94,11 +96,11 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
     const RoutingTableHeader& GetHeader() const;
 
     /**
-     * @brief Gets the total size of the serialized message
+     * @brief Gets the total size of the payload message
      * 
-     * @return size_t Total size in bytes
+     * @return size_t Total payload size in bytes
      */
-    size_t GetTotalSize() const;
+    size_t GetTotalPayloadSize() const;
 
     /**
      * @brief Gets link quality for a specific node
@@ -107,6 +109,17 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * @return uint8_t Link quality (0-255) or 0 if not found
      */
     uint8_t GetLinkQualityFor(AddressType node_address) const;
+
+    /**
+     * @brief Sets the link quality for a specific node
+     * 
+     * @param node_address Node address to update
+     * @param link_quality New link quality value (0-255)
+     * 
+     * @return Result Success if setting the link quality succeeded,
+     *         error code otherwise
+     */
+    Result SetLinkQualityFor(AddressType node_address, uint8_t link_quality);
 
     /**
      * @brief Converts to a BaseMessage for transmission
@@ -131,14 +144,11 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * @param network_manager_addr Network manager address
      * @param entries The network node routes
      */
-    RoutingTableMessage(
-        const RoutingTableHeader& header,
-        const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-            entries);
+    RoutingTableMessage(const RoutingTableHeader& header,
+                        const std::vector<RoutingTableEntry>& entries);
 
-    RoutingTableHeader header_;  ///< Routing table message header
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-        entries_;  ///< Network node routes
+    RoutingTableHeader header_;               ///< Routing table message header
+    std::vector<RoutingTableEntry> entries_;  ///< Network node routes
 };
 
 }  // namespace loramesher

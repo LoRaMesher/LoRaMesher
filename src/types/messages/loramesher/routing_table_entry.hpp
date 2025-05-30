@@ -18,10 +18,11 @@ namespace loramesher {
   * other nodes in the network.
   */
 struct RoutingTableEntry {
-    AddressType destination;  ///< Destination address
-    uint8_t hop_count;        ///< Number of hops to destination
-    uint8_t link_quality;     ///< Link quality metric (0-255)
-    uint8_t allocated_slots;  ///< Number of data slots allocated to this node
+    AddressType destination = 0;  ///< Destination address
+    uint8_t hop_count = 0;        ///< Number of hops to destination
+    uint8_t link_quality = 0;     ///< Link quality metric (0-255)
+    uint8_t allocated_slots =
+        0;  ///< Number of data slots allocated to this node
 
     /**
      * @brief Constructor with all fields

@@ -19,8 +19,8 @@ namespace loramesher {
 namespace test {
 
 /**
-  * @brief Test fixture for RoutingTableMessage tests
-  */
+ * @brief Test fixture for RoutingTableMessage tests
+ */
 class RoutingTableMessageTest : public ::testing::Test {
    protected:
     // Common test data
@@ -95,8 +95,8 @@ class RoutingTableMessageTest : public ::testing::Test {
 };
 
 /**
-  * @brief Test creating a RoutingTableMessage with valid parameters
-  */
+ * @brief Test creating a RoutingTableMessage with valid parameters
+ */
 TEST_F(RoutingTableMessageTest, CreationTest) {
     // Given: Test parameters
     const AddressType test_dest = 0xABCD;
@@ -118,7 +118,7 @@ TEST_F(RoutingTableMessageTest, CreationTest) {
     // And: Message should have correct fields
     EXPECT_EQ(opt_msg->GetDestination(), test_dest);
     EXPECT_EQ(opt_msg->GetSource(), test_src);
-    EXPECT_EQ(opt_msg->GetNetworkId(), test_network_id);
+    EXPECT_EQ(opt_msg->GetNetworkManager(), test_network_id);
     EXPECT_EQ(opt_msg->GetTableVersion(), test_version);
 
     // Check entries
@@ -135,8 +135,8 @@ TEST_F(RoutingTableMessageTest, CreationTest) {
 }
 
 /**
-  * @brief Test creation failure with too many entries
-  */
+ * @brief Test creation failure with too many entries
+ */
 TEST_F(RoutingTableMessageTest, TooManyEntriesTest) {
     // Only if uint8_t is used for entry count, we can test this
     if (UINT8_MAX < SIZE_MAX) {
@@ -147,8 +147,8 @@ TEST_F(RoutingTableMessageTest, TooManyEntriesTest) {
 }
 
 /**
-  * @brief Test creating a RoutingTableMessage with empty entries
-  */
+ * @brief Test creating a RoutingTableMessage with empty entries
+ */
 TEST_F(RoutingTableMessageTest, EmptyEntriesTest) {
     // When: Creating a message with no entries
     std::vector<RoutingTableEntry> empty_entries;
@@ -164,8 +164,8 @@ TEST_F(RoutingTableMessageTest, EmptyEntriesTest) {
 }
 
 /**
-  * @brief Test serializing a RoutingTableMessage
-  */
+ * @brief Test serializing a RoutingTableMessage
+ */
 TEST_F(RoutingTableMessageTest, SerializationTest) {
     // Given: A valid message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -184,8 +184,8 @@ TEST_F(RoutingTableMessageTest, SerializationTest) {
 }
 
 /**
-  * @brief Test deserializing a RoutingTableMessage
-  */
+ * @brief Test deserializing a RoutingTableMessage
+ */
 TEST_F(RoutingTableMessageTest, DeserializationTest) {
     // Given: A serialized message
     auto opt_serialized = msg_ptr->Serialize();
@@ -202,7 +202,7 @@ TEST_F(RoutingTableMessageTest, DeserializationTest) {
     // Then: Verify header fields
     EXPECT_EQ(deserialized_msg.GetDestination(), dest);
     EXPECT_EQ(deserialized_msg.GetSource(), src);
-    EXPECT_EQ(deserialized_msg.GetNetworkId(), network_id);
+    EXPECT_EQ(deserialized_msg.GetNetworkManager(), network_id);
     EXPECT_EQ(deserialized_msg.GetTableVersion(), table_version);
 
     // And: Verify entries
@@ -219,8 +219,8 @@ TEST_F(RoutingTableMessageTest, DeserializationTest) {
 }
 
 /**
-  * @brief Test deserializing a RoutingTableMessage with invalid data
-  */
+ * @brief Test deserializing a RoutingTableMessage with invalid data
+ */
 TEST_F(RoutingTableMessageTest, DeserializationFailureTest) {
     // Test: Empty data
     {
@@ -268,8 +268,8 @@ TEST_F(RoutingTableMessageTest, DeserializationFailureTest) {
 }
 
 /**
-  * @brief Test conversion to BaseMessage
-  */
+ * @brief Test conversion to BaseMessage
+ */
 TEST_F(RoutingTableMessageTest, ConversionToBaseMessageTest) {
     // Given: A RoutingTable message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -286,9 +286,7 @@ TEST_F(RoutingTableMessageTest, ConversionToBaseMessageTest) {
     const std::vector<uint8_t>& payload = base_msg.GetPayload();
 
     // Payload should have 4 bytes header (network_id, version, entry_count) plus entry data
-    const size_t expected_payload_size =
-        RoutingTableHeader::RoutingTableFieldsSize() +
-        (entries.size() * RoutingTableEntry::Size());
+    const size_t expected_payload_size = msg_ptr->GetTotalPayloadSize();
     ASSERT_EQ(payload.size(), expected_payload_size);
 
     // Network ID should be in the first two bytes (assuming little endian)
@@ -304,25 +302,24 @@ TEST_F(RoutingTableMessageTest, ConversionToBaseMessageTest) {
 }
 
 /**
-  * @brief Test GetTotalSize() returns the correct value
-  */
-TEST_F(RoutingTableMessageTest, GetTotalSizeTest) {
+ * @brief Test GetTotalSize() returns the correct value
+ */
+TEST_F(RoutingTableMessageTest, GetTotalPayloadSizeTest) {
     // Given: A RoutingTable message
     ASSERT_TRUE(msg_ptr != nullptr);
 
     // When: Getting the total size
-    size_t total_size = msg_ptr->GetTotalSize();
+    size_t total_size = msg_ptr->GetTotalPayloadSize();
 
     // Then: Size should be correct
     const size_t expected_size = RoutingTableHeader::RoutingTableFieldsSize() +
-                                 BaseHeader::Size() +
                                  (entries.size() * RoutingTableEntry::Size());
     EXPECT_EQ(total_size, expected_size);
 }
 
 /**
-  * @brief Test retrieving the header directly
-  */
+ * @brief Test retrieving the header directly
+ */
 TEST_F(RoutingTableMessageTest, GetHeaderTest) {
     // Given: A RoutingTable message
     ASSERT_TRUE(msg_ptr != nullptr);
@@ -334,7 +331,7 @@ TEST_F(RoutingTableMessageTest, GetHeaderTest) {
     EXPECT_EQ(header.GetDestination(), dest);
     EXPECT_EQ(header.GetSource(), src);
     EXPECT_EQ(header.GetType(), MessageType::ROUTE_TABLE);
-    EXPECT_EQ(header.GetNetworkId(), network_id);
+    EXPECT_EQ(header.GetNetworkManager(), network_id);
     EXPECT_EQ(header.GetTableVersion(), table_version);
     EXPECT_EQ(header.GetEntryCount(), static_cast<uint8_t>(entries.size()));
 }

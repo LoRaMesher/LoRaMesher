@@ -16,8 +16,7 @@
 #include "os/rtos.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
-#include "types/protocols/lora_mesh/network_node.hpp"
-#include "types/protocols/lora_mesh/routing_entry.hpp"
+#include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/protocols/lora_mesh/superframe.hpp"
 #include "types/protocols/protocol.hpp"
@@ -174,10 +173,8 @@ class LoRaMeshProtocol : public Protocol {
         current_superframe_;  ///< Current superframe structure
 
     // Protocol data structures
-    std::vector<types::protocols::lora_mesh::RoutingEntry>
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
         routing_table_;  ///< Routing table
-    std::vector<types::protocols::lora_mesh::NetworkNode>
-        network_nodes_;  ///< Known network nodes
     std::vector<types::protocols::lora_mesh::SlotAllocation>
         slot_table_;  ///< Slot allocation table
     std::unordered_map<types::protocols::lora_mesh::SlotAllocation::SlotType,
