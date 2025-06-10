@@ -241,6 +241,29 @@ public:
     LM_LinkedList<RouteNode>* routingTableListCopy() { return new LM_LinkedList<RouteNode>(*RoutingTableService::routingTableList); }
 
     /**
+     * @brief Send a Packet
+     * This function will create a DataPacket with the payload and destination address, and set it to the send queue.
+     * It will not wait for an ACK back from the destination.
+     *
+     * @param dst Destination address
+     * @param payload Payload to send
+     * @param payloadSize Payload size to be send in Bytes
+     */
+    void sendPacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
+        //Cannot send an empty packet
+        if (payloadSize == 0)
+            return;
+
+        ESP_LOGV(LM_TAG, "Creating a packet for send with %d bytes", payloadSize);
+
+        //Create a data packet with the payload
+        DataPacket* dPacket = PacketService::createDataPacket(dst, getLocalAddress(), DATA_P, payload, payloadSize);
+
+        //Create the packet and set it to the send queue
+        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(dPacket), DEFAULT_PRIORITY);
+    }
+
+    /**
      * @brief Create a Packet And Send it
      *
      * @tparam T
