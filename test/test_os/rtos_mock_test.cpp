@@ -613,4 +613,437 @@ TEST_F(RTOSMockTest, MultiTaskQueueTest) {
     delete consumerParams;
 }
 
+//**
+ * @brief Test reproducing the edge case where a task is suspended while waiting in WaitForNotify
+ * 
+ * This test creates a task that calls WaitForNotify with a long timeout,
+ * then suspends the task while it's waiting, and finally resumes it.
+ * The goal is to reproduce the timeout warning and then fix it.
+ */
+TEST_F(RTOSMockTest, SuspendTaskWaitingInWaitForNotify) {
+    // Setup
+    std::atomic<bool> taskStarted(false);
+    std::atomic<bool> waitForNotifyStarted(false);
+    std::atomic<bool> waitForNotifyCompleted(false);
+    std::atomic<bool> suspensionDetected(false);
+    std::atomic<bool> shouldExit(false);
+    std::atomic<QueueResult> waitResult(QueueResult::kError);
+    std::atomic<int> waitForNotifyAttempts(0);
+    TaskHandle_t taskHandle;
+
+    auto taskFunction = [](void* param) {
+        auto* state = static_cast<
+            std::tuple<std::atomic<bool>*, std::atomic<bool>*, std::atomic<bool>*, 
+                      std::atomic<bool>*, std::atomic<bool>*, std::atomic<QueueResult>*, std::atomic<int>*>*>(param);
+        
+        auto& taskStarted = *std::get<0>(*state);
+        auto& waitForNotifyStarted = *std::get<1>(*state);
+        auto& waitForNotifyCompleted = *std::get<2>(*state);
+        auto& suspensionDetected = *std::get<3>(*state);
+        auto& shouldExit = *std::get<4>(*state);
+        auto& waitResult = *std::get<5>(*state);
+        auto& waitForNotifyAttempts = *std::get<6>(*state);
+
+        auto& rtos = GetRTOS();
+
+        taskStarted.store(true);
+
+        while (!shouldExit.load()) {
+            // Check if we should pause/stop first
+            if (rtos.ShouldStopOrPause()) {
+                suspensionDetected.store(true);
+                continue; // Continue the loop to check again after resume
+            }
+
+            // Start waiting for notification
+            waitForNotifyStarted.store(true);
+            waitForNotifyAttempts.fetch_add(1);
+            
+            // Wait for notification with a moderate timeout
+            QueueResult result = rtos.WaitForNotify(1000); // 1 second timeout
+            
+            waitResult.store(result);
+
+            if (result == QueueResult::kOk) {
+                // Notification received, exit successfully
+                waitForNotifyCompleted.store(true);
+                break;
+            } else if (result == QueueResult::kTimeout) {
+                // Timeout occurred, this could be due to suspension or normal timeout
+                // Continue the loop to check suspension state and try again
+                continue;
+            } else {
+                // Error occurred, exit
+                waitForNotifyCompleted.store(true);
+                break;
+            }
+        }
+    };
+
+    // Create parameter tuple for the task
+    auto* params = new std::tuple<
+        std::atomic<bool>*, std::atomic<bool>*, std::atomic<bool>*, 
+        std::atomic<bool>*, std::atomic<bool>*, std::atomic<QueueResult>*, std::atomic<int>*>(
+        &taskStarted, &waitForNotifyStarted, &waitForNotifyCompleted, 
+        &suspensionDetected, &shouldExit, &waitResult, &waitForNotifyAttempts);
+
+    // Execute - create task
+    bool result = rtosInstance->CreateTask(taskFunction, "SX1276", 2048, params, 1, &taskHandle);
+    EXPECT_TRUE(result);
+
+    // Wait for task to start
+    int attempts = 0;
+    while (!taskStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(taskStarted.load());
+
+    // Wait for task to enter WaitForNotify
+    attempts = 0;
+    while (!waitForNotifyStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(waitForNotifyStarted.load());
+
+    // Give the task a moment to actually enter the wait
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Verify task hasn't completed WaitForNotify yet
+    EXPECT_FALSE(waitForNotifyCompleted.load());
+
+    // Now suspend the task while it's waiting in WaitForNotify
+    std::cout << "Suspending task while it's waiting in WaitForNotify..." << std::endl;
+    bool suspendResult = rtosInstance->SuspendTask(taskHandle);
+    EXPECT_TRUE(suspendResult);
+
+    // Give time for suspension to be processed and for the task to detect it
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    // After suspension, the task should eventually detect it through ShouldStopOrPause
+    // Note: suspension detection happens when the task loops back and calls ShouldStopOrPause
+    
+    // Now resume the task - this is where the warning might occur
+    std::cout << "Resuming task..." << std::endl;
+    bool resumeResult = rtosInstance->ResumeTask(taskHandle);
+    EXPECT_TRUE(resumeResult);
+
+    // Give time for resume to be processed
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Send a notification to complete the wait
+    rtosInstance->NotifyTaskFromISR(taskHandle);
+
+    // Wait for the notification to be processed
+    attempts = 0;
+    while (!waitForNotifyCompleted.load() && attempts < 200) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+
+    // Verify the task completed successfully
+    EXPECT_TRUE(waitForNotifyCompleted.load());
+    EXPECT_EQ(waitResult.load(), QueueResult::kOk);
+    
+    // Verify that the task made multiple attempts (indicating it handled the suspend/resume cycle)
+    EXPECT_GT(waitForNotifyAttempts.load(), 1);
+
+    // Clean up
+    shouldExit.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    rtosInstance->DeleteTask(taskHandle);
+    delete params;
+}
+
+/**
+ * @brief Test multiple suspend/resume cycles while task alternates between WaitForNotify and ShouldStopOrPause
+ * 
+ * This test verifies that a task can handle multiple suspend/resume cycles
+ * while waiting for notifications without generating warnings.
+ */
+TEST_F(RTOSMockTest, MultipleSuspendResumeCycles) {
+    // Setup
+    std::atomic<bool> taskStarted(false);
+    std::atomic<bool> shouldExit(false);
+    std::atomic<int> suspendCount(0);
+    std::atomic<int> resumeCount(0);
+    std::atomic<int> waitForNotifyAttempts(0);
+    std::atomic<int> shouldStopOrPauseCalls(0);
+    TaskHandle_t taskHandle;
+
+    auto taskFunction = [](void* param) {
+        auto* state = static_cast<
+            std::tuple<std::atomic<bool>*, std::atomic<bool>*, std::atomic<int>*, std::atomic<int>*, std::atomic<int>*, std::atomic<int>*>*>(param);
+        
+        auto& taskStarted = *std::get<0>(*state);
+        auto& shouldExit = *std::get<1>(*state);
+        auto& suspendCount = *std::get<2>(*state);
+        auto& resumeCount = *std::get<3>(*state);
+        auto& waitForNotifyAttempts = *std::get<4>(*state);
+        auto& shouldStopOrPauseCalls = *std::get<5>(*state);
+
+        auto& rtos = GetRTOS();
+
+        taskStarted.store(true);
+
+        while (!shouldExit.load()) {
+            // First check if we should pause/stop - this is where suspend/resume is detected
+            shouldStopOrPauseCalls.fetch_add(1);
+            if (rtos.ShouldStopOrPause()) {
+                suspendCount.fetch_add(1);
+                // After suspension ends and we're here again, count it as a resume
+                if (!shouldExit.load()) {
+                    resumeCount.fetch_add(1);
+                }
+                continue;
+            }
+
+            // Then wait for notification with short timeout
+            waitForNotifyAttempts.fetch_add(1);
+            QueueResult result = rtos.WaitForNotify(25); // Very short timeout to check suspension frequently
+            
+            if (result == QueueResult::kOk) {
+                // Notification received, exit the loop
+                break;
+            }
+            // On timeout or other results, continue the loop to check suspension
+        }
+    };
+
+    // Create parameter tuple for the task
+    auto* params = new std::tuple<
+        std::atomic<bool>*, std::atomic<bool>*, std::atomic<int>*, std::atomic<int>*, std::atomic<int>*, std::atomic<int>*>(
+        &taskStarted, &shouldExit, &suspendCount, &resumeCount, &waitForNotifyAttempts, &shouldStopOrPauseCalls);
+
+    // Execute - create task
+    bool result = rtosInstance->CreateTask(taskFunction, "MultiSuspendTask", 2048, params, 1, &taskHandle);
+    EXPECT_TRUE(result);
+
+    // Wait for task to start
+    int attempts = 0;
+    while (!taskStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(taskStarted.load());
+
+    // Let the task run a bit before starting suspend/resume cycles
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Perform multiple suspend/resume cycles
+    for (int cycle = 0; cycle < 3; cycle++) {
+        std::cout << "Suspend/Resume cycle " << (cycle + 1) << std::endl;
+        
+        // Suspend
+        bool suspendResult = rtosInstance->SuspendTask(taskHandle);
+        EXPECT_TRUE(suspendResult);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150)); // Wait for suspension to be detected
+
+        // Resume
+        bool resumeResult = rtosInstance->ResumeTask(taskHandle);
+        EXPECT_TRUE(resumeResult);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150)); // Wait for resume to be processed
+    }
+
+    // Verify we had some suspend/resume operations
+    // The task should have detected the suspension/resume cycles
+    EXPECT_GT(suspendCount.load(), 0) << "Expected some suspensions to be detected";
+    EXPECT_GT(resumeCount.load(), 0) << "Expected some resumes to be detected";
+    
+    // Verify the task made multiple calls to both functions
+    EXPECT_GT(waitForNotifyAttempts.load(), 10) << "Expected multiple WaitForNotify attempts";
+    EXPECT_GT(shouldStopOrPauseCalls.load(), 10) << "Expected multiple ShouldStopOrPause calls";
+
+    std::cout << "Final counts - Suspends: " << suspendCount.load() 
+              << ", Resumes: " << resumeCount.load() 
+              << ", WaitForNotify calls: " << waitForNotifyAttempts.load()
+              << ", ShouldStopOrPause calls: " << shouldStopOrPauseCalls.load() << std::endl;
+
+    // Send final notification to complete the task
+    rtosInstance->NotifyTaskFromISR(taskHandle);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Clean up
+    shouldExit.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    rtosInstance->DeleteTask(taskHandle);
+    delete params;
+}
+
+/**
+ * @brief Test rapid suspend/resume operations
+ * 
+ * This test rapidly suspends and resumes a task to stress-test
+ * the synchronization mechanism.
+ */
+TEST_F(RTOSMockTest, RapidSuspendResumeOperations) {
+    // Setup
+    std::atomic<bool> taskStarted(false);
+    std::atomic<bool> shouldExit(false);
+    std::atomic<bool> operationCompleted(false);
+    TaskHandle_t taskHandle;
+
+    auto taskFunction = [](void* param) {
+        auto* state = static_cast<
+            std::tuple<std::atomic<bool>*, std::atomic<bool>*, std::atomic<bool>*>*>(param);
+        
+        auto& taskStarted = *std::get<0>(*state);
+        auto& shouldExit = *std::get<1>(*state);
+        auto& operationCompleted = *std::get<2>(*state);
+
+        auto& rtos = GetRTOS();
+
+        taskStarted.store(true);
+
+        // Simple loop with frequent suspension checks
+        for (int i = 0; i < 100 && !shouldExit.load(); i++) {
+            if (rtos.ShouldStopOrPause()) {
+                continue;
+            }
+            
+            // Short wait to allow for suspension
+            rtos.WaitForNotify(10);
+        }
+
+        operationCompleted.store(true);
+    };
+
+    // Create parameter tuple for the task
+    auto* params = new std::tuple<
+        std::atomic<bool>*, std::atomic<bool>*, std::atomic<bool>*>(
+        &taskStarted, &shouldExit, &operationCompleted);
+
+    // Execute - create task
+    bool result = rtosInstance->CreateTask(taskFunction, "RapidSuspendTask", 2048, params, 1, &taskHandle);
+    EXPECT_TRUE(result);
+
+    // Wait for task to start
+    int attempts = 0;
+    while (!taskStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        attempts++;
+    }
+    EXPECT_TRUE(taskStarted.load());
+
+    // Perform rapid suspend/resume operations
+    for (int i = 0; i < 5; i++) {
+        rtosInstance->SuspendTask(taskHandle);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        rtosInstance->ResumeTask(taskHandle);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Wait for task to complete its operations
+    attempts = 0;
+    while (!operationCompleted.load() && attempts < 200) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+
+    // Clean up
+    shouldExit.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    rtosInstance->DeleteTask(taskHandle);
+    delete params;
+}
+
+/**
+ * @brief Focused test that specifically tests the scenario causing the warning
+ * 
+ * This test creates a task that immediately goes into WaitForNotify, suspends it,
+ * then resumes it to specifically test the resume acknowledgment mechanism.
+ */
+TEST_F(RTOSMockTest, FocusedSuspendResumeInWaitForNotify) {
+    std::atomic<bool> taskStarted(false);
+    std::atomic<bool> shouldExit(false);
+    std::atomic<bool> inWaitForNotify(false);
+    std::atomic<QueueResult> finalResult(QueueResult::kError);
+    TaskHandle_t taskHandle;
+
+    auto taskFunction = [](void* param) {
+        auto* state = static_cast<
+            std::tuple<std::atomic<bool>*, std::atomic<bool>*, std::atomic<bool>*, std::atomic<QueueResult>*>*>(param);
+        
+        auto& taskStarted = *std::get<0>(*state);
+        auto& shouldExit = *std::get<1>(*state);
+        auto& inWaitForNotify = *std::get<2>(*state);
+        auto& finalResult = *std::get<3>(*state);
+
+        auto& rtos = GetRTOS();
+        taskStarted.store(true);
+
+        // Go directly into WaitForNotify to test the suspend/resume during wait
+        while (!shouldExit.load()) {
+            inWaitForNotify.store(true);
+            QueueResult result = rtos.WaitForNotify(500); // Wait with timeout
+            inWaitForNotify.store(false);
+            
+            if (result == QueueResult::kOk) {
+                finalResult.store(result);
+                break; // Got notification, exit
+            }
+            
+            // Check if we should stop/pause between wait attempts
+            if (rtos.ShouldStopOrPause()) {
+                continue;
+            }
+        }
+    };
+
+    auto* params = new std::tuple<
+        std::atomic<bool>*, std::atomic<bool>*, std::atomic<bool>*, std::atomic<QueueResult>*>(
+        &taskStarted, &shouldExit, &inWaitForNotify, &finalResult);
+
+    // Create the task
+    bool result = rtosInstance->CreateTask(taskFunction, "FocusedTestTask", 2048, params, 1, &taskHandle);
+    EXPECT_TRUE(result);
+
+    // Wait for task to start and enter WaitForNotify
+    int attempts = 0;
+    while (!taskStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(taskStarted.load());
+
+    // Wait for task to enter WaitForNotify
+    attempts = 0;
+    while (!inWaitForNotify.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(inWaitForNotify.load());
+
+    // Now suspend the task while it's in WaitForNotify - this should NOT generate a warning
+    std::cout << "Suspending task while in WaitForNotify (should not generate warning)..." << std::endl;
+    bool suspendResult = rtosInstance->SuspendTask(taskHandle);
+    EXPECT_TRUE(suspendResult);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Resume the task - this is the critical operation that was generating warnings
+    std::cout << "Resuming task (testing for warning elimination)..." << std::endl;
+    bool resumeResult = rtosInstance->ResumeTask(taskHandle);
+    EXPECT_TRUE(resumeResult);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Send notification to complete the test
+    rtosInstance->NotifyTaskFromISR(taskHandle);
+    
+    // Wait for completion
+    attempts = 0;
+    while (finalResult.load() != QueueResult::kOk && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+
+    EXPECT_EQ(finalResult.load(), QueueResult::kOk);
+
+    // Clean up
+    shouldExit.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    rtosInstance->DeleteTask(taskHandle);
+    delete params;
+}
+
 #endif  // ARDUINO

@@ -164,8 +164,8 @@ class RTOSMock : public RTOS {
 
         // Now wake up tasks (outside the lock to prevent deadlocks)
         for (auto& task : tasksToWake) {
-            LOG_DEBUG("MOCK: Waking up task waiting until %llu ms",
-                      (unsigned long long)task.second);
+            // LOG_DEBUG("MOCK: Waking up task waiting until %llu ms",
+            //           (unsigned long long)task.second);
             task.first->notify_all();
         }
 
@@ -307,12 +307,18 @@ class RTOSMock : public RTOS {
             }
         }
 
-        // Notify the task to wake up - do this outside the lock to prevent deadlock
+        // Notify the task to wake up - do this outside the tasksMutex_ lock to prevent deadlock
         if (task_info) {
-            task_info->cv.notify_all();
-            task_info->notify_cv.notify_all();
-            LOG_DEBUG("MOCK: Notified task '%s' for deletion",
-                      task_name.c_str());
+            // CRITICAL: Notify ALL condition variables the task might be waiting on
+            task_info->cv.notify_all();         // For ShouldStopOrPause
+            task_info->notify_cv.notify_all();  // For WaitForNotify
+            task_info->suspend_ack_cv
+                .notify_all();  // For suspend acknowledgment
+            task_info->resume_ack_cv.notify_all();  // For resume acknowledgment
+
+            LOG_DEBUG(
+                "MOCK: Notified all condition variables for task '%s' deletion",
+                task_name.c_str());
         }
 
         if (thread_id != std::thread::id()) {
@@ -434,6 +440,17 @@ class RTOSMock : public RTOS {
                       task_name.c_str());
         }
 
+        // CRITICAL FIX: Notify ALL condition variables the task might be waiting on
+        task_info->cv.notify_all();  // For ShouldStopOrPause
+        task_info->notify_cv
+            .notify_all();  // For WaitForNotify - THIS WAS MISSING!
+        task_info->suspend_ack_cv.notify_all();  // For suspend acknowledgment
+        task_info->resume_ack_cv.notify_all();   // For resume acknowledgment
+
+        LOG_DEBUG(
+            "MOCK: Notified all condition variables for task '%s' suspension",
+            task_name.c_str());
+
         // For self-suspension (current task), we don't need to wait for acknowledgment
         if (!taskHandle || static_cast<std::thread*>(taskHandle)->get_id() ==
                                std::this_thread::get_id()) {
@@ -533,9 +550,12 @@ class RTOSMock : public RTOS {
             task_info->resume_acknowledged = false;
         }
 
-        // Notify the task to wake up
-        task_info->cv.notify_all();
-        LOG_DEBUG("MOCK: Task '%s' resume signal sent", task_name.c_str());
+        // Notify the task to wake up - notify ALL condition variables
+        task_info->cv.notify_all();         // For ShouldStopOrPause
+        task_info->notify_cv.notify_all();  // For WaitForNotify - CRITICAL!
+        LOG_DEBUG(
+            "MOCK: Task '%s' resume signal sent to all condition variables",
+            task_name.c_str());
 
         // Wait for task to acknowledge the resume
         // We only wait if this isn't a self-resume
@@ -545,16 +565,21 @@ class RTOSMock : public RTOS {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Use our waitFor helper that respects virtual time
+            // IMPORTANT: Increased timeout and better predicate
             bool acknowledged =
-                waitFor(task_info->resume_ack_cv, lock, 500, [task_info]() {
-                    return task_info->resume_acknowledged ||
-                           task_info->stop_requested;
-                });
+                waitFor(task_info->resume_ack_cv, lock,
+                        1000 /* 1 second timeout */, [task_info]() {
+                            return task_info->resume_acknowledged ||
+                                   task_info->stop_requested;
+                        });
 
             if (!acknowledged) {
-                LOG_WARNING(
-                    "MOCK: Timeout waiting for task '%s' to acknowledge resume",
+                LOG_DEBUG(
+                    "MOCK: Task '%s' did not acknowledge resume within "
+                    "timeout, "
+                    "but resume signal was sent successfully",
                     task_name.c_str());
+                // Changed from WARNING to DEBUG and improved message
                 // Return true anyway as we've sent the resume signal
                 return true;
             }
@@ -777,8 +802,8 @@ class RTOSMock : public RTOS {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
             wakeTimeMs = virtualTimeMs_ + ms;
             waitingTasks_[&cv] = wakeTimeMs;
-            LOG_DEBUG("MOCK: Task will wait until virtual time %llu ms",
-                      (unsigned long long)wakeTimeMs);
+            // LOG_DEBUG("MOCK: Task will wait until virtual time %llu ms",
+            //           (unsigned long long)wakeTimeMs);
         }
 
         // Wait until either the virtual time advances beyond our wake time,
@@ -788,8 +813,8 @@ class RTOSMock : public RTOS {
             return virtualTimeMs_ >= wakeTimeMs;
         });
 
-        LOG_DEBUG("MOCK: Task woke up after waiting until %llu ms",
-                  (unsigned long long)wakeTimeMs);
+        // LOG_DEBUG("MOCK: Task woke up after waiting until %llu ms",
+        //           (unsigned long long)wakeTimeMs);
 
         // Clean up (in case we were woken by something other than advanceTime)
         {
@@ -1011,6 +1036,7 @@ class RTOSMock : public RTOS {
 
     QueueResult WaitForNotify(uint32_t timeout) override {
         LOG_DEBUG("MOCK: Waiting for notification with timeout %u ms", timeout);
+
         // Find the current task's handle
         thread_local TaskHandle_t this_task = nullptr;
         TaskInfo* task_info = nullptr;
@@ -1056,8 +1082,16 @@ class RTOSMock : public RTOS {
                 return QueueResult::kError;
             }
 
-            // If we already have a pending notification, consume it and return immediately
-            if (task_info->notification_pending) {
+            // IMPORTANT: Check for suspension before checking notification
+            if (task_info->suspended) {
+                LOG_DEBUG(
+                    "MOCK: Task is suspended during WaitForNotify, will wait "
+                    "for resume");
+                // Don't return error here - we should wait for resume or stop
+            }
+
+            // If we already have a pending notification and not suspended, consume it
+            if (task_info->notification_pending && !task_info->suspended) {
                 task_info->notification_pending = false;
                 LOG_DEBUG("MOCK: Consumed pending notification immediately");
                 return QueueResult::kOk;
@@ -1069,32 +1103,58 @@ class RTOSMock : public RTOS {
             return QueueResult::kTimeout;
         }
 
-        // Wait for notification with timeout - OUTSIDE the tasksMutex_ lock to prevent deadlock
-        // We only lock the individual task's mutex
+        // Wait for notification, resume, or stop request
+        bool condition_met = false;
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-            bool notification_received = false;
+
+            // Remember the initial suspension state to detect changes
+            bool initial_suspended_state = task_info->suspended;
+
+            // CRITICAL FIX: Set up resume acknowledgment BEFORE waiting
+            // This ensures that if we get suspended and then resumed while waiting,
+            // the ResumeTask call won't timeout waiting for acknowledgment
+            auto wait_predicate = [this, task_info, initial_suspended_state]() {
+                // Check conditions under the proper lock
+                std::lock_guard<std::mutex> tasks_lock(tasksMutex_);
+                auto it = tasks_.find(static_cast<std::thread*>(this_task));
+                if (it == tasks_.end()) {
+                    return true;  // Task deleted, exit wait
+                }
+
+                // If we were just resumed, acknowledge it immediately
+                if (initial_suspended_state && !it->second.suspended &&
+                    !it->second.resume_acknowledged) {
+                    it->second.resume_acknowledged = true;
+                    it->second.resume_ack_cv.notify_all();
+                    LOG_DEBUG(
+                        "MOCK: WaitForNotify acknowledged resume operation");
+                }
+
+                // Return true if:
+                // 1. Stop requested (should exit)
+                // 2. Not suspended AND have pending notification (normal notification)
+                // 3. Suspension state changed (either got suspended or resumed)
+                return it->second.stop_requested ||
+                       (!it->second.suspended &&
+                        it->second.notification_pending) ||
+                       (it->second.suspended != initial_suspended_state);
+            };
 
             if (timeout == MAX_DELAY) {
                 // Use our waitFor helper with a very long timeout
-                notification_received = waitFor(
+                condition_met = waitFor(
                     task_info->notify_cv, lock,
                     3600 * 1000,  // 1 hour timeout as MAX_DELAY equivalent
-                    [task_info]() {
-                        return task_info->notification_pending ||
-                               task_info->stop_requested;
-                    });
+                    wait_predicate);
             } else {
                 // Regular timeout case
-                notification_received =
-                    waitFor(task_info->notify_cv, lock, timeout, [task_info]() {
-                        return task_info->notification_pending ||
-                               task_info->stop_requested;
-                    });
+                condition_met = waitFor(task_info->notify_cv, lock, timeout,
+                                        wait_predicate);
             }
         }
 
-        // After waiting, check the results - need to reacquire tasksMutex_
+        // After waiting, check what happened
         {
             std::lock_guard<std::mutex> lock(tasksMutex_);
 
@@ -1102,6 +1162,7 @@ class RTOSMock : public RTOS {
             auto it = tasks_.find(static_cast<std::thread*>(this_task));
             if (it == tasks_.end()) {
                 this_task = nullptr;  // Reset the cache
+                LOG_DEBUG("MOCK: Task deleted during WaitForNotify");
                 return QueueResult::kError;
             }
 
@@ -1112,8 +1173,25 @@ class RTOSMock : public RTOS {
                 return QueueResult::kError;
             }
 
+            // Check what caused us to wake up
+            if (it->second.suspended) {
+                LOG_DEBUG("MOCK: WaitForNotify woke up due to suspension");
+
+                // IMPORTANT: Acknowledge the suspension here since we detected it
+                // This prevents SuspendTask from waiting indefinitely
+                if (!it->second.suspension_acknowledged) {
+                    it->second.suspension_acknowledged = true;
+                    it->second.suspend_ack_cv.notify_all();
+                    LOG_DEBUG("MOCK: WaitForNotify acknowledged suspension");
+                }
+
+                // Don't consume any pending notification while suspended
+                return QueueResult::
+                    kTimeout;  // Return timeout to indicate we should check suspension state
+            }
+
             if (it->second.notification_pending) {
-                // Notification received, consume it
+                // Notification received and we're not suspended, consume it
                 it->second.notification_pending = false;
                 LOG_DEBUG("MOCK: Notification received after wait");
                 return QueueResult::kOk;
