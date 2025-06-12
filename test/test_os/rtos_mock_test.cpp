@@ -613,7 +613,7 @@ TEST_F(RTOSMockTest, MultiTaskQueueTest) {
     delete consumerParams;
 }
 
-//**
+/**
  * @brief Test reproducing the edge case where a task is suspended while waiting in WaitForNotify
  * 
  * This test creates a task that calls WaitForNotify with a long timeout,
