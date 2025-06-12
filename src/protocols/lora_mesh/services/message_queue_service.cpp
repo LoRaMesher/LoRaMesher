@@ -3,8 +3,9 @@
  * @brief Implementation of message queue service
  */
 
-#include <numeric>
 #include "message_queue_service.hpp"
+
+#include <numeric>
 #include "utils/logger.hpp"
 
 namespace loramesher {
@@ -12,7 +13,9 @@ namespace protocols {
 namespace lora_mesh {
 
 MessageQueueService::MessageQueueService(size_t max_queue_size)
-    : max_queue_size_(max_queue_size) {}
+    : max_queue_size_(max_queue_size) {
+        
+    }
 
 void MessageQueueService::AddMessageToQueue(
     types::protocols::lora_mesh::SlotAllocation::SlotType type,
