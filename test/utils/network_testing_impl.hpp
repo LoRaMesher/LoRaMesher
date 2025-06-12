@@ -343,6 +343,7 @@ class VirtualTimeController {
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
 
         if (rtos_mock) {
+            LOG_DEBUG("Setting RTOSMock to virtual time mode");
             rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
         } else {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
@@ -377,7 +378,7 @@ class VirtualTimeController {
      * @param time_ms Time to advance in milliseconds
      */
     void AdvanceTime(uint32_t time_ms) {
-        LOG_DEBUG("Advancing time by %u ms", time_ms);
+        // LOG_DEBUG("Advancing time by %u ms", time_ms);
         current_time_ += time_ms;
         network_.AdvanceTime(time_ms);
         ProcessTimeDependentEvents();
@@ -750,22 +751,6 @@ class TestRadioFactory {
     std::function<std::unique_ptr<radio::IRadio>(int, int, int, int, SPIClass&)>
         original_create_radio_;
 };
-
-/**
- * @brief Helper function to inject time function into LoRaMeshProtocol
- * 
- * This function allows tests to override the protocol's internal time
- * mechanism with a controlled virtual time.
- * 
- * @param protocol Protocol instance to inject time function into
- * @param time_function Time function to inject
- */
-void InjectTimeFunction(protocols::LoRaMeshProtocol& protocol,
-                        std::function<uint32_t()> time_function) {
-#ifdef DEBUG
-    protocol.SetTimeFunction(time_function);
-#endif
-}
 
 }  // namespace test
 }  // namespace loramesher
