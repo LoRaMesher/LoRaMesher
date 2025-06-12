@@ -75,7 +75,7 @@
 
 //     /**
 //      * @brief Helper method to advance virtual time and update service state
-//      * 
+//      *
 //      * @param ms_to_advance Time to advance in milliseconds
 //      */
 //     void AdvanceTimeAndUpdate(uint32_t ms_to_advance) {
@@ -85,7 +85,7 @@
 
 //     /**
 //      * @brief Helper to create test slot allocation table
-//      * 
+//      *
 //      * @return Test slot allocation table
 //      */
 //     std::vector<SlotAllocation> CreateTestSlotTable() {
