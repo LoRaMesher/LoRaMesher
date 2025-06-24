@@ -67,16 +67,40 @@ uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
     return node->networkNode.metric;
 }
 
+int calcSNRCost(int8_t receivedSNR) {
+    if (receivedSNR >= 20)
+        return 1;
+    else if (receivedSNR >= 15)
+        return 2;
+    else if (receivedSNR >= 10)
+        return 3;
+    else if (receivedSNR >= 5)
+        return 4;
+    else if (receivedSNR >= 0)
+        return 5;
+    else if (receivedSNR >= -5)
+        return 6;
+    else if (receivedSNR >= -10)
+        return 7;
+    else if (receivedSNR >= -15)
+        return 8;
+    else if (receivedSNR >= -20)
+        return 9;
+    return 255;
+}
+
 void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     if ((p->packetSize - sizeof(RoutePacket)) % sizeof(NetworkNode) != 0) {
         ESP_LOGE(LM_TAG, "Invalid route packet size");
         return;
     }
 
+    uint8_t hopCost = calcSNRCost(receivedSNR);
+    
     size_t numNodes = p->getNetworkNodesSize();
     ESP_LOGI(LM_TAG, "Route packet from %X with size %d", p->src, numNodes);
 
-    NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
+    NetworkNode* receivedNode = new NetworkNode(p->src, hopCost, p->nodeRole);
     processRoute(p->src, receivedNode);
     delete receivedNode;
 
@@ -84,7 +108,10 @@ void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
 
     for (size_t i = 0; i < numNodes; i++) {
         NetworkNode* node = &p->networkNodes[i];
-        node->metric++;
+        if (node->metric <= 255 - hopCost)
+            node->metric += hopCost;
+        else
+            node->metric = 255;
         processRoute(p->src, node);
     }
 
@@ -137,10 +164,11 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
         return;
     }
 
-    if (calculateMaximumMetricOfRoutingTable() < node->metric) {
-        ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
-        return;
-    }
+    // commenting out as it do not work properly with the SNR metric
+    // if (calculateMaximumMetricOfRoutingTable() < node->metric) { 
+    //     ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
+    //     return;
+    // }
 
     RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
 
