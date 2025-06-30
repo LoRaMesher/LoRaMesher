@@ -7,8 +7,11 @@
 #include <algorithm>
 #include <numeric>
 
+#include "os/os_port.hpp"
+
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
+using JoinResponseStatus = loramesher::JoinResponseHeader::ResponseStatus;
 }  // namespace
 
 namespace loramesher {
@@ -18,11 +21,9 @@ namespace lora_mesh {
 NetworkService::NetworkService(
     AddressType node_address,
     std::shared_ptr<IMessageQueueService> message_queue_service,
-    std::shared_ptr<ITimeProvider> time_provider,
     std::shared_ptr<ISuperframeService> superframe_service)
     : node_address_(node_address),
       message_queue_service_(message_queue_service),
-      time_provider_(time_provider),
       superframe_service_(superframe_service),
       state_(ProtocolState::INITIALIZING),
       network_manager_(0),
@@ -30,12 +31,8 @@ NetworkService::NetworkService(
       network_creator_(false),
       is_synchronized_(false),
       last_sync_time_(0),
-      table_version_(0) {
-
-    if (!time_provider_) {
-        // Create default time provider if none provided
-        time_provider_ = std::make_shared<TimeProvider>();
-    }
+      table_version_(0),
+      discovery_start_time_(0) {
 
     if (!message_queue_service_) {
         LOG_ERROR("Message queue service is required");
@@ -43,13 +40,14 @@ NetworkService::NetworkService(
 
     // Initialize configuration with defaults
     config_.node_address = node_address;
+    node_address_ = node_address;
 }
 
 bool NetworkService::UpdateNetworkNode(AddressType node_address,
                                        uint8_t battery_level,
                                        bool is_network_manager,
-                                       uint8_t capabilities,
-                                       uint8_t allocated_slots) {
+                                       uint8_t allocated_data_slots,
+                                       uint8_t capabilities) {
     // Don't track our own node
     if (node_address == node_address_) {
         return false;
@@ -57,23 +55,23 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
 
     std::lock_guard<std::mutex> lock(network_mutex_);
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
     auto node_it = FindNode(node_address);
 
     if (node_it != network_nodes_.end()) {
         // Update existing node
-        bool changed = node_it->UpdateNodeInfo(battery_level,
-                                               is_network_manager, capabilities,
-                                               allocated_slots, current_time);
+        bool changed = node_it->UpdateNodeInfo(
+            battery_level, is_network_manager, capabilities,
+            allocated_data_slots, current_time);
 
         LOG_DEBUG("Updated node 0x%04X in network", node_address);
 
         if (changed) {
             LOG_INFO(
                 "Node 0x%04X updated: battery=%d, manager=%d, "
-                "capabilities=0x%02X, slots=%d",
+                "capabilities=0x%02X, data_slots=%d",
                 node_address, battery_level, is_network_manager, capabilities,
-                allocated_slots);
+                allocated_data_slots);
 
             // If node became network manager, update network manager
             if (is_network_manager) {
@@ -83,7 +81,7 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
 
             // Trigger superframe update if needed
             if (superframe_service_ &&
-                (is_network_manager || allocated_slots > 0)) {
+                (is_network_manager || allocated_data_slots > 0)) {
                 NotifySuperframeOfNetworkChanges();
             }
         }
@@ -102,7 +100,7 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
         // Create new node with NetworkNodeRoute
         NetworkNodeRoute new_node(node_address, battery_level, current_time,
                                   is_network_manager, capabilities,
-                                  allocated_slots);
+                                  allocated_data_slots);
 
         // For new nodes, assume they're direct neighbors initially
         new_node.next_hop = node_address;
@@ -121,12 +119,28 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
 
         // Trigger superframe update if needed
         if (superframe_service_ &&
-            (is_network_manager || allocated_slots > 0)) {
+            (is_network_manager || allocated_data_slots > 0)) {
             NotifySuperframeOfNetworkChanges();
         }
 
         return true;
     }
+}
+
+bool NetworkService::UpdateNetwork(uint8_t allocated_control_slots,
+                                   uint8_t allocated_discovery_slots) {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    bool updated = false;
+    if (allocated_control_slots > 0) {
+        config_.default_control_slots = allocated_control_slots;
+        updated = true;
+    }
+    if (allocated_discovery_slots > 0) {
+        config_.default_discovery_slots = allocated_discovery_slots;
+        updated = true;
+    }
+
+    return updated;
 }
 
 bool NetworkService::IsNodeInNetwork(AddressType node_address) const {
@@ -147,7 +161,7 @@ size_t NetworkService::GetNetworkSize() const {
 size_t NetworkService::RemoveInactiveNodes() {
     std::lock_guard<std::mutex> lock(network_mutex_);
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
     size_t initial_size = network_nodes_.size();
     bool topology_changed = false;
 
@@ -198,7 +212,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
     auto network_manager = routing_msg.GetNetworkManager();
     auto table_version = routing_msg.GetTableVersion();
     auto entries = routing_msg.GetEntries();
-    auto current_time = time_provider_->GetCurrentTime();
+    auto current_time = GetRTOS().getTickCount();
 
     LOG_INFO(
         "Received routing table update from 0x%04X: version %d, %zu entries",
@@ -232,7 +246,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
             source_node_it->ReceivedRoutingMessage(
                 routing_msg.GetLinkQualityFor(node_address_), current_time);
 
-            // Ensure source is marked as direct neighbor
+            // TODO: Network quality, not hops.
             if (source_node_it->routing_entry.hop_count != 1 ||
                 source_node_it->next_hop != source) {
                 source_node_it->next_hop = source;
@@ -248,7 +262,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
             }
         } else {
             // Add source as new direct neighbor
-            NetworkNodeRoute new_node(source, 100, current_time);
+            uint8_t battery = 100;
+            NetworkNodeRoute new_node(source, battery, current_time);
             new_node.next_hop = source;
             new_node.routing_entry.hop_count = 1;
             new_node.routing_entry.link_quality = 128;  // Initial quality
@@ -313,9 +328,9 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
                     entry, source, current_time);
 
                 // Update additional node info if available
-                if (entry.allocated_slots > 0) {
-                    node_it->routing_entry.allocated_slots =
-                        entry.allocated_slots;
+                if (entry.allocated_data_slots > 0) {
+                    node_it->routing_entry.allocated_data_slots =
+                        entry.allocated_data_slots;
                 }
 
                 routing_changed |= changed;
@@ -414,7 +429,7 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
 bool NetworkService::UpdateRouteEntry(AddressType source,
                                       AddressType destination,
                                       uint8_t hop_count, uint8_t link_quality,
-                                      uint8_t allocated_slots) {
+                                      uint8_t allocated_data_slots) {
     // Calculate actual metrics
     uint8_t actual_hop_count = hop_count + 1;
 
@@ -429,7 +444,7 @@ bool NetworkService::UpdateRouteEntry(AddressType source,
 
     std::lock_guard<std::mutex> lock(network_mutex_);
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
     bool route_changed = false;
 
     // Find or create node
@@ -444,8 +459,10 @@ bool NetworkService::UpdateRouteEntry(AddressType source,
             route_changed = node_it->UpdateRouteInfo(
                 source, actual_hop_count, actual_link_quality, current_time);
 
-            if (allocated_slots != node_it->routing_entry.allocated_slots) {
-                node_it->routing_entry.allocated_slots = allocated_slots;
+            if (allocated_data_slots !=
+                node_it->routing_entry.allocated_data_slots) {
+                node_it->routing_entry.allocated_data_slots =
+                    allocated_data_slots;
                 route_changed = true;
             }
 
@@ -465,8 +482,8 @@ bool NetworkService::UpdateRouteEntry(AddressType source,
         }
 
         NetworkNodeRoute new_node(destination, source, actual_hop_count,
-                                  actual_link_quality, current_time);
-        new_node.routing_entry.allocated_slots = allocated_slots;
+                                  actual_link_quality, current_time,
+                                  allocated_data_slots);
 
         network_nodes_.push_back(new_node);
         route_changed = true;
@@ -490,7 +507,7 @@ void NetworkService::SetRouteUpdateCallback(RouteUpdateCallback callback) {
     route_update_callback_ = callback;
 }
 
-Result NetworkService::StartDiscovery() {
+Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
     // Reset discovery state
     network_found_ = false;
     network_creator_ = false;
@@ -498,39 +515,36 @@ Result NetworkService::StartDiscovery() {
     // Set protocol state
     SetState(ProtocolState::DISCOVERY);
 
-    // Start discovery timer
-    uint32_t discovery_start_time = time_provider_->GetCurrentTime();
+    // Set the slot allocation for discovery
+    SetDiscoverySlots();
 
-    LOG_INFO("Starting network discovery, timeout: %d ms",
-             config_.discovery_timeout_ms);
+    // Record discovery start time
+    discovery_start_time_ = GetRTOS().getTickCount();
 
-    // In a real implementation, this would:
-    // 1. Listen for beacons/routing messages
-    // 2. Check if any network managers exist
-    // 3. Wait for discovery timeout
+    LOG_INFO("Starting network discovery, timeout: %d ms, current time: %d ms",
+             discovery_timeout_ms, discovery_start_time_);
 
-    // For now, we'll check if we already know about a network manager
-    {
-        std::lock_guard<std::mutex> lock(network_mutex_);
-        for (const auto& node : network_nodes_) {
-            if (node.is_network_manager && node.is_active) {
-                network_found_ = true;
-                network_manager_ = node.routing_entry.destination;
-                break;
-            }
-        }
-    }
+    // Start discovery process
+    return PerformDiscovery(discovery_timeout_ms);
+}
 
-    // If network found, join it
+Result NetworkService::StartJoining(AddressType manager_address,
+                                    uint32_t join_timeout_ms) {
+    // Check if already in a network
     if (network_found_) {
-        LOG_INFO("Network found with manager 0x%04X, joining",
-                 network_manager_);
-        return JoinNetwork(network_manager_);
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Already in a network, cannot join");
     }
+    // Set protocol state to JOINING
+    SetState(ProtocolState::JOINING);
+    network_found_ = true;
+    network_creator_ = false;
 
-    // Otherwise, create new network
-    LOG_INFO("No network found, creating new network");
-    return CreateNetwork();
+    // Set slot allocation for joining
+    UpdateSlotTable();
+
+    // Join the network
+    return SendJoinRequest(network_manager_, config_.default_data_slots);
 }
 
 bool NetworkService::IsNetworkFound() const {
@@ -548,30 +562,21 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message) {
             return ProcessRoutingTableMessage(message);
 
         case MessageType::JOIN_REQUEST:
-            // TODO: Implement join request processing
-            LOG_DEBUG("Received JOIN_REQUEST from 0x%04X", message.GetSource());
-            break;
+            return ProcessJoinRequest(message);
 
         case MessageType::JOIN_RESPONSE:
-            // TODO: Implement join response processing
-            LOG_DEBUG("Received JOIN_RESPONSE from 0x%04X",
-                      message.GetSource());
-            break;
+            return ProcessJoinResponse(message);
 
         case MessageType::SLOT_REQUEST:
-            // TODO: Implement slot request processing
-            LOG_DEBUG("Received SLOT_REQUEST from 0x%04X", message.GetSource());
-            break;
+            return ProcessSlotRequest(message);
 
         case MessageType::SLOT_ALLOCATION:
-            // TODO: Implement slot allocation processing
-            LOG_DEBUG("Received SLOT_ALLOCATION from 0x%04X",
-                      message.GetSource());
-            break;
+            return ProcessSlotAllocation(message);
 
         case MessageType::DATA_MSG:
             // Data messages handled by upper layers
             LOG_DEBUG("Received DATA_MSG from 0x%04X", message.GetSource());
+            // TODO: Forward to application layer
             break;
 
         default:
@@ -589,9 +594,7 @@ Result NetworkService::NotifySuperframeOfNetworkChanges() {
         return Result::Success();  // No superframe service
     }
 
-    // TODO: Implement superframe notification
-    // This would update slot allocations based on network topology
-
+    // Generate the current
     LOG_DEBUG("Notifying superframe service of network changes");
     return Result::Success();
 }
@@ -680,7 +683,6 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     // Create message
     auto routing_msg_opt = RoutingTableMessage::Create(
         destination, node_address_, network_manager_, table_version_, entries);
-
     if (!routing_msg_opt) {
         LOG_ERROR("Failed to create routing table message");
         return nullptr;
@@ -688,73 +690,15 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
 
     RoutingTableMessage routing_msg = std::move(routing_msg_opt.value());
 
-    Result result = Result::Success();
-
     // Add link qualities for direct neighbors
     for (const auto& node : network_nodes_) {
         if (node.IsDirectNeighbor()) {
-            result = routing_msg.SetLinkQualityFor(
-                node.routing_entry.destination, node.GetLinkQuality());
-            if (!result) {
-                LOG_ERROR("Failed to set link quality for node 0x%04X: %s",
-                          node.routing_entry.destination,
-                          result.GetErrorMessage().c_str());
-            }
+            routing_msg.SetLinkQualityFor(node.routing_entry.destination,
+                                          node.GetLinkQuality());
         }
     }
 
     return std::make_unique<BaseMessage>(routing_msg.ToBaseMessage());
-}
-
-bool NetworkService::AddDirectRoute(AddressType neighbor_address,
-                                    uint8_t link_quality) {
-    if (neighbor_address == node_address_) {
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(network_mutex_);
-
-    uint32_t current_time = time_provider_->GetCurrentTime();
-    auto node_it = FindNode(neighbor_address);
-    bool route_changed = false;
-
-    if (node_it != network_nodes_.end()) {
-        // Update existing node as direct neighbor
-        route_changed = node_it->UpdateRouteInfo(neighbor_address, 1,
-                                                 link_quality, current_time);
-
-        if (route_changed && route_update_callback_) {
-            route_update_callback_(true, neighbor_address, neighbor_address, 1);
-        }
-    } else {
-        // Add new direct neighbor
-        if (WouldExceedLimit()) {
-            if (!RemoveOldestNode()) {
-                LOG_WARNING("Cannot add node 0x%04X: network full",
-                            neighbor_address);
-                return false;
-            }
-        }
-
-        NetworkNodeRoute new_node(neighbor_address, neighbor_address, 1,
-                                  link_quality, current_time);
-
-        network_nodes_.push_back(new_node);
-        route_changed = true;
-
-        LOG_INFO("Added direct route to node 0x%04X, link quality %d",
-                 neighbor_address, link_quality);
-
-        if (route_update_callback_) {
-            route_update_callback_(true, neighbor_address, neighbor_address, 1);
-        }
-    }
-
-    if (route_changed) {
-        UpdateNetworkTopology();
-    }
-
-    return route_changed;
 }
 
 Result NetworkService::JoinNetwork(AddressType manager_address) {
@@ -768,19 +712,41 @@ Result NetworkService::JoinNetwork(AddressType manager_address) {
 
     // Mark as synchronized
     is_synchronized_ = true;
-    last_sync_time_ = time_provider_->GetCurrentTime();
+    last_sync_time_ = GetRTOS().getTickCount();
 
     LOG_INFO("Joining network with manager 0x%04X", manager_address);
 
-    // TODO: Send join request message
+    // Send join request
+    return SendJoinRequest(manager_address, config_.default_data_slots);
+}
 
-    // For now, move directly to normal operation
-    SetState(ProtocolState::NORMAL_OPERATION);
+Result NetworkService::SlotTableToSuperframe() {
+    if (!superframe_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Superframe service not available");
+    }
 
-    return Result::Success();
+    // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+    // auto new_superframe = superframe_service_->CreateSuperframe();
+    // if (!new_superframe) {
+    //     return Result(LoraMesherErrorCode::kMemoryError,
+    //                   "Failed to create superframe");
+    // }
+
+    // // Notify superframe service
+    // return superframe_service_->UpdateSlotTable(std::move(slot_table));
+    return Result(LoraMesherErrorCode::kNotImplemented,
+                  "Slot table to superframe conversion not implemented yet");
 }
 
 Result NetworkService::CreateNetwork() {
+    // Pause supeframe_service
+    Result result = superframe_service_->StopSuperframe();
+    if (!result) {
+        LOG_ERROR("Failed to stop superframe while creating network");
+        return result;
+    }
+
     // Set ourselves as network manager
     SetNetworkManager(node_address_);
 
@@ -791,15 +757,30 @@ Result NetworkService::CreateNetwork() {
 
     // Mark as synchronized
     is_synchronized_ = true;
-    last_sync_time_ = time_provider_->GetCurrentTime();
+    last_sync_time_ = GetRTOS().getTickCount();
 
     LOG_INFO("Created new network as manager 0x%04X", node_address_);
+
+    // Add the network manager node
+    NetworkNodeRoute manager_node(node_address_, 100, last_sync_time_, true, 0,
+                                  config_.default_data_slots);
+    network_nodes_.push_back(manager_node);
+    LOG_INFO("Added network manager node 0x%04X", node_address_);
+
+    // Initialize slot table as network manager
+    result = UpdateSlotTable();
+    if (!result) {
+        LOG_ERROR("Failed to update slot table");
+        return result;
+    }
+
+    superframe_service_->SetSynchronized(true);
 
     // Notify superframe if available
     if (superframe_service_) {
         NotifySuperframeOfNetworkChanges();
     }
-
+    
     return Result::Success();
 }
 
@@ -879,12 +860,33 @@ void NetworkService::ResetLinkQualityStats() {
 }
 
 bool NetworkService::UpdateNetworkTopology(bool notify_superframe) {
-    // Could implement additional topology analysis here
+    //TODO: Could implement additional topology analysis here
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    // Check if we have any nodes
 
-    // Notify superframe if requested
-    if (notify_superframe && superframe_service_) {
-        NotifySuperframeOfNetworkChanges();
-    }
+    // Remove inactive nodes
+    // size_t removed_count = RemoveInactiveNodes();
+    // if (removed_count > 0) {
+    //     LOG_INFO("Removed %zu inactive nodes from network", removed_count);
+    // }
+
+    // // Update routing entries
+    // for (auto& node : network_nodes_) {
+    //     node.UpdateRoutingEntries();
+    // }
+
+    // Update slot table
+    // if (!slot_table_service_) {
+    //     LOG_ERROR("Slot table service not available");
+    //     return false;
+    // }
+
+    // // Notify superframe if requested
+    // if (notify_superframe && superframe_service_) {
+    //     NotifySuperframeOfNetworkChanges();
+    // }
+
+    // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
 
     return true;
 }
@@ -928,7 +930,7 @@ uint8_t NetworkService::CalculateComprehensiveLinkQuality(
 }
 
 uint8_t NetworkService::CalculateLinkStability(const NetworkNodeRoute& node) {
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
 
     // Time-based stability
     uint32_t node_age_ms = current_time - node.last_updated;
@@ -951,6 +953,639 @@ uint8_t NetworkService::CalculateLinkStability(const NetworkNodeRoute& node) {
 
     // Average of factors
     return (age_factor + consistency_factor) / 2;
+}
+
+// Join management implementations
+
+Result NetworkService::SendJoinRequest(AddressType manager_address,
+                                       uint8_t requested_slots) {
+    // Determine node capabilities
+    uint8_t capabilities = 0;
+
+    // Set router capability if we have routes
+    if (!network_nodes_.empty()) {
+        capabilities |= 0x01;  // ROUTER capability
+    }
+
+    // Battery level (default to 100%)
+    uint8_t battery_level = 100;
+
+    // Create join request message
+    auto join_request =
+        JoinRequestMessage::Create(manager_address, node_address_, capabilities,
+                                   battery_level, requested_slots);
+
+    if (!join_request) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create join request message");
+    }
+
+    // Queue message for transmission
+    auto base_msg =
+        std::make_unique<BaseMessage>(join_request->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+
+    LOG_INFO("Join request queued for manager 0x%04X, requesting %d slots",
+             manager_address, requested_slots);
+
+    return Result::Success();
+}
+
+Result NetworkService::ProcessJoinRequest(const BaseMessage& message) {
+    // Only network manager processes join requests
+    if (network_manager_ != node_address_) {
+        LOG_DEBUG("Ignoring join request - not network manager");
+        return Result::Success();
+    }
+
+    auto join_request_opt =
+        JoinRequestMessage::CreateFromSerialized(*message.Serialize());
+
+    if (!join_request_opt) {
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize join request");
+    }
+
+    auto source = message.GetSource();
+    auto capabilities = join_request_opt->GetCapabilities();
+    auto battery_level = join_request_opt->GetBatteryLevel();
+    auto requested_slots = join_request_opt->GetRequestedSlots();
+
+    LOG_INFO("Join request from 0x%04X: caps=0x%02X, battery=%d%%, slots=%d",
+             source, capabilities, battery_level, requested_slots);
+
+    // Determine if node should be accepted
+    auto [accepted, allocated_slots] =
+        ShouldAcceptJoin(source, capabilities, requested_slots);
+
+    // Update node information
+    if (accepted) {
+        //TODO: Update Network node
+        LOG_ERROR(
+            "UpdateNetworkNode not implemented yet, this is a placeholder");
+        // UpdateNetworkNode(source, battery_level, false, capabilities,
+        //                   allocated_slots);
+    }
+
+    // Send response
+    JoinResponseStatus status =
+        accepted ? JoinResponseStatus::ACCEPTED : JoinResponseStatus::REJECTED;
+
+    Result result = SendJoinResponse(source, status, allocated_slots);
+    if (!result) {
+        return result;
+    }
+
+    // Update network if accepted
+    if (accepted) {
+        LOG_INFO("Node 0x%04X accepted with %d slots", source, allocated_slots);
+        UpdateSlotTable();
+        BroadcastSlotAllocation();
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::ProcessJoinResponse(const BaseMessage& message) {
+    // Only process in joining state
+    if (state_ != ProtocolState::JOINING) {
+        LOG_DEBUG("Ignoring join response - not in joining state");
+        return Result::Success();
+    }
+
+    auto join_response_opt =
+        JoinResponseMessage::CreateFromSerialized(*message.Serialize());
+
+    if (!join_response_opt) {
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize join response");
+    }
+
+    auto status = join_response_opt->GetStatus();
+    auto network_id = join_response_opt->GetNetworkId();
+    auto allocated_slots = join_response_opt->GetAllocatedSlots();
+    auto source = message.GetSource();
+
+    LOG_INFO("Join response from 0x%04X: status=%d, network=0x%04X, slots=%d",
+             source, static_cast<int>(status), network_id, allocated_slots);
+
+    if (status == JoinResponseStatus::ACCEPTED) {
+        // Update network state
+        SetNetworkManager(source);
+        is_synchronized_ = true;
+        last_sync_time_ = GetRTOS().getTickCount();
+
+        // Initialize slot table
+        Result result = UpdateSlotTable();
+        if (!result) {
+            return result;
+        }
+
+        // Move to normal operation
+        SetState(ProtocolState::NORMAL_OPERATION);
+
+        // Notify superframe service
+        if (superframe_service_) {
+            NotifySuperframeOfNetworkChanges();
+        }
+
+        LOG_INFO("Successfully joined network 0x%04X", network_id);
+    } else {
+        LOG_WARNING("Join rejected with status %d", static_cast<int>(status));
+
+        // Return to discovery
+        SetState(ProtocolState::DISCOVERY);
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::SendJoinResponse(AddressType dest,
+                                        JoinResponseStatus status,
+                                        uint8_t allocated_slots) {
+    // Only network manager sends join responses
+    if (network_manager_ != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Only network manager can send join responses");
+    }
+
+    // Create join response
+    auto join_response =
+        JoinResponseMessage::Create(dest, node_address_,
+                                    network_manager_,  // Network ID
+                                    allocated_slots, status);
+
+    if (!join_response) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create join response");
+    }
+
+    // Queue for transmission
+    auto base_msg =
+        std::make_unique<BaseMessage>(join_response->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+
+    LOG_INFO("Join response queued for 0x%04X: status=%d, slots=%d", dest,
+             static_cast<int>(status), allocated_slots);
+
+    return Result::Success();
+}
+
+// Slot management implementations
+
+Result NetworkService::ProcessSlotRequest(const BaseMessage& message) {
+    // Only network manager processes slot requests
+    if (network_manager_ != node_address_) {
+        LOG_DEBUG("Ignoring slot request - not network manager");
+        return Result::Success();
+    }
+
+    auto slot_request_opt =
+        SlotRequestMessage::CreateFromSerialized(*message.Serialize());
+
+    if (!slot_request_opt) {
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize slot request");
+    }
+
+    auto source = message.GetSource();
+    auto requested_slots = slot_request_opt->GetRequestedSlots();
+
+    LOG_INFO("Slot request from 0x%04X: %d slots", source, requested_slots);
+
+    // Check if node is known
+    bool node_exists = false;
+    {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        node_exists = (FindNode(source) != network_nodes_.end());
+    }
+
+    if (!node_exists) {
+        LOG_WARNING("Slot request from unknown node 0x%04X", source);
+        return Result::Success();
+    }
+
+    // Determine allocation
+    uint8_t available_slots =
+        config_.max_network_nodes - GetAllocatedDataSlots();
+    uint8_t allocated_slots = std::min(requested_slots, available_slots);
+
+    if (allocated_slots > 0) {
+        // Update node with new allocation
+        UpdateNetworkNode(source, 100, false, 0, allocated_slots);
+
+        // Update network allocation
+        Result result = UpdateSlotTable();
+        if (!result) {
+            return result;
+        }
+        BroadcastSlotAllocation();
+
+        LOG_INFO("Allocated %d slots to node 0x%04X", allocated_slots, source);
+    } else {
+        LOG_WARNING("No slots available for node 0x%04X", source);
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::ProcessSlotAllocation(const BaseMessage& message) {
+    // Only accept from network manager
+    if (message.GetSource() != network_manager_) {
+        LOG_WARNING("Ignoring slot allocation from non-manager 0x%04X",
+                    message.GetSource());
+        return Result::Success();
+    }
+
+    auto slot_alloc_opt =
+        SlotAllocationMessage::CreateFromSerialized(*message.Serialize());
+
+    if (!slot_alloc_opt) {
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize slot allocation");
+    }
+
+    auto network_id = slot_alloc_opt->GetNetworkId();
+    auto allocated_slots = slot_alloc_opt->GetAllocatedSlots();
+    auto total_nodes = slot_alloc_opt->GetTotalNodes();
+
+    LOG_INFO("Slot allocation: network=0x%04X, slots=%d, nodes=%d", network_id,
+             allocated_slots, total_nodes);
+
+    // Reinitialize slot table
+    Result result = UpdateSlotTable();
+    if (!result) {
+        return result;
+    }
+
+    // Update synchronization
+    is_synchronized_ = true;
+    last_sync_time_ = GetRTOS().getTickCount();
+
+    return Result::Success();
+}
+
+Result NetworkService::SendSlotRequest(uint8_t num_slots) {
+    // Create slot request
+    auto slot_request =
+        SlotRequestMessage::Create(network_manager_, node_address_, num_slots);
+
+    if (!slot_request) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create slot request");
+    }
+
+    // Queue for transmission
+    auto base_msg =
+        std::make_unique<BaseMessage>(slot_request->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+
+    LOG_INFO("Slot request queued for %d slots", num_slots);
+
+    return Result::Success();
+}
+
+Result NetworkService::UpdateSlotTable() {
+    // Clear existing table
+    slot_table_.clear();
+
+    // Get the total data slots allocated inside the network_nodes
+    uint8_t total_data_slots = network_nodes_.size() > 0
+                                   ? GetAllocatedDataSlots()
+                                   : config_.default_data_slots;
+
+    allocated_control_slots_ = allocated_discovery_slots_ =
+        network_nodes_.size();
+
+    // Get the total number of slots
+    uint8_t total_superframe_slots = allocated_control_slots_ +
+                                     allocated_discovery_slots_ +
+                                     total_data_slots;
+
+    LOG_DEBUG("Total slots in the superframes %d", total_superframe_slots);
+    LOG_DEBUG("Control slots %d, discovery_slots %d, data_slots %d",
+              allocated_control_slots_, allocated_discovery_slots_,
+              total_data_slots);
+
+    slot_table_.resize(total_superframe_slots);
+
+    // Allocate the control slots in order of network_nodes
+    for (size_t i = 0; i < network_nodes_.size(); i++) {
+        auto node = network_nodes_[i];
+        AddressType addr = node.GetAddress();
+
+        auto& slot_allocation = slot_table_[i];
+        slot_allocation.slot_number = i;
+        slot_allocation.target_address = addr;
+
+        if (addr != node_address_) {
+            slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
+        } else {
+            if (node.is_active) {
+                slot_allocation.type = SlotAllocation::SlotType::CONTROL_TX;
+            }
+        }
+    }
+
+    // Allocate the data slots in order of network_nodes
+    size_t slot_data_index = allocated_control_slots_;
+
+    for (size_t i = 0; i < network_nodes_.size(); i++) {
+        auto& node = network_nodes_[i];
+        AddressType addr = node.GetAddress();
+        uint8_t slot_data_number = node.GetAllocatedDataSlots();
+        for (size_t j = 0; j < slot_data_number; j++) {
+            uint8_t slot_index = slot_data_index + j;
+            if (slot_index > slot_table_.size()) {
+                LOG_WARNING(
+                    "Slot index %d out of bounds for node 0x%04X, skipping",
+                    slot_index, addr);
+                continue;
+            }
+
+            // Use reference to modify actual vector element
+            auto& slot = slot_table_[slot_index];
+
+            slot.slot_number = slot_index;
+            slot.target_address = addr;
+            if (addr == node_address_) {
+                // If this is our own slot, we can use it for TX
+                slot.type = SlotAllocation::SlotType::TX;
+            } else if (node.IsDirectNeighbor()) {
+                // For other nodes, we use RX
+                slot.type = SlotAllocation::SlotType::RX;
+            } else {
+                slot.type = SlotAllocation::SlotType::SLEEP;
+            }
+        }
+        slot_data_index += slot_data_number;
+    }
+
+    // Allocate discovery slots
+    size_t discovery_slot_index = slot_data_index;
+    for (size_t i = 0; i < allocated_discovery_slots_; i++) {
+        if (discovery_slot_index >= slot_table_.size()) {
+            LOG_WARNING("Discovery slot index %d out of bounds, skipping",
+                        discovery_slot_index);
+            continue;
+        }
+
+        // Use reference to modify actual vector element
+        auto& slot = slot_table_[discovery_slot_index];
+
+        slot.slot_number = discovery_slot_index;
+        slot.target_address = 0;  // Discovery
+        slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
+
+        discovery_slot_index++;
+    }
+
+    if (!superframe_service_) {
+        LOG_ERROR("Superframe service not available, cannot update slot table");
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Superframe service not available");
+    }
+
+    // Notify superframe service of new slot table
+    Result result =
+        superframe_service_->UpdateSuperframeConfig(slot_table_.size());
+    if (!result) {
+        LOG_ERROR("Failed to update superframe service with new slot table");
+        return result;
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::SetDiscoverySlots() {
+    // Clear existing discovery slots
+    allocated_discovery_slots_ =
+        ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+
+    slot_table_.clear();
+    slot_table_.resize(allocated_discovery_slots_);
+    for (size_t i = 0; i < allocated_discovery_slots_; i++) {
+        SlotAllocation slot;
+        slot.slot_number = i;
+        slot.target_address =
+            INetworkService::kBroadcastAddress;  // Discovery to boradcast
+        slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
+
+        slot_table_[i] = slot;
+    }
+
+    LOG_INFO("Updated discovery slots to %d", allocated_discovery_slots_);
+    return Result::Success();
+}
+
+Result NetworkService::BroadcastSlotAllocation() {
+    // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+    // Only network manager broadcasts
+    // if (network_manager_ != node_address_) {
+    //     return Result(LoraMesherErrorCode::kInvalidState,
+    //                   "Only network manager can broadcast allocation");
+    // }
+
+    // std::lock_guard<std::mutex> lock(network_mutex_);
+
+    // // Get total active nodes
+    // uint8_t total_nodes = static_cast<uint8_t>(network_nodes_.size() + 1);
+
+    // // Send allocation to each node
+    // for (const auto& node : network_nodes_) {
+    //     if (!node.is_active)
+    //         continue;
+
+    //     // Create slot allocation message
+    //     auto slot_alloc = SlotAllocationMessage::Create(
+    //         node.routing_entry.destination, node_address_, network_manager_,
+    //         node.routing_entry.allocated_slots, total_nodes);
+
+    //     if (!slot_alloc) {
+    //         LOG_ERROR("Failed to create slot allocation for 0x%04X",
+    //                   node.routing_entry.destination);
+    //         continue;
+    //     }
+
+    //     // Queue for transmission
+    //     auto base_msg =
+    //         std::make_unique<BaseMessage>(slot_alloc->ToBaseMessage());
+    //     message_queue_service_->AddMessageToQueue(
+    //         SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+    // }
+
+    // LOG_INFO("Broadcast slot allocation to %d nodes", total_nodes - 1);
+
+    // return Result::Success();
+    return Result(LoraMesherErrorCode::kNotImplemented,
+                  "Broadcast slot allocation not implemented yet");
+}
+
+// Discovery implementation
+
+Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
+    uint32_t current_time = GetRTOS().getTickCount();
+    uint32_t end_time = discovery_start_time_ + timeout_ms;
+
+    // Check if we've already discovered a network
+    {
+        std::unique_lock<std::mutex> lock(network_mutex_);
+        for (const auto& node : network_nodes_) {
+            if (node.is_network_manager && node.is_active) {
+                network_manager_ = node.routing_entry.destination;
+                LOG_INFO("Found existing network with manager 0x%04X",
+                         network_manager_);
+
+                lock.unlock();
+                return StartJoining(network_manager_, GetJoinTimeout());
+            }
+        }
+        lock.unlock();
+    }
+
+    // Check if discovery timeout has elapsed
+    if (current_time >= end_time) {
+        LOG_INFO("Discovery timeout - creating new network");
+        return CreateNetwork();
+    }
+
+    // Still discovering - this will be called again
+    return Result::Success();
+}
+
+Result NetworkService::PerformJoining(uint32_t timeout_ms) {
+    uint32_t current_time = GetRTOS().getTickCount();
+    uint32_t end_time = GetJoinTimeout() + timeout_ms;
+
+    // Check if we've already discovered a network
+    {
+        std::unique_lock<std::mutex> lock(network_mutex_);
+        for (const auto& node : network_nodes_) {
+            if (node.is_network_manager && node.is_active) {
+                network_manager_ = node.routing_entry.destination;
+                LOG_INFO("Found existing network with manager 0x%04X",
+                         network_manager_);
+
+                lock.unlock();
+                return StartJoining(network_manager_, GetJoinTimeout());
+            }
+        }
+        lock.unlock();
+    }
+
+    // Check if discovery timeout has elapsed
+    if (current_time >= end_time) {
+        LOG_INFO("Discovery timeout - creating new network");
+        return CreateNetwork();
+    }
+
+    // Still discovering - this will be called again
+    return Result::Success();
+}
+
+// Helper method implementations
+
+std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
+    AddressType node_address, uint8_t capabilities, uint8_t requested_slots) {
+
+    // Check network capacity
+    if (network_nodes_.size() >= config_.max_network_nodes) {
+        LOG_WARNING("Network at capacity, rejecting node 0x%04X", node_address);
+        return {false, 0};
+    }
+
+    // Check available slots
+    uint8_t available_slots =
+        config_.max_network_nodes - GetAllocatedDataSlots();
+    if (available_slots == 0) {
+        LOG_WARNING("No slots available, rejecting node 0x%04X", node_address);
+        return {false, 0};
+    }
+
+    // Allocate requested slots or maximum available
+    uint8_t allocated_slots = std::min(requested_slots, available_slots);
+
+    LOG_INFO("Accepting node 0x%04X with %d slots (requested %d)", node_address,
+             allocated_slots, requested_slots);
+
+    return {true, allocated_slots};
+}
+
+void NetworkService::AllocateDataSlotsBasedOnRouting(
+    bool is_network_manager, uint16_t available_data_slots) {
+
+    // const auto& superframe = superframe_service_->GetSuperframeConfig();
+    // uint16_t slot_index = 0;
+
+    // // Find available slots and allocate based on routing
+    // for (uint16_t i = 0;
+    //      i < superframe.total_slots && slot_index < available_data_slots; i++) {
+    //     if (slot_table_[i].type == SlotAllocation::SlotType::SLEEP) {
+    //         // Allocate as data slot
+    //         if (is_network_manager) {
+    //             // Network manager uses some slots for TX
+    //             slot_table_[i].type = (slot_index % 2 == 0)
+    //                                       ? SlotAllocation::SlotType::TX
+    //                                       : SlotAllocation::SlotType::RX;
+    //         } else {
+    //             // Regular nodes mostly receive
+    //             slot_table_[i].type = (slot_index % 4 == 0)
+    //                                       ? SlotAllocation::SlotType::TX
+    //                                       : SlotAllocation::SlotType::RX;
+    //         }
+    //         slot_index++;
+    //     }
+    // }
+
+    // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+}
+
+uint16_t NetworkService::FindNextAvailableSlot(uint16_t start_slot) {
+    for (uint16_t i = start_slot; i < slot_table_.size(); i++) {
+        if (slot_table_[i].type == SlotAllocation::SlotType::SLEEP) {
+            return i;
+        }
+    }
+
+    // Wrap around search
+    for (uint16_t i = 0; i < start_slot; i++) {
+        if (slot_table_[i].type == SlotAllocation::SlotType::SLEEP) {
+            return i;
+        }
+    }
+
+    return UINT16_MAX;  // No available slot
+}
+
+uint8_t NetworkService::GetAllocatedDataSlots() const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    uint8_t total_allocated = 0;
+    for (const auto& node : network_nodes_) {
+        if (node.is_active) {
+            total_allocated += node.GetAllocatedDataSlots();
+        }
+    }
+
+    return total_allocated;
+}
+
+uint32_t NetworkService::GetJoinTimeout() {
+    uint32_t timeout_ms = 0;
+
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    for (const auto& node : network_nodes_) {
+        timeout_ms += node.GetAllocatedDataSlots() *
+                      superframe_service_->GetSlotDuration();
+    }
+
+    // TODO: Change this to use the actual Control, discovery and Sleep durations
+    timeout_ms += network_nodes_.size() * 3;  // Add Control and Sleep duration.
+    return timeout_ms;
 }
 
 }  // namespace lora_mesh

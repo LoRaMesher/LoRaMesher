@@ -107,6 +107,18 @@ class NetworkNodeRoute {
                      uint8_t quality, uint32_t time);
 
     /**
+     * @brief Get the address of this node/route
+     * @return AddressType Node address
+     */
+    AddressType GetAddress() const { return routing_entry.destination; }
+    
+    /**
+     * @brief Get the allocated data slots of this node
+     * @return Allocated data slots
+     */
+    uint8_t GetAllocatedDataSlots() const { return routing_entry.allocated_data_slots; }
+
+    /**
      * @brief Check if this node/route is expired
      * 
      * @param current_time Current timestamp
@@ -143,12 +155,12 @@ class NetworkNodeRoute {
      * @param battery Battery level (0-100%)
      * @param is_manager Whether node is network manager
      * @param caps Capabilities bitmap
-     * @param slots Allocated slots
+     * @param data_slots Allocated data slots
      * @param current_time Current timestamp
      * @return bool True if significant updates were made
      */
     bool UpdateNodeInfo(uint8_t battery, bool is_manager, uint8_t caps,
-                        uint8_t slots, uint32_t current_time);
+                        uint8_t data_slots, uint32_t current_time);
 
     /**
      * @brief Update routing information

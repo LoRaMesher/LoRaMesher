@@ -21,7 +21,7 @@ struct RoutingTableEntry {
     AddressType destination = 0;  ///< Destination address
     uint8_t hop_count = 0;        ///< Number of hops to destination
     uint8_t link_quality = 0;     ///< Link quality metric (0-255)
-    uint8_t allocated_slots =
+    uint8_t allocated_data_slots =
         0;  ///< Number of data slots allocated to this node
 
     /**
@@ -30,14 +30,14 @@ struct RoutingTableEntry {
      * @param dest Destination address
      * @param hops Hop count to destination
      * @param quality Link quality metric
-     * @param slots Allocated data slots
+     * @param data_slots Allocated data slots
      */
     RoutingTableEntry(AddressType dest, uint8_t hops, uint8_t quality,
-                      uint8_t slots)
+                      uint8_t data_slots)
         : destination(dest),
           hop_count(hops),
           link_quality(quality),
-          allocated_slots(slots) {}
+          allocated_data_slots(data_slots) {}
 
     /**
      * @brief Default constructor
@@ -66,7 +66,7 @@ struct RoutingTableEntry {
         serializer.WriteUint16(destination);
         serializer.WriteUint8(hop_count);
         serializer.WriteUint8(link_quality);
-        serializer.WriteUint8(allocated_slots);
+        serializer.WriteUint8(allocated_data_slots);
         return Result::Success();
     }
 
@@ -82,13 +82,13 @@ struct RoutingTableEntry {
         auto dest = deserializer.ReadUint16();
         auto hops = deserializer.ReadUint8();
         auto quality = deserializer.ReadUint8();
-        auto slots = deserializer.ReadUint8();
+        auto data_slots = deserializer.ReadUint8();
 
-        if (!dest || !hops || !quality || !slots) {
+        if (!dest || !hops || !quality || !data_slots) {
             return std::nullopt;
         }
 
-        return RoutingTableEntry(*dest, *hops, *quality, *slots);
+        return RoutingTableEntry(*dest, *hops, *quality, *data_slots);
     }
 };
 

@@ -349,14 +349,18 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
    private:
-    uint32_t hello_interval_;  ///< Interval between hello messages in ms
-    uint32_t route_timeout_;   ///< Time after which routes are considered stale
-    uint8_t max_hops_;         ///< Maximum number of hops for routing
-    uint8_t max_packet_size_;  ///< Maximum packet size
-    uint8_t
-        default_data_slots_;  ///< Default Number of data slots in the superframe
-    uint32_t joining_timeout_ms_;  ///< Joining timeout in ms
-    uint8_t max_network_nodes_;    ///< Maximum number of nodes in the network
+    uint32_t hello_interval_ =
+        60000;  ///< Interval between hello messages in ms
+    uint32_t route_timeout_ =
+        60000;               ///< Time after which routes are considered stale
+    uint8_t max_hops_ = 10;  ///< Maximum number of hops for routing
+    uint8_t max_packet_size_ = 255;  ///< Maximum packet size
+    uint8_t default_data_slots_ =
+        1;  ///< Default Number of data slots in the superframe
+    uint32_t joining_timeout_ms_ =
+        hello_interval_ * 3;  ///< Joining timeout in ms
+    uint8_t max_network_nodes_ =
+        50;  ///< Maximum number of nodes in the network
 };
 
 /**

@@ -54,28 +54,32 @@ class ISuperframeService {
     virtual bool IsSynchronized() const = 0;
 
     /**
-     * @brief Get current superframe configuration
+     * @brief Set whether the superframe is synchronized
      * 
-     * @return const Superframe& Current superframe configuration
+     * @param synchronized True if synchronized, false otherwise
      */
-    virtual const types::protocols::lora_mesh::Superframe& GetSuperframeConfig()
-        const = 0;
+    virtual void SetSynchronized(bool synchronized) = 0;
 
     /**
      * @brief Update superframe configuration
      * 
      * @param total_slots Total number of slots in superframe
-     * @param data_slots Number of data slots
-     * @param discovery_slots Number of discovery slots
-     * @param control_slots Number of control slots
      * @param slot_duration_ms Duration of each slot in milliseconds
+     * @param update_superframe Whether to update the superframe immediately
      * @return Result Success if updated successfully
      */
     virtual Result UpdateSuperframeConfig(uint16_t total_slots,
-                                          uint16_t data_slots,
-                                          uint16_t discovery_slots,
-                                          uint16_t control_slots,
-                                          uint32_t slot_duration_ms) = 0;
+                                          uint32_t slot_duration_ms = 0,
+                                          bool update_superframe = true) = 0;
+
+    virtual uint32_t GetSlotDuration() const = 0;
+
+    static constexpr uint32_t DEFAULT_DISCOVERY_SLOT_COUNT = 10;
+    static constexpr uint32_t DEFAULT_SLOT_DURATION_MS = 1000;
+    static constexpr uint32_t DEFAULT_DISCOVERY_TIMEOUT_MS =
+        DEFAULT_SLOT_DURATION_MS * DEFAULT_DISCOVERY_SLOT_COUNT * 3;
+    static constexpr uint32_t DEFAULT_CONTROL_SLOT_COUNT = 10;
+    static constexpr uint32_t DEFAULT_SLEEP_SLOT_COUNT = 10;
 };
 
 }  // namespace lora_mesh

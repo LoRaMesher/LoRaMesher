@@ -208,6 +208,8 @@ class ByteDeserializer {
             return result;
         }
         offset_ += length;
+
+        return Result::Success();
     }
 
     /**

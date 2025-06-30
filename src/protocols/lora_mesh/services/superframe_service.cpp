@@ -6,6 +6,8 @@
 #include "superframe_service.hpp"
 #include <algorithm>
 
+#include "os/os_port.hpp"
+
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
 }  // namespace
@@ -14,48 +16,28 @@ namespace loramesher {
 namespace protocols {
 namespace lora_mesh {
 
-SuperframeService::SuperframeService(
-    std::shared_ptr<ITimeProvider> time_provider,
-    const Superframe& initial_superframe)
-    : time_provider_(time_provider),
-      current_superframe_(initial_superframe),
+SuperframeService::SuperframeService(uint16_t total_slots,
+                                     uint32_t slot_duration_ms)
+    : total_slots_(total_slots),
+      slot_duration_ms_(slot_duration_ms),
       is_running_(false),
       is_synchronized_(false),
       auto_advance_(true),
       last_slot_(0),
       service_start_time_(0),
-      task_enabled_(true),  // Task enabled by default
-      task_running_(false),
       update_interval_ms_(DEFAULT_UPDATE_INTERVAL_MS),
       update_task_handle_(nullptr),
       superframes_completed_(0),
       total_timing_error_ms_(0),
       timing_samples_(0),
       last_sync_time_(0),
-      sync_drift_accumulator_(0) {
-
-    if (!time_provider_) {
-        // Create default time provider if none provided
-        time_provider_ = std::make_shared<TimeProvider>();
-    }
-
-    // Validate initial superframe
-    Result validation = current_superframe_.Validate();
-    if (!validation.IsSuccess()) {
-        LOG_WARNING("Initial superframe invalid: %s",
-                    validation.GetErrorMessage().c_str());
-        // Use default superframe if invalid
-        current_superframe_ = Superframe();
-    }
-}
+      sync_drift_accumulator_(0) {}
 
 SuperframeService::~SuperframeService() {
     // Make sure we stop the service and task
     StopSuperframe();
 
-    if (task_running_) {
-        DeleteUpdateTask();
-    }
+    DeleteUpdateTask();
 }
 
 Result SuperframeService::StartSuperframe() {
@@ -65,8 +47,8 @@ Result SuperframeService::StartSuperframe() {
     }
 
     // Initialize timing
-    uint32_t current_time = time_provider_->GetCurrentTime();
-    current_superframe_.superframe_start_time = current_time;
+    uint32_t current_time = GetRTOS().getTickCount();
+    superframe_start_time_ = current_time;
     service_start_time_ = current_time;
     last_sync_time_ = current_time;
 
@@ -80,8 +62,10 @@ Result SuperframeService::StartSuperframe() {
     timing_samples_ = 0;
     sync_drift_accumulator_ = 0;
 
-    // Create the update task if enabled
-    if (task_enabled_ && !task_running_) {
+    // Create the update task
+    if (update_task_handle_ != nullptr) {
+        GetRTOS().ResumeTask(update_task_handle_);
+    } else {
         bool task_created = CreateUpdateTask();
         if (!task_created) {
             LOG_ERROR("Failed to create superframe update task");
@@ -91,8 +75,7 @@ Result SuperframeService::StartSuperframe() {
     }
 
     LOG_INFO("Superframe service started - %d slots, %dms per slot",
-             current_superframe_.total_slots,
-             current_superframe_.slot_duration_ms);
+             total_slots_, slot_duration_ms_);
 
     return Result::Success();
 }
@@ -106,9 +89,9 @@ Result SuperframeService::StopSuperframe() {
     is_running_ = false;
     is_synchronized_ = false;
 
-    // Stop the update task if running
-    if (task_running_) {
-        DeleteUpdateTask();
+    // Stop the update task
+    if (update_task_handle_) {
+        GetRTOS().SuspendTask(update_task_handle_);
     }
 
     LOG_INFO("Superframe service stopped after %d completed superframes",
@@ -119,15 +102,18 @@ Result SuperframeService::StopSuperframe() {
 
 Result SuperframeService::HandleNewSuperframe() {
     if (!is_running_) {
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "Superframe not running");
+        Result result = StartSuperframe();
+        if (!result) {
+            LOG_ERROR("Failed to start superframe");
+            return result;
+        }
     }
 
     superframes_completed_++;
 
     // Update superframe start time
-    uint32_t current_time = time_provider_->GetCurrentTime();
-    current_superframe_.superframe_start_time = current_time;
+    uint32_t current_time = GetRTOS().getTickCount();
+    superframe_start_time_ = current_time;
     last_slot_ = 0;
 
     // Update timing statistics
@@ -149,7 +135,7 @@ bool SuperframeService::IsSynchronized() const {
     }
 
     // Check if we haven't lost sync due to timing drift
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
     uint32_t time_since_sync = current_time - last_sync_time_;
 
     // Consider synchronized if within reasonable drift limits
@@ -158,21 +144,74 @@ bool SuperframeService::IsSynchronized() const {
     return is_synchronized_ && (time_since_sync < MAX_SYNC_DRIFT_MS);
 }
 
-const Superframe& SuperframeService::GetSuperframeConfig() const {
-    return current_superframe_;
+void SuperframeService::SetSynchronized(bool synchronized) {
+    is_synchronized_ = synchronized;
+    if (synchronized) {
+        // Reset drift accumulator when synchronized
+        sync_drift_accumulator_ = 0;
+        last_sync_time_ = GetRTOS().getTickCount();
+        // If synchronized, reset start time to last sync time
+        superframe_start_time_ = last_sync_time_;
+    }
+    LOG_INFO("Superframe synchronization state set to %s",
+             synchronized ? "true" : "false");
 }
 
 Result SuperframeService::UpdateSuperframeConfig(uint16_t total_slots,
-                                                 uint16_t data_slots,
-                                                 uint16_t discovery_slots,
-                                                 uint16_t control_slots,
-                                                 uint32_t slot_duration_ms) {
+                                                 uint32_t slot_duration_ms,
+                                                 bool update_superframe) {
     // Create new superframe with updated parameters
-    Superframe new_superframe(total_slots, data_slots, discovery_slots,
-                              control_slots, slot_duration_ms,
-                              current_superframe_.superframe_start_time);
+    if (total_slots == 0) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Total slots must be greater than 0");
+    }
 
-    return UpdateSuperframeConfig(new_superframe);
+    total_slots_ = total_slots;
+
+    if (slot_duration_ms != 0) {
+        slot_duration_ms_ = slot_duration_ms;
+    }
+
+    if (update_superframe) {
+        Result result = HandleNewSuperframe();
+        if (!result.IsSuccess()) {
+            LOG_ERROR("Failed to handle new superframe: %s",
+                      result.GetErrorMessage().c_str());
+            return result;
+        }
+    }
+
+    return Result::Success();
+}
+
+Result SuperframeService::StartSuperframeDiscovery() {
+    if (!is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Superframe not running");
+    }
+
+    LOG_DEBUG("Starting superframe discovery");
+
+    return UpdateSuperframeConfig(DEFAULT_DISCOVERY_SLOT_COUNT,
+                                  DEFAULT_SLOT_DURATION_MS);
+}
+
+uint32_t SuperframeService::GetSuperframeDuration() {
+    return total_slots_ * slot_duration_ms_;
+}
+
+uint32_t SuperframeService::GetSuperframeEndTime() {
+    // Calculate end time based on start time and duration
+    return superframe_start_time_ + GetSuperframeDuration();
+}
+
+uint32_t SuperframeService::GetDiscoveryTimeout() {
+    if (!is_running_) {
+        return 0;
+    }
+
+    // Discovery timeout is the duration of discovery slots
+    return total_slots_ * slot_duration_ms_;
 }
 
 uint16_t SuperframeService::GetCurrentSlot() const {
@@ -180,29 +219,33 @@ uint16_t SuperframeService::GetCurrentSlot() const {
         return 0;
     }
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
 
     if (auto_advance_) {
-        // Normal calculation - allows slot to wrap to 0
-        return current_superframe_.GetCurrentSlot(current_time);
+        if (current_time < superframe_start_time_) {
+            return 0;  // Before superframe started
+        }
+
+        uint32_t elapsed = current_time - superframe_start_time_;
+        uint32_t slot_index = (elapsed / slot_duration_ms_) % total_slots_;
+
+        return static_cast<uint16_t>(slot_index);
     } else {
         // Calculate slot without wrapping around to new superframe
-        if (current_time < current_superframe_.superframe_start_time) {
+        if (current_time < superframe_start_time_) {
             return 0;
         }
 
-        uint32_t elapsed_time =
-            current_time - current_superframe_.superframe_start_time;
-        uint32_t total_superframe_time = current_superframe_.total_slots *
-                                         current_superframe_.slot_duration_ms;
+        uint32_t elapsed_time = current_time - superframe_start_time_;
+        uint32_t total_superframe_time = total_slots_ * slot_duration_ms_;
 
         if (elapsed_time >= total_superframe_time) {
             // Instead of wrapping, stay at the highest slot
-            return current_superframe_.total_slots - 1;
+            return total_slots_ - 1;
         }
 
         // Normal calculation within the superframe
-        return (elapsed_time / current_superframe_.slot_duration_ms);
+        return (elapsed_time / slot_duration_ms_);
     }
 }
 
@@ -228,14 +271,13 @@ bool SuperframeService::IsInSlotType(
     return GetCurrentSlotType(slot_table) == slot_type;
 }
 
-uint32_t SuperframeService::GetTimeRemainingInSlot() const {
+uint32_t SuperframeService::GetTimeRemainingInSlot() {
     if (!is_running_) {
         return 0;
     }
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
-    uint16_t current_slot = GetCurrentSlot();
-    uint32_t slot_end_time = current_superframe_.GetSlotEndTime(current_slot);
+    uint32_t current_time = GetRTOS().getTickCount();
+    uint32_t slot_end_time = GetSuperframeEndTime();
 
     if (current_time >= slot_end_time) {
         return 0;
@@ -249,29 +291,16 @@ uint32_t SuperframeService::GetTimeInSlot() const {
         return 0;
     }
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
+    uint32_t current_time = GetRTOS().getTickCount();
     uint16_t current_slot = GetCurrentSlot();
     uint32_t slot_start_time =
-        current_superframe_.GetSlotStartTime(current_slot);
+        superframe_start_time_ + (current_slot * slot_duration_ms_);
 
     if (current_time < slot_start_time) {
         return 0;
     }
 
     return current_time - slot_start_time;
-}
-
-Result SuperframeService::AdvanceToNextSuperframe() {
-    if (!is_running_) {
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "Superframe not running");
-    }
-
-    // Force advance to next superframe
-    current_superframe_.AdvanceToNextSuperframe(
-        time_provider_->GetCurrentTime());
-
-    return HandleNewSuperframe();
 }
 
 Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
@@ -282,13 +311,13 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     }
 
     // Calculate when the external superframe started
-    uint32_t slot_duration = current_superframe_.slot_duration_ms;
+    uint32_t slot_duration = slot_duration_ms_;
     uint32_t calculated_superframe_start =
         external_slot_start_time - (external_slot * slot_duration);
 
     // Adjust our superframe to match
-    uint32_t old_start = current_superframe_.superframe_start_time;
-    current_superframe_.superframe_start_time = calculated_superframe_start;
+    uint32_t old_start = superframe_start_time_;
+    superframe_start_time_ = calculated_superframe_start;
 
     LOG_DEBUG("Previous superframe start time: %dms, new start time: %dms",
               old_start, calculated_superframe_start);
@@ -299,7 +328,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     sync_drift_accumulator_ += abs(drift);
 
     is_synchronized_ = true;
-    last_sync_time_ = time_provider_->GetCurrentTime();
+    last_sync_time_ = GetRTOS().getTickCount();
 
     LOG_INFO("Synchronized superframe with external timing (drift: %dms)",
              drift);
@@ -311,36 +340,6 @@ void SuperframeService::SetSuperframeCallback(SuperframeCallback callback) {
     superframe_callback_ = callback;
 }
 
-Result SuperframeService::UpdateSuperframeConfig(
-    const Superframe& new_superframe) {
-    // Validate new superframe
-    Result validation = new_superframe.Validate();
-    if (!validation.IsSuccess()) {
-        return validation;
-    }
-
-    // If running, the change takes effect at the next superframe boundary
-    if (is_running_) {
-        LOG_INFO("Superframe config will change at next superframe boundary");
-    }
-
-    // Update configuration (preserve current start time if running)
-    current_superframe_ = new_superframe;
-    if (is_running_) {
-        // Don't change the start time if already running
-        // The new config will apply at the next natural superframe transition
-    }
-
-    LOG_INFO(
-        "Updated superframe config: %d slots (%d data, %d discovery, %d "
-        "control), %dms/slot",
-        current_superframe_.total_slots, current_superframe_.data_slots,
-        current_superframe_.discovery_slots, current_superframe_.control_slots,
-        current_superframe_.slot_duration_ms);
-
-    return Result::Success();
-}
-
 SuperframeService::SuperframeStats SuperframeService::GetSuperframeStats()
     const {
     SuperframeStats stats = {};
@@ -350,7 +349,7 @@ SuperframeService::SuperframeStats SuperframeService::GetSuperframeStats()
     stats.time_in_current_slot_ms = GetTimeInSlot();
 
     if (is_running_) {
-        uint32_t current_time = time_provider_->GetCurrentTime();
+        uint32_t current_time = GetRTOS().getTickCount();
         stats.total_runtime_ms = current_time - service_start_time_;
         stats.sync_drift_ms =
             sync_drift_accumulator_ / std::max(1u, superframes_completed_);
@@ -378,12 +377,12 @@ bool SuperframeService::NeedsResynchronization(
     return avg_drift > drift_threshold_ms;
 }
 
-uint32_t SuperframeService::GetSlotStartTime(uint16_t slot_number) const {
-    return current_superframe_.GetSlotStartTime(slot_number);
+uint32_t SuperframeService::GetSlotStartTime(uint16_t slot_number) {
+    return superframe_start_time_ + (slot_number * slot_duration_ms_);
 }
 
-uint32_t SuperframeService::GetSlotEndTime(uint16_t slot_number) const {
-    return current_superframe_.GetSlotEndTime(slot_number);
+uint32_t SuperframeService::GetSlotEndTime(uint16_t slot_number) {
+    return GetSlotStartTime(slot_number) + slot_duration_ms_;
 }
 
 Result SuperframeService::UpdateSuperframeState() {
@@ -433,20 +432,6 @@ Result SuperframeService::UpdateSuperframeState() {
     return Result::Success();
 }
 
-void SuperframeService::SetTaskEnabled(bool enable) {
-    task_enabled_ = enable;
-
-    // If enabling and not already running, create task
-    if (task_enabled_ && !task_running_ && is_running_) {
-        CreateUpdateTask();
-    }
-
-    // If disabling and running, delete task
-    if (!task_enabled_ && task_running_) {
-        DeleteUpdateTask();
-    }
-}
-
 void SuperframeService::SetUpdateInterval(uint32_t interval_ms) {
     // Ensure reasonable interval
     if (interval_ms < 10) {
@@ -459,7 +444,7 @@ void SuperframeService::SetUpdateInterval(uint32_t interval_ms) {
 }
 
 bool SuperframeService::CreateUpdateTask() {
-    if (task_running_) {
+    if (update_task_handle_) {
         return true;  // Already running
     }
 
@@ -468,7 +453,6 @@ bool SuperframeService::CreateUpdateTask() {
         TASK_PRIORITY, &update_task_handle_);
 
     if (task_created) {
-        task_running_ = true;
         LOG_DEBUG("Superframe update task created");
     } else {
         LOG_ERROR("Failed to create superframe update task");
@@ -478,13 +462,10 @@ bool SuperframeService::CreateUpdateTask() {
 }
 
 void SuperframeService::DeleteUpdateTask() {
-    if (!task_running_) {
-        return;  // Not running
+    if (update_task_handle_) {
+        GetRTOS().DeleteTask(update_task_handle_);
+        update_task_handle_ = nullptr;
     }
-
-    GetRTOS().DeleteTask(update_task_handle_);
-    update_task_handle_ = nullptr;
-    task_running_ = false;
 
     LOG_DEBUG("Superframe update task deleted");
 }
@@ -501,18 +482,16 @@ void SuperframeService::UpdateTaskFunction(void* param) {
     auto& rtos = GetRTOS();
 
     // Task loop
-    while (service->is_running_ && service->task_enabled_ &&
-           !rtos.ShouldStopOrPause()) {
+    while (!rtos.ShouldStopOrPause()) {
 
         // Update superframe state
         service->UpdateSuperframeState();
 
         // Sleep for update interval
-        rtos.delay(service->update_interval_ms_);
+        rtos.YieldTask();
     }
 
     // Task cleanup
-    service->task_running_ = false;
     rtos.DeleteTask(nullptr);  // Delete self
 }
 
@@ -521,8 +500,14 @@ bool SuperframeService::CheckForNewSuperframe() {
         return false;
     }
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
-    return current_superframe_.IsNewSuperframe(current_time);
+    uint32_t current_time = GetRTOS().getTickCount();
+    uint32_t elapsed_time = current_time - superframe_start_time_;
+    uint32_t superframe_duration = GetSuperframeDuration();
+    if (elapsed_time >= superframe_duration) {
+        return true;
+    }
+
+    return false;
 }
 
 void SuperframeService::UpdateSynchronizationStatus() {
@@ -536,8 +521,8 @@ void SuperframeService::UpdateTimingStats() {
         return;
     }
 
-    uint32_t current_time = time_provider_->GetCurrentTime();
-    uint32_t expected_time = current_superframe_.superframe_start_time;
+    uint32_t current_time = GetRTOS().getTickCount();
+    uint32_t expected_time = superframe_start_time_;
 
     // Calculate timing error
     uint32_t timing_error =

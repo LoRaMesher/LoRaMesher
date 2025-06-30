@@ -34,12 +34,6 @@ Result Superframe::Validate() const {
                       "Slot duration must be between 10ms and 60s");
     }
 
-    // Check that we have at least some slots of each type
-    if (data_slots == 0) {
-        return Result(LoraMesherErrorCode::kInvalidParameter,
-                      "Must have at least one data slot");
-    }
-
     return Result::Success();
 }
 

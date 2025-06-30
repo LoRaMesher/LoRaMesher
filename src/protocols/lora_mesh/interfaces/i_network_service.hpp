@@ -48,14 +48,18 @@ class INetworkService {
         AddressType node_address = 0;  ///< Local node address
         uint32_t hello_interval_ms =
             60000;  ///< Interval between hello messages
-        uint32_t route_timeout_ms = 180000;     ///< Route expiration timeout
-        uint32_t node_timeout_ms = 300000;      ///< Node expiration timeout
-        uint32_t discovery_timeout_ms = 30000;  ///< Network discovery timeout
-        uint8_t max_hops = 5;                   ///< Maximum hops for routing
-        uint8_t max_packet_size = 255;          ///< Maximum packet size
-        uint8_t default_data_slots = 1;  ///< Default data slots to request
-        uint8_t max_network_nodes = 50;  ///< Maximum network nodes
+        uint32_t route_timeout_ms = 180000;   ///< Route expiration timeout
+        uint32_t node_timeout_ms = 300000;    ///< Node expiration timeout
+        uint8_t max_hops = 5;                 ///< Maximum hops for routing
+        uint8_t max_packet_size = 255;        ///< Maximum packet size
+        uint8_t max_network_nodes = 50;       ///< Maximum network nodes
+        uint8_t default_data_slots = 1;       ///< Default data slots to request
+        uint8_t default_control_slots = 1;    ///< Default control slots
+        uint8_t default_discovery_slots = 1;  ///< Default discovery slots
     };
+
+    static constexpr AddressType kBroadcastAddress =
+        0xFFFF;  ///< Broadcast address for routing
 
     // Node management methods
 
@@ -65,15 +69,28 @@ class INetworkService {
      * @param node_address Node address
      * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether node is network manager
+     * @param allocated_data_slots Allocated slots for node
      * @param capabilities Node capabilities bitmap
-     * @param allocated_slots Allocated slots for node
      * @return bool True if node was added or significantly updated
      */
     virtual bool UpdateNetworkNode(AddressType node_address,
                                    uint8_t battery_level,
                                    bool is_network_manager,
-                                   uint8_t capabilities = 0,
-                                   uint8_t allocated_slots = 0) = 0;
+                                   uint8_t allocated_data_slots,
+                                   uint8_t capabilities = 0) = 0;
+
+    /**
+    * @brief Update the network with control and discovery slots
+    * 
+    * Updates the network configuration with the specified control and discovery slots.
+    * If a slot count is 0, the previous value will be retained.
+    * 
+    * @param allocated_control_slots Number of control slots to allocate
+    * @param allocated_discovery_slots Number of discovery slots to allocate
+    * @return bool True if the network was updated successfully
+    */
+    virtual bool UpdateNetwork(uint8_t allocated_control_slots = 0,
+                               uint8_t allocated_discovery_slots = 0) = 0;
 
     /**
      * @brief Check if node exists in network
@@ -156,9 +173,22 @@ class INetworkService {
     /**
      * @brief Start network discovery
      * 
+     * @param discovery_timeout_ms Timeout for discovery in milliseconds
      * @return Result Success or error
      */
-    virtual Result StartDiscovery() = 0;
+    virtual Result StartDiscovery(uint32_t discovery_timeout_ms) = 0;
+
+    /**
+     * @brief Start Joining process to an existing network
+     * @param manager_address Network manager address
+     * @param join_timeout_ms Timeout for joining in milliseconds
+     * 
+     * Initiates the joining process by sending a join request to the
+     * network manager.
+     * @return Result Success or error
+     */
+    virtual Result StartJoining(AddressType manager_address,
+                                uint32_t join_timeout_ms) = 0;
 
     /**
      * @brief Check if network was found

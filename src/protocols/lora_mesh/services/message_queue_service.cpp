@@ -153,6 +153,19 @@ size_t MessageQueueService::GetTotalMessageCount() const {
     return total;
 }
 
+bool MessageQueueService::HasMessage(MessageType type) const {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    
+    for (const auto& pair : message_queues_) {
+        for(const auto& message : pair.second) {
+            if (message->GetType() == type) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 }  // namespace lora_mesh
 }  // namespace protocols
 }  // namespace loramesher

@@ -63,7 +63,14 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
       last_seen(time),
       last_updated(time),
       is_network_manager(is_manager),
-      capabilities(caps) {}
+      capabilities(caps),
+      is_active(true),
+      next_hop(0) {
+    LOG_DEBUG(
+        "New routing entry created with address 0x%04X, "
+        "battery %d%%, manager %s, slots %d",
+        addr, battery, is_manager ? "yes" : "no", slots);
+}
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
                                    uint8_t hops, uint8_t quality, uint32_t time)
@@ -100,7 +107,7 @@ void NetworkNodeRoute::UpdateLastSeen(uint32_t current_time) {
 }
 
 bool NetworkNodeRoute::UpdateNodeInfo(uint8_t battery, bool is_manager,
-                                      uint8_t caps, uint8_t slots,
+                                      uint8_t caps, uint8_t data_slots,
                                       uint32_t current_time) {
     bool changed = false;
 
@@ -123,8 +130,8 @@ bool NetworkNodeRoute::UpdateNodeInfo(uint8_t battery, bool is_manager,
     }
 
     // Update allocated slots if provided
-    if (slots != 0 && routing_entry.allocated_slots != slots) {
-        routing_entry.allocated_slots = slots;
+    if (data_slots != 0 && routing_entry.allocated_data_slots != data_slots) {
+        routing_entry.allocated_data_slots = data_slots;
         changed = true;
     }
 
@@ -183,8 +190,8 @@ bool NetworkNodeRoute::UpdateFromRoutingTableEntry(
         changed = true;
     }
 
-    if (routing_entry.allocated_slots != entry.allocated_slots) {
-        routing_entry.allocated_slots = entry.allocated_slots;
+    if (routing_entry.allocated_data_slots != entry.allocated_data_slots) {
+        routing_entry.allocated_data_slots = entry.allocated_data_slots;
         changed = true;
     }
 
@@ -210,8 +217,8 @@ bool NetworkNodeRoute::UpdateBatteryLevel(uint8_t new_battery,
 
 bool NetworkNodeRoute::UpdateAllocatedSlots(uint8_t new_slots,
                                             uint32_t current_time) {
-    if (routing_entry.allocated_slots != new_slots) {
-        routing_entry.allocated_slots = new_slots;
+    if (routing_entry.allocated_data_slots != new_slots) {
+        routing_entry.allocated_data_slots = new_slots;
         last_seen = current_time;  // Update last seen time on slots change
         return true;               // Slots changed
     }

@@ -64,6 +64,13 @@ class IMessageQueueService {
      * @brief Clear all message queues
      */
     virtual void ClearAllQueues() = 0;
+
+    /**
+     * @brief Returns true if any queue has messages of type
+     * @param type Type of message to check
+     * @return bool True if any queue has messages of the specified type
+     */
+    virtual bool HasMessage(MessageType type) const;
 };
 
 }  // namespace protocols

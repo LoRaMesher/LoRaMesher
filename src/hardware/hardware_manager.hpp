@@ -44,21 +44,21 @@ class HardwareManager : public IHardwareManager {
      * 
      * @return Result Success if initialization was successful, error code otherwise
      */
-    Result Initialize();
+    Result Initialize() override;
 
     /**
      * @brief Start the hardware operation
      * 
      * @return Result Success if start was successful
      */
-    Result Start();
+    Result Start() override;
 
     /**
      * @brief Stop the hardware operation
      * 
      * @return Result Success if stop was successful
      */
-    Result Stop();
+    Result Stop() override;
 
     /**
      * @brief Start receiving messages
@@ -88,7 +88,7 @@ class HardwareManager : public IHardwareManager {
      * @param callback Function to call for each radio event
      * @return Result Success if callback was set successfully
      */
-    Result setActionReceive(EventCallback callback);
+    Result setActionReceive(EventCallback callback) override;
 
     /**
      * @brief Send a message
@@ -96,7 +96,7 @@ class HardwareManager : public IHardwareManager {
      * @param message The message to send
      * @return Result Success if message was sent
      */
-    Result SendMessage(const BaseMessage& message);
+    Result SendMessage(const BaseMessage& message) override;
 
     /**
      * @brief Get time on air for a given length and configuration
@@ -104,7 +104,7 @@ class HardwareManager : public IHardwareManager {
      * @param length Length of the message in bytes
      * @return uint32_t Time on air in milliseconds
      */
-    uint32_t getTimeOnAir(uint8_t length);
+    uint32_t getTimeOnAir(uint8_t length) override;
 
     /**
      * @brief Check if HAL is initialized

@@ -49,9 +49,9 @@ class RadioLibRadio : public IRadio {
     RadioLibRadio(const RadioLibRadio&) = delete;
     RadioLibRadio& operator=(const RadioLibRadio&) = delete;
 
-    // Allow moving
-    RadioLibRadio(RadioLibRadio&&) = default;
-    RadioLibRadio& operator=(RadioLibRadio&&) = default;
+    // Prevent moving
+    RadioLibRadio(RadioLibRadio&&) = delete;
+    RadioLibRadio& operator=(RadioLibRadio&&) = delete;
 
     /**
      * @brief Configure the radio with specified parameters
@@ -254,7 +254,7 @@ class RadioLibRadio : public IRadio {
      * @return true If the callback was set successfully
      * @return false If there was an error setting the callback
      */
-    Result setActionReceive(void (*callback)(void)) {
+    Result setActionReceive(void (*callback)(void)) override {
         // Prevent unused parameter warnings
         (void)callback;
         throw std::runtime_error(

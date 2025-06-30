@@ -87,6 +87,13 @@ class MessageQueueService : public IMessageQueueService {
      */
     size_t GetTotalMessageCount() const;
 
+    /**
+     * @brief Check if a specific message type queue has messages
+     * @param type Type of message to check
+     * @return bool True if the queue has messages, false otherwise
+     */
+    bool HasMessage(MessageType type) const override;
+
    private:
     std::unordered_map<types::protocols::lora_mesh::SlotAllocation::SlotType,
                        std::vector<std::unique_ptr<BaseMessage>>>

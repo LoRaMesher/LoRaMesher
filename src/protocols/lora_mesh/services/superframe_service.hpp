@@ -10,7 +10,6 @@
 #include <vector>
 #include "os/rtos.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
-#include "time_provider.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/protocols/lora_mesh/superframe.hpp"
 #include "utils/logger.hpp"
@@ -36,13 +35,12 @@ class SuperframeService : public ISuperframeService {
     /**
       * @brief Constructor
       * 
-      * @param time_provider Time provider for timing operations
-      * @param initial_superframe Initial superframe configuration
+      * @param total_slots Total number of slots in the superframe
+      * @param slot_duration_ms Duration of each slot in milliseconds
       */
     explicit SuperframeService(
-        std::shared_ptr<ITimeProvider> time_provider,
-        const types::protocols::lora_mesh::Superframe& initial_superframe =
-            types::protocols::lora_mesh::Superframe());
+        uint16_t total_slots = DEFAULT_DISCOVERY_SLOT_COUNT,
+        uint32_t slot_duration_ms = DEFAULT_DISCOVERY_TIMEOUT_MS);
 
     /**
       * @brief Virtual destructor
@@ -55,13 +53,68 @@ class SuperframeService : public ISuperframeService {
     Result StartSuperframe() override;
     Result StopSuperframe() override;
     Result HandleNewSuperframe() override;
+
     bool IsSynchronized() const override;
-    const types::protocols::lora_mesh::Superframe& GetSuperframeConfig()
-        const override;
-    Result UpdateSuperframeConfig(uint16_t total_slots, uint16_t data_slots,
-                                  uint16_t discovery_slots,
-                                  uint16_t control_slots,
-                                  uint32_t slot_duration_ms) override;
+
+    void SetSynchronized(bool synchronized) override;
+
+    /**
+     * @brief Get the total number of slots in the superframe
+     * 
+     * @return uint16_t Total number of slots
+     */
+    uint16_t GetTotalSlots() const { return total_slots_; }
+
+    /**
+     * @brief Update superframe configuration
+     * 
+     * @param total_slots Total number of slots in the superframe
+     * @param slot_duration_ms Duration of each slot in milliseconds, if 0 it won't be updated
+     * @param update_superframe Whether to update the superframe immediately
+     * @return Result Success if configuration updated successfully
+     */
+    Result UpdateSuperframeConfig(uint16_t total_slots,
+                                  uint32_t slot_duration_ms = 0,
+                                  bool update_superframe = true) override;
+
+    /**
+     * @brief Get the slot duration in ms
+     * 
+     * @return uint32_t Slot duration ms
+     */
+    uint32_t GetSlotDuration() const override { return slot_duration_ms_; }
+
+    /**
+     * @brief Update superframe configuration with new slot duration
+     * @param slot_duration_ms New duration for each slot in milliseconds, if 0 it won't be updated
+     * @param update_superframe Whether to update the superframe immediately
+     * @return Result Success if configuration updated successfully
+     */
+    Result UpdateSlotDuration(uint32_t slot_duration_ms,
+                              bool update_superframe = true) {
+        return UpdateSuperframeConfig(total_slots_, slot_duration_ms,
+                                      update_superframe);
+    }
+
+    /**
+     * @brief Start superframe discovery process
+     * @return Result Success if discovery started successfully
+     */
+    Result StartSuperframeDiscovery();
+
+    /**
+      * @brief Get current superframe duration
+      * 
+      * @return uint32_t Duration of the superframe in milliseconds
+      */
+    uint32_t GetSuperframeDuration();
+
+    /**
+     * @brief Get Superframe Discovery timeout
+     * 
+     * @return uint32_t Discovery timeout in milliseconds
+     */
+    uint32_t GetDiscoveryTimeout();
 
     /**
       * @brief Get current slot number
@@ -108,7 +161,7 @@ class SuperframeService : public ISuperframeService {
       * 
       * @return uint32_t Time remaining in milliseconds
       */
-    uint32_t GetTimeRemainingInSlot() const;
+    uint32_t GetTimeRemainingInSlot();
 
     /**
       * @brief Get time since slot started
@@ -116,13 +169,6 @@ class SuperframeService : public ISuperframeService {
       * @return uint32_t Time elapsed in current slot in milliseconds
       */
     uint32_t GetTimeInSlot() const;
-
-    /**
-      * @brief Advance to next superframe manually
-      * 
-      * @return Result Success if advanced successfully
-      */
-    Result AdvanceToNextSuperframe();
 
     /**
       * @brief Synchronize with external superframe timing
@@ -140,15 +186,6 @@ class SuperframeService : public ISuperframeService {
       * @param callback Function to call on superframe events
       */
     void SetSuperframeCallback(SuperframeCallback callback);
-
-    /**
-      * @brief Update superframe configuration with validation
-      * 
-      * @param new_superframe New superframe configuration
-      * @return Result Success if updated successfully
-      */
-    Result UpdateSuperframeConfig(
-        const types::protocols::lora_mesh::Superframe& new_superframe);
 
     /**
       * @brief Get superframe statistics
@@ -180,7 +217,7 @@ class SuperframeService : public ISuperframeService {
       * @param slot_number Slot number to get start time for
       * @return uint32_t Start time of the slot
       */
-    uint32_t GetSlotStartTime(uint16_t slot_number) const;
+    uint32_t GetSlotStartTime(uint16_t slot_number);
 
     /**
       * @brief Get slot end time
@@ -188,21 +225,7 @@ class SuperframeService : public ISuperframeService {
       * @param slot_number Slot number to get end time for
       * @return uint32_t End time of the slot
       */
-    uint32_t GetSlotEndTime(uint16_t slot_number) const;
-
-    /**
-      * @brief Enable/disable the automatic update task
-      * 
-      * @param enable True to enable task-based automatic updates
-      */
-    void SetTaskEnabled(bool enable);
-
-    /**
-      * @brief Check if update task is enabled
-      * 
-      * @return bool True if task is enabled
-      */
-    bool IsTaskEnabled() const { return task_enabled_; }
+    uint32_t GetSlotEndTime(uint16_t slot_number);
 
     /**
       * @brief Set update interval for task
@@ -269,8 +292,18 @@ class SuperframeService : public ISuperframeService {
       */
     void UpdateTimingStats();
 
-    std::shared_ptr<ITimeProvider> time_provider_;
-    types::protocols::lora_mesh::Superframe current_superframe_;
+    /**
+     * @brief Get the end time of the superframe
+     * 
+     * @return uint32_t End time of the superframe in milliseconds
+     */
+    uint32_t GetSuperframeEndTime();
+
+    uint16_t total_slots_ = 0;  ///< Total number of slots in the superframe
+    uint32_t slot_duration_ms_ = 0;  ///< Duration of each slot in milliseconds
+    uint32_t superframe_start_time_ =
+        0;  ///< Start time of current superframe cycle
+
     bool is_running_;
     bool is_synchronized_;
     bool auto_advance_;
@@ -279,8 +312,6 @@ class SuperframeService : public ISuperframeService {
     SuperframeCallback superframe_callback_;
 
     // Task management
-    bool task_enabled_;
-    bool task_running_;
     uint32_t update_interval_ms_;
     os::TaskHandle_t update_task_handle_;
 

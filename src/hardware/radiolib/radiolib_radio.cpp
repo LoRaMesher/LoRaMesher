@@ -68,11 +68,11 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
         return Result::Error(LoraMesherErrorCode::kMemoryError);
     }
 
-    const char* taskName = config.getRadioTypeString().c_str();
+    std::string taskName = config.getRadioTypeString();
 
     // Create processing task with monitored configuration
     bool task_created = GetRTOS().CreateTask(
-        ProcessEvents, taskName,
+        ProcessEvents, taskName.c_str(),
         config::TaskConfig::kRadioEventStackSize / 4,  // FreeRTOS uses words
         this, config::TaskPriorities::kRadioEventPriority, &processing_task_);
 
@@ -199,6 +199,11 @@ Result RadioLibRadio::Sleep() {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     if (!current_module_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    if (current_state_ == RadioState::kSleep) {
+        LOG_DEBUG("Already Sleeping");
+        return Result::Success();
     }
 
     // Suspend the processing task before sleep
@@ -494,26 +499,21 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     }
 
     LOG_DEBUG("Processing events");
-    while (true) {
-        if (GetRTOS().ShouldStopOrPause()) {
-            break;
-        }
-
+    while (!GetRTOS().ShouldStopOrPause() && radio->processing_task_) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
         LOG_DEBUG("Current State %d", radio->current_state_);
         if (result == os::QueueResult::kOk) {
-            const char* taskName =
-                radio->current_config_.getRadioTypeString().c_str();
+            std::string taskName = radio->current_config_.getRadioTypeString();
             // Periodic monitoring
             utils::TaskMonitor::MonitorTask(
-                radio->processing_task_, taskName,
+                radio->processing_task_, taskName.c_str(),
                 config::TaskConfig::kMinStackWatermark);
 
             LOG_DEBUG("Notification received");
             radio->HandleInterrupt();
             // Periodic monitoring
             utils::TaskMonitor::MonitorTask(
-                radio->processing_task_, taskName,
+                radio->processing_task_, taskName.c_str(),
                 config::TaskConfig::kMinStackWatermark);
         } else {
             LOG_DEBUG("Notification timeout");
@@ -521,6 +521,10 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         LOG_DEBUG("Finished processing event");
         GetRTOS().YieldTask();
     }
+
+    LOG_DEBUG("RadioLibRadio event processing task ending");
+    radio->processing_task_ = nullptr;
+    GetRTOS().DeleteTask(nullptr);
 }
 
 }  // namespace radio
