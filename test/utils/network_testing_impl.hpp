@@ -19,6 +19,9 @@
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh_protocol.hpp"
 #include "types/error_codes/result.hpp"
+#include "types/radio/radio_state.hpp"
+
+using ::testing::A;
 
 namespace loramesher {
 namespace test {
@@ -42,6 +45,20 @@ class IRadioReceiver {
      */
     virtual void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
                                 int8_t snr) = 0;
+
+    /**
+     * @brief Check if the radio can currently receive messages
+     * 
+     * @return true if radio is in receive mode, false otherwise
+     */
+    virtual bool CanReceive() const = 0;
+
+    /**
+     * @brief Get current radio state for debugging
+     * 
+     * @return Current radio state
+     */
+    virtual loramesher::radio::RadioState GetRadioState() const = 0;
 };
 
 /**
@@ -81,7 +98,10 @@ class VirtualNetwork {
      * 
      * @param address Address of the node to remove
      */
-    void UnregisterNode(uint32_t address) { nodes_.erase(address); }
+    void UnregisterNode(uint32_t address) { 
+        nodes_.erase(address);
+        sent_messages_.erase(address);
+    }
 
     /**
      * @brief Transmit a message from a source node to all nodes within range
@@ -93,6 +113,9 @@ class VirtualNetwork {
      */
     void TransmitMessage(uint32_t source, const std::vector<uint8_t>& data,
                          int8_t rssi = -65, int8_t snr = 8) {
+        // Store the sent message for testing purposes
+        sent_messages_[source].push_back(data);
+        
         // Check if source exists
         if (nodes_.find(source) == nodes_.end()) {
             std::cerr << "Source node " << source << " not found in network"
@@ -105,8 +128,21 @@ class VirtualNetwork {
             uint32_t dest_address = node_pair.first;
             NodeInfo& dest_node = node_pair.second;
 
+            LOG_DEBUG("Transmitting message from 0x%04X to 0x%04X", source,
+                      dest_address);
+
             // Skip the source node
             if (dest_address == source) {
+                LOG_DEBUG("Skipping transmission to self (0x%04X)", source);
+                continue;
+            }
+
+            // Check if destination radio can receive (not transmitting/sleeping)
+            if (!dest_node.radio->CanReceive()) {
+                loramesher::radio::RadioState radio_state =
+                    dest_node.radio->GetRadioState();
+                LOG_DEBUG("Node 0x%04X cannot receive (state: %d) - CONTINUE",
+                          dest_address, static_cast<int>(radio_state));
                 continue;
             }
 
@@ -128,6 +164,100 @@ class VirtualNetwork {
             QueueMessageDelivery(source, dest_address, data, delivery_time,
                                  rssi, snr);
         }
+    }
+
+    /**
+     * @brief Get all sent messages from a specific node
+     * 
+     * @param node_address Address of the node
+     * @return Vector containing all messages sent by the node
+     */
+    std::vector<std::vector<uint8_t>> GetSentMessages(uint32_t node_address) const {
+        auto it = sent_messages_.find(node_address);
+        if (it != sent_messages_.end()) {
+            return it->second;
+        }
+        return std::vector<std::vector<uint8_t>>();
+    }
+
+    /**
+     * @brief Get the last N messages sent by a specific node
+     * 
+     * @param node_address Address of the node
+     * @param count Number of messages to retrieve (from most recent)
+     * @return Vector containing the last N messages sent by the node
+     */
+    std::vector<std::vector<uint8_t>> GetLastSentMessages(uint32_t node_address, 
+                                                          size_t count) const {
+        auto it = sent_messages_.find(node_address);
+        if (it == sent_messages_.end() || it->second.empty()) {
+            return std::vector<std::vector<uint8_t>>();
+        }
+
+        const auto& messages = it->second;
+        size_t start_index = (count >= messages.size()) ? 0 : messages.size() - count;
+        
+        return std::vector<std::vector<uint8_t>>(messages.begin() + start_index, 
+                                                 messages.end());
+    }
+
+    /**
+     * @brief Get filtered sent messages from a specific node
+     * 
+     * @param node_address Address of the node
+     * @param filter Predicate function to filter messages
+     * @return Vector containing messages that match the filter criteria
+     */
+    std::vector<std::vector<uint8_t>> GetFilteredSentMessages(
+        uint32_t node_address, 
+        std::function<bool(const std::vector<uint8_t>&)> filter) const {
+        
+        auto it = sent_messages_.find(node_address);
+        if (it == sent_messages_.end()) {
+            return std::vector<std::vector<uint8_t>>();
+        }
+
+        std::vector<std::vector<uint8_t>> filtered_messages;
+        for (const auto& message : it->second) {
+            if (filter(message)) {
+                filtered_messages.push_back(message);
+            }
+        }
+        
+        return filtered_messages;
+    }
+
+    /**
+     * @brief Clear all sent messages for a specific node
+     * 
+     * @param node_address Address of the node
+     */
+    void ClearSentMessages(uint32_t node_address) {
+        auto it = sent_messages_.find(node_address);
+        if (it != sent_messages_.end()) {
+            it->second.clear();
+        }
+    }
+
+    /**
+     * @brief Clear all sent messages for all nodes
+     */
+    void ClearAllSentMessages() {
+        sent_messages_.clear();
+    }
+
+    /**
+     * @brief Get the number of messages sent by a specific node
+     * 
+     * @param node_address Address of the node
+     * @return Number of messages sent by the node
+     */
+    size_t GetSentMessageCount(uint32_t node_address) const {
+        auto it = sent_messages_.find(node_address);
+        if (it != sent_messages_.end()) {
+            return it->second.size();
+        }
+        return 0;
     }
 
     /**
@@ -236,6 +366,7 @@ class VirtualNetwork {
 
     std::map<uint32_t, NodeInfo> nodes_;
     std::vector<PendingMessage> pending_messages_;
+    std::map<uint32_t, std::vector<std::vector<uint8_t>>> sent_messages_; ///< Store sent messages per node
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
@@ -286,6 +417,9 @@ class VirtualNetwork {
         msg.snr = snr;
 
         pending_messages_.push_back(msg);
+
+        LOG_DEBUG("Queued message from 0x%04X to 0x%04X for delivery at %u ms",
+                  source, destination, delivery_time);
     }
 
     /**
@@ -316,6 +450,16 @@ class VirtualNetwork {
         // Get the destination radio
         auto* radio = it->second.radio;
         if (!radio) {
+            return;
+        }
+
+        // Double-check that the radio can still receive when delivery time arrives
+        if (!radio->CanReceive()) {
+            radio::RadioState radio_state = radio->GetRadioState();
+            LOG_DEBUG(
+                "Message delivery cancelled - Node 0x%04X cannot receive "
+                "(state: %d)",
+                msg.destination, static_cast<int>(radio_state));
             return;
         }
 
@@ -463,293 +607,144 @@ class VirtualTimeController {
 VirtualTimeController* VirtualTimeController::instance_ = nullptr;
 
 /**
- * @brief Network-connected mock radio for testing LoRaMesh protocol
- * 
- * This class extends your existing MockRadio to connect it to the virtual network
+ * @brief Adapter class to connect MockRadio to VirtualNetwork
  */
-class NetworkConnectedMockRadio : public radio::test::MockRadio,
-                                  public IRadioReceiver {
+class RadioToNetworkAdapter : public IRadioReceiver {
    public:
-    /**
-     * @brief Constructor
-     * 
-     * @param network Reference to the virtual network
-     * @param address Address of this node
-     */
-    NetworkConnectedMockRadio(VirtualNetwork& network, uint32_t address)
-        : radio::test::MockRadio(), network_(network), address_(address) {
-        // Register with the virtual network
-        network_.RegisterNode(address_, this);
+    RadioToNetworkAdapter(radio::test::MockRadio* radio,
+                          VirtualNetwork& network, AddressType address)
+        : radio_(radio), network_(network), address_(address) {
+        // Set up original callback saving
+        EXPECT_CALL(*radio_, setActionReceive(A<void (*)(void)>()))
+            .WillRepeatedly(
+                testing::DoAll(testing::SaveArg<0>(&original_callback_),
+                               testing::Return(Result::Success())));
+
+        // Set up packet data storage
+        EXPECT_CALL(*radio_, getPacketLength())
+            .WillRepeatedly(testing::Invoke(
+                [this]() -> size_t { return received_data_.size(); }));
+
+        EXPECT_CALL(*radio_, getRSSI()).WillRepeatedly(testing::Return(rssi_));
+
+        EXPECT_CALL(*radio_, getSNR()).WillRepeatedly(testing::Return(snr_));
+
+        EXPECT_CALL(*radio_, readData(testing::_, testing::_))
+            .WillRepeatedly(testing::Invoke([this](uint8_t* data,
+                                                   size_t len) -> Result {
+                if (received_data_.empty()) {
+                    return Result(LoraMesherErrorCode::kHardwareError,
+                                  "No data received");
+                }
+
+                if (len < received_data_.size()) {
+                    return Result(LoraMesherErrorCode::kBufferOverflow,
+                                  "Buffer too small");
+                }
+
+                std::copy(received_data_.begin(), received_data_.end(), data);
+                return Result::Success();
+            }));
+        EXPECT_CALL(*radio_, getTimeOnAir(testing::_))
+            .WillRepeatedly(testing::Invoke([this](uint8_t length) -> uint32_t {
+                return length * 10;  // TODO: Mock time on air
+            }));                     // Default value
+        EXPECT_CALL(*radio_, ClearActionReceive())
+            .WillRepeatedly(testing::Return(Result::Success()));
+        EXPECT_CALL(*radio_, Sleep())
+            .WillRepeatedly(
+                testing::DoAll(testing::Invoke([this]() {
+                                   current_radio_state_ =
+                                       loramesher::radio::RadioState::kSleep;
+                               }),
+                               testing::Return(Result::Success())));
+
+        EXPECT_CALL(*radio_, StartReceive())
+            .WillRepeatedly(
+                testing::DoAll(testing::Invoke([this]() {
+                                   current_radio_state_ =
+                                       loramesher::radio::RadioState::kReceive;
+                               }),
+                               testing::Return(Result::Success())));
+        EXPECT_CALL(*radio_, Begin(testing::_))
+            .WillRepeatedly(testing::DoAll(
+                testing::Invoke([this](const RadioConfig&) {
+                    current_radio_state_ = loramesher::radio::RadioState::kIdle;
+                }),
+                testing::Return(Result::Success())));
+
+        EXPECT_CALL(*radio_, getState())
+            .WillRepeatedly(
+                testing::Invoke([this]() -> loramesher::radio::RadioState {
+                    return current_radio_state_;
+                }));
+
+        // Set up expectations for the mock radio
+        EXPECT_CALL(*radio_, Send(testing::_, testing::_))
+            .WillRepeatedly(testing::Invoke(
+                [this, address](const uint8_t* data, size_t len) -> Result {
+                    current_radio_state_ =
+                        loramesher::radio::RadioState::kTransmit;
+
+                    // Convert data to vector for convenience
+                    std::vector<uint8_t> packet(data, data + len);
+
+                    // Transmit via the virtual network
+                    network_.TransmitMessage(address, packet);
+
+                    return Result::Success();
+                }));
     }
 
-    /**
-     * @brief Destructor
-     */
-    ~NetworkConnectedMockRadio() override { network_.UnregisterNode(address_); }
+    ~RadioToNetworkAdapter() override { network_.UnregisterNode(address_); }
 
-    /**
-     * @brief Override Send to route through the virtual network
-     * 
-     * @param data Data to send
-     * @param len Length of data
-     * @return Result indicating success or failure
-     */
-    Result Send(const uint8_t* data, size_t len) override {
-        // First call the parent's Send to maintain any behavior or expectations
-        auto result = radio::test::MockRadio::Send(data, len);
-        if (!result) {
-            return result;
-        }
-
-        // Convert data to vector for convenience
-        std::vector<uint8_t> packet(data, data + len);
-
-        // Transmit via the virtual network
-        network_.TransmitMessage(address_, packet, rssi_, snr_);
-
-        return Result::Success();
-    }
-
-    /**
-     * @brief Implementation of IRadioReceiver interface
-     * 
-     * @param data Received data
-     * @param rssi Simulated RSSI value
-     * @param snr Simulated SNR value
-     */
     void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
                         int8_t snr) override {
-        // Store parameters for future calls to getRSSI, getSNR, etc.
+        // Store parameters for the mock radio to use
         received_data_ = data;
         rssi_ = rssi;
         snr_ = snr;
 
-        // Set packet length for getPacketLength
-        packet_length_ = data.size();
+        LOG_DEBUG("Received message on address 0x%04X: %s", address_,
+                  std::string(data.begin(), data.end()).c_str());
 
-        // Call the parent's callback if set
-        if (receive_callback_) {
-            receive_callback_();
+        // Call the original callback if set
+        if (original_callback_) {
+            LOG_DEBUG("Calling received callback");
+            original_callback_();
+        } else {
+            LOG_WARNING("No received callback set");
         }
     }
 
     /**
-     * @brief Get the received RSSI
-     * 
-     * @return RSSI value
-     */
-    int8_t getRSSI() override { return rssi_; }
-
-    /**
-     * @brief Get the received SNR
-     * 
-     * @return SNR value
-     */
-    int8_t getSNR() override { return snr_; }
-
-    /**
-     * @brief Get the packet length
-     * 
-     * @return Packet length
-     */
-    uint8_t getPacketLength() override { return packet_length_; }
-
-    /**
-     * @brief Read received data
-     * 
-     * @param data Buffer to read data into
-     * @param len Length of buffer
-     * @return Result indicating success or failure
-     */
-    Result readData(uint8_t* data, size_t len) override {
-        if (received_data_.empty()) {
-            return Result(LoraMesherErrorCode::kHardwareError,
-                          "No data received");
-        }
-
-        if (len < received_data_.size()) {
-            return Result(LoraMesherErrorCode::kBufferOverflow,
-                          "Buffer too small");
-        }
-
-        std::copy(received_data_.begin(), received_data_.end(), data);
-        return Result::Success();
+         * @brief Check if the radio can currently receive messages
+         * 
+         * @return true if radio is in receive mode, false otherwise
+         */
+    bool CanReceive() const override {
+        return current_radio_state_ == loramesher::radio::RadioState::kReceive;
     }
 
     /**
-     * @brief Set the action receive callback
-     * 
-     * @param callback Function to call when data is received
-     * @return Result indicating success or failure
-     */
-    Result setActionReceive(void (*callback)(void)) override {
-        receive_callback_ = callback;
-        return Result::Success();
-    }
-
-    /**
-     * @brief Clear the action receive callback
-     * 
-     * @return Result indicating success or failure
-     */
-    Result ClearActionReceive() override {
-        receive_callback_ = nullptr;
-        return Result::Success();
+         * @brief Get current radio state for debugging
+         * 
+         * @return Current radio state
+         */
+    loramesher::radio::RadioState GetRadioState() const override {
+        return current_radio_state_;
     }
 
    private:
+    radio::test::MockRadio* radio_;
     VirtualNetwork& network_;
-    uint32_t address_;
+    AddressType address_;
     std::vector<uint8_t> received_data_;
-    size_t packet_length_{0};
     int8_t rssi_{-65};
     int8_t snr_{8};
-    void (*receive_callback_)(void) = nullptr;
-};
-
-/**
- * @brief Factory for creating network-connected mock radios
- * 
- * This class allows us to override the default radio creation
- * with our network-connected mock radios for testing.
- */
-class TestRadioFactory {
-   public:
-    /**
-     * @brief Initialize the test radio factory
-     * 
-     * @param network Reference to the virtual network
-     */
-    static void Initialize(VirtualNetwork& network) {
-        instance().network_ = &network;
-        instance().initialized_ = true;
-    }
-
-    /**
-     * @brief Register a node address for a specific set of pins
-     * 
-     * This maps pin configurations to node addresses for testing.
-     * 
-     * @param nss NSS pin
-     * @param dio0 DIO0 pin
-     * @param reset Reset pin
-     * @param busy Busy pin
-     * @param address Node address to use
-     */
-    static void RegisterNodeAddress(int nss, int dio0, int reset, int busy,
-                                    uint32_t address) {
-        NodePins pins{nss, dio0, reset, busy};
-        instance().pin_to_address_map_[pins] = address;
-    }
-
-    /**
-     * @brief Reset the factory to its initial state
-     */
-    static void Reset() {
-        instance().initialized_ = false;
-        instance().network_ = nullptr;
-        instance().pin_to_address_map_.clear();
-        instance().original_create_radio_ = nullptr;
-    }
-
-    /**
-     * @brief Create a radio for testing
-     * 
-     * @param nss NSS pin
-     * @param dio0 DIO0 pin
-     * @param reset Reset pin
-     * @param busy Busy pin
-     * @param spi SPI interface
-     * @return std::unique_ptr<radio::IRadio> Network-connected mock radio
-     */
-    static std::unique_ptr<radio::IRadio> CreateTestRadio(int nss, int dio0,
-                                                          int reset, int busy,
-                                                          SPIClass& spi) {
-        if (!instance().initialized_) {
-            throw std::runtime_error("TestRadioFactory not initialized");
-        }
-
-        // Find node address based on pins
-        NodePins pins{nss, dio0, reset, busy};
-        auto it = instance().pin_to_address_map_.find(pins);
-        if (it == instance().pin_to_address_map_.end()) {
-            throw std::runtime_error(
-                "Node address not registered for these pins");
-        }
-
-        uint32_t address = it->second;
-
-        // Create network-connected mock radio
-        return std::make_unique<NetworkConnectedMockRadio>(*instance().network_,
-                                                           address);
-    }
-
-    /**
-     * @brief Install the test radio factory
-     * 
-     * This replaces the original CreateRadio function with our test version.
-     * 
-     * @param original_func Pointer to store the original function
-     */
-    static void Install(std::function<std::unique_ptr<radio::IRadio>(
-                            int, int, int, int, SPIClass&)>* original_func) {
-        // Store the original function
-        if (original_func) {
-            instance().original_create_radio_ = *original_func;
-            // Replace with our test function
-            *original_func = CreateTestRadio;
-        }
-    }
-
-    /**
-     * @brief Uninstall the test radio factory
-     * 
-     * This restores the original CreateRadio function.
-     * 
-     * @param func_ptr Pointer to restore the original function
-     */
-    static void Uninstall(std::function<std::unique_ptr<radio::IRadio>(
-                              int, int, int, int, SPIClass&)>* func_ptr) {
-        if (func_ptr && instance().original_create_radio_) {
-            // Restore the original function
-            *func_ptr = instance().original_create_radio_;
-        }
-    }
-
-   private:
-    /**
-     * @brief Structure to represent a set of pins
-     */
-    struct NodePins {
-        int nss;
-        int dio0;
-        int reset;
-        int busy;
-
-        bool operator<(const NodePins& other) const {
-            if (nss != other.nss)
-                return nss < other.nss;
-            if (dio0 != other.dio0)
-                return dio0 < other.dio0;
-            if (reset != other.reset)
-                return reset < other.reset;
-            return busy < other.busy;
-        }
-    };
-
-    // Singleton pattern
-    static TestRadioFactory& instance() {
-        static TestRadioFactory instance;
-        return instance;
-    }
-
-    TestRadioFactory() = default;
-
-    bool initialized_{false};
-    VirtualNetwork* network_{nullptr};
-    std::map<NodePins, uint32_t> pin_to_address_map_;
-    std::function<std::unique_ptr<radio::IRadio>(int, int, int, int, SPIClass&)>
-        original_create_radio_;
+    void (*original_callback_)() = nullptr;
+    loramesher::radio::RadioState current_radio_state_{
+        loramesher::radio::RadioState::kIdle};  ///< Track current radio state
 };
 
 }  // namespace test

@@ -1,6 +1,6 @@
 /**
- * @file test/types/protocols/test_lora_mesh/test_lora_mesh.cpp
- * @brief Test suite for LoRaMesh protocol types
+ * @file test/utils/test_utils.cpp
+ * @brief Test utilities
  */
 #include <gtest/gtest.h>
 

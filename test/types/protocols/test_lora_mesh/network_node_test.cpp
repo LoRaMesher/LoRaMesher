@@ -27,7 +27,7 @@ class NetworkNodeRouteTest : public ::testing::Test {
                              5000,    // last_seen
                              false,   // is_network_manager
                              0x05,    // capabilities (ROUTER | BATTERY_POWERED)
-                             3        // allocated_slots
+                             3        // allocated_data_slots
             );
     }
 
@@ -56,7 +56,7 @@ TEST_F(NetworkNodeRouteTest, DefaultConstructor) {
     EXPECT_EQ(default_node.last_seen, 0);
     EXPECT_FALSE(default_node.is_network_manager);
     EXPECT_EQ(default_node.capabilities, 0);
-    EXPECT_EQ(default_node.routing_entry.allocated_slots, 0);
+    EXPECT_EQ(default_node.routing_entry.allocated_data_slots, 0);
 }
 
 /**
@@ -68,7 +68,7 @@ TEST_F(NetworkNodeRouteTest, ParameterizedConstructor) {
     EXPECT_EQ(node_.last_seen, 5000);
     EXPECT_FALSE(node_.is_network_manager);
     EXPECT_EQ(node_.capabilities, 0x05);  // ROUTER | BATTERY_POWERED
-    EXPECT_EQ(node_.routing_entry.allocated_slots, 3);
+    EXPECT_EQ(node_.routing_entry.allocated_data_slots, 3);
 }
 
 /**
@@ -82,7 +82,7 @@ TEST_F(NetworkNodeRouteTest, MinimalConstructor) {
     EXPECT_EQ(minimal_node.last_seen, 10000);
     EXPECT_FALSE(minimal_node.is_network_manager);             // Default value
     EXPECT_EQ(minimal_node.capabilities, 0);                   // Default value
-    EXPECT_EQ(minimal_node.routing_entry.allocated_slots, 0);  // Default value
+    EXPECT_EQ(minimal_node.routing_entry.allocated_data_slots, 0);  // Default value
 }
 
 /**
@@ -168,7 +168,7 @@ TEST_F(NetworkNodeRouteTest, UpdateAllocatedSlots) {
     uint8_t new_slots = 5;
 
     node_.UpdateAllocatedSlots(new_slots, current_time);
-    EXPECT_EQ(node_.routing_entry.allocated_slots, new_slots);
+    EXPECT_EQ(node_.routing_entry.allocated_data_slots, new_slots);
     EXPECT_EQ(node_.last_seen, current_time);
 }
 
@@ -332,8 +332,8 @@ TEST_F(NetworkNodeRouteTest, NetworkManagerNodes) {
     // Network manager typically has more capabilities and slots
     EXPECT_TRUE(manager.HasCapability(GATEWAY));
     EXPECT_TRUE(manager.HasCapability(TIME_SYNC_SOURCE));
-    EXPECT_GT(manager.routing_entry.allocated_slots,
-              regular.routing_entry.allocated_slots);
+    EXPECT_GT(manager.routing_entry.allocated_data_slots,
+              regular.routing_entry.allocated_data_slots);
 }
 
 /**

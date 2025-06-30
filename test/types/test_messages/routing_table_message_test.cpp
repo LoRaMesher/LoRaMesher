@@ -129,8 +129,8 @@ TEST_F(RoutingTableMessageTest, CreationTest) {
         EXPECT_EQ(result_entries[i].destination, test_entries[i].destination);
         EXPECT_EQ(result_entries[i].hop_count, test_entries[i].hop_count);
         EXPECT_EQ(result_entries[i].link_quality, test_entries[i].link_quality);
-        EXPECT_EQ(result_entries[i].allocated_slots,
-                  test_entries[i].allocated_slots);
+        EXPECT_EQ(result_entries[i].allocated_data_slots,
+                  test_entries[i].allocated_data_slots);
     }
 }
 
@@ -213,8 +213,8 @@ TEST_F(RoutingTableMessageTest, DeserializationTest) {
         EXPECT_EQ(result_entries[i].destination, entries[i].destination);
         EXPECT_EQ(result_entries[i].hop_count, entries[i].hop_count);
         EXPECT_EQ(result_entries[i].link_quality, entries[i].link_quality);
-        EXPECT_EQ(result_entries[i].allocated_slots,
-                  entries[i].allocated_slots);
+        EXPECT_EQ(result_entries[i].allocated_data_slots,
+                  entries[i].allocated_data_slots);
     }
 }
 

@@ -1,82 +1,128 @@
-// /**
-// * @file lora_mesh_discovery_tests.cpp
-// * @brief Test suite for LoRaMesh protocol discovery and network formation
-// */
+/**
+* @file lora_mesh_discovery_tests.cpp
+* @brief Test suite for LoRaMesh protocol discovery and network formation
+*/
 
-// #include <gtest/gtest.h>
-// #include <chrono>
-// #include <memory>
-// #include <thread>
-// #include <vector>
+#include <gtest/gtest.h>
+#include <chrono>
+#include <memory>
+#include <thread>
+#include <vector>
 
-// #include "lora_mesh_test_fixture.hpp"
+#include "lora_mesh_test_fixture.hpp"
 
-// namespace loramesher {
-// namespace test {
+namespace loramesher {
+namespace test {
 
-// /**
-//   * @brief Test suite for LoRaMesh protocol discovery and network formation
-//   */
-// class LoRaMeshDiscoveryTests : public LoRaMeshTestFixture {
-//    protected:
-//     void SetUp() override { LoRaMeshTestFixture::SetUp(); }
+/**
+  * @brief Test suite for LoRaMesh protocol discovery and network formation
+  */
+class LoRaMeshDiscoveryTests : public LoRaMeshTestFixture {
+   protected:
+    void SetUp() override { LoRaMeshTestFixture::SetUp(); }
 
-//     void TearDown() override { LoRaMeshTestFixture::TearDown(); }
+    void TearDown() override { LoRaMeshTestFixture::TearDown(); }
 
-//     /**
-//      * @brief Wait for tasks to execute
-//      *
-//      * This helper function waits a short time to allow tasks to run and
-//      * process any events before continuing. It helps ensure proper test
-//      * sequencing, especially when virtual time is used.
-//      */
-//     void WaitForTasksToExecute() {
-// #ifdef LORAMESHER_BUILD_ARDUINO
-//         GetRTOS().delay(20);
-// #else
-//         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-// #endif
-//     }
-// };
+    /**
+     * @brief Wait for tasks to execute
+     *
+     * This helper function waits a short time to allow tasks to run and
+     * process any events before continuing. It helps ensure proper test
+     * sequencing, especially when virtual time is used.
+     */
+    void WaitForTasksToExecute() {
+#ifdef LORAMESHER_BUILD_ARDUINO
+        GetRTOS().delay(20);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+#endif
+    }
+};
 
-// /**
-//   * @brief Test single node discovery
-//   *
-//   * This test verifies that a single node properly transitions to network manager state
-//   * after the discovery timeout when no other nodes are present.
-//   */
-// TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
-//     // Create a single node
-//     auto& node = CreateNode("Node1", 0x1001);
+/**
+  * @brief Test single node discovery
+  *
+  * This test verifies that a single node properly transitions to network manager state
+  * after the discovery timeout when no other nodes are present.
+  */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
+    // Create a single node
+    auto& node = CreateNode("Node1", 0x1001);
 
-//     // Start the node
-//     ASSERT_TRUE(StartNode(node));
+    // Start the node
+    ASSERT_TRUE(StartNode(node));
 
-//     // Initially, the node should be in DISCOVERY state
-//     EXPECT_EQ(node.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::DISCOVERY);
+    // Initially, the node should be in DISCOVERY state
+    EXPECT_EQ(node.protocol->GetState(),
+              protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
 
-//     WaitForTasksToExecute();
+    WaitForTasksToExecute();
 
-//     // Advance time past the discovery timeout
-//     bool advanced = AdvanceTime(
-//         GetDiscoveryTimeout() + 100, GetDiscoveryTimeout() + 500,
-//         GetDiscoveryTimeout() / 3, 10, [&]() {
-//             return node.protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER;
-//         });
-//     EXPECT_TRUE(advanced) << "Node did not become network manager in time";
+    // Advance time past the discovery timeout
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
+    LOG_DEBUG("Discovery timeout: %u ms, Slot duration: %u ms",
+              discovery_timeout, slot_duration);
+    EXPECT_GT(slot_duration, 0) << "Slot duration should be greater than zero";
+    EXPECT_GT(discovery_timeout, 0)
+        << "Discovery timeout should be greater than zero";
+    bool advanced =
+        AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
+                    slot_duration, 10, [&]() {
+                        return node.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
+    EXPECT_TRUE(advanced) << "Node did not become network manager in time";
 
-//     EXPECT_TRUE(node.protocol->IsSynchronized());
-//     EXPECT_EQ(node.protocol->GetNetworkManager(), node.address);
-// }
+    EXPECT_TRUE(node.protocol->IsSynchronized());
+    EXPECT_EQ(
+        node.protocol->GetState(),
+        protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
+    EXPECT_EQ(node.protocol->GetNetworkManager(), node.address);
 
-// /**
-//   * @brief Test two node network formation with sequential start
-//   *
-//   * This test verifies that when two nodes are within range and started sequentially,
-//   * the first node becomes network manager and the second node joins the network.
-//   */
+    // The slot_table should be completed with slots for the single node
+    auto slot_table = node.protocol->GetSlotTable();
+    EXPECT_FALSE(slot_table.empty()) << "Slot table should not be empty";
+
+    auto network_nodes = node.protocol->GetNetworkNodes();
+
+    // As this is a single node network:
+    EXPECT_EQ(slot_table.size(), network_nodes.size() * 3)
+        << "Expected exactly three slots for single node";
+    EXPECT_EQ(slot_table[0].target_address, node.address)
+        << "Slot should be assigned to the node's address";
+
+    // Expect that the node after AdvanceTime goes to different slots
+    for (size_t i = 0; i < slot_table.size(); ++i) {
+        advanced = AdvanceTime(
+            slot_duration + 100, slot_duration + 500, slot_duration, 10,
+            [&]() { return node.protocol->GetCurrentSlot() == i; });
+        EXPECT_TRUE(advanced)
+            << "Node did not advance to slot " << i << " in time";
+        EXPECT_EQ(node.protocol->GetCurrentSlot(), i)
+            << "Node should be in slot " << i;
+    }
+
+    advanced =
+        AdvanceTime(slot_duration + 100, slot_duration + 500,
+                    slot_duration, 10, [&]() {
+                        auto sent_messages = virtual_network_.GetSentMessageCount(node.address);
+                        return sent_messages > 0;
+                    });
+
+    EXPECT_TRUE(advanced);
+    auto last_messages = virtual_network_.GetLastSentMessages(node.address, 1);
+    ASSERT_FALSE(last_messages.empty());
+    // Expect routing message.
+}
+
+/**
+  * @brief Test two node network formation with sequential start
+  *
+  * This test verifies that when two nodes are within range and started sequentially,
+  * the first node becomes network manager and the second node joins the network.
+  */
 // TEST_F(LoRaMeshDiscoveryTests, TwoNodeSequentialStart) {
 //     // Create two nodes
 //     auto& node1 = CreateNode("Node1", 0x1001);
@@ -90,22 +136,31 @@
 
 //     // Initially, the node should be in DISCOVERY state
 //     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::DISCOVERY);
+//               protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
 
 //     WaitForTasksToExecute();
 
 //     // Advance time to let node1 become network manager
-//     bool advanced1 = AdvanceTime(
-//         GetDiscoveryTimeout() + 100, GetDiscoveryTimeout() + 500,
-//         GetDiscoveryTimeout() / 3, 10, [&]() {
-//             return node1.protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER;
-//         });
-//     EXPECT_TRUE(advanced1) << "Node1 did not become network manager in time";
+//     auto discovery_timeout1 = GetDiscoveryTimeout(node1);
+//     auto slot_duration1 = GetSlotDuration(node1);
+//     LOG_DEBUG("Discovery timeout: %u ms, Slot duration: %u ms",
+//               discovery_timeout1, slot_duration1);
+//     EXPECT_GT(slot_duration1, 0) << "Slot duration should be greater than zero";
+//     EXPECT_GT(discovery_timeout1, 0)
+//         << "Discovery timeout should be greater than zero";
+//     bool advanced1 =
+//         AdvanceTime(discovery_timeout1 + 100, discovery_timeout1 + 500,
+//                     slot_duration1, 10, [&]() {
+//                         return node1.protocol->GetState() ==
+//                                protocols::lora_mesh::INetworkService::
+//                                    ProtocolState::NETWORK_MANAGER;
+//                     });
+//     EXPECT_TRUE(advanced1) << "Node did not become network manager in time";
 
 //     // Verify node1 is now a network manager
-//     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//     EXPECT_EQ(
+//         node1.protocol->GetState(),
+//         protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 //     EXPECT_TRUE(node1.protocol->IsSynchronized());
 
 //     // Start the second node
@@ -114,23 +169,33 @@
 //     WaitForTasksToExecute();
 
 //     // Advance time to let node2 discover node1's network
-//     bool advanced2 = AdvanceTime(
-//         GetDiscoveryTimeout() / 2, GetDiscoveryTimeout(),
-//         GetDiscoveryTimeout() / 5, 10, [&]() {
-//             return node2.protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION;
-//         });
-//     EXPECT_TRUE(advanced2) << "Node2 did not join the network in time";
+//     auto discovery_timeout2 = GetDiscoveryTimeout(node2);
+//     auto slot_duration2 = GetSlotDuration(node2);
+//     LOG_DEBUG("Discovery timeout: %u ms, Slot duration: %u ms",
+//               discovery_timeout2, slot_duration2);
+//     EXPECT_GT(slot_duration2, 0) << "Slot duration should be greater than zero";
+//     EXPECT_GT(discovery_timeout2, 0)
+//         << "Discovery timeout should be greater than zero";
+//     bool advanced2 =
+//         AdvanceTime(discovery_timeout2 + 100, discovery_timeout2 + 500,
+//                     slot_duration2, 10, [&]() {
+//                         return node2.protocol->GetState() ==
+//                                protocols::lora_mesh::INetworkService::
+//                                    ProtocolState::NORMAL_OPERATION;
+//                     });
+//     EXPECT_TRUE(advanced2) << "Node did not become network manager in time";
 
 //     // Verify node2 joined node1's network
-//     EXPECT_EQ(node2.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//     EXPECT_EQ(
+//         node2.protocol->GetState(),
+//         protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(node2.protocol->IsSynchronized());
 //     EXPECT_EQ(node2.protocol->GetNetworkManager(), node1.address);
 
 //     // Verify node1 is still network manager
-//     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//     EXPECT_EQ(
+//         node1.protocol->GetState(),
+//         protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 // }
 
 // /**
@@ -153,9 +218,9 @@
 
 //     // Both nodes should initially be in DISCOVERY state
 //     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::DISCOVERY);
+//               protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
 //     EXPECT_EQ(node2.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::DISCOVERY);
+//               protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
 
 //     WaitForTasksToExecute();
 
@@ -164,16 +229,16 @@
 //         AdvanceTime(GetDiscoveryTimeout() + 100, GetDiscoveryTimeout() + 500,
 //                     GetDiscoveryTimeout() / 3, 15, [&]() {
 //                         return (node1.protocol->GetState() ==
-//                                     protocols::LoRaMeshProtocol::ProtocolState::
+//                                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                                         NETWORK_MANAGER &&
 //                                 node2.protocol->GetState() ==
-//                                     protocols::LoRaMeshProtocol::ProtocolState::
+//                                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                                         NORMAL_OPERATION) ||
 //                                (node2.protocol->GetState() ==
-//                                     protocols::LoRaMeshProtocol::ProtocolState::
+//                                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                                         NETWORK_MANAGER &&
 //                                 node1.protocol->GetState() ==
-//                                     protocols::LoRaMeshProtocol::ProtocolState::
+//                                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                                         NORMAL_OPERATION);
 //                     });
 //     EXPECT_TRUE(advanced) << "Network formation did not complete in time";
@@ -183,17 +248,17 @@
 //     int normal_operation_count = 0;
 
 //     if (node1.protocol->GetState() ==
-//         protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+//         protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
 //         network_manager_count++;
 //         EXPECT_EQ(node2.protocol->GetState(),
-//                   protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//                   protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //         EXPECT_EQ(node2.protocol->GetNetworkManager(), node1.address);
 //         normal_operation_count++;
 //     } else if (node2.protocol->GetState() ==
-//                protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+//                protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
 //         network_manager_count++;
 //         EXPECT_EQ(node1.protocol->GetState(),
-//                   protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//                   protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //         EXPECT_EQ(node1.protocol->GetNetworkManager(), node2.address);
 //         normal_operation_count++;
 //     }
@@ -225,7 +290,7 @@
 //     // All nodes should initially be in DISCOVERY state
 //     for (auto* node : nodes) {
 //         EXPECT_EQ(node->protocol->GetState(),
-//                   protocols::LoRaMeshProtocol::ProtocolState::DISCOVERY);
+//                   protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
 //     }
 
 //     WaitForTasksToExecute();
@@ -239,11 +304,11 @@
 //             int normalCount = 0;
 //             for (auto* node : nodes) {
 //                 if (node->protocol->GetState() ==
-//                     protocols::LoRaMeshProtocol::ProtocolState::
+//                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                         NETWORK_MANAGER) {
 //                     managerCount++;
 //                 } else if (node->protocol->GetState() ==
-//                            protocols::LoRaMeshProtocol::ProtocolState::
+//                            protocols::lora_mesh::INetworkService::ProtocolState::
 //                                NORMAL_OPERATION) {
 //                     normalCount++;
 //                 }
@@ -259,11 +324,11 @@
 
 //     for (auto* node : nodes) {
 //         if (node->protocol->GetState() ==
-//             protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+//             protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
 //             network_manager_count++;
 //             manager = node;
 //         } else if (node->protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::
+//                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                        NORMAL_OPERATION) {
 //             normal_operation_count++;
 //         }
@@ -309,11 +374,11 @@
 //             int normalCount = 0;
 //             for (auto* node : nodes) {
 //                 if (node->protocol->GetState() ==
-//                     protocols::LoRaMeshProtocol::ProtocolState::
+//                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                         NETWORK_MANAGER) {
 //                     managerCount++;
 //                 } else if (node->protocol->GetState() ==
-//                            protocols::LoRaMeshProtocol::ProtocolState::
+//                            protocols::lora_mesh::INetworkService::ProtocolState::
 //                                NORMAL_OPERATION) {
 //                     normalCount++;
 //                 }
@@ -328,7 +393,7 @@
 
 //     for (auto* node : nodes) {
 //         if (node->protocol->GetState() ==
-//             protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+//             protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
 //             network_manager_count++;
 //             manager = node;
 //         }
@@ -346,7 +411,7 @@
 //         if (node != manager) {
 //             EXPECT_EQ(
 //                 node->protocol->GetState(),
-//                 protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION)
+//                 protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION)
 //                 << "Node " << node->name << " not in NORMAL_OPERATION state";
 //             EXPECT_EQ(node->protocol->GetNetworkManager(), manager->address)
 //                 << "Node " << node->name << " has incorrect network manager";
@@ -383,24 +448,24 @@
 //         AdvanceTime(GetDiscoveryTimeout() + 100, GetDiscoveryTimeout() + 500,
 //                     GetDiscoveryTimeout() / 3, 15, [&]() {
 //                         return node1.protocol->GetState() ==
-//                                    protocols::LoRaMeshProtocol::ProtocolState::
+//                                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                                        NETWORK_MANAGER &&
 //                                node2.protocol->GetState() ==
-//                                    protocols::LoRaMeshProtocol::ProtocolState::
+//                                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                                        NETWORK_MANAGER &&
 //                                node3.protocol->GetState() ==
-//                                    protocols::LoRaMeshProtocol::ProtocolState::
+//                                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                                        NETWORK_MANAGER;
 //                     });
 //     EXPECT_TRUE(advanced) << "Nodes did not become network managers in time";
 
 //     // All three nodes should become network managers
 //     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 //     EXPECT_EQ(node2.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 //     EXPECT_EQ(node3.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 
 //     // All nodes should be synchronized (to their own networks)
 //     EXPECT_TRUE(node1.protocol->IsSynchronized());
@@ -442,7 +507,7 @@
 //                         bool group2HasManager = false;
 //                         for (auto* node : group1) {
 //                             if (node->protocol->GetState() ==
-//                                 protocols::LoRaMeshProtocol::ProtocolState::
+//                                 protocols::lora_mesh::INetworkService::ProtocolState::
 //                                     NETWORK_MANAGER) {
 //                                 group1HasManager = true;
 //                                 break;
@@ -450,7 +515,7 @@
 //                         }
 //                         for (auto* node : group2) {
 //                             if (node->protocol->GetState() ==
-//                                 protocols::LoRaMeshProtocol::ProtocolState::
+//                                 protocols::lora_mesh::INetworkService::ProtocolState::
 //                                     NETWORK_MANAGER) {
 //                                 group2HasManager = true;
 //                                 break;
@@ -499,7 +564,7 @@
 
 //             for (auto* node : all_nodes) {
 //                 if (node->protocol->GetState() ==
-//                     protocols::LoRaMeshProtocol::ProtocolState::
+//                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                         NETWORK_MANAGER) {
 //                     managerCount++;
 //                     singleManager = node;
@@ -535,7 +600,7 @@
 
 //     for (auto* node : all_nodes) {
 //         if (node->protocol->GetState() ==
-//             protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+//             protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
 //             manager_count++;
 //             final_manager = node;
 //         }
@@ -579,7 +644,7 @@
 //                         int managerCount = 0;
 //                         for (auto* node : nodes) {
 //                             if (node->protocol->GetState() ==
-//                                 protocols::LoRaMeshProtocol::ProtocolState::
+//                                 protocols::lora_mesh::INetworkService::ProtocolState::
 //                                     NETWORK_MANAGER) {
 //                                 managerCount++;
 //                             }
@@ -615,7 +680,7 @@
 //                         for (auto* node : nodes) {
 //                             if (node != original_manager &&
 //                                 node->protocol->GetState() ==
-//                                     protocols::LoRaMeshProtocol::ProtocolState::
+//                                     protocols::lora_mesh::INetworkService::ProtocolState::
 //                                         NETWORK_MANAGER) {
 //                                 managerCount++;
 //                                 newManager = node;
@@ -650,7 +715,7 @@
 //     for (auto* node : nodes) {
 //         if (node != original_manager &&
 //             node->protocol->GetState() ==
-//                 protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+//                 protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
 //             manager_count++;
 //             new_manager = node;
 //         }
@@ -697,7 +762,7 @@
 //                         int managerCount = 0;
 //                         for (auto* node : nodes) {
 //                             if (node->protocol->GetState() ==
-//                                 protocols::LoRaMeshProtocol::ProtocolState::
+//                                 protocols::lora_mesh::INetworkService::ProtocolState::
 //                                     NETWORK_MANAGER) {
 //                                 managerCount++;
 //                             }
@@ -722,7 +787,7 @@
 
 //     // Verify initial state
 //     EXPECT_EQ(disconnect_node->protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(disconnect_node->protocol->IsSynchronized());
 //     EXPECT_EQ(disconnect_node->protocol->GetNetworkManager(), manager->address);
 
@@ -744,7 +809,7 @@
 //         AdvanceTime(GetDiscoveryTimeout() * 2, GetDiscoveryTimeout() * 3,
 //                     GetDiscoveryTimeout() / 2, 20, [&]() {
 //                         return disconnect_node->protocol->GetState() ==
-//                                    protocols::LoRaMeshProtocol::ProtocolState::
+//                                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                                        NORMAL_OPERATION &&
 //                                disconnect_node->protocol->IsSynchronized() &&
 //                                disconnect_node->protocol->GetNetworkManager() ==
@@ -754,7 +819,7 @@
 
 //     // Verify the node has rejoined
 //     EXPECT_EQ(disconnect_node->protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(disconnect_node->protocol->IsSynchronized());
 //     EXPECT_EQ(disconnect_node->protocol->GetNetworkManager(), manager->address);
 // }
@@ -795,13 +860,13 @@
 //         GetDiscoveryTimeout() + 100, GetDiscoveryTimeout() + 500,
 //         GetDiscoveryTimeout() / 3, 15, [&]() {
 //             return node1.protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER;
+//                    protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER;
 //         });
 //     EXPECT_TRUE(advanced1) << "Node1 did not become network manager in time";
 
 //     // Verify first node is network manager
 //     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 //     EXPECT_TRUE(node1.protocol->IsSynchronized());
 
 //     // Start second node
@@ -814,13 +879,13 @@
 //         GetDiscoveryTimeout() / 2, GetDiscoveryTimeout(),
 //         GetDiscoveryTimeout() / 5, 10, [&]() {
 //             return node2.protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION;
+//                    protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION;
 //         });
 //     EXPECT_TRUE(advanced2) << "Node2 did not join the network in time";
 
 //     // Verify second node joined
 //     EXPECT_EQ(node2.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(node2.protocol->IsSynchronized());
 //     EXPECT_EQ(node2.protocol->GetNetworkManager(), node1.address);
 
@@ -834,13 +899,13 @@
 //         GetDiscoveryTimeout() / 2, GetDiscoveryTimeout(),
 //         GetDiscoveryTimeout() / 5, 10, [&]() {
 //             return node3.protocol->GetState() ==
-//                    protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION;
+//                    protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION;
 //         });
 //     EXPECT_TRUE(advanced3) << "Node3 did not join the network in time";
 
 //     // Verify third node joined
 //     EXPECT_EQ(node3.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(node3.protocol->IsSynchronized());
 //     EXPECT_EQ(node3.protocol->GetNetworkManager(), node1.address);
 
@@ -855,10 +920,10 @@
 //         AdvanceTime(GetDiscoveryTimeout() / 2, GetDiscoveryTimeout(),
 //                     GetDiscoveryTimeout() / 5, 15, [&]() {
 //                         return node4.protocol->GetState() ==
-//                                    protocols::LoRaMeshProtocol::ProtocolState::
+//                                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                                        NORMAL_OPERATION &&
 //                                node5.protocol->GetState() ==
-//                                    protocols::LoRaMeshProtocol::ProtocolState::
+//                                    protocols::lora_mesh::INetworkService::ProtocolState::
 //                                        NORMAL_OPERATION;
 //                     });
 //     EXPECT_TRUE(advanced4)
@@ -866,19 +931,19 @@
 
 //     // Verify fourth and fifth nodes joined
 //     EXPECT_EQ(node4.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(node4.protocol->IsSynchronized());
 //     EXPECT_EQ(node4.protocol->GetNetworkManager(), node1.address);
 
 //     EXPECT_EQ(node5.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NORMAL_OPERATION);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
 //     EXPECT_TRUE(node5.protocol->IsSynchronized());
 //     EXPECT_EQ(node5.protocol->GetNetworkManager(), node1.address);
 
 //     // Verify first node is still network manager
 //     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER);
+//               protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
 // }
 
-// }  // namespace test
-// }  // namespace loramesher
+}  // namespace test
+}  // namespace loramesher

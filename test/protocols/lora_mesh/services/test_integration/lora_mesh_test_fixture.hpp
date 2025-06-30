@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+#include <thread>
 #include "../test/utils/network_testing_impl.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
@@ -17,18 +18,14 @@
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh_protocol.hpp"
 #include "types/configurations/protocol_configuration.hpp"
-
-using ::testing::A;
+#include "types/radio/radio_state.hpp"
 
 namespace loramesher {
 namespace test {
 
-// Forward declaration
-class NetworkConnectedMockRadio;
-
 /**
  * @brief Test fixture for LoRaMesh protocol tests
- * 
+ *
  * This fixture sets up a test environment with simulated radio communication
  * between LoRaMesh protocol instances, using the real HardwareManager but
  * with mocked radios and a virtual network.
@@ -71,7 +68,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Create a test node with the given configuration
-     * 
+     *
      * @param name Node name for debugging
      * @param address Node address
      * @param pin_config Pin configuration (default: unique pins based on index)
@@ -147,13 +144,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
         node->mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
 
         // Connect the mock radio to our virtual network
-        ConnectRadioToNetwork(*node->mock_radio, node->address);
+        ConnectRadioToNetwork(node->mock_radio, node->address);
 
         // Create the protocol instance
         node->protocol = std::make_unique<protocols::LoRaMeshProtocol>();
-
-        // Override time function for protocol to use our virtual time
-        InjectTimeFunction(*node->protocol, time_controller_.GetTimeProvider());
 
         // Initialize the protocol with our hardware manager
         result = node->protocol->Init(node->hardware_manager, address);
@@ -184,118 +178,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Connect a mock radio to the virtual network
-     * 
+     *
      * @param mock_radio Mock radio to connect
      * @param address Node address to use
      */
-    void ConnectRadioToNetwork(radio::test::MockRadio& mock_radio,
+    void ConnectRadioToNetwork(radio::test::MockRadio* mock_radio,
                                AddressType address) {
         // Register the node with the virtual network
         virtual_network_.RegisterNode(
             address,
             new RadioToNetworkAdapter(mock_radio, virtual_network_, address));
-
-        // Set up expectations for the mock radio
-        EXPECT_CALL(mock_radio, Send(testing::_, testing::_))
-            .WillRepeatedly(testing::Invoke(
-                [this, address](const uint8_t* data, size_t len) -> Result {
-                    // Convert data to vector for convenience
-                    std::vector<uint8_t> packet(data, data + len);
-
-                    // Transmit via the virtual network
-                    virtual_network_.TransmitMessage(address, packet);
-
-                    return Result::Success();
-                }));
     }
 
     /**
-     * @brief Adapter class to connect MockRadio to VirtualNetwork
-     */
-    class RadioToNetworkAdapter : public IRadioReceiver {
-       public:
-        RadioToNetworkAdapter(radio::test::MockRadio& radio,
-                              VirtualNetwork& network, AddressType address)
-            : radio_(radio), network_(network), address_(address) {
-            // Set up original callback saving
-            EXPECT_CALL(radio_, setActionReceive(A<void (*)(void)>()))
-                .WillRepeatedly(
-                    testing::DoAll(testing::SaveArg<0>(&original_callback_),
-                                   testing::Return(Result::Success())));
-
-            // Set up packet data storage
-            EXPECT_CALL(radio_, getPacketLength())
-                .WillRepeatedly(testing::Invoke(
-                    [this]() -> size_t { return received_data_.size(); }));
-
-            EXPECT_CALL(radio_, getRSSI())
-                .WillRepeatedly(testing::Return(rssi_));
-
-            EXPECT_CALL(radio_, getSNR()).WillRepeatedly(testing::Return(snr_));
-
-            EXPECT_CALL(radio_, readData(testing::_, testing::_))
-                .WillRepeatedly(testing::Invoke(
-                    [this](uint8_t* data, size_t len) -> Result {
-                        if (received_data_.empty()) {
-                            return Result(LoraMesherErrorCode::kHardwareError,
-                                          "No data received");
-                        }
-
-                        if (len < received_data_.size()) {
-                            return Result(LoraMesherErrorCode::kBufferOverflow,
-                                          "Buffer too small");
-                        }
-
-                        std::copy(received_data_.begin(), received_data_.end(),
-                                  data);
-                        return Result::Success();
-                    }));
-            EXPECT_CALL(radio_, getTimeOnAir(testing::_))
-                .WillRepeatedly(
-                    testing::Invoke([this](uint8_t length) -> uint32_t {
-                        return length * 100;  // TODO: Mock time on air
-                    }));                      // Default value
-            // EXPECT_CALL(mock_radio, ClearActionReceive())
-            //     .WillRepeatedly(
-            //         DoAll(Invoke([this]() { this->saved_callback_ = nullptr; }),
-            //               Return(Result::Success())));
-            EXPECT_CALL(radio_, Sleep())
-                .WillRepeatedly(testing::Return(Result::Success()));
-
-            EXPECT_CALL(radio_, StartReceive())
-                .WillRepeatedly(testing::Return(Result::Success()));
-            EXPECT_CALL(radio_, Begin(testing::_))
-                .WillOnce(testing::Return(Result::Success()));
-        }
-
-        ~RadioToNetworkAdapter() override { network_.UnregisterNode(address_); }
-
-        void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
-                            int8_t snr) override {
-            // Store parameters for the mock radio to use
-            received_data_ = data;
-            rssi_ = rssi;
-            snr_ = snr;
-
-            // Call the original callback if set
-            if (original_callback_) {
-                original_callback_();
-            }
-        }
-
-       private:
-        radio::test::MockRadio& radio_;
-        VirtualNetwork& network_;
-        AddressType address_;
-        std::vector<uint8_t> received_data_;
-        int8_t rssi_{-65};
-        int8_t snr_{8};
-        void (*original_callback_)() = nullptr;
-    };
-
-    /**
      * @brief Start a node
-     * 
+     *
      * @param node Node to start
      * @return Result Success if started successfully, error details otherwise
      */
@@ -309,7 +206,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Stop a node
-     * 
+     *
      * @param node Node to stop
      * @return Result Success if stopped successfully, error details otherwise
      */
@@ -322,19 +219,19 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     /**
- * @brief Waits for a condition to be met while advancing simulated time
- *
- * This function periodically advances the simulation time and checks if a
- * specified condition is met. It continues checking until either the condition
- * is satisfied or a timeout occurs.
- *
- * @param time_ms Total time to advance in milliseconds
- * @param timeout_ms Maximum time to wait for the condition in milliseconds (0 = no timeout)
- * @param check_interval_ms Interval between condition checks in milliseconds (constant)
- * @param real_sleep_ms Real sleep time between iterations in milliseconds
- * @param condition Function returning true when the wait condition is met (nullptr = no condition)
- * @return bool True if the condition was met, false if timeout occurred
- */
+     * @brief Waits for a condition to be met while advancing simulated time
+     *
+     * This function periodically advances the simulation time and checks if a
+     * specified condition is met. It continues checking until either the condition
+     * is satisfied or a timeout occurs.
+     *
+     * @param time_ms Total time to advance in milliseconds
+     * @param timeout_ms Maximum time to wait for the condition in milliseconds (0 = no timeout)
+     * @param check_interval_ms Interval between condition checks in milliseconds (constant)
+     * @param real_sleep_ms Real sleep time between iterations in milliseconds
+     * @param condition Function returning true when the wait condition is met (nullptr = no condition)
+     * @return bool True if the condition was met, false if timeout occurred
+     */
     bool AdvanceTime(uint32_t time_ms, uint32_t timeout_ms = 0,
                      uint32_t check_interval_ms = 10,
                      uint32_t real_sleep_ms = 10,
@@ -344,6 +241,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             time_controller_.AdvanceTime(time_ms);
 
             if (real_sleep_ms > 0) {
+                // Sleep for the specified real time to allow tasks to execute
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(real_sleep_ms));
             }
@@ -372,6 +270,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
         // Continue checking until timeout
         while (elapsed_ms < kEffectiveTimeoutMs) {
+            LOG_DEBUG("Advancing time by %u ms", kSimTimePerStepMs);
             // Advance simulation time
             time_controller_.AdvanceTime(kSimTimePerStepMs);
             elapsed_ms += kTimeStepMs;
@@ -393,30 +292,26 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Get the discovery timeout period used by the protocol
-     * 
+     *
      * @return Discovery timeout in milliseconds
      */
-    uint32_t GetDiscoveryTimeout() const {
-        return protocols::LoRaMeshProtocol::GetDiscoveryTimeout();
+    uint32_t GetDiscoveryTimeout(TestNode& node) {
+        return node.protocol->GetDiscoveryTimeout();
     }
 
     /**
      * @brief Get the slot duration used by the protocol
-     * 
+     *
      * @return Slot duration in milliseconds
      */
-    uint32_t GetSlotDuration() const {
-#ifdef DEBUG
-        return protocols::LoRaMeshProtocol::DEFAULT_SLOT_DURATION_MS;
-#else
-#warning "Slot duration is not set in release mode"
-        return 0;
-#endif
+    uint32_t GetSlotDuration(TestNode& node) {
+        // Return the Slot duration
+        return node.protocol->GetSlotDuration();
     }
 
     /**
      * @brief Set link status between two nodes
-     * 
+     *
      * @param node1 First node
      * @param node2 Second node
      * @param active Whether the link should be active
@@ -428,7 +323,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Set message delay between two nodes
-     * 
+     *
      * @param node1 First node
      * @param node2 Second node
      * @param delay_ms Delay in milliseconds
@@ -441,7 +336,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Set packet loss rate for the entire network
-     * 
+     *
      * @param rate Loss rate (0.0 = no loss, 1.0 = all packets lost)
      */
     void SetPacketLossRate(float rate) {
@@ -450,9 +345,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Set up message tracking for a node
-     * 
+     *
      * This sets up a callback to track messages received by the node.
-     * 
+     *
      * @param node Node to set up message tracking for
      */
     void SetupMessageTracking(TestNode& node) {
@@ -483,7 +378,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Send a message from one node to another
-     * 
+     *
      * @param from Source node
      * @param to Destination node
      * @param type Message type
@@ -504,7 +399,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Check if a node has received a message from another node
-     * 
+     *
      * @param node Node to check
      * @param from Source node address
      * @param type Message type (default: any type)
@@ -523,7 +418,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Get messages received by a node
-     * 
+     *
      * @param node Node to get messages for
      * @param from Source node address (default: any source)
      * @param type Message type (default: any type)
@@ -546,7 +441,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Generate a fully connected mesh topology
-     * 
+     *
      * @param num_nodes Number of nodes to create
      * @param base_address Base address for nodes (default: 0x1000)
      * @param name_prefix Prefix for node names (default: "Node")
@@ -586,7 +481,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Generate a line topology where each node only connects to its neighbors
-     * 
+     *
      * @param num_nodes Number of nodes to create
      * @param base_address Base address for nodes (default: 0x1000)
      * @param name_prefix Prefix for node names (default: "Node")
@@ -633,7 +528,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Generate a star topology with one central node connected to all others
-     * 
+     *
      * @param num_nodes Total number of nodes including the central node
      * @param central_node_index Index of the central node (default: 0)
      * @param base_address Base address for nodes (default: 0x1000)
@@ -684,7 +579,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Create a partitioned network with two separated groups
-     * 
+     *
      * @param group1_size Number of nodes in first group
      * @param group2_size Number of nodes in second group
      * @param group1_base_address Base address for group 1 (default: 0x1000)
@@ -757,7 +652,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Create a bridge connection between two partitioned groups
-     * 
+     *
      * @param group1 First group of nodes
      * @param group2 Second group of nodes
      * @param bridge_node1_index Index of node in first group to connect
@@ -780,14 +675,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Find the network manager node in a collection of nodes
-     * 
+     *
      * @param nodes Collection of nodes to search
      * @return TestNode* Pointer to the network manager node, or nullptr if none found
      */
     TestNode* FindNetworkManager(const std::vector<TestNode*>& nodes) {
         for (auto* node : nodes) {
             if (node->protocol->GetState() ==
-                protocols::LoRaMeshProtocol::ProtocolState::NETWORK_MANAGER) {
+                protocols::lora_mesh::INetworkService::ProtocolState::
+                    NETWORK_MANAGER) {
                 return node;
             }
         }
@@ -796,10 +692,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Wait for network formation to complete
-     * 
+     *
      * This advances time until the network has formed with the expected
      * number of nodes in NORMAL_OPERATION state.
-     * 
+     *
      * @param nodes Nodes to check
      * @param expected_normal_nodes Number of nodes expected to be in NORMAL_OPERATION state
      * @param timeout_ms Maximum time to wait (default: 2x discovery timeout)
@@ -811,7 +707,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
                                  uint32_t timeout_ms = 0,
                                  uint32_t check_interval_ms = 100) {
         if (timeout_ms == 0) {
-            timeout_ms = GetDiscoveryTimeout() * 2;
+            auto* first_node = nodes.front();
+            timeout_ms = GetDiscoveryTimeout(*first_node) * 2;
+            LOG_DEBUG("Using default timeout of %u ms for network formation",
+                      timeout_ms);
         }
 
         uint32_t elapsed = 0;
@@ -823,11 +722,11 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
             for (auto* node : nodes) {
                 auto state = node->protocol->GetState();
-                if (state == protocols::LoRaMeshProtocol::ProtocolState::
-                                 NETWORK_MANAGER) {
+                if (state == protocols::lora_mesh::INetworkService::
+                                 ProtocolState::NETWORK_MANAGER) {
                     network_manager_count++;
-                } else if (state == protocols::LoRaMeshProtocol::ProtocolState::
-                                        NORMAL_OPERATION) {
+                } else if (state == protocols::lora_mesh::INetworkService::
+                                        ProtocolState::NORMAL_OPERATION) {
                     normal_operation_count++;
                 }
             }
@@ -848,7 +747,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Simulate node failure by disconnecting it from the network
-     * 
+     *
      * @param node Node to disconnect
      */
     void SimulateNodeFailure(TestNode& node) {
@@ -862,7 +761,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     /**
      * @brief Simulate node recovery by reconnecting it to the network
-     * 
+     *
      * @param node Node to reconnect
      * @param connect_to_all Whether to connect to all nodes or just neighbors
      */
