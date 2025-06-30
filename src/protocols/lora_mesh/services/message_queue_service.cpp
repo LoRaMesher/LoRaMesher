@@ -155,9 +155,9 @@ size_t MessageQueueService::GetTotalMessageCount() const {
 
 bool MessageQueueService::HasMessage(MessageType type) const {
     std::lock_guard<std::mutex> lock(queue_mutex_);
-    
+
     for (const auto& pair : message_queues_) {
-        for(const auto& message : pair.second) {
+        for (const auto& message : pair.second) {
             if (message->GetType() == type) {
                 return true;
             }

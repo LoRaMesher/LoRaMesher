@@ -201,9 +201,8 @@ class NetworkService : public INetworkService {
      * @param join_timeout_ms Timeout for joining in milliseconds
      * @return Result Success or error details
      */
-    Result StartJoining(
-        AddressType manager_address,
-        uint32_t join_timeout_ms) override;
+    Result StartJoining(AddressType manager_address,
+                        uint32_t join_timeout_ms) override;
 
     /**
      * @brief Get the join timeout
@@ -482,7 +481,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result PerformJoining(uint32_t timeout_ms);
-    
+
    private:
     /**
      * @brief Find node by address
@@ -618,8 +617,10 @@ class NetworkService : public INetworkService {
     uint32_t last_sync_time_;
     uint8_t table_version_;
     uint32_t discovery_start_time_;
-    uint8_t allocated_control_slots_ = ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
-    uint8_t allocated_discovery_slots_ = ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+    uint8_t allocated_control_slots_ =
+        ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
+    uint8_t allocated_discovery_slots_ =
+        ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
     // Thread safety
     mutable std::mutex network_mutex_;

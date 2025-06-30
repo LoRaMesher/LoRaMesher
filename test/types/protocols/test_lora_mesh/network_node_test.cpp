@@ -80,9 +80,10 @@ TEST_F(NetworkNodeRouteTest, MinimalConstructor) {
     EXPECT_EQ(minimal_node.routing_entry.destination, 0x5678);
     EXPECT_EQ(minimal_node.battery_level, 90);
     EXPECT_EQ(minimal_node.last_seen, 10000);
-    EXPECT_FALSE(minimal_node.is_network_manager);             // Default value
-    EXPECT_EQ(minimal_node.capabilities, 0);                   // Default value
-    EXPECT_EQ(minimal_node.routing_entry.allocated_data_slots, 0);  // Default value
+    EXPECT_FALSE(minimal_node.is_network_manager);  // Default value
+    EXPECT_EQ(minimal_node.capabilities, 0);        // Default value
+    EXPECT_EQ(minimal_node.routing_entry.allocated_data_slots,
+              0);  // Default value
 }
 
 /**

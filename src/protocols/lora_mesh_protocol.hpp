@@ -225,7 +225,7 @@ class LoRaMeshProtocol : public Protocol {
      * @param hop_count Number of hops to destination
      */
     void OnNetworkTopologyChange(bool route_updated, AddressType destination,
-                           AddressType next_hop, uint8_t hop_count);
+                                 AddressType next_hop, uint8_t hop_count);
 
     /**
      * @brief Process messages for current slot type

@@ -98,7 +98,7 @@ class VirtualNetwork {
      * 
      * @param address Address of the node to remove
      */
-    void UnregisterNode(uint32_t address) { 
+    void UnregisterNode(uint32_t address) {
         nodes_.erase(address);
         sent_messages_.erase(address);
     }
@@ -115,7 +115,7 @@ class VirtualNetwork {
                          int8_t rssi = -65, int8_t snr = 8) {
         // Store the sent message for testing purposes
         sent_messages_[source].push_back(data);
-        
+
         // Check if source exists
         if (nodes_.find(source) == nodes_.end()) {
             std::cerr << "Source node " << source << " not found in network"
@@ -172,7 +172,8 @@ class VirtualNetwork {
      * @param node_address Address of the node
      * @return Vector containing all messages sent by the node
      */
-    std::vector<std::vector<uint8_t>> GetSentMessages(uint32_t node_address) const {
+    std::vector<std::vector<uint8_t>> GetSentMessages(
+        uint32_t node_address) const {
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             return it->second;
@@ -187,7 +188,7 @@ class VirtualNetwork {
      * @param count Number of messages to retrieve (from most recent)
      * @return Vector containing the last N messages sent by the node
      */
-    std::vector<std::vector<uint8_t>> GetLastSentMessages(uint32_t node_address, 
+    std::vector<std::vector<uint8_t>> GetLastSentMessages(uint32_t node_address,
                                                           size_t count) const {
         auto it = sent_messages_.find(node_address);
         if (it == sent_messages_.end() || it->second.empty()) {
@@ -195,9 +196,10 @@ class VirtualNetwork {
         }
 
         const auto& messages = it->second;
-        size_t start_index = (count >= messages.size()) ? 0 : messages.size() - count;
-        
-        return std::vector<std::vector<uint8_t>>(messages.begin() + start_index, 
+        size_t start_index =
+            (count >= messages.size()) ? 0 : messages.size() - count;
+
+        return std::vector<std::vector<uint8_t>>(messages.begin() + start_index,
                                                  messages.end());
     }
 
@@ -209,9 +211,9 @@ class VirtualNetwork {
      * @return Vector containing messages that match the filter criteria
      */
     std::vector<std::vector<uint8_t>> GetFilteredSentMessages(
-        uint32_t node_address, 
+        uint32_t node_address,
         std::function<bool(const std::vector<uint8_t>&)> filter) const {
-        
+
         auto it = sent_messages_.find(node_address);
         if (it == sent_messages_.end()) {
             return std::vector<std::vector<uint8_t>>();
@@ -223,7 +225,7 @@ class VirtualNetwork {
                 filtered_messages.push_back(message);
             }
         }
-        
+
         return filtered_messages;
     }
 
@@ -242,9 +244,7 @@ class VirtualNetwork {
     /**
      * @brief Clear all sent messages for all nodes
      */
-    void ClearAllSentMessages() {
-        sent_messages_.clear();
-    }
+    void ClearAllSentMessages() { sent_messages_.clear(); }
 
     /**
      * @brief Get the number of messages sent by a specific node
@@ -366,7 +366,8 @@ class VirtualNetwork {
 
     std::map<uint32_t, NodeInfo> nodes_;
     std::vector<PendingMessage> pending_messages_;
-    std::map<uint32_t, std::vector<std::vector<uint8_t>>> sent_messages_; ///< Store sent messages per node
+    std::map<uint32_t, std::vector<std::vector<uint8_t>>>
+        sent_messages_;  ///< Store sent messages per node
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;

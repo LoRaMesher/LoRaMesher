@@ -104,12 +104,12 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
             << "Node should be in slot " << i;
     }
 
-    advanced =
-        AdvanceTime(slot_duration + 100, slot_duration + 500,
-                    slot_duration, 10, [&]() {
-                        auto sent_messages = virtual_network_.GetSentMessageCount(node.address);
-                        return sent_messages > 0;
-                    });
+    advanced = AdvanceTime(
+        slot_duration + 100, slot_duration + 500, slot_duration, 10, [&]() {
+            auto sent_messages =
+                virtual_network_.GetSentMessageCount(node.address);
+            return sent_messages > 0;
+        });
 
     EXPECT_TRUE(advanced);
     auto last_messages = virtual_network_.GetLastSentMessages(node.address, 1);

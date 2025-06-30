@@ -779,7 +779,7 @@ Result NetworkService::CreateNetwork() {
         superframe_service_->SetSynchronized(true);
         NotifySuperframeOfNetworkChanges();
     }
-    
+
     return Result::Success();
 }
 

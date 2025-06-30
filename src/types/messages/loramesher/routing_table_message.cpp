@@ -54,11 +54,12 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     RoutingTableHeader header(dest, src, network_manager_addr, table_version,
                               static_cast<uint8_t>(entries.size()));
 
-    LOG_DEBUG("Created routing table message with source: 0x%04X, "
-              "destination: 0x%04X, network manager: 0x%04X, "
-              "table version: %d, entry count: %d",
-              src, dest, network_manager_addr, table_version,
-              static_cast<int>(entries.size()));
+    LOG_DEBUG(
+        "Created routing table message with source: 0x%04X, "
+        "destination: 0x%04X, network manager: 0x%04X, "
+        "table version: %d, entry count: %d",
+        src, dest, network_manager_addr, table_version,
+        static_cast<int>(entries.size()));
 
     return RoutingTableMessage(header, entries);
 }

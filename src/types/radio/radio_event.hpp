@@ -75,9 +75,12 @@ class RadioEvent {
     /**
      * @brief Default move constructor
      */
-    RadioEvent(RadioEvent&& other) noexcept : type_(other.type_),
-        message_(std::move(other.message_)), rssi_(other.rssi_),
-        snr_(other.snr_), timestamp_(other.timestamp_) {};
+    RadioEvent(RadioEvent&& other) noexcept
+        : type_(other.type_),
+          message_(std::move(other.message_)),
+          rssi_(other.rssi_),
+          snr_(other.snr_),
+          timestamp_(other.timestamp_) {};
 
     /**
      * @brief Default move assignment operator
@@ -203,8 +206,8 @@ class RadioEvent {
 
    private:
     RadioEventType type_;  ///< Type of radio event
-    std::unique_ptr<BaseMessage>
-        message_ = nullptr;            ///< Optional message associated with event
+    std::unique_ptr<BaseMessage> message_ =
+        nullptr;             ///< Optional message associated with event
     int8_t rssi_ = 0;        ///< Received Signal Strength Indicator
     int8_t snr_ = 0;         ///< Signal-to-Noise Ratio
     int32_t timestamp_ = 0;  ///< Event timestamp

@@ -111,12 +111,14 @@ class NetworkNodeRoute {
      * @return AddressType Node address
      */
     AddressType GetAddress() const { return routing_entry.destination; }
-    
+
     /**
      * @brief Get the allocated data slots of this node
      * @return Allocated data slots
      */
-    uint8_t GetAllocatedDataSlots() const { return routing_entry.allocated_data_slots; }
+    uint8_t GetAllocatedDataSlots() const {
+        return routing_entry.allocated_data_slots;
+    }
 
     /**
      * @brief Check if this node/route is expired
