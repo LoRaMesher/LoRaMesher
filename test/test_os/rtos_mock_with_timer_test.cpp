@@ -66,6 +66,12 @@ class RTOSMockTimeTest : public ::testing::Test {
             }
         }
 
+        // Clean up dynamically allocated task parameters
+        for (auto& cleanup : taskParameterCleanup_) {
+            cleanup();
+        }
+        taskParameterCleanup_.clear();
+
         // Return to real-time mode after tests
         rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
     }
@@ -81,21 +87,6 @@ class RTOSMockTimeTest : public ::testing::Test {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
-    /**
-     * @brief Helper method to safely create a task and track its handle
-     */
-    template <typename Func>
-    os::TaskHandle_t CreateTrackedTask(Func taskFunc, const char* name,
-                                       uint32_t stackSize, void* params,
-                                       uint32_t priority) {
-        os::TaskHandle_t handle = nullptr;
-        EXPECT_TRUE(rtos_->CreateTask(taskFunc, name, stackSize, params,
-                                      priority, &handle));
-        if (handle) {
-            taskHandles_.push_back(handle);
-        }
-        return handle;
-    }
 
     /**
      * @brief Helper method to safely create a queue and track its handle
@@ -132,6 +123,9 @@ class RTOSMockTimeTest : public ::testing::Test {
 
     // Vector to track semaphore handles for cleanup
     std::vector<os::SemaphoreHandle_t> semaphoreHandles_;
+
+    // Vector to track dynamically allocated task parameters for cleanup
+    std::vector<std::function<void()>> taskParameterCleanup_;
 };
 
 /**
@@ -168,7 +162,11 @@ TEST_F(RTOSMockTimeTest, SimpleDelayWithVirtualTime) {
     auto state = std::make_shared<SharedState>();
 
     // Create a task that uses delay
-    os::TaskHandle_t task = CreateTrackedTask(
+    auto* taskParam = new std::shared_ptr<SharedState>(state);
+    taskParameterCleanup_.push_back([taskParam]() { delete taskParam; });  // Track for cleanup
+    
+    os::TaskHandle_t task = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
         [](void* param) {
             auto state = *static_cast<std::shared_ptr<SharedState>*>(param);
 
@@ -183,7 +181,11 @@ TEST_F(RTOSMockTimeTest, SimpleDelayWithVirtualTime) {
             state->endTime = GetRTOS().getTickCount();
             state->taskCompleted = true;
         },
-        "DelayTask", 2048, new std::shared_ptr<SharedState>(state), 1);
+        "DelayTask", 2048, taskParam, 1, &task));
+    
+    if (task) {
+        taskHandles_.push_back(task);
+    }
 
     ASSERT_NE(task, nullptr);
 
@@ -238,7 +240,11 @@ TEST_F(RTOSMockTimeTest, SimpleQueueOperation) {
     const int testValue = 42;
 
     // Create a sender task that delays then sends
-    os::TaskHandle_t senderTask = CreateTrackedTask(
+    auto* senderParam = new std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>(queue, state);
+    taskParameterCleanup_.push_back([senderParam]() { delete senderParam; });  // Track for cleanup
+    
+    os::TaskHandle_t senderTask = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
         [](void* param) {
             auto args = *static_cast<
                 std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>*>(
@@ -255,15 +261,20 @@ TEST_F(RTOSMockTimeTest, SimpleQueueOperation) {
             GetRTOS().SendToQueue(queue, &value, 0);
             state->senderDone = true;
         },
-        "SenderTask", 2048,
-        new std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>(queue,
-                                                                       state),
-        1);
+        "SenderTask", 2048, senderParam, 1, &senderTask));
+    
+    if (senderTask) {
+        taskHandles_.push_back(senderTask);
+    }
 
     ASSERT_NE(senderTask, nullptr);
 
     // Create a receiver task
-    os::TaskHandle_t receiverTask = CreateTrackedTask(
+    auto* receiverParam = new std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>(queue, state);
+    taskParameterCleanup_.push_back([receiverParam]() { delete receiverParam; });  // Track for cleanup
+    
+    os::TaskHandle_t receiverTask = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
         [](void* param) {
             auto args = *static_cast<
                 std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>*>(
@@ -281,10 +292,11 @@ TEST_F(RTOSMockTimeTest, SimpleQueueOperation) {
 
             state->receiverDone = true;
         },
-        "ReceiverTask", 2048,
-        new std::pair<os::QueueHandle_t, std::shared_ptr<SharedState>>(queue,
-                                                                       state),
-        1);
+        "ReceiverTask", 2048, receiverParam, 1, &receiverTask));
+    
+    if (receiverTask) {
+        taskHandles_.push_back(receiverTask);
+    }
 
     ASSERT_NE(receiverTask, nullptr);
 
