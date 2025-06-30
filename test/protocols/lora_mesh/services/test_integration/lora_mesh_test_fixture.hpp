@@ -58,6 +58,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Stop and clean up all nodes
         for (auto& node : nodes_) {
             if (node->protocol) {
+                // Stop the protocol before destroying it to avoid race conditions
+                node->protocol->Stop();
                 node->protocol.reset();
             }
             node->hardware_manager.reset();

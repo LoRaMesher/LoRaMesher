@@ -375,6 +375,11 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
         }
 
         // Check current state and perform state-specific actions
+        // Add safety check to prevent use-after-free
+        if (!protocol->network_service_) {
+            LOG_DEBUG("Network service no longer available, exiting protocol task");
+            break;
+        }
         auto state = protocol->network_service_->GetState();
 
         switch (state) {
