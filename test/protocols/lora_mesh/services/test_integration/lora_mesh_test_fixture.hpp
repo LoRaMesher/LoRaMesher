@@ -47,6 +47,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
     VirtualTimeController time_controller_;
     std::vector<std::shared_ptr<TestNode>> nodes_;
     std::map<AddressType, std::vector<BaseMessage>> message_log_;
+    std::vector<std::unique_ptr<RadioToNetworkAdapter>> network_adapters_;
 
     LoRaMeshTestFixture() : time_controller_(virtual_network_) {}
 
@@ -66,6 +67,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
         nodes_.clear();
         message_log_.clear();
+        
+        // Clean up network adapters
+        network_adapters_.clear();
     }
 
     /**
@@ -186,10 +190,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
      */
     void ConnectRadioToNetwork(radio::test::MockRadio* mock_radio,
                                AddressType address) {
+        // Create and track the adapter for proper cleanup
+        auto adapter = std::make_unique<RadioToNetworkAdapter>(
+            mock_radio, virtual_network_, address);
+        
         // Register the node with the virtual network
-        virtual_network_.RegisterNode(
-            address,
-            new RadioToNetworkAdapter(mock_radio, virtual_network_, address));
+        virtual_network_.RegisterNode(address, adapter.get());
+        
+        // Store the adapter for cleanup
+        network_adapters_.push_back(std::move(adapter));
     }
 
     /**
