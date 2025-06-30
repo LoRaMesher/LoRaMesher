@@ -6,3 +6,5 @@
 *.code-workspace
 build
 
+.claude
+
