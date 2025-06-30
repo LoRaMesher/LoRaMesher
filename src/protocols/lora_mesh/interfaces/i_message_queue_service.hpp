@@ -6,6 +6,7 @@
 #pragma once
 
 #include <memory>
+#include "types/messages/message_type.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -70,7 +71,7 @@ class IMessageQueueService {
      * @param type Type of message to check
      * @return bool True if any queue has messages of the specified type
      */
-    virtual bool HasMessage(MessageType type) const;
+    virtual bool HasMessage(MessageType type) const = 0;
 };
 
 }  // namespace protocols
