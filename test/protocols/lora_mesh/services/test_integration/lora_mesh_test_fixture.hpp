@@ -67,7 +67,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
         nodes_.clear();
         message_log_.clear();
-        
+
         // Clean up network adapters
         network_adapters_.clear();
     }
@@ -193,10 +193,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Create and track the adapter for proper cleanup
         auto adapter = std::make_unique<RadioToNetworkAdapter>(
             mock_radio, virtual_network_, address);
-        
+
         // Register the node with the virtual network
         virtual_network_.RegisterNode(address, adapter.get());
-        
+
         // Store the adapter for cleanup
         network_adapters_.push_back(std::move(adapter));
     }
