@@ -4,7 +4,7 @@ We are using [Google C++ Style Guide](https://google.github.io/styleguide/cppgui
 
 ## General Rules
 - Use 4 spaces for indentation
-- Maximum line length is 100 characters
+- Maximum line length is 80 characters
 - Use UTF-8 encoding
 - Files should end with a newline
 - Remove trailing whitespace
