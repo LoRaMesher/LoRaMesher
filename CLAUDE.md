@@ -90,3 +90,4 @@ Uses GoogleTest with comprehensive coverage:
 - **Integration tests**: Protocol interaction testing  
 - **Hardware mocks**: Full radio and RTOS simulation
 - **Network simulation**: Multi-node mesh testing framework
+- **PlatformIO Native Tests**: Run native tests using `pio test -e test_native`
