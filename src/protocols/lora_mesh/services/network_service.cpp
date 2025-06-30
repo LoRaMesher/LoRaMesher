@@ -530,8 +530,8 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
 
 Result NetworkService::StartJoining(AddressType manager_address,
                                     uint32_t join_timeout_ms) {
-    // Check if already in a network
-    if (network_found_) {
+    // Check if already successfully joined a network (in normal operation)
+    if (GetState() == ProtocolState::NORMAL_OPERATION) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Already in a network, cannot join");
     }
