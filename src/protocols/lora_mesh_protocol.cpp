@@ -452,8 +452,18 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
         if (event->HasMessage()) {
             const BaseMessage* message = event->getMessage();
             if (message) {
-                network_service_->ProcessReceivedMessage(*message);
-                LOG_DEBUG("Processed radio event with message");
+                // Only process received events as received messages
+                if (event->getType() == radio::RadioEventType::kReceived) {
+                    network_service_->ProcessReceivedMessage(*message);
+                    LOG_DEBUG("Processed radio event with message");
+                } else if (event->getType() ==
+                           radio::RadioEventType::kTransmitted) {
+                    // TODO: Handle transmitted events (e.g., update transmission statistics)
+                    LOG_DEBUG("Processed radio event for transmitted message");
+                } else {
+                    LOG_DEBUG("Processed radio event with message of type %d",
+                              static_cast<int>(event->getType()));
+                }
             }
         } else {
             // TODO: Handle radio events without messages
