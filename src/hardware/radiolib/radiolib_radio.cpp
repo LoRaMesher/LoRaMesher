@@ -55,7 +55,7 @@ RadioLibRadio::~RadioLibRadio() {
         }
     }
 
-    Sleep();
+    // Note: Sleep() not called in destructor to avoid virtual function call during destruction
 }
 
 Result RadioLibRadio::Configure(const RadioConfig& config) {
@@ -417,7 +417,6 @@ void RadioLibRadio::HandleInterrupt() {
     if (!current_module_) {
         LOG_ERROR("No radio module initialized");
         lock.unlock();
-        current_module_->StartReceive();
         return;
     }
 

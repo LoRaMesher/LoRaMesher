@@ -774,10 +774,9 @@ Result NetworkService::CreateNetwork() {
         return result;
     }
 
-    superframe_service_->SetSynchronized(true);
-
     // Notify superframe if available
     if (superframe_service_) {
+        superframe_service_->SetSynchronized(true);
         NotifySuperframeOfNetworkChanges();
     }
     

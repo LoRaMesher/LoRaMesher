@@ -24,7 +24,7 @@ LoRaMeshProtocol::LoRaMeshProtocol()
       is_paused_(false) {}
 
 LoRaMeshProtocol::~LoRaMeshProtocol() {
-    Stop();
+    // Note: Stop() not called in destructor to avoid virtual function call during destruction
 }
 
 Result LoRaMeshProtocol::Init(

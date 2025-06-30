@@ -73,7 +73,7 @@ class LoraMesherSX1276 : public IRadio {
     /**
      * @brief Destructor ensuring proper cleanup of hardware resources
      */
-    ~LoraMesherSX1276() override { Sleep(); }
+    ~LoraMesherSX1276() override = default;
 
     /**
      * @brief Initialize and begin radio operations

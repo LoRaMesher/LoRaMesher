@@ -22,7 +22,7 @@ PingPongProtocol::PingPongProtocol()
       stop_tasks_(false) {}
 
 PingPongProtocol::~PingPongProtocol() {
-    Stop();
+    // Note: Stop() not called in destructor to avoid virtual function call during destruction
 }
 
 Result PingPongProtocol::Start() {

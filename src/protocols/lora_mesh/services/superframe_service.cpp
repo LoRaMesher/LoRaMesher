@@ -35,7 +35,7 @@ SuperframeService::SuperframeService(uint16_t total_slots,
 
 SuperframeService::~SuperframeService() {
     // Make sure we stop the service and task
-    StopSuperframe();
+    // Note: StopSuperframe() not called in destructor to avoid virtual function call during destruction
 
     DeleteUpdateTask();
 }
