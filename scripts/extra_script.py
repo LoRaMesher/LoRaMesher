@@ -8,6 +8,8 @@
 Import("env")
 from os.path import join, realpath
 
+env.Replace(CC="clang", CXX="clang++")
+
 # Get global environment
 global_env = DefaultEnvironment()
 
