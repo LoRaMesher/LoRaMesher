@@ -69,5 +69,8 @@
         "iostream": "cpp",
         "mutex": "cpp",
         "cinttypes": "cpp"
+    },
+    "files.exclude": {
+        "**/.git": false
     }
 }
