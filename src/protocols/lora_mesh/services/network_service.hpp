@@ -695,6 +695,7 @@ class NetworkService : public INetworkService {
         ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
     uint8_t allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+    uint8_t network_max_hops_ = 5;  ///< Maximum hops received from sync beacons
 
     // Thread safety
     mutable std::mutex network_mutex_;

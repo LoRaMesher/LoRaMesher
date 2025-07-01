@@ -27,13 +27,11 @@ class SyncBeaconMessageTest : public ::testing::Test {
     static constexpr AddressType dest = 0xFFFF;  // Broadcast
     static constexpr AddressType src = 0x1234;   // Network Manager
     static constexpr uint16_t network_id = 1;
-    static constexpr uint32_t superframe_number = 100;
-    static constexpr uint16_t superframe_duration_ms = 1000;
     static constexpr uint8_t total_slots = 20;
-    static constexpr uint32_t slot_duration_ms = 50;
-    static constexpr uint32_t original_timestamp_ms = 12345678;
+    static constexpr uint16_t slot_duration_ms = 50;
+    static constexpr uint16_t original_timestamp_ms =
+        45678;  // 16-bit timestamp
     static constexpr uint8_t max_hops = 5;
-    static constexpr uint16_t sequence_number = 42;
 
     std::optional<SyncBeaconMessage> original_msg;
     std::optional<SyncBeaconMessage> forwarded_msg;
@@ -84,18 +82,16 @@ class SyncBeaconMessageTest : public ::testing::Test {
     void CreateMessages() {
         // Create original sync beacon
         original_msg = SyncBeaconMessage::CreateOriginal(
-            dest, src, network_id, superframe_number, superframe_duration_ms,
-            total_slots, slot_duration_ms, original_timestamp_ms, max_hops,
-            sequence_number);
+            dest, src, network_id, total_slots, slot_duration_ms,
+            original_timestamp_ms, max_hops);
 
         // Create forwarded sync beacon
         forwarded_msg = SyncBeaconMessage::CreateForwarded(
             dest, 0x5678,  // Different forwarding node
-            network_id, superframe_number, superframe_duration_ms, total_slots,
-            slot_duration_ms, src,       // Original source is network manager
+            network_id, total_slots, slot_duration_ms,
             2,                           // Hop count 2
             original_timestamp_ms, 100,  // 100ms propagation delay
-            max_hops, sequence_number);
+            max_hops);
     }
 };
 
@@ -109,18 +105,18 @@ TEST_F(SyncBeaconMessageTest, CreateOriginalBeacon) {
     EXPECT_EQ(original_msg->GetSource(), src);
     EXPECT_EQ(original_msg->GetDestination(), dest);
     EXPECT_EQ(original_msg->GetNetworkId(), network_id);
-    EXPECT_EQ(original_msg->GetSuperframeNumber(), superframe_number);
-    EXPECT_EQ(original_msg->GetSuperframeDuration(), superframe_duration_ms);
     EXPECT_EQ(original_msg->GetTotalSlots(), total_slots);
     EXPECT_EQ(original_msg->GetSlotDuration(), slot_duration_ms);
 
+    // Verify calculated superframe duration
+    EXPECT_EQ(original_msg->GetSuperframeDuration(),
+              total_slots * slot_duration_ms);
+
     // Verify forwarding fields for original beacon
-    EXPECT_EQ(original_msg->GetOriginalSource(), src);
     EXPECT_EQ(original_msg->GetHopCount(), 0);  // Original beacon
     EXPECT_EQ(original_msg->GetOriginalTimestamp(), original_timestamp_ms);
     EXPECT_EQ(original_msg->GetPropagationDelay(), 0);  // No delay for original
     EXPECT_EQ(original_msg->GetMaxHops(), max_hops);
-    EXPECT_EQ(original_msg->GetSequenceNumber(), sequence_number);
 
     // Verify original beacon check
     EXPECT_TRUE(original_msg->IsOriginalBeacon());
@@ -134,17 +130,17 @@ TEST_F(SyncBeaconMessageTest, CreateForwardedBeacon) {
 
     // Verify basic fields (should match original)
     EXPECT_EQ(forwarded_msg->GetNetworkId(), network_id);
-    EXPECT_EQ(forwarded_msg->GetSuperframeNumber(), superframe_number);
-    EXPECT_EQ(forwarded_msg->GetSuperframeDuration(), superframe_duration_ms);
     EXPECT_EQ(forwarded_msg->GetTotalSlots(), total_slots);
     EXPECT_EQ(forwarded_msg->GetSlotDuration(), slot_duration_ms);
 
+    // Verify calculated superframe duration
+    EXPECT_EQ(forwarded_msg->GetSuperframeDuration(),
+              total_slots * slot_duration_ms);
+
     // Verify forwarding fields
-    EXPECT_EQ(forwarded_msg->GetOriginalSource(), src);  // Original NM
     EXPECT_EQ(forwarded_msg->GetHopCount(), 2);
     EXPECT_EQ(forwarded_msg->GetOriginalTimestamp(), original_timestamp_ms);
     EXPECT_EQ(forwarded_msg->GetPropagationDelay(), 100);
-    EXPECT_EQ(forwarded_msg->GetSequenceNumber(), sequence_number);
 
     // Verify not original beacon
     EXPECT_FALSE(forwarded_msg->IsOriginalBeacon());
@@ -192,9 +188,7 @@ TEST_F(SyncBeaconMessageTest, CreateForwardedFromOriginal) {
     EXPECT_EQ(forwarded_opt->GetHopCount(), 1);
 
     // Verify original fields preserved
-    EXPECT_EQ(forwarded_opt->GetOriginalSource(), src);
     EXPECT_EQ(forwarded_opt->GetOriginalTimestamp(), original_timestamp_ms);
-    EXPECT_EQ(forwarded_opt->GetSequenceNumber(), sequence_number);
 
     // Verify propagation delay updated
     EXPECT_EQ(forwarded_opt->GetPropagationDelay(), processing_delay);
@@ -237,23 +231,17 @@ TEST_F(SyncBeaconMessageTest, SerializationRoundTrip) {
     EXPECT_EQ(deserialized_opt->GetDestination(),
               original_msg->GetDestination());
     EXPECT_EQ(deserialized_opt->GetNetworkId(), original_msg->GetNetworkId());
-    EXPECT_EQ(deserialized_opt->GetSuperframeNumber(),
-              original_msg->GetSuperframeNumber());
     EXPECT_EQ(deserialized_opt->GetSuperframeDuration(),
               original_msg->GetSuperframeDuration());
     EXPECT_EQ(deserialized_opt->GetTotalSlots(), original_msg->GetTotalSlots());
     EXPECT_EQ(deserialized_opt->GetSlotDuration(),
               original_msg->GetSlotDuration());
-    EXPECT_EQ(deserialized_opt->GetOriginalSource(),
-              original_msg->GetOriginalSource());
     EXPECT_EQ(deserialized_opt->GetHopCount(), original_msg->GetHopCount());
     EXPECT_EQ(deserialized_opt->GetOriginalTimestamp(),
               original_msg->GetOriginalTimestamp());
     EXPECT_EQ(deserialized_opt->GetPropagationDelay(),
               original_msg->GetPropagationDelay());
     EXPECT_EQ(deserialized_opt->GetMaxHops(), original_msg->GetMaxHops());
-    EXPECT_EQ(deserialized_opt->GetSequenceNumber(),
-              original_msg->GetSequenceNumber());
 }
 
 /**
@@ -281,27 +269,25 @@ TEST_F(SyncBeaconMessageTest, BaseMessageConversion) {
 TEST_F(SyncBeaconMessageTest, InvalidParameters) {
     // Test invalid total slots
     auto invalid_msg = SyncBeaconMessage::CreateOriginal(
-        dest, src, network_id, superframe_number, superframe_duration_ms,
+        dest, src, network_id,
         0,  // Invalid: zero slots
-        slot_duration_ms, original_timestamp_ms, max_hops, sequence_number);
+        slot_duration_ms, original_timestamp_ms, max_hops);
 
     EXPECT_FALSE(invalid_msg.has_value());
 
-    // Test invalid durations
-    auto invalid_duration_msg = SyncBeaconMessage::CreateOriginal(
-        dest, src, network_id, superframe_number,
-        0,  // Invalid: zero superframe duration
-        total_slots, slot_duration_ms, original_timestamp_ms, max_hops,
-        sequence_number);
+    // Test invalid slot duration
+    auto invalid_duration_msg =
+        SyncBeaconMessage::CreateOriginal(dest, src, network_id, total_slots,
+                                          0,  // Invalid: zero slot duration
+                                          original_timestamp_ms, max_hops);
 
     EXPECT_FALSE(invalid_duration_msg.has_value());
 
     // Test forwarded beacon with hop count exceeding max
     auto invalid_forwarded = SyncBeaconMessage::CreateForwarded(
-        dest, 0x5678, network_id, superframe_number, superframe_duration_ms,
-        total_slots, slot_duration_ms, src,
+        dest, 0x5678, network_id, total_slots, slot_duration_ms,
         10,  // Hop count exceeds max_hops (5)
-        original_timestamp_ms, 100, max_hops, sequence_number);
+        original_timestamp_ms, 100, max_hops);
 
     EXPECT_FALSE(invalid_forwarded.has_value());
 }

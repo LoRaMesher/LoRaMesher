@@ -11,11 +11,9 @@ SyncBeaconMessage::SyncBeaconMessage(const SyncBeaconHeader& header)
     : header_(header) {}
 
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
-    AddressType dest, AddressType src, uint16_t network_id,
-    uint32_t superframe_number, uint16_t superframe_duration_ms,
-    uint8_t total_slots, uint32_t slot_duration_ms,
-    uint32_t original_timestamp_ms, uint8_t max_hops,
-    uint16_t sequence_number) {
+    AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
+    uint16_t slot_duration_ms, uint16_t original_timestamp_ms,
+    uint8_t max_hops) {
 
     // Validate parameters
     if (total_slots == 0) {
@@ -23,20 +21,18 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
         return std::nullopt;
     }
 
-    if (superframe_duration_ms == 0 || slot_duration_ms == 0) {
-        LOG_ERROR("Invalid duration values: superframe=%d, slot=%d",
-                  superframe_duration_ms, slot_duration_ms);
+    if (slot_duration_ms == 0) {
+        LOG_ERROR("Invalid slot duration: %d", slot_duration_ms);
         return std::nullopt;
     }
 
-    // Create the header with the sync beacon information
-    SyncBeaconHeader header(dest, src, network_id, superframe_number,
-                            superframe_duration_ms, total_slots,
+    // Create the header with optimized sync beacon information
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
                             slot_duration_ms);
 
     // Set timing and forwarding info for original beacon
-    Result result = header.SetForwardingInfo(src, 0, original_timestamp_ms, 0,
-                                             max_hops, sequence_number);
+    Result result =
+        header.SetForwardingInfo(0, original_timestamp_ms, 0, max_hops);
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to set forwarding info: %s",
                   result.GetErrorMessage().c_str());
@@ -47,11 +43,10 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
 }
 
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwarded(
-    AddressType dest, AddressType src, uint16_t network_id,
-    uint32_t superframe_number, uint16_t superframe_duration_ms,
-    uint8_t total_slots, uint32_t slot_duration_ms, AddressType original_source,
-    uint8_t hop_count, uint32_t original_timestamp_ms,
-    uint32_t propagation_delay_ms, uint8_t max_hops, uint16_t sequence_number) {
+    AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
+    uint16_t slot_duration_ms, uint8_t hop_count,
+    uint16_t original_timestamp_ms, uint32_t propagation_delay_ms,
+    uint8_t max_hops) {
 
     // Validate parameters
     if (hop_count > max_hops) {
@@ -59,11 +54,10 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwarded(
         return std::nullopt;
     }
 
-    // Create the header with full forwarding information
-    SyncBeaconHeader header(
-        dest, src, network_id, superframe_number, superframe_duration_ms,
-        total_slots, slot_duration_ms, original_source, hop_count,
-        original_timestamp_ms, propagation_delay_ms, max_hops, sequence_number);
+    // Create the header with optimized forwarding information
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, hop_count, original_timestamp_ms,
+                            propagation_delay_ms, max_hops);
 
     return SyncBeaconMessage(header);
 }
@@ -93,37 +87,30 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateFromSerialized(
     return SyncBeaconMessage(*header);
 }
 
-// Core synchronization field getters
+// Core synchronization field getters (optimized)
 uint16_t SyncBeaconMessage::GetNetworkId() const {
     return header_.GetNetworkId();
-}
-
-uint32_t SyncBeaconMessage::GetSuperframeNumber() const {
-    return header_.GetSuperframeNumber();
-}
-
-uint16_t SyncBeaconMessage::GetSuperframeDuration() const {
-    return header_.GetSuperframeDuration();
 }
 
 uint8_t SyncBeaconMessage::GetTotalSlots() const {
     return header_.GetTotalSlots();
 }
 
-uint32_t SyncBeaconMessage::GetSlotDuration() const {
+uint16_t SyncBeaconMessage::GetSlotDuration() const {
     return header_.GetSlotDuration();
 }
 
-// Multi-hop forwarding field getters
-AddressType SyncBeaconMessage::GetOriginalSource() const {
-    return header_.GetOriginalSource();
+// Calculated/derived field getters
+uint16_t SyncBeaconMessage::GetSuperframeDuration() const {
+    return header_.GetSuperframeDuration();
 }
 
+// Multi-hop forwarding field getters (optimized)
 uint8_t SyncBeaconMessage::GetHopCount() const {
     return header_.GetHopCount();
 }
 
-uint32_t SyncBeaconMessage::GetOriginalTimestamp() const {
+uint16_t SyncBeaconMessage::GetOriginalTimestamp() const {
     return header_.GetOriginalTimestamp();
 }
 
@@ -133,10 +120,6 @@ uint32_t SyncBeaconMessage::GetPropagationDelay() const {
 
 uint8_t SyncBeaconMessage::GetMaxHops() const {
     return header_.GetMaxHops();
-}
-
-uint16_t SyncBeaconMessage::GetSequenceNumber() const {
-    return header_.GetSequenceNumber();
 }
 
 AddressType SyncBeaconMessage::GetSource() const {

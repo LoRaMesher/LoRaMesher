@@ -24,99 +24,78 @@ class SyncBeaconHeader : public BaseHeader {
     SyncBeaconHeader() = default;
 
     /**
-     * @brief Constructor with core sync fields
+     * @brief Constructor with core sync fields (optimized)
      * 
      * @param dest Destination address (typically broadcast 0xFFFF)
      * @param src Source address (current transmitter)
      * @param network_id Network identifier
-     * @param superframe_number Incremental superframe counter
-     * @param superframe_duration_ms Total superframe time in milliseconds
      * @param total_slots Number of slots in complete superframe
      * @param slot_duration_ms Individual slot duration in milliseconds
      */
     SyncBeaconHeader(AddressType dest, AddressType src, uint16_t network_id,
-                     uint32_t superframe_number,
-                     uint16_t superframe_duration_ms, uint8_t total_slots,
-                     uint32_t slot_duration_ms);
+                     uint8_t total_slots, uint16_t slot_duration_ms);
 
     /**
-     * @brief Full constructor with all multi-hop fields
+     * @brief Full constructor with all multi-hop fields (optimized)
      * 
      * @param dest Destination address (typically broadcast 0xFFFF)
      * @param src Source address (current transmitter)
      * @param network_id Network identifier
-     * @param superframe_number Incremental superframe counter
-     * @param superframe_duration_ms Total superframe time in milliseconds
      * @param total_slots Number of slots in complete superframe
      * @param slot_duration_ms Individual slot duration in milliseconds
-     * @param original_source Network Manager address (original beacon source)
      * @param hop_count Hops from Network Manager
      * @param original_timestamp_ms NM's original transmission time
      * @param propagation_delay_ms Accumulated forwarding delay
      * @param max_hops Network diameter limit
-     * @param sequence_number Loop prevention sequence number
      */
     SyncBeaconHeader(AddressType dest, AddressType src, uint16_t network_id,
-                     uint32_t superframe_number,
-                     uint16_t superframe_duration_ms, uint8_t total_slots,
-                     uint32_t slot_duration_ms, AddressType original_source,
-                     uint8_t hop_count, uint32_t original_timestamp_ms,
-                     uint32_t propagation_delay_ms, uint8_t max_hops,
-                     uint16_t sequence_number);
+                     uint8_t total_slots, uint16_t slot_duration_ms,
+                     uint8_t hop_count, uint16_t original_timestamp_ms,
+                     uint32_t propagation_delay_ms, uint8_t max_hops);
 
-    // Core synchronization field getters
+    // Core synchronization field getters (optimized)
     uint16_t GetNetworkId() const { return network_id_; }
-
-    uint32_t GetSuperframeNumber() const { return superframe_number_; }
-
-    uint16_t GetSuperframeDuration() const { return superframe_duration_ms_; }
 
     uint8_t GetTotalSlots() const { return total_slots_; }
 
-    uint32_t GetSlotDuration() const { return slot_duration_ms_; }
+    uint16_t GetSlotDuration() const { return slot_duration_ms_; }
 
-    // Multi-hop forwarding field getters
-    AddressType GetOriginalSource() const { return original_source_; }
-
+    // Multi-hop forwarding field getters (optimized)
     uint8_t GetHopCount() const { return hop_count_; }
 
-    uint32_t GetOriginalTimestamp() const { return original_timestamp_ms_; }
+    uint16_t GetOriginalTimestamp() const { return original_timestamp_ms_; }
 
     uint32_t GetPropagationDelay() const { return propagation_delay_ms_; }
 
     uint8_t GetMaxHops() const { return max_hops_; }
 
-    uint16_t GetSequenceNumber() const { return sequence_number_; }
+    // Calculated/derived field getters
+    uint16_t GetSuperframeDuration() const {
+        return total_slots_ * slot_duration_ms_;
+    }
 
     /**
-     * @brief Sets the core synchronization information
+     * @brief Sets the core synchronization information (optimized)
      * 
      * @param network_id Network identifier
-     * @param superframe_number Incremental superframe counter
-     * @param superframe_duration_ms Total superframe time
      * @param total_slots Number of slots in superframe
      * @param slot_duration_ms Individual slot duration
      * @return Result Success if setting succeeded, error otherwise
      */
-    Result SetSyncInfo(uint16_t network_id, uint32_t superframe_number,
-                       uint16_t superframe_duration_ms, uint8_t total_slots,
-                       uint32_t slot_duration_ms);
+    Result SetSyncInfo(uint16_t network_id, uint8_t total_slots,
+                       uint16_t slot_duration_ms);
 
     /**
-     * @brief Sets the multi-hop forwarding information
+     * @brief Sets the multi-hop forwarding information (optimized)
      * 
-     * @param original_source Network Manager address
      * @param hop_count Hops from Network Manager
      * @param original_timestamp_ms NM's original transmission time
      * @param propagation_delay_ms Accumulated forwarding delay
      * @param max_hops Network diameter limit
-     * @param sequence_number Loop prevention sequence number
      * @return Result Success if setting succeeded, error otherwise
      */
-    Result SetForwardingInfo(AddressType original_source, uint8_t hop_count,
-                             uint32_t original_timestamp_ms,
-                             uint32_t propagation_delay_ms, uint8_t max_hops,
-                             uint16_t sequence_number);
+    Result SetForwardingInfo(uint8_t hop_count, uint16_t original_timestamp_ms,
+                             uint32_t propagation_delay_ms, uint8_t max_hops);
 
     /**
      * @brief Adds propagation delay for forwarding
@@ -176,17 +155,16 @@ class SyncBeaconHeader : public BaseHeader {
      * @return size_t Size of the sync beacon header fields in bytes
      */
     static constexpr size_t SyncBeaconFieldsSize() {
-        return sizeof(uint16_t) +     // network_id
-               sizeof(uint32_t) +     // superframe_number
-               sizeof(uint16_t) +     // superframe_duration_ms
-               sizeof(uint8_t) +      // total_slots
-               sizeof(uint32_t) +     // slot_duration_ms
-               sizeof(AddressType) +  // original_source
-               sizeof(uint8_t) +      // hop_count
-               sizeof(uint32_t) +     // original_timestamp_ms
-               sizeof(uint32_t) +     // propagation_delay_ms
-               sizeof(uint8_t) +      // max_hops
-               sizeof(uint16_t);      // sequence_number
+        return sizeof(uint16_t) +  // network_id
+               sizeof(uint8_t) +   // total_slots
+               sizeof(uint16_t) +  // slot_duration_ms (optimized from uint32_t)
+               sizeof(uint8_t) +   // hop_count
+               sizeof(
+                   uint16_t) +  // original_timestamp_ms (optimized from uint32_t)
+               sizeof(uint32_t) +  // propagation_delay_ms
+               sizeof(uint8_t);    // max_hops
+        // Removed: superframe_number (4 bytes), superframe_duration_ms (2 bytes),
+        //          original_source (2 bytes), sequence_number (2 bytes)
     }
 
     /**
@@ -199,20 +177,24 @@ class SyncBeaconHeader : public BaseHeader {
     }
 
    private:
-    // Core synchronization fields
-    uint16_t network_id_ = 0;         ///< Network identifier
-    uint32_t superframe_number_ = 0;  ///< Incremental superframe counter
-    uint16_t superframe_duration_ms_ = 1000;  ///< Total superframe time
-    uint8_t total_slots_ = 10;                ///< Number of slots in superframe
-    uint32_t slot_duration_ms_ = 1000;        ///< Individual slot duration
+    // Core synchronization fields (optimized)
+    uint16_t network_id_ = 0;   ///< Network identifier
+    uint8_t total_slots_ = 10;  ///< Number of slots in superframe
+    uint16_t slot_duration_ms_ =
+        1000;  ///< Individual slot duration (optimized from uint32_t)
 
-    // Multi-hop forwarding fields
-    AddressType original_source_ = 0;     ///< Network Manager address
-    uint8_t hop_count_ = 0;               ///< Hops from Network Manager
-    uint32_t original_timestamp_ms_ = 0;  ///< NM's original transmission time
-    uint32_t propagation_delay_ms_ = 0;   ///< Accumulated forwarding delay
-    uint8_t max_hops_ = 5;                ///< Network diameter limit
-    uint16_t sequence_number_ = 0;        ///< Loop prevention sequence
+    // Multi-hop forwarding fields (optimized)
+    uint8_t hop_count_ = 0;  ///< Hops from Network Manager
+    uint16_t original_timestamp_ms_ =
+        0;  ///< NM's original transmission time (optimized from uint32_t)
+    uint32_t propagation_delay_ms_ = 0;  ///< Accumulated forwarding delay
+    uint8_t max_hops_ = 5;               ///< Network diameter limit
+
+    // Removed fields (total savings: 10 bytes):
+    // - uint32_t superframe_number_ (4 bytes) - Can be calculated from timing
+    // - uint16_t superframe_duration_ms_ (2 bytes) - Can be calculated from slots * slot_duration
+    // - AddressType original_source_ (2 bytes) - Redundant with routing information
+    // - uint16_t sequence_number_ (2 bytes) - Loop prevention handled differently
 };
 
 }  // namespace loramesher

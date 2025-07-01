@@ -1276,8 +1276,8 @@ Result NetworkService::UpdateSlotTable() {
                                    ? GetAllocatedDataSlots()
                                    : config_.default_data_slots;
 
-    // TODO: Get the max_hop_count from the sync beacon.
-    int max_hops_count = 5;
+    // Use max_hops from received sync beacons
+    int max_hops_count = network_max_hops_;
 
     // Fix slot allocation logic - control and discovery should be calculated separately
     allocated_control_slots_ = network_nodes_.size();
@@ -1787,18 +1787,29 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
     const auto& sync_beacon = sync_beacon_opt.value();
     uint32_t current_time = GetRTOS().getTickCount();
 
-    LOG_INFO("Received sync beacon from 0x%04X, hop count %d, sequence %d",
-             sync_beacon.GetSource(), sync_beacon.GetHopCount(),
-             sync_beacon.GetSequenceNumber());
+    LOG_INFO("Received sync beacon from 0x%04X, hop count %d",
+             sync_beacon.GetSource(), sync_beacon.GetHopCount());
 
     // Update network manager if this is from the original source
     if (sync_beacon.IsOriginalBeacon()) {
-        AddressType original_nm = sync_beacon.GetOriginalSource();
+        // For original beacons (hop count 0), the source IS the network manager
+        AddressType original_nm = sync_beacon.GetSource();
         if (network_manager_ != original_nm) {
             std::lock_guard<std::mutex> lock(network_mutex_);
             network_manager_ = original_nm;
             LOG_INFO("Updated network manager to 0x%04X from sync beacon",
                      original_nm);
+        }
+    }
+
+    // Store max_hops from the sync beacon for slot allocation calculations
+    {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        uint8_t beacon_max_hops = sync_beacon.GetMaxHops();
+        if (beacon_max_hops != network_max_hops_) {
+            network_max_hops_ = beacon_max_hops;
+            LOG_INFO("Updated network max_hops to %d from sync beacon",
+                     network_max_hops_);
         }
     }
 
@@ -1812,14 +1823,14 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
 
     // Update superframe timing if we have a superframe service
     if (superframe_service_) {
-        uint32_t superframe_number = sync_beacon.GetSuperframeNumber();
         uint16_t superframe_duration = sync_beacon.GetSuperframeDuration();
         uint8_t total_slots = sync_beacon.GetTotalSlots();
-        uint32_t slot_duration = sync_beacon.GetSlotDuration();
+        uint16_t slot_duration = sync_beacon.GetSlotDuration();
 
         // TODO: Update superframe service with new timing information
-        LOG_DEBUG("Sync beacon timing: frame %d, duration %d ms, slots %d",
-                  superframe_number, superframe_duration, total_slots);
+        LOG_DEBUG(
+            "Sync beacon timing: duration %d ms, slots %d, slot_duration %d ms",
+            superframe_duration, total_slots, slot_duration);
     }
 
     // Check if we should forward this beacon
@@ -1854,18 +1865,16 @@ Result NetworkService::SendSyncBeacon(uint32_t superframe_number,
 
     uint32_t current_time = GetRTOS().getTickCount();
 
-    // Create original sync beacon
+    // Create original sync beacon with optimized parameters
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
         0xFFFF,         // Broadcast destination
         node_address_,  // Network manager as source
         1,              // TODO: Get actual network ID
-        superframe_number,
-        1000,  // Default superframe duration
-        20,    // Default total slots
-        superframe_service_->GetSlotDuration(),
-        current_time,  // Original timestamp
-        5,             // Max 5 hops for mesh network
-        sequence_number);
+        20,             // Default total slots
+        static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
+        static_cast<uint16_t>(current_time &
+                              0xFFFF),  // Original timestamp (16-bit)
+        5);                             // Max 5 hops for mesh network
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
@@ -1883,8 +1892,7 @@ Result NetworkService::SendSyncBeacon(uint32_t superframe_number,
 
     LOG_INFO("Queued sync beacon for transmission");
 
-    LOG_INFO("Sent sync beacon: frame %d, sequence %d", superframe_number,
-             sequence_number);
+    LOG_INFO("Sent sync beacon: sequence %d", sequence_number);
     return Result::Success();
 }
 
@@ -1910,8 +1918,7 @@ Result NetworkService::ForwardSyncBeacon(
 
     LOG_INFO("Queued forwarded sync beacon for transmission");
 
-    LOG_INFO("Forwarded sync beacon from 0x%04X, new hop count %d",
-             original_beacon.GetOriginalSource(),
+    LOG_INFO("Forwarded sync beacon, new hop count %d",
              forwarded_beacon_opt.value().GetHopCount());
 
     return Result::Success();
