@@ -12,12 +12,12 @@ namespace lora_mesh {
 
 bool SlotAllocation::IsTxSlot() const {
     return type == SlotType::TX || type == SlotType::DISCOVERY_TX ||
-           type == SlotType::CONTROL_TX;
+           type == SlotType::CONTROL_TX || type == SlotType::SYNC_BEACON_TX;
 }
 
 bool SlotAllocation::IsRxSlot() const {
     return type == SlotType::RX || type == SlotType::DISCOVERY_RX ||
-           type == SlotType::CONTROL_RX;
+           type == SlotType::CONTROL_RX || type == SlotType::SYNC_BEACON_RX;
 }
 
 bool SlotAllocation::IsControlSlot() const {
@@ -26,6 +26,10 @@ bool SlotAllocation::IsControlSlot() const {
 
 bool SlotAllocation::IsDiscoverySlot() const {
     return type == SlotType::DISCOVERY_RX || type == SlotType::DISCOVERY_TX;
+}
+
+bool SlotAllocation::IsSyncBeaconSlot() const {
+    return type == SlotType::SYNC_BEACON_RX || type == SlotType::SYNC_BEACON_TX;
 }
 
 std::string SlotAllocation::GetTypeString() const {
@@ -92,6 +96,10 @@ std::string SlotTypeToString(SlotAllocation::SlotType type) {
             return "CONTROL_RX";
         case SlotAllocation::SlotType::CONTROL_TX:
             return "CONTROL_TX";
+        case SlotAllocation::SlotType::SYNC_BEACON_TX:
+            return "SYNC_BEACON_TX";
+        case SlotAllocation::SlotType::SYNC_BEACON_RX:
+            return "SYNC_BEACON_RX";
         default:
             return "UNKNOWN";
     }
@@ -113,6 +121,10 @@ std::optional<SlotAllocation::SlotType> StringToSlotType(
         return SlotAllocation::SlotType::CONTROL_RX;
     if (type_str == "CONTROL_TX")
         return SlotAllocation::SlotType::CONTROL_TX;
+    if (type_str == "SYNC_BEACON_TX")
+        return SlotAllocation::SlotType::SYNC_BEACON_TX;
+    if (type_str == "SYNC_BEACON_RX")
+        return SlotAllocation::SlotType::SYNC_BEACON_RX;
 
     return std::nullopt;
 }
@@ -126,6 +138,8 @@ bool IsValidSlotType(SlotAllocation::SlotType type) {
         case SlotAllocation::SlotType::DISCOVERY_TX:
         case SlotAllocation::SlotType::CONTROL_RX:
         case SlotAllocation::SlotType::CONTROL_TX:
+        case SlotAllocation::SlotType::SYNC_BEACON_TX:
+        case SlotAllocation::SlotType::SYNC_BEACON_RX:
             return true;
         default:
             return false;

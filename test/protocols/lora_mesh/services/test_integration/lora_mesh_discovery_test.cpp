@@ -118,85 +118,269 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
 }
 
 /**
+ * @brief Test single node discovery with delayed initialization
+ *
+ * This test verifies that a single node properly handles delayed start conditions
+ * and still transitions to network manager state correctly.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscoveryDelayedStart) {
+    auto& node = CreateNode("DelayedNode", 0x1001);
+
+    // Add artificial delay before starting
+    WaitForTasksToExecute();
+    WaitForTasksToExecute();
+
+    ASSERT_TRUE(StartNode(node));
+    EXPECT_EQ(node.protocol->GetState(),
+              protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
+
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
+
+    bool advanced =
+        AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
+                    slot_duration, 10, [&]() {
+                        return node.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
+    EXPECT_TRUE(advanced) << "Delayed node did not become network manager";
+    EXPECT_TRUE(node.protocol->IsSynchronized());
+    EXPECT_EQ(node.protocol->GetNetworkManager(), node.address);
+}
+
+/**
+ * @brief Test single node synchronization validation
+ *
+ * This test focuses on validating the synchronization state and its persistence
+ * throughout the network manager lifecycle.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeSynchronizationValidation) {
+    auto& node = CreateNode("SyncNode", 0x1001);
+    ASSERT_TRUE(StartNode(node));
+
+    // Node should not be synchronized initially
+    EXPECT_FALSE(node.protocol->IsSynchronized());
+
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
+
+    bool advanced = AdvanceTime(
+        discovery_timeout + 100, discovery_timeout + 500, slot_duration, 10,
+        [&]() { return node.protocol->IsSynchronized(); });
+    EXPECT_TRUE(advanced) << "Node did not synchronize in time";
+
+    // Verify synchronization persists across multiple slot cycles
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        advanced = AdvanceTime(slot_duration + 50, slot_duration + 200,
+                               slot_duration, 5, [&]() { return true; });
+        EXPECT_TRUE(advanced);
+        EXPECT_TRUE(node.protocol->IsSynchronized())
+            << "Synchronization lost in cycle " << cycle;
+    }
+}
+
+/**
+ * @brief Test single node slot management
+ *
+ * This test validates proper slot allocation and cycling behavior for a single node.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
+    auto& node = CreateNode("SlotNode", 0x1001);
+    ASSERT_TRUE(StartNode(node));
+
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
+
+    bool advanced =
+        AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
+                    slot_duration, 10, [&]() {
+                        return node.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
+    EXPECT_TRUE(advanced);
+
+    auto slot_table = node.protocol->GetSlotTable();
+    EXPECT_FALSE(slot_table.empty()) << "Slot table should not be empty";
+
+    // Verify slot progression and wraparound
+    size_t initial_slot = node.protocol->GetCurrentSlot();
+    for (size_t expected_slot = 0; expected_slot < slot_table.size() * 2;
+         ++expected_slot) {
+        size_t wrapped_slot = expected_slot % slot_table.size();
+        advanced = AdvanceTime(
+            slot_duration + 50, slot_duration + 200, slot_duration, 5,
+            [&]() { return node.protocol->GetCurrentSlot() == wrapped_slot; });
+        EXPECT_TRUE(advanced) << "Failed to advance to slot " << wrapped_slot;
+        EXPECT_EQ(node.protocol->GetCurrentSlot(), wrapped_slot);
+    }
+}
+
+/**
+ * @brief Test single node message generation
+ *
+ * This test verifies that routing messages are properly generated and transmitted.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeMessageGeneration) {
+    auto& node = CreateNode("MsgNode", 0x1001);
+    ASSERT_TRUE(StartNode(node));
+
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
+
+    bool advanced =
+        AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
+                    slot_duration, 10, [&]() {
+                        return node.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
+    EXPECT_TRUE(advanced);
+
+    // Clear any initial messages
+    virtual_network_.ClearAllSentMessages();
+
+    // Wait for message generation
+    advanced = AdvanceTime(
+        slot_duration + 50, slot_duration * 3, slot_duration, 10, [&]() {
+            return virtual_network_.GetSentMessageCount(node.address) > 0;
+        });
+
+    EXPECT_TRUE(advanced) << "No messages generated";
+
+    auto messages = virtual_network_.GetLastSentMessages(node.address, 5);
+    EXPECT_FALSE(messages.empty()) << "Expected routing messages";
+
+    // Verify message generation continues
+    size_t initial_count = virtual_network_.GetSentMessageCount(node.address);
+    advanced = AdvanceTime(
+        slot_duration * 2, slot_duration * 4, slot_duration, 10, [&]() {
+            return virtual_network_.GetSentMessageCount(node.address) >
+                   initial_count;
+        });
+    EXPECT_TRUE(advanced) << "Message generation stopped";
+}
+
+/**
   * @brief Test two node network formation with sequential start
   *
   * This test verifies that when two nodes are within range and started sequentially,
   * the first node becomes network manager and the second node joins the network.
   */
-// TEST_F(LoRaMeshDiscoveryTests, TwoNodeSequentialStart) {
-//     // Create two nodes
-//     auto& node1 = CreateNode("Node1", 0x1001);
-//     auto& node2 = CreateNode("Node2", 0x1002);
+TEST_F(LoRaMeshDiscoveryTests, TwoNodeSequentialStart) {
+    // Create two nodes
+    auto& node1 = CreateNode("Node1", 0x1001);
+    auto& node2 = CreateNode("Node2", 0x1002);
 
-//     // Ensure nodes can communicate
-//     SetLinkStatus(node1, node2, true);
+    // Ensure nodes can communicate
+    SetLinkStatus(node1, node2, true);
 
-//     // Start the first node
-//     ASSERT_TRUE(StartNode(node1));
+    // Start the first node
+    ASSERT_TRUE(StartNode(node1));
 
-//     // Initially, the node should be in DISCOVERY state
-//     EXPECT_EQ(node1.protocol->GetState(),
-//               protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
+    // Initially, the node should be in DISCOVERY state
+    EXPECT_EQ(node1.protocol->GetState(),
+              protocols::lora_mesh::INetworkService::ProtocolState::DISCOVERY);
 
-//     WaitForTasksToExecute();
+    WaitForTasksToExecute();
 
-//     // Advance time to let node1 become network manager
-//     auto discovery_timeout1 = GetDiscoveryTimeout(node1);
-//     auto slot_duration1 = GetSlotDuration(node1);
-//     LOG_DEBUG("Discovery timeout: %u ms, Slot duration: %u ms",
-//               discovery_timeout1, slot_duration1);
-//     EXPECT_GT(slot_duration1, 0) << "Slot duration should be greater than zero";
-//     EXPECT_GT(discovery_timeout1, 0)
-//         << "Discovery timeout should be greater than zero";
-//     bool advanced1 =
-//         AdvanceTime(discovery_timeout1 + 100, discovery_timeout1 + 500,
-//                     slot_duration1, 10, [&]() {
-//                         return node1.protocol->GetState() ==
-//                                protocols::lora_mesh::INetworkService::
-//                                    ProtocolState::NETWORK_MANAGER;
-//                     });
-//     EXPECT_TRUE(advanced1) << "Node did not become network manager in time";
+    // Advance time to let node1 become network manager
+    auto discovery_timeout1 = GetDiscoveryTimeout(node1);
+    auto slot_duration1 = GetSlotDuration(node1);
+    LOG_DEBUG("Discovery timeout: %u ms, Slot duration: %u ms",
+              discovery_timeout1, slot_duration1);
+    EXPECT_GT(slot_duration1, 0) << "Slot duration should be greater than zero";
+    EXPECT_GT(discovery_timeout1, 0)
+        << "Discovery timeout should be greater than zero";
+    bool advanced1 =
+        AdvanceTime(discovery_timeout1 + 100, discovery_timeout1 + 500,
+                    slot_duration1, 10, [&]() {
+                        return node1.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
+    EXPECT_TRUE(advanced1) << "Node did not become network manager in time";
 
-//     // Verify node1 is now a network manager
-//     EXPECT_EQ(
-//         node1.protocol->GetState(),
-//         protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
-//     EXPECT_TRUE(node1.protocol->IsSynchronized());
+    // Verify node1 is now a network manager
+    EXPECT_EQ(
+        node1.protocol->GetState(),
+        protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
+    EXPECT_TRUE(node1.protocol->IsSynchronized());
 
-//     // Start the second node
-//     ASSERT_TRUE(StartNode(node2));
+    // Start the second node
+    ASSERT_TRUE(StartNode(node2));
 
-//     WaitForTasksToExecute();
+    WaitForTasksToExecute();
 
-//     // Advance time to let node2 discover node1's network
-//     auto discovery_timeout2 = GetDiscoveryTimeout(node2);
-//     auto slot_duration2 = GetSlotDuration(node2);
-//     LOG_DEBUG("Discovery timeout: %u ms, Slot duration: %u ms",
-//               discovery_timeout2, slot_duration2);
-//     EXPECT_GT(slot_duration2, 0) << "Slot duration should be greater than zero";
-//     EXPECT_GT(discovery_timeout2, 0)
-//         << "Discovery timeout should be greater than zero";
-//     bool advanced2 =
-//         AdvanceTime(discovery_timeout2 + 100, discovery_timeout2 + 500,
-//                     slot_duration2, 10, [&]() {
-//                         return node2.protocol->GetState() ==
-//                                protocols::lora_mesh::INetworkService::
-//                                    ProtocolState::NORMAL_OPERATION;
-//                     });
-//     EXPECT_TRUE(advanced2) << "Node did not become network manager in time";
+    // Advance time to let node2 discover node1's network
+    auto discovery_timeout2 = GetDiscoveryTimeout(node2);
+    auto slot_duration2 = GetSlotDuration(node2);
+    LOG_DEBUG("Node2 Discovery timeout: %u ms, Slot duration: %u ms",
+              discovery_timeout2, slot_duration2);
+    EXPECT_GT(slot_duration2, 0) << "Slot duration should be greater than zero";
+    EXPECT_GT(discovery_timeout2, 0)
+        << "Discovery timeout should be greater than zero";
 
-//     // Verify node2 joined node1's network
-//     EXPECT_EQ(
-//         node2.protocol->GetState(),
-//         protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
-//     EXPECT_TRUE(node2.protocol->IsSynchronized());
-//     EXPECT_EQ(node2.protocol->GetNetworkManager(), node1.address);
+    // First wait for node2 to discover the network (DISCOVERY -> JOINING)
+    bool found_network = AdvanceTime(
+        discovery_timeout2 + 100, discovery_timeout2 + 500, slot_duration2, 10,
+        [&]() {
+            auto state = node2.protocol->GetState();
+            LOG_DEBUG("Node2 current state: %d", static_cast<int>(state));
+            return state == protocols::lora_mesh::INetworkService::
+                                ProtocolState::JOINING ||
+                   state == protocols::lora_mesh::INetworkService::
+                                ProtocolState::NORMAL_OPERATION;
+        });
+    EXPECT_TRUE(found_network) << "Node2 did not discover network in time";
 
-//     // Verify node1 is still network manager
-//     EXPECT_EQ(
-//         node1.protocol->GetState(),
-//         protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
-// }
+    // Then wait for the join process to complete (JOINING -> NORMAL_OPERATION)
+    bool advanced2 = AdvanceTime(
+        slot_duration2 * 5, slot_duration2 * 15, slot_duration2, 20, [&]() {
+            auto state = node2.protocol->GetState();
+            LOG_DEBUG("Node2 joining state: %d", static_cast<int>(state));
+            return state == protocols::lora_mesh::INetworkService::
+                                ProtocolState::NORMAL_OPERATION;
+        });
+    EXPECT_TRUE(advanced2) << "Node2 did not complete join process in time";
+
+    // Verify node2 joined node1's network
+    EXPECT_EQ(
+        node2.protocol->GetState(),
+        protocols::lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION);
+    EXPECT_TRUE(node2.protocol->IsSynchronized());
+    EXPECT_EQ(node2.protocol->GetNetworkManager(), node1.address);
+
+    // Verify node1 is still network manager
+    EXPECT_EQ(
+        node1.protocol->GetState(),
+        protocols::lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER);
+
+    // Additional verification of network state
+    auto node1_network_nodes = node1.protocol->GetNetworkNodes();
+    auto node2_network_nodes = node2.protocol->GetNetworkNodes();
+
+    LOG_DEBUG("Node1 network size: %zu, Node2 network size: %zu",
+              node1_network_nodes.size(), node2_network_nodes.size());
+
+    // Both nodes should see each other in the network
+    EXPECT_GE(node1_network_nodes.size(), 2)
+        << "Node1 should see at least 2 nodes (including itself)";
+    EXPECT_GE(node2_network_nodes.size(), 2)
+        << "Node2 should see at least 2 nodes (including itself)";
+
+    // Verify message communication occurred
+    auto node1_messages = virtual_network_.GetSentMessageCount(node1.address);
+    auto node2_messages = virtual_network_.GetSentMessageCount(node2.address);
+
+    LOG_DEBUG("Node1 sent %zu messages, Node2 sent %zu messages",
+              node1_messages, node2_messages);
+
+    EXPECT_GT(node1_messages, 0) << "Network manager should have sent messages";
+    EXPECT_GT(node2_messages, 0)
+        << "Joining node should have sent join requests";
+}
 
 // /**
 //   * @brief Test two node network formation with simultaneous start

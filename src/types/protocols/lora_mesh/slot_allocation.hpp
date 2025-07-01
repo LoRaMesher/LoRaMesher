@@ -34,6 +34,9 @@ struct SlotAllocation {
         DISCOVERY_TX = 0x05,  ///< Discovery transmission slot
         CONTROL_RX = 0x06,    ///< Control message reception slot
         CONTROL_TX = 0x07,    ///< Control message transmission slot
+        SYNC_BEACON_TX =
+            0x08,  ///< Sync beacon transmission slot (Network Manager only)
+        SYNC_BEACON_RX = 0x09,  ///< Sync beacon reception slot (for forwarding)
     };
 
     uint16_t slot_number = 0;         ///< Slot number in the superframe
@@ -84,6 +87,13 @@ struct SlotAllocation {
      * @return bool True if this is a discovery RX or TX slot
      */
     bool IsDiscoverySlot() const;
+
+    /**
+     * @brief Check if this is a sync beacon slot
+     * 
+     * @return bool True if this is a sync beacon RX or TX slot
+     */
+    bool IsSyncBeaconSlot() const;
 
     /**
      * @brief Get the string representation of the slot type

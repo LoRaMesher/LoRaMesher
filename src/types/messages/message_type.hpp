@@ -52,6 +52,7 @@ enum class MessageType : uint8_t {
     JOIN_RESPONSE = 0x43,    ///< 0100 0011: Response to join request
     SLOT_REQUEST = 0x44,     ///< 0100 0100: Request for slot allocation
     SLOT_ALLOCATION = 0x45,  ///< 0100 0101: Slot allocation response
+    SYNC_BEACON = 0x46,      ///< 0100 0110: Multi-hop sync beacon
 };
 
 /**

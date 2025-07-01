@@ -19,6 +19,7 @@
 #include "types/messages/loramesher/routing_table_message.hpp"
 #include "types/messages/loramesher/slot_allocation_message.hpp"
 #include "types/messages/loramesher/slot_request_message.hpp"
+#include "types/messages/loramesher/sync_beacon_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "utils/logger.hpp"
@@ -394,6 +395,66 @@ class NetworkService : public INetworkService {
         AddressType dest, loramesher::JoinResponseHeader::ResponseStatus status,
         uint8_t allocated_slots);
 
+    // Multi-hop synchronization beacon processing
+
+    /**
+     * @brief Process a received sync beacon message
+     * 
+     * Handles timing synchronization and forwarding decisions for multi-hop
+     * sync beacon propagation across the mesh network.
+     * 
+     * @param message Sync beacon message
+     * @return Result Success or error
+     */
+    Result ProcessSyncBeacon(const BaseMessage& message);
+
+    /**
+     * @brief Send an original sync beacon (Network Manager only)
+     * 
+     * Creates and sends the original synchronization beacon with current
+     * superframe timing information. Only the Network Manager should call this.
+     * 
+     * @param superframe_number Current superframe number
+     * @param sequence_number Unique sequence number for loop prevention
+     * @return Result Success or error
+     */
+    Result SendSyncBeacon(uint32_t superframe_number, uint16_t sequence_number);
+
+    /**
+     * @brief Forward a received sync beacon to the next hop
+     * 
+     * Creates and sends a forwarded version of the received sync beacon,
+     * incrementing hop count and adding propagation delay.
+     * 
+     * @param original_beacon The sync beacon to forward
+     * @param processing_delay Additional delay for processing and transmission
+     * @return Result Success or error
+     */
+    Result ForwardSyncBeacon(const SyncBeaconMessage& original_beacon,
+                             uint32_t processing_delay);
+
+    /**
+     * @brief Check if this node should forward a sync beacon
+     * 
+     * Determines if the node should forward based on hop count, network
+     * topology, and forwarding rules to prevent loops and collisions.
+     * 
+     * @param beacon The sync beacon to evaluate
+     * @return bool True if the node should forward this beacon
+     */
+    bool ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon);
+
+    /**
+     * @brief Handle superframe start event for sync beacon transmission
+     * 
+     * Called at the beginning of each superframe. If this node is the Network Manager,
+     * it will send a sync beacon. If it's a regular node, it will listen for sync beacons.
+     * 
+     * @param superframe_number Current superframe number
+     * @return Result Success or error
+     */
+    Result HandleSuperframeStart(uint32_t superframe_number);
+
     // Slot management methods
 
     /**
@@ -440,6 +501,19 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result SetDiscoverySlots();
+
+    /**
+     * @brief Set joining slots for power-efficient join process
+     * 
+     * Configures minimal slot allocation for JOINING state:
+     * - 1 CONTROL_TX slot for join requests
+     * - 1 CONTROL_RX slot for join responses  
+     * - 2 DISCOVERY_RX slots for network monitoring
+     * - Remaining slots as SLEEP for power efficiency
+     * 
+     * @return Result Success or error
+     */
+    Result SetJoiningSlots();
 
     /**
      * @brief Broadcast slot allocation to all nodes
