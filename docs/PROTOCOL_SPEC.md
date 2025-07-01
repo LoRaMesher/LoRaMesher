@@ -623,6 +623,9 @@ struct TimingConfig {
 - [ ] Check if the sync beacon message could be reduced in size, now is 27 bytes of size. (removing sequence_number, superframe_number, superframe_duration_ms, original_source) Check if some of the types could be reduced into smaller types. Correct me if I am wrong. 
 - [ ] Modify all the functions that uses beacon messages with the previous changes.
 - [ ] Correct and test the sync beacon message test.
+- [ ] Think about the following and implement a plan: Control slots would be allocated to N nodes. RX node if they are at 1 hop of their neighbours, 1 TX to send their routing table and else sleep. Which order should they send the routing table? Can you give me suggestions?
+- [ ] Change the .md files to be accordingly to the previous control slots.
+- [ ] Add test in comprehensive_slot_allocation_test to fullfill the previous control slots too.
 - [ ] Test and check the comprehensive_slot_allocation_test
 - [ ] Evaluate how the join_request and the join_response should be forwarded throught the network. Multiple devices would receive the message and we need to ensure that only one message is forwarded. (Use the next_hop when joining a network?)
 - [ ] Evaluate how the superframe is being start when a sync beacon is received.

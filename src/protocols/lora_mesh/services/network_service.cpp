@@ -1379,22 +1379,50 @@ Result NetworkService::UpdateSlotTable() {
         slot_table_[slot_index - 1] = sync_slot;
     }
 
-    // Allocate the control slots starting after sync beacon slots
+    // Allocate control slots with deterministic address-based ordering
+    // This ensures all nodes in the network calculate the same slot allocation order
+    std::vector<NetworkNodeRoute> ordered_nodes = network_nodes_;
+    std::sort(ordered_nodes.begin(), ordered_nodes.end(),
+              [](const NetworkNodeRoute& a, const NetworkNodeRoute& b) {
+                  // Primary: Network Manager transmits first (has most complete routing info)
+                  if (a.is_network_manager != b.is_network_manager) {
+                      return a.is_network_manager > b.is_network_manager;
+                  }
+                  // Secondary: address-based deterministic ordering (same across all nodes)
+                  return a.routing_entry.destination <
+                         b.routing_entry.destination;
+              });
+
     for (size_t i = 0;
-         i < network_nodes_.size() && slot_index < total_superframe_slots;
-         i++) {
-        auto node = network_nodes_[i];
+         i < ordered_nodes.size() && slot_index < total_superframe_slots; i++) {
+        const auto& node = ordered_nodes[i];
         AddressType addr = node.GetAddress();
 
         auto& slot_allocation = slot_table_[slot_index];
         slot_allocation.slot_number = slot_index;
         slot_allocation.target_address = addr;
 
-        if (addr != node_address_) {
-            slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
-        } else {
+        if (addr == node_address_) {
+            // This node's control TX slot for routing table transmission
             if (node.is_active) {
                 slot_allocation.type = SlotAllocation::SlotType::CONTROL_TX;
+                LOG_DEBUG(
+                    "Allocated CONTROL_TX slot %zu for local node 0x%04X "
+                    "(NM=%d)",
+                    slot_index, addr, node.is_network_manager);
+            }
+        } else {
+            // Only listen to direct neighbors (1-hop), sleep for others
+            if (node.IsDirectNeighbor()) {
+                slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
+                LOG_DEBUG(
+                    "Allocated CONTROL_RX slot %zu for neighbor 0x%04X (NM=%d)",
+                    slot_index, addr, node.is_network_manager);
+            } else {
+                slot_allocation.type = SlotAllocation::SlotType::SLEEP;
+                LOG_DEBUG(
+                    "Allocated SLEEP slot %zu for non-neighbor 0x%04X (NM=%d)",
+                    slot_index, addr, node.is_network_manager);
             }
         }
         slot_index++;
