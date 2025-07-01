@@ -1412,18 +1412,25 @@ Result NetworkService::UpdateSlotTable() {
                     slot_index, addr, node.is_network_manager);
             }
         } else {
+            slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
+            LOG_DEBUG("allocated CONTROL_RX slot %zu for node 0x%04X (NM=%d)",
+                      slot_index, addr, node.is_network_manager);
+
+            //TODO: If we want to optimize the sleep nodes we can use the following code, however,
+            // we should sometime listen all the nodes to see if we have better links
+
             // Only listen to direct neighbors (1-hop), sleep for others
-            if (node.IsDirectNeighbor()) {
-                slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
-                LOG_DEBUG(
-                    "Allocated CONTROL_RX slot %zu for neighbor 0x%04X (NM=%d)",
-                    slot_index, addr, node.is_network_manager);
-            } else {
-                slot_allocation.type = SlotAllocation::SlotType::SLEEP;
-                LOG_DEBUG(
-                    "Allocated SLEEP slot %zu for non-neighbor 0x%04X (NM=%d)",
-                    slot_index, addr, node.is_network_manager);
-            }
+            // if (node.IsDirectNeighbor()) {
+            //     slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
+            //     LOG_DEBUG(
+            //         "Allocated CONTROL_RX slot %zu for neighbor 0x%04X (NM=%d)",
+            //         slot_index, addr, node.is_network_manager);
+            // } else {
+            //     slot_allocation.type = SlotAllocation::SlotType::SLEEP;
+            //     LOG_DEBUG(
+            //         "Allocated SLEEP slot %zu for non-neighbor 0x%04X (NM=%d)",
+            //         slot_index, addr, node.is_network_manager);
+            // }
         }
         slot_index++;
     }
