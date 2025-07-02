@@ -15,7 +15,7 @@ JoinRequestMessage::JoinRequestMessage(
 std::optional<JoinRequestMessage> JoinRequestMessage::Create(
     AddressType dest, AddressType src, uint8_t capabilities,
     uint8_t battery_level, uint8_t requested_slots,
-    const std::vector<uint8_t>& additional_info) {
+    const std::vector<uint8_t>& additional_info, AddressType next_hop) {
 
     // Validate battery level
     if (battery_level > 100) {
@@ -25,7 +25,7 @@ std::optional<JoinRequestMessage> JoinRequestMessage::Create(
 
     // Create the header with the join request information
     JoinRequestHeader header(dest, src, capabilities, battery_level,
-                             requested_slots);
+                             requested_slots, next_hop, additional_info.size());
 
     return JoinRequestMessage(header, additional_info);
 }
@@ -100,16 +100,17 @@ size_t JoinRequestMessage::GetTotalSize() const {
 
 BaseMessage JoinRequestMessage::ToBaseMessage() const {
     // Calculate payload size
-    size_t payload_size =
-        3 + additional_info_.size();  // 3 bytes for the header fields
+    size_t payload_size = GetTotalSize();
     std::vector<uint8_t> payload(payload_size);
 
     utils::ByteSerializer serializer(payload);
 
-    // Serialize the header-specific fields into the payload
-    serializer.WriteUint8(header_.GetCapabilities());
-    serializer.WriteUint8(header_.GetBatteryLevel());
-    serializer.WriteUint8(header_.GetRequestedSlots());
+    Result result = header_.Serialize(serializer);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to serialize join request message header");
+        return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                           MessageType::JOIN_REQUEST, {});
+    }
 
     // Add any additional information
     if (!additional_info_.empty()) {
@@ -117,15 +118,12 @@ BaseMessage JoinRequestMessage::ToBaseMessage() const {
     }
 
     // Create the base message with our serialized content as payload
-    auto base_message =
-        BaseMessage::Create(header_.GetDestination(), header_.GetSource(),
-                            MessageType::JOIN_REQUEST, payload);
-
+    auto base_message = BaseMessage::CreateFromSerialized(payload);
     if (!base_message.has_value()) {
-        LOG_ERROR("Failed to create base message from join request message");
+        LOG_ERROR("Failed to create base message from join request");
         // Return an empty message as fallback
         return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::JOIN_REQUEST, {});
+                           MessageType::SYNC_BEACON, {});
     }
 
     return base_message.value();

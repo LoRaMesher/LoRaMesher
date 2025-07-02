@@ -30,13 +30,15 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
       * @param allocated_slots Number of data slots allocated
       * @param status Response status code
       * @param superframe_info Optional superframe configuration information
+      * @param next_hop Next hop for message forwarding (0 for direct)
       * @return std::optional<JoinResponseMessage> Valid message if creation succeeded,
       *         std::nullopt otherwise
       */
     static std::optional<JoinResponseMessage> Create(
         AddressType dest, AddressType src, uint16_t network_id,
         uint8_t allocated_slots, JoinResponseHeader::ResponseStatus status,
-        const std::vector<uint8_t>& superframe_info = {});
+        const std::vector<uint8_t>& superframe_info = {},
+        AddressType next_hop = 0);
 
     /**
       * @brief Creates a join response message from serialized data

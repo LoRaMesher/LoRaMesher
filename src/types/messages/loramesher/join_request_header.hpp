@@ -45,9 +45,13 @@ class JoinRequestHeader : public BaseHeader {
       * @param capabilities Node capabilities bitmap
       * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
+      * @param next_hop Next hop for message forwarding (0 for direct)
+      * @param additional_info_size To store the payload size in the base message
       */
     JoinRequestHeader(AddressType dest, AddressType src, uint8_t capabilities,
-                      uint8_t battery_level, uint8_t requested_slots);
+                      uint8_t battery_level, uint8_t requested_slots,
+                      AddressType next_hop = 0,
+                      uint8_t additional_info_size = 0);
 
     /**
       * @brief Gets the node capabilities
@@ -69,6 +73,13 @@ class JoinRequestHeader : public BaseHeader {
       * @return uint8_t Requested number of data slots
       */
     uint8_t GetRequestedSlots() const { return requested_slots_; }
+
+    /**
+      * @brief Gets the next hop for message forwarding
+      * 
+      * @return AddressType Next hop address (0 for direct routing)
+      */
+    AddressType GetNextHop() const { return next_hop_; }
 
     /**
       * @brief Sets the join request specific information
@@ -107,9 +118,10 @@ class JoinRequestHeader : public BaseHeader {
       * @return size_t Size of the join request header fields in bytes
       */
     static constexpr size_t JoinRequestFieldsSize() {
-        return sizeof(uint8_t) +  // Capabilities
-               sizeof(uint8_t) +  // Battery level
-               sizeof(uint8_t);   // Requested slots
+        return sizeof(uint8_t) +     // Capabilities
+               sizeof(uint8_t) +     // Battery level
+               sizeof(uint8_t) +     // Requested slots
+               sizeof(AddressType);  // Next hop
     }
 
     /**
@@ -125,6 +137,7 @@ class JoinRequestHeader : public BaseHeader {
     uint8_t capabilities_ = 0;     ///< Node capabilities bitmap
     uint8_t battery_level_ = 100;  ///< Battery level (0-100%)
     uint8_t requested_slots_ = 1;  ///< Requested number of data slots
+    AddressType next_hop_ = 0;     ///< Next hop for message forwarding
 };
 
 }  // namespace loramesher

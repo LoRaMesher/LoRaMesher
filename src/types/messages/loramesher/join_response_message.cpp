@@ -15,10 +15,11 @@ JoinResponseMessage::JoinResponseMessage(
 std::optional<JoinResponseMessage> JoinResponseMessage::Create(
     AddressType dest, AddressType src, uint16_t network_id,
     uint8_t allocated_slots, JoinResponseHeader::ResponseStatus status,
-    const std::vector<uint8_t>& superframe_info) {
+    const std::vector<uint8_t>& superframe_info, AddressType next_hop) {
 
     // Create the header with the join response information
-    JoinResponseHeader header(dest, src, network_id, allocated_slots, status);
+    JoinResponseHeader header(dest, src, network_id, allocated_slots, status,
+                              next_hop, superframe_info.size());
 
     return JoinResponseMessage(header, superframe_info);
 }
@@ -93,16 +94,17 @@ size_t JoinResponseMessage::GetTotalSize() const {
 
 BaseMessage JoinResponseMessage::ToBaseMessage() const {
     // Calculate payload size
-    size_t payload_size =
-        4 + superframe_info_.size();  // 4 bytes for header fields
-    std::vector<uint8_t> payload(payload_size);
+    size_t payload_size = GetTotalSize();
 
+    std::vector<uint8_t> payload(payload_size);
     utils::ByteSerializer serializer(payload);
 
-    // Serialize the header-specific fields into the payload
-    serializer.WriteUint16(header_.GetNetworkId());
-    serializer.WriteUint8(header_.GetAllocatedSlots());
-    serializer.WriteUint8(static_cast<uint8_t>(header_.GetStatus()));
+    Result result = header_.Serialize(serializer);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to serialize join response header");
+        return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                           MessageType::JOIN_RESPONSE, {});
+    }
 
     // Add any superframe information
     if (!superframe_info_.empty()) {
@@ -110,15 +112,12 @@ BaseMessage JoinResponseMessage::ToBaseMessage() const {
     }
 
     // Create the base message with our serialized content as payload
-    auto base_message =
-        BaseMessage::Create(header_.GetDestination(), header_.GetSource(),
-                            MessageType::JOIN_RESPONSE, payload);
-
+    auto base_message = BaseMessage::CreateFromSerialized(payload);
     if (!base_message.has_value()) {
-        LOG_ERROR("Failed to create base message from join response message");
+        LOG_ERROR("Failed to create base message from join response");
         // Return an empty message as fallback
         return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::JOIN_RESPONSE, {});
+                           MessageType::SYNC_BEACON, {});
     }
 
     return base_message.value();

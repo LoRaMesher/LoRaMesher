@@ -10,12 +10,16 @@ namespace loramesher {
 JoinResponseHeader::JoinResponseHeader(AddressType dest, AddressType src,
                                        uint16_t network_id,
                                        uint8_t allocated_slots,
-                                       ResponseStatus status)
-    : BaseHeader(dest, src, MessageType::JOIN_RESPONSE,
-                 0),  // Payload size set later
+                                       ResponseStatus status,
+                                       AddressType next_hop,
+                                       uint8_t additional_info_size)
+    : BaseHeader(
+          dest, src, MessageType::JOIN_RESPONSE,
+          JoinResponseHeader::JoinResponseFieldsSize() + additional_info_size),
       network_id_(network_id),
       allocated_slots_(allocated_slots),
-      status_(status) {}
+      status_(status),
+      next_hop_(next_hop) {}
 
 Result JoinResponseHeader::SetJoinResponseInfo(uint16_t network_id,
                                                uint8_t allocated_slots,
@@ -38,6 +42,7 @@ Result JoinResponseHeader::Serialize(utils::ByteSerializer& serializer) const {
     serializer.WriteUint16(network_id_);
     serializer.WriteUint8(allocated_slots_);
     serializer.WriteUint8(static_cast<uint8_t>(status_));
+    serializer.WriteUint16(next_hop_);
 
     return Result::Success();
 }
@@ -63,8 +68,9 @@ std::optional<JoinResponseHeader> JoinResponseHeader::Deserialize(
     auto network_id = deserializer.ReadUint16();
     auto allocated_slots = deserializer.ReadUint8();
     auto status_raw = deserializer.ReadUint8();
+    auto next_hop = deserializer.ReadUint16();
 
-    if (!network_id || !allocated_slots || !status_raw) {
+    if (!network_id || !allocated_slots || !status_raw || !next_hop) {
         LOG_ERROR("Failed to deserialize join response header fields");
         return std::nullopt;
     }
@@ -75,7 +81,7 @@ std::optional<JoinResponseHeader> JoinResponseHeader::Deserialize(
     // Create and return the join response header
     JoinResponseHeader header(base_header->GetDestination(),
                               base_header->GetSource(), *network_id,
-                              *allocated_slots, status);
+                              *allocated_slots, status, *next_hop);
 
     return header;
 }

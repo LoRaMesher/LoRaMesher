@@ -30,13 +30,15 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
       * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
       * @param additional_info Optional additional information to include
+      * @param next_hop Next hop for message forwarding (0 for direct)
       * @return std::optional<JoinRequestMessage> Valid message if creation succeeded,
       *         std::nullopt otherwise
       */
     static std::optional<JoinRequestMessage> Create(
         AddressType dest, AddressType src, uint8_t capabilities,
         uint8_t battery_level, uint8_t requested_slots,
-        const std::vector<uint8_t>& additional_info = {});
+        const std::vector<uint8_t>& additional_info = {},
+        AddressType next_hop = 0);
 
     /**
       * @brief Creates a join request message from serialized data

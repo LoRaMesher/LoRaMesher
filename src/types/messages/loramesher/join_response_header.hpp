@@ -42,9 +42,13 @@ class JoinResponseHeader : public BaseHeader {
       * @param network_id Network identifier
       * @param allocated_slots Number of data slots allocated
       * @param status Response status code
+      * @param next_hop Next hop for message forwarding (0 for direct)
+      * @param additional_info_size Additional info size to set the correct payload to BaseHeader
       */
     JoinResponseHeader(AddressType dest, AddressType src, uint16_t network_id,
-                       uint8_t allocated_slots, ResponseStatus status);
+                       uint8_t allocated_slots, ResponseStatus status,
+                       AddressType next_hop = 0,
+                       uint8_t additional_info_size = 0);
 
     /**
       * @brief Gets the network ID
@@ -66,6 +70,13 @@ class JoinResponseHeader : public BaseHeader {
       * @return ResponseStatus The response status code
       */
     ResponseStatus GetStatus() const { return status_; }
+
+    /**
+      * @brief Gets the next hop for message forwarding
+      * 
+      * @return AddressType Next hop address (0 for direct routing)
+      */
+    AddressType GetNextHop() const { return next_hop_; }
 
     /**
       * @brief Sets the join response specific information
@@ -104,9 +115,10 @@ class JoinResponseHeader : public BaseHeader {
       * @return size_t Size of the join response header fields in bytes
       */
     static constexpr size_t JoinResponseFieldsSize() {
-        return sizeof(uint16_t) +  // Network ID
-               sizeof(uint8_t) +   // Allocated slots
-               sizeof(uint8_t);    // Status
+        return sizeof(uint16_t) +    // Network ID
+               sizeof(uint8_t) +     // Allocated slots
+               sizeof(uint8_t) +     // Status
+               sizeof(AddressType);  // Next hop
     }
 
     /**
@@ -122,6 +134,7 @@ class JoinResponseHeader : public BaseHeader {
     uint16_t network_id_ = 0;           ///< Network identifier
     uint8_t allocated_slots_ = 0;       ///< Number of allocated data slots
     ResponseStatus status_ = ACCEPTED;  ///< Response status code
+    AddressType next_hop_ = 0;          ///< Next hop for message forwarding
 };
 
 }  // namespace loramesher
