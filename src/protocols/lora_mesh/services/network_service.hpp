@@ -414,11 +414,9 @@ class NetworkService : public INetworkService {
      * Creates and sends the original synchronization beacon with current
      * superframe timing information. Only the Network Manager should call this.
      * 
-     * @param superframe_number Current superframe number
-     * @param sequence_number Unique sequence number for loop prevention
      * @return Result Success or error
      */
-    Result SendSyncBeacon(uint32_t superframe_number, uint16_t sequence_number);
+    Result SendSyncBeacon();
 
     /**
      * @brief Forward a received sync beacon to the next hop
@@ -450,10 +448,9 @@ class NetworkService : public INetworkService {
      * Called at the beginning of each superframe. If this node is the Network Manager,
      * it will send a sync beacon. If it's a regular node, it will listen for sync beacons.
      * 
-     * @param superframe_number Current superframe number
      * @return Result Success or error
      */
-    Result HandleSuperframeStart(uint32_t superframe_number);
+    Result HandleSuperframeStart();
 
     // Slot management methods
 
@@ -643,6 +640,27 @@ class NetworkService : public INetworkService {
                                               uint8_t requested_slots);
 
     /**
+     * @brief Forward a join request to the network manager
+     * 
+     * Implements dynamic discovery slot forwarding: temporarily switches 
+     * the next discovery slot from RX to TX to forward the message.
+     * 
+     * @param join_request The join request message to forward
+     * @return Result Success or error
+     */
+    Result ForwardJoinRequest(const JoinRequestMessage& join_request);
+
+    /**
+     * @brief Schedule discovery slot for forwarding
+     * 
+     * Finds the next available DISCOVERY_RX slot and temporarily converts
+     * it to DISCOVERY_TX for message forwarding, then reverts it back.
+     * 
+     * @return bool True if slot was scheduled successfully
+     */
+    bool ScheduleDiscoverySlotForwarding();
+
+    /**
      * @brief Allocate data slots based on routing information
      * 
      * @param is_network_manager Whether this node is network manager
@@ -691,6 +709,7 @@ class NetworkService : public INetworkService {
     uint32_t last_sync_time_;
     uint8_t table_version_;
     uint32_t discovery_start_time_;
+    uint32_t joining_start_time_;
     uint8_t allocated_control_slots_ =
         ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
     uint8_t allocated_discovery_slots_ =

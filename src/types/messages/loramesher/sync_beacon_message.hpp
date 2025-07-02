@@ -29,6 +29,7 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
      * @param network_id Network identifier
      * @param total_slots Number of slots in superframe
      * @param slot_duration_ms Individual slot duration
+     * @param network_manager Address of the network manager
      * @param original_timestamp_ms NM's transmission timestamp
      * @param max_hops Network diameter limit
      * @return std::optional<SyncBeaconMessage> Valid message if creation succeeded,
@@ -37,7 +38,8 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
     static std::optional<SyncBeaconMessage> CreateOriginal(
         AddressType dest, AddressType src, uint16_t network_id,
         uint8_t total_slots, uint16_t slot_duration_ms,
-        uint16_t original_timestamp_ms, uint8_t max_hops);
+        AddressType network_manager, uint16_t original_timestamp_ms,
+        uint8_t max_hops);
 
     /**
      * @brief Creates a forwarded sync beacon message (optimized)
@@ -47,6 +49,7 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
      * @param network_id Network identifier
      * @param total_slots Number of slots in superframe
      * @param slot_duration_ms Individual slot duration
+     * @param network_manager Address of the network manager
      * @param hop_count Hops from Network Manager
      * @param original_timestamp_ms NM's original transmission time
      * @param propagation_delay_ms Accumulated forwarding delay
@@ -56,7 +59,8 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
      */
     static std::optional<SyncBeaconMessage> CreateForwarded(
         AddressType dest, AddressType src, uint16_t network_id,
-        uint8_t total_slots, uint16_t slot_duration_ms, uint8_t hop_count,
+        uint8_t total_slots, uint16_t slot_duration_ms,
+        AddressType network_manager, uint8_t hop_count,
         uint16_t original_timestamp_ms, uint32_t propagation_delay_ms,
         uint8_t max_hops);
 
@@ -74,6 +78,7 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
     uint16_t GetNetworkId() const;
     uint8_t GetTotalSlots() const;
     uint16_t GetSlotDuration() const;
+    AddressType GetNetworkManager() const;
 
     // Multi-hop forwarding field getters (optimized)
     uint8_t GetHopCount() const;

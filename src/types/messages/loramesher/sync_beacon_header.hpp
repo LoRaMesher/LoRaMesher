@@ -31,9 +31,11 @@ class SyncBeaconHeader : public BaseHeader {
      * @param network_id Network identifier
      * @param total_slots Number of slots in complete superframe
      * @param slot_duration_ms Individual slot duration in milliseconds
+     * @param network_manager Address of the network manager
      */
     SyncBeaconHeader(AddressType dest, AddressType src, uint16_t network_id,
-                     uint8_t total_slots, uint16_t slot_duration_ms);
+                     uint8_t total_slots, uint16_t slot_duration_ms,
+                     AddressType network_manager);
 
     /**
      * @brief Full constructor with all multi-hop fields (optimized)
@@ -43,6 +45,7 @@ class SyncBeaconHeader : public BaseHeader {
      * @param network_id Network identifier
      * @param total_slots Number of slots in complete superframe
      * @param slot_duration_ms Individual slot duration in milliseconds
+     * @param network_manager Address of the network manager
      * @param hop_count Hops from Network Manager
      * @param original_timestamp_ms NM's original transmission time
      * @param propagation_delay_ms Accumulated forwarding delay
@@ -50,7 +53,8 @@ class SyncBeaconHeader : public BaseHeader {
      */
     SyncBeaconHeader(AddressType dest, AddressType src, uint16_t network_id,
                      uint8_t total_slots, uint16_t slot_duration_ms,
-                     uint8_t hop_count, uint16_t original_timestamp_ms,
+                     AddressType network_manager, uint8_t hop_count,
+                     uint16_t original_timestamp_ms,
                      uint32_t propagation_delay_ms, uint8_t max_hops);
 
     // Core synchronization field getters (optimized)
@@ -59,6 +63,8 @@ class SyncBeaconHeader : public BaseHeader {
     uint8_t GetTotalSlots() const { return total_slots_; }
 
     uint16_t GetSlotDuration() const { return slot_duration_ms_; }
+
+    AddressType GetNetworkManager() const { return network_manager_; }
 
     // Multi-hop forwarding field getters (optimized)
     uint8_t GetHopCount() const { return hop_count_; }
@@ -158,7 +164,8 @@ class SyncBeaconHeader : public BaseHeader {
         return sizeof(uint16_t) +  // network_id
                sizeof(uint8_t) +   // total_slots
                sizeof(uint16_t) +  // slot_duration_ms (optimized from uint32_t)
-               sizeof(uint8_t) +   // hop_count
+               sizeof(AddressType) +  // network_manager
+               sizeof(uint8_t) +      // hop_count
                sizeof(
                    uint16_t) +  // original_timestamp_ms (optimized from uint32_t)
                sizeof(uint32_t) +  // propagation_delay_ms
@@ -182,6 +189,7 @@ class SyncBeaconHeader : public BaseHeader {
     uint8_t total_slots_ = 10;  ///< Number of slots in superframe
     uint16_t slot_duration_ms_ =
         1000;  ///< Individual slot duration (optimized from uint32_t)
+    AddressType network_manager_ = 0;  ///< Address of the network manager
 
     // Multi-hop forwarding fields (optimized)
     uint8_t hop_count_ = 0;  ///< Hops from Network Manager

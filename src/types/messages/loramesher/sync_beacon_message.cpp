@@ -12,8 +12,8 @@ SyncBeaconMessage::SyncBeaconMessage(const SyncBeaconHeader& header)
 
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
     AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
-    uint16_t slot_duration_ms, uint16_t original_timestamp_ms,
-    uint8_t max_hops) {
+    uint16_t slot_duration_ms, AddressType network_manager,
+    uint16_t original_timestamp_ms, uint8_t max_hops) {
 
     // Validate parameters
     if (total_slots == 0) {
@@ -28,7 +28,7 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
 
     // Create the header with optimized sync beacon information
     SyncBeaconHeader header(dest, src, network_id, total_slots,
-                            slot_duration_ms);
+                            slot_duration_ms, network_manager);
 
     // Set timing and forwarding info for original beacon
     Result result =
@@ -44,7 +44,7 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
 
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwarded(
     AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
-    uint16_t slot_duration_ms, uint8_t hop_count,
+    uint16_t slot_duration_ms, AddressType network_manager, uint8_t hop_count,
     uint16_t original_timestamp_ms, uint32_t propagation_delay_ms,
     uint8_t max_hops) {
 
@@ -55,9 +55,9 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwarded(
     }
 
     // Create the header with optimized forwarding information
-    SyncBeaconHeader header(dest, src, network_id, total_slots,
-                            slot_duration_ms, hop_count, original_timestamp_ms,
-                            propagation_delay_ms, max_hops);
+    SyncBeaconHeader header(
+        dest, src, network_id, total_slots, slot_duration_ms, network_manager,
+        hop_count, original_timestamp_ms, propagation_delay_ms, max_hops);
 
     return SyncBeaconMessage(header);
 }
@@ -98,6 +98,10 @@ uint8_t SyncBeaconMessage::GetTotalSlots() const {
 
 uint16_t SyncBeaconMessage::GetSlotDuration() const {
     return header_.GetSlotDuration();
+}
+
+AddressType SyncBeaconMessage::GetNetworkManager() const {
+    return header_.GetNetworkManager();
 }
 
 // Calculated/derived field getters
@@ -163,14 +167,23 @@ bool SyncBeaconMessage::IsOriginalBeacon() const {
 }
 
 BaseMessage SyncBeaconMessage::ToBaseMessage() const {
-    // For sync beacons, all data is in the header, so no additional payload needed
-    std::vector<uint8_t> empty_payload;
+    // Calculate total payload size for sync beacon header
+    size_t total_message_size =
+        header_.SyncBeaconFieldsSize() + BaseHeader::Size();
 
-    // Create the base message with empty payload (all data is in header)
-    auto base_message =
-        BaseMessage::Create(header_.GetDestination(), header_.GetSource(),
-                            MessageType::SYNC_BEACON, empty_payload);
+    std::vector<uint8_t> payload(total_message_size);
+    utils::ByteSerializer serializer(payload);
 
+    // Serialize the sync beacon header-specific fields
+    Result result = header_.Serialize(serializer);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to serialize sync beacon header");
+        return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                           MessageType::SYNC_BEACON, {});
+    }
+
+    // Create the base message with our serialized content as payload
+    auto base_message = BaseMessage::CreateFromSerialized(payload);
     if (!base_message.has_value()) {
         LOG_ERROR("Failed to create base message from sync beacon message");
         // Return an empty message as fallback

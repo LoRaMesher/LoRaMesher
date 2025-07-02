@@ -455,7 +455,6 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                 // Only process received events as received messages
                 if (event->getType() == radio::RadioEventType::kReceived) {
                     network_service_->ProcessReceivedMessage(*message);
-                    LOG_DEBUG("Processed radio event with message");
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
                     // TODO: Handle transmitted events (e.g., update transmission statistics)
@@ -583,10 +582,59 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
         }
 
+        case SlotAllocation::SlotType::SYNC_BEACON_TX: {
+            // Handle sync beacon transmission based on network role and hop distance
+            auto state = network_service_->GetState();
+
+            if (state ==
+                lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
+                // Network Manager: First queue the sync beacon, then extract and send it
+                result = network_service_->SendSyncBeacon();
+                if (!result) {
+                    LOG_ERROR("Failed to queue sync beacon: %s",
+                              result.GetErrorMessage().c_str());
+                    break;
+                }
+
+                // Extract the queued sync beacon and send it
+                auto message =
+                    message_queue_service_->ExtractMessageOfType(slot_type);
+                if (message) {
+                    result = hardware_->SendMessage(*message);
+                    if (!result) {
+                        LOG_ERROR("Failed to send sync beacon: %s",
+                                  result.GetErrorMessage().c_str());
+                    } else {
+                        LOG_DEBUG("Network Manager sent sync beacon");
+                    }
+                } else {
+                    LOG_ERROR("Failed to extract queued sync beacon");
+                }
+            } else {
+                // Regular nodes: Check queue for sync beacon to forward
+                auto message =
+                    message_queue_service_->ExtractMessageOfType(slot_type);
+                if (message) {
+                    // Forward the sync beacon
+                    result = hardware_->SendMessage(*message);
+                    if (!result) {
+                        LOG_ERROR("Failed to forward sync beacon: %s",
+                                  result.GetErrorMessage().c_str());
+                    } else {
+                        LOG_DEBUG("Regular node forwarded sync beacon");
+                    }
+                } else {
+                    LOG_DEBUG("No sync beacon to forward for regular node");
+                }
+            }
+            break;
+        }
+
         case SlotAllocation::SlotType::RX:
         case SlotAllocation::SlotType::CONTROL_RX:
         case SlotAllocation::SlotType::DISCOVERY_RX:
-            // Set radio to receive mode
+        case SlotAllocation::SlotType::SYNC_BEACON_RX:
+            // Set radio to receive mode for all RX slot types
             result = hardware_->setState(radio::RadioState::kReceive);
             if (!result) {
                 LOG_ERROR("Failed to set radio to receive: %s",

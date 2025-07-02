@@ -33,7 +33,8 @@ NetworkService::NetworkService(
       is_synchronized_(false),
       last_sync_time_(0),
       table_version_(0),
-      discovery_start_time_(0) {
+      discovery_start_time_(0),
+      joining_start_time_(0) {
 
     if (!message_queue_service_) {
         LOG_ERROR("Message queue service is required");
@@ -546,6 +547,12 @@ Result NetworkService::StartJoining(AddressType manager_address,
     network_found_ = true;
     network_creator_ = false;
 
+    // Record discovery start time
+    joining_start_time_ = GetRTOS().getTickCount();
+
+    LOG_INFO("Starting network joining, timeout: %d ms, current time: %d ms",
+             join_timeout_ms, joining_start_time_);
+
     // Set power-efficient slot allocation for joining
     Result slot_result = SetJoiningSlots();
     if (!slot_result) {
@@ -993,11 +1000,11 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
                       "Failed to create join request message");
     }
 
-    // Queue message for transmission
+    // Queue message for transmission using DISCOVERY_TX slot for proper timing
     auto base_msg =
         std::make_unique<BaseMessage>(join_request->ToBaseMessage());
     message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
 
     LOG_INFO("Join request queued for manager 0x%04X, requesting %d slots",
              manager_address, requested_slots);
@@ -1006,12 +1013,6 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
 }
 
 Result NetworkService::ProcessJoinRequest(const BaseMessage& message) {
-    // Only network manager processes join requests
-    if (network_manager_ != node_address_) {
-        LOG_DEBUG("Ignoring join request - not network manager");
-        return Result::Success();
-    }
-
     auto join_request_opt =
         JoinRequestMessage::CreateFromSerialized(*message.Serialize());
 
@@ -1021,6 +1022,21 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message) {
     }
 
     auto source = message.GetSource();
+    auto next_hop = join_request_opt->GetHeader().GetNextHop();
+
+    // If we're not the network manager and not the intended next hop, forward the message
+    if (network_manager_ != node_address_ && next_hop != node_address_) {
+        LOG_DEBUG("Forwarding join request from 0x%04X (not for us)", source);
+        return ForwardJoinRequest(*join_request_opt);
+    }
+
+    // If we're not the network manager but we are the next hop, ignore
+    if (network_manager_ != node_address_) {
+        LOG_DEBUG("Ignoring join request - not network manager");
+        return Result::Success();
+    }
+
+    // Now we're the network manager, process the join request
     auto capabilities = join_request_opt->GetCapabilities();
     auto battery_level = join_request_opt->GetBatteryLevel();
     auto requested_slots = join_request_opt->GetRequestedSlots();
@@ -1144,7 +1160,7 @@ Result NetworkService::SendJoinResponse(AddressType dest,
     auto base_msg =
         std::make_unique<BaseMessage>(join_response->ToBaseMessage());
     message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
 
     LOG_INFO("Join response queued for 0x%04X: status=%d, slots=%d", dest,
              static_cast<int>(status), allocated_slots);
@@ -1413,7 +1429,7 @@ Result NetworkService::UpdateSlotTable() {
             }
         } else {
             slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
-            LOG_DEBUG("allocated CONTROL_RX slot %zu for node 0x%04X (NM=%d)",
+            LOG_DEBUG("Allocated CONTROL_RX slot %zu for node 0x%04X (NM=%d)",
                       slot_index, addr, node.is_network_manager);
 
             //TODO: If we want to optimize the sleep nodes we can use the following code, however,
@@ -1550,59 +1566,81 @@ Result NetworkService::SetDiscoverySlots() {
 }
 
 Result NetworkService::SetJoiningSlots() {
-    // Configure power-efficient slots for JOINING state
-    // According to PROTOCOL_SPEC.md: 4 active slots + 26 sleep slots = 30 total (13% duty cycle)
+    // Use the same slot structure as the network but only listen to necessary slots
+    // This ensures synchronization with the network manager's timing
 
-    const uint8_t JOINING_ACTIVE_SLOTS = 4;
-    const uint8_t JOINING_TOTAL_SLOTS = 30;
-    const uint8_t JOINING_SLEEP_SLOTS =
-        JOINING_TOTAL_SLOTS - JOINING_ACTIVE_SLOTS;
-
-    slot_table_.clear();
-    slot_table_.resize(JOINING_TOTAL_SLOTS);
-
-    // Slot 0: CONTROL_TX for join requests
-    SlotAllocation control_tx_slot;
-    control_tx_slot.slot_number = 0;
-    control_tx_slot.target_address =
-        network_manager_;  // Send to network manager
-    control_tx_slot.type = SlotAllocation::SlotType::CONTROL_TX;
-    slot_table_[0] = control_tx_slot;
-
-    // Slot 1: CONTROL_RX for join responses
-    SlotAllocation control_rx_slot;
-    control_rx_slot.slot_number = 1;
-    control_rx_slot.target_address = node_address_;  // Receive on our address
-    control_rx_slot.type = SlotAllocation::SlotType::CONTROL_RX;
-    slot_table_[1] = control_rx_slot;
-
-    // Slots 2-3: DISCOVERY_RX for network monitoring
-    for (uint8_t i = 2; i < JOINING_ACTIVE_SLOTS; i++) {
-        SlotAllocation discovery_slot;
-        discovery_slot.slot_number = i;
-        discovery_slot.target_address = INetworkService::kBroadcastAddress;
-        discovery_slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
-        slot_table_[i] = discovery_slot;
+    // First, use the normal slot allocation algorithm to get the network structure
+    Result result = UpdateSlotTable();
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to update slot table for joining: %s",
+                  result.GetErrorMessage().c_str());
+        return result;
     }
 
-    // Remaining slots: SLEEP for power efficiency
-    for (uint8_t i = JOINING_ACTIVE_SLOTS; i < JOINING_TOTAL_SLOTS; i++) {
-        SlotAllocation sleep_slot;
-        sleep_slot.slot_number = i;
-        sleep_slot.target_address = 0;  // Not applicable for sleep
-        sleep_slot.type = SlotAllocation::SlotType::SLEEP;
-        slot_table_[i] = sleep_slot;
+    // Modify slots for joining behavior:
+    // - Convert most slots to SLEEP for power efficiency
+    // - Keep essential CONTROL_RX slots for routing table updates
+    // - Keep DISCOVERY_RX slots for receiving join responses
+    // - Add DISCOVERY_TX slot for join requests
+
+    size_t discovery_tx_added = 0;
+    size_t active_slots = 0;
+
+    for (auto& slot : slot_table_) {
+        switch (slot.type) {
+            case SlotAllocation::SlotType::SYNC_BEACON_RX:
+            case SlotAllocation::SlotType::SYNC_BEACON_TX:
+                // Keep sync beacon slots active for synchronization
+                active_slots++;
+                break;
+
+            case SlotAllocation::SlotType::CONTROL_RX:
+                // Keep control RX slots for join responses and network monitoring
+                active_slots++;
+                break;
+
+            case SlotAllocation::SlotType::CONTROL_TX:
+                // Convert TX slots into RX slots, we want to still listen TX slots.
+                slot.type = SlotAllocation::SlotType::CONTROL_RX;
+                active_slots++;
+                break;
+
+            case SlotAllocation::SlotType::DISCOVERY_RX:
+                // Keep discovery RX slots for network monitoring
+                active_slots++;
+                // Convert first discovery TX slot to send join requests to network manager
+                if (discovery_tx_added == 0) {
+                    slot.target_address = network_manager_;
+                    slot.type = SlotAllocation::SlotType::DISCOVERY_TX;
+                    discovery_tx_added++;
+                }
+                break;
+
+            case SlotAllocation::SlotType::DISCOVERY_TX:
+                // Keep discovery TX slots for waiting join response messages.
+                active_slots++;
+                break;
+
+            case SlotAllocation::SlotType::TX:
+            case SlotAllocation::SlotType::RX:
+                // Convert data slots to sleep (no data transmission while joining)
+                slot.type = SlotAllocation::SlotType::SLEEP;
+                slot.target_address = 0;
+                break;
+
+            case SlotAllocation::SlotType::SLEEP:
+                // Already sleep, no change
+                break;
+        }
     }
 
-    // Update slot allocation tracking
-    allocated_control_slots_ = 2;    // 1 TX + 1 RX
-    allocated_discovery_slots_ = 2;  // 2 DISCOVERY_RX
+    float duty_cycle = (float)active_slots / slot_table_.size() * 100.0f;
 
     LOG_INFO(
-        "Set joining slots: %d active (%d control, %d discovery) + %d sleep = "
-        "%d total (%.1f%% duty cycle)",
-        JOINING_ACTIVE_SLOTS, 2, 2, JOINING_SLEEP_SLOTS, JOINING_TOTAL_SLOTS,
-        (float)JOINING_ACTIVE_SLOTS / JOINING_TOTAL_SLOTS * 100.0f);
+        "Set joining slots: %zu active + %zu sleep = %zu total (%.1f%% duty "
+        "cycle) - synchronized with network",
+        active_slots, slot_table_.size() - active_slots, slot_table_.size(),
+        duty_cycle);
 
     return Result::Success();
 }
@@ -1656,22 +1694,6 @@ Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
     uint32_t current_time = GetRTOS().getTickCount();
     uint32_t end_time = discovery_start_time_ + timeout_ms;
 
-    // Check if we've already discovered a network
-    {
-        std::unique_lock<std::mutex> lock(network_mutex_);
-        for (const auto& node : network_nodes_) {
-            if (node.is_network_manager && node.is_active) {
-                network_manager_ = node.routing_entry.destination;
-                LOG_INFO("Found existing network with manager 0x%04X",
-                         network_manager_);
-
-                lock.unlock();
-                return StartJoining(network_manager_, GetJoinTimeout());
-            }
-        }
-        lock.unlock();
-    }
-
     // Check if discovery timeout has elapsed
     if (current_time >= end_time) {
         LOG_INFO("Discovery timeout - creating new network");
@@ -1684,7 +1706,7 @@ Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
 
 Result NetworkService::PerformJoining(uint32_t timeout_ms) {
     uint32_t current_time = GetRTOS().getTickCount();
-    uint32_t end_time = GetJoinTimeout() + timeout_ms;
+    uint32_t end_time = joining_start_time_ + timeout_ms;
 
     // If we're already in JOINING state, just wait for join response or timeout
     if (GetState() == ProtocolState::JOINING) {
@@ -1788,23 +1810,15 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
 }
 
 uint32_t NetworkService::GetJoinTimeout() {
-    uint32_t timeout_ms = 0;
-
-    std::lock_guard<std::mutex> lock(network_mutex_);
-
-    for (const auto& node : network_nodes_) {
-        timeout_ms += node.GetAllocatedDataSlots() *
-                      superframe_service_->GetSlotDuration();
-    }
-
-    // TODO: Change this to use the actual Control, discovery and Sleep durations
-    timeout_ms += network_nodes_.size() * 3;  // Add Control and Sleep duration.
-    return timeout_ms;
+    // TODO: Since we know the number of nodes and the superframe duration
+    // Calculate it using 3 superframes
+    return 60000;  // TODO: Change to an actual value or configurable.
 }
 
 Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
-    // Only process sync beacons when synchronized or trying to join
-    if (state_ != ProtocolState::NORMAL_OPERATION &&
+    // Process sync beacons in discovery, joining, normal operation, and network manager states
+    if (state_ != ProtocolState::DISCOVERY &&
+        state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::JOINING &&
         state_ != ProtocolState::NETWORK_MANAGER) {
         LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_));
@@ -1825,16 +1839,38 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
     LOG_INFO("Received sync beacon from 0x%04X, hop count %d",
              sync_beacon.GetSource(), sync_beacon.GetHopCount());
 
-    // Update network manager if this is from the original source
-    if (sync_beacon.IsOriginalBeacon()) {
-        // For original beacons (hop count 0), the source IS the network manager
-        AddressType original_nm = sync_beacon.GetSource();
-        if (network_manager_ != original_nm) {
-            std::lock_guard<std::mutex> lock(network_mutex_);
-            network_manager_ = original_nm;
-            LOG_INFO("Updated network manager to 0x%04X from sync beacon",
-                     original_nm);
+    // Update network manager from the sync beacon header
+    AddressType beacon_nm = sync_beacon.GetNetworkManager();
+    if (network_manager_ != beacon_nm) {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        network_manager_ = beacon_nm;
+        LOG_INFO("Updated network manager to 0x%04X from sync beacon",
+                 beacon_nm);
+    }
+
+    // Special handling for DISCOVERY state: sync beacon indicates existing network
+    if (state_ == ProtocolState::DISCOVERY) {
+        auto network_id = sync_beacon.GetNetworkId();
+        LOG_INFO("Discovery: Found existing network with id 0x%04X",
+                 network_id);
+        AddressType source = sync_beacon.GetSource();
+        AddressType network_manager = sync_beacon.GetNetworkManager();
+        // Add the source as a direct neighbor, but only mark as NM if it actually is
+        bool is_network_manager = (source == network_manager);
+        UpdateNetworkNode(source, 100, is_network_manager,
+                          config_.default_data_slots);
+        // Trigger transition to JOINING state
+        LOG_INFO("Transitioning from DISCOVERY to JOINING for network 0x%04X",
+                 network_id);
+        // Get the actual Network Manager from the sync beacon header
+        AddressType original_nm = network_manager;
+
+        Result join_result = StartJoining(original_nm, GetJoinTimeout());
+        if (!join_result.IsSuccess()) {
+            LOG_ERROR("Failed to start joining process: %s",
+                      join_result.GetErrorMessage().c_str());
         }
+        return join_result;
     }
 
     // Store max_hops from the sync beacon for slot allocation calculations
@@ -1884,8 +1920,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
     return Result::Success();
 }
 
-Result NetworkService::SendSyncBeacon(uint32_t superframe_number,
-                                      uint16_t sequence_number) {
+Result NetworkService::SendSyncBeacon() {
     // Only network manager can send original sync beacons
     if (state_ != ProtocolState::NETWORK_MANAGER ||
         network_manager_ != node_address_) {
@@ -1900,16 +1935,25 @@ Result NetworkService::SendSyncBeacon(uint32_t superframe_number,
 
     uint32_t current_time = GetRTOS().getTickCount();
 
-    // Create original sync beacon with optimized parameters
+    // Get actual total slots from the slot table
+    uint16_t total_slots = static_cast<uint16_t>(slot_table_.size());
+    if (total_slots == 0) {
+        total_slots = 20;  // Fallback default
+        LOG_WARNING("Slot table empty, using default total slots: %d",
+                    total_slots);
+    }
+
+    // Create original sync beacon with actual parameters
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
         0xFFFF,         // Broadcast destination
         node_address_,  // Network manager as source
         1,              // TODO: Get actual network ID
-        20,             // Default total slots
+        total_slots,    // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
+        node_address_,  // Network manager address
         static_cast<uint16_t>(current_time &
                               0xFFFF),  // Original timestamp (16-bit)
-        5);                             // Max 5 hops for mesh network
+        network_max_hops_);             // Use actual max hops from network
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
@@ -1919,15 +1963,14 @@ Result NetworkService::SendSyncBeacon(uint32_t superframe_number,
     // Convert to base message and queue for transmission
     BaseMessage base_msg = sync_beacon_opt.value().ToBaseMessage();
 
-    // Add to sync beacon TX queue
+    // Add to sync beacon TX queue - protocol layer handles actual transmission
     auto base_msg_ptr = std::make_unique<BaseMessage>(std::move(base_msg));
     message_queue_service_->AddMessageToQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX,
         std::move(base_msg_ptr));
 
-    LOG_INFO("Queued sync beacon for transmission");
-
-    LOG_INFO("Sent sync beacon: sequence %d", sequence_number);
+    LOG_INFO("Queued sync beacon for transmission: %d total slots, %d max hops",
+             total_slots, network_max_hops_);
     return Result::Success();
 }
 
@@ -2000,7 +2043,7 @@ bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
     return should_forward;
 }
 
-Result NetworkService::HandleSuperframeStart(uint32_t superframe_number) {
+Result NetworkService::HandleSuperframeStart() {
     // Only process if we're in active network states
     if (state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::NETWORK_MANAGER) {
@@ -2010,16 +2053,9 @@ Result NetworkService::HandleSuperframeStart(uint32_t superframe_number) {
     // Network Manager sends sync beacon at start of each superframe
     if (state_ == ProtocolState::NETWORK_MANAGER &&
         network_manager_ == node_address_) {
-        // Generate unique sequence number for loop prevention
-        static uint16_t sequence_counter = 0;
-        sequence_counter++;
+        LOG_DEBUG("Network Manager sending sync beacon");
 
-        LOG_DEBUG(
-            "Network Manager sending sync beacon for superframe %d, sequence "
-            "%d",
-            superframe_number, sequence_counter);
-
-        Result result = SendSyncBeacon(superframe_number, sequence_counter);
+        Result result = SendSyncBeacon();
         if (!result.IsSuccess()) {
             LOG_WARNING("Failed to send sync beacon: %s",
                         result.GetErrorMessage().c_str());
@@ -2027,11 +2063,77 @@ Result NetworkService::HandleSuperframeStart(uint32_t superframe_number) {
         }
     } else {
         // Regular nodes listen for sync beacons but don't send them
-        LOG_DEBUG("Node listening for sync beacon in superframe %d",
-                  superframe_number);
+        LOG_DEBUG("Node listening for sync beacon");
     }
 
     return Result::Success();
+}
+
+Result NetworkService::ForwardJoinRequest(
+    const JoinRequestMessage& join_request) {
+    // Schedule the next discovery slot for forwarding
+    if (!ScheduleDiscoverySlotForwarding()) {
+        LOG_WARNING(
+            "Failed to schedule discovery slot for join request forwarding");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "No available discovery slots for forwarding");
+    }
+
+    // Calculate next hop towards network manager
+    AddressType next_hop =
+        network_manager_;  // For now, direct to network manager
+    // TODO: Implement proper routing to find best next hop
+
+    // Create forwarded join request with updated next_hop
+    auto forwarded_request = JoinRequestMessage::Create(
+        join_request.GetDestination(),
+        node_address_,  // We become the source for forwarding
+        join_request.GetCapabilities(), join_request.GetBatteryLevel(),
+        join_request.GetRequestedSlots(), {},  // No additional info
+        next_hop                               // Set next hop for routing
+    );
+
+    if (!forwarded_request) {
+        LOG_ERROR("Failed to create forwarded join request");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create forwarded join request");
+    }
+
+    // Queue for transmission in next available discovery slot
+    auto base_msg =
+        std::make_unique<BaseMessage>(forwarded_request->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+
+    LOG_INFO(
+        "Forwarded join request from 0x%04X to network manager 0x%04X via "
+        "0x%04X",
+        join_request.GetSource(), network_manager_, next_hop);
+
+    return Result::Success();
+}
+
+bool NetworkService::ScheduleDiscoverySlotForwarding() {
+    // Find the next DISCOVERY_RX slot and temporarily convert it to TX
+    for (auto& slot : slot_table_) {
+        if (slot.type == SlotAllocation::SlotType::DISCOVERY_RX) {
+            // Temporarily convert this slot to TX for forwarding
+            slot.type = SlotAllocation::SlotType::DISCOVERY_TX;
+            slot.target_address = network_manager_;
+
+            LOG_DEBUG("Scheduled discovery slot %d for forwarding to 0x%04X",
+                      slot.slot_number, network_manager_);
+
+            // TODO: Implement mechanism to revert slot back to RX after message is sent
+            // This could be done through a callback from the message queue service
+            // or by scheduling a timer to revert the slot after transmission
+
+            return true;
+        }
+    }
+
+    LOG_WARNING("No available DISCOVERY_RX slots found for forwarding");
+    return false;
 }
 
 }  // namespace lora_mesh
