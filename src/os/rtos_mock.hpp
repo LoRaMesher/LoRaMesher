@@ -229,7 +229,7 @@ class RTOSMock : public RTOS {
                 LOG_ERROR("Unknown exception in task '%s'", task_name.c_str());
             }
 
-            LOG_DEBUG("MOCK: Task '%s' exiting", task_name.c_str());
+            // LOG_DEBUG("MOCK: Task '%s' exiting", task_name.c_str());
         });
 
         // Store task information
@@ -247,8 +247,8 @@ class RTOSMock : public RTOS {
             task_info.suspended = false;
             task_info.stop_requested = false;
 
-            LOG_DEBUG("MOCK: Task '%s' registered with thread ID %p",
-                      task_name.c_str(), task_info.thread_id);
+            // LOG_DEBUG("MOCK: Task '%s' registered with thread ID %p",
+            //   task_name.c_str(), task_info.thread_id);
         }
 
         if (taskHandle) {
@@ -286,18 +286,18 @@ class RTOSMock : public RTOS {
                 was_suspended = it->second.suspended;
                 task_info = &(it->second);
 
-                LOG_DEBUG(
-                    "MOCK: Deleting task '%s' (thread ID: %p, suspended: %d)",
-                    task_name.c_str(), thread_id, was_suspended);
+                // LOG_DEBUG(
+                //     "MOCK: Deleting task '%s' (thread ID: %p, suspended: %d)",
+                //     task_name.c_str(), thread_id, was_suspended);
 
                 // Set the stop flag first, before changing suspended state
                 it->second.stop_requested = true;
 
                 // If task is suspended, resume it so it can process the stop request
                 if (was_suspended) {
-                    LOG_DEBUG(
-                        "MOCK: Resuming suspended task '%s' before deletion",
-                        task_name.c_str());
+                    // LOG_DEBUG(
+                    //     "MOCK: Resuming suspended task '%s' before deletion",
+                    //     task_name.c_str());
                     it->second.suspended = false;
                 }
             } else {
@@ -316,9 +316,9 @@ class RTOSMock : public RTOS {
                 .notify_all();  // For suspend acknowledgment
             task_info->resume_ack_cv.notify_all();  // For resume acknowledgment
 
-            LOG_DEBUG(
-                "MOCK: Notified all condition variables for task '%s' deletion",
-                task_name.c_str());
+            // LOG_DEBUG(
+            //     "MOCK: Notified all condition variables for task '%s' deletion",
+            //     task_name.c_str());
         }
 
         if (thread_id != std::thread::id()) {
@@ -327,8 +327,8 @@ class RTOSMock : public RTOS {
 
             // Wait for thread to finish with a reasonable timeout
             if (thread->joinable()) {
-                LOG_DEBUG("MOCK: Waiting for task '%s' to finish",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Waiting for task '%s' to finish",
+                //           task_name.c_str());
 
                 // Use a timeout mechanism to avoid waiting indefinitely
                 std::atomic<bool> joined{false};
@@ -355,8 +355,8 @@ class RTOSMock : public RTOS {
                         task_name.c_str());
                     // We can't forcibly terminate std::thread, so we have to leak it
                 } else {
-                    LOG_DEBUG("MOCK: Task '%s' exited cleanly",
-                              task_name.c_str());
+                    // LOG_DEBUG("MOCK: Task '%s' exited cleanly",
+                    //   task_name.c_str());
                 }
             }
         }
@@ -368,7 +368,7 @@ class RTOSMock : public RTOS {
         }
 
         delete thread;
-        LOG_DEBUG("MOCK: Task '%s' deleted", task_name.c_str());
+        // LOG_DEBUG("MOCK: Task '%s' deleted", task_name.c_str());
     }
 
     /**
@@ -418,8 +418,8 @@ class RTOSMock : public RTOS {
             return false;
         }
 
-        LOG_DEBUG("MOCK: Suspending task '%s' (thread ID: %p)",
-                  task_name.c_str(), thread_id);
+        // LOG_DEBUG("MOCK: Suspending task '%s' (thread ID: %p)",
+        //           task_name.c_str(), thread_id);
 
         // Set up confirmation mechanism
         {
@@ -427,8 +427,8 @@ class RTOSMock : public RTOS {
 
             // If already suspended, nothing to do
             if (task_info->suspended) {
-                LOG_DEBUG("MOCK: Task '%s' is already suspended",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Task '%s' is already suspended",
+                //   task_name.c_str());
                 return true;
             }
 
@@ -436,8 +436,8 @@ class RTOSMock : public RTOS {
             task_info->suspended = true;
             task_info->suspension_acknowledged = false;
 
-            LOG_DEBUG("MOCK: Set suspended flag for task '%s'",
-                      task_name.c_str());
+            // LOG_DEBUG("MOCK: Set suspended flag for task '%s'",
+            //           task_name.c_str());
         }
 
         // CRITICAL FIX: Notify ALL condition variables the task might be waiting on
@@ -447,9 +447,9 @@ class RTOSMock : public RTOS {
         task_info->suspend_ack_cv.notify_all();  // For suspend acknowledgment
         task_info->resume_ack_cv.notify_all();   // For resume acknowledgment
 
-        LOG_DEBUG(
-            "MOCK: Notified all condition variables for task '%s' suspension",
-            task_name.c_str());
+        // LOG_DEBUG(
+        //     "MOCK: Notified all condition variables for task '%s' suspension",
+        //     task_name.c_str());
 
         // For self-suspension (current task), we don't need to wait for acknowledgment
         if (!taskHandle || static_cast<std::thread*>(taskHandle)->get_id() ==
@@ -480,8 +480,8 @@ class RTOSMock : public RTOS {
                 return true;
             }
 
-            LOG_DEBUG("MOCK: Task '%s' acknowledged suspension",
-                      task_name.c_str());
+            // LOG_DEBUG("MOCK: Task '%s' acknowledged suspension",
+            //   task_name.c_str());
         }
 
         return true;
@@ -532,16 +532,16 @@ class RTOSMock : public RTOS {
             return false;
         }
 
-        LOG_DEBUG("MOCK: Resuming task '%s' (thread ID: %p)", task_name.c_str(),
-                  thread_id);
+        // LOG_DEBUG("MOCK: Resuming task '%s' (thread ID: %p)", task_name.c_str(),
+        //           thread_id);
 
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // If not suspended, nothing to do
             if (!task_info->suspended) {
-                LOG_DEBUG("MOCK: Task '%s' is already running",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Task '%s' is already running",
+                //   task_name.c_str());
                 return true;
             }
 
@@ -553,9 +553,9 @@ class RTOSMock : public RTOS {
         // Notify the task to wake up - notify ALL condition variables
         task_info->cv.notify_all();         // For ShouldStopOrPause
         task_info->notify_cv.notify_all();  // For WaitForNotify - CRITICAL!
-        LOG_DEBUG(
-            "MOCK: Task '%s' resume signal sent to all condition variables",
-            task_name.c_str());
+        // LOG_DEBUG(
+        //     "MOCK: Task '%s' resume signal sent to all condition variables",
+        //     task_name.c_str());
 
         // Wait for task to acknowledge the resume
         // We only wait if this isn't a self-resume
@@ -584,7 +584,7 @@ class RTOSMock : public RTOS {
                 return true;
             }
 
-            LOG_DEBUG("MOCK: Task '%s' acknowledged resume", task_name.c_str());
+            // LOG_DEBUG("MOCK: Task '%s' acknowledged resume", task_name.c_str());
         }
 
         return true;
@@ -634,8 +634,8 @@ class RTOSMock : public RTOS {
 
         // If stop requested, return immediately
         if (should_stop) {
-            LOG_DEBUG("MOCK: Task '%s' should stop (quick check)",
-                      task_name.c_str());
+            // LOG_DEBUG("MOCK: Task '%s' should stop (quick check)",
+            //   task_name.c_str());
             return true;
         }
 
@@ -659,17 +659,17 @@ class RTOSMock : public RTOS {
                 });
 
             if (!status) {
-                LOG_DEBUG("MOCK: Task '%s' wait timeout, rechecking condition",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Task '%s' wait timeout, rechecking condition",
+                //   task_name.c_str());
             } else {
-                LOG_DEBUG("MOCK: Task '%s' condition changed",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Task '%s' condition changed",
+                //   task_name.c_str());
             }
 
             // After wait, recheck stop flag
             if (task_info->stop_requested) {
-                LOG_DEBUG("MOCK: Task '%s' should stop after wait",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Task '%s' should stop after wait",
+                //   task_name.c_str());
                 return true;
             }
 
@@ -677,11 +677,11 @@ class RTOSMock : public RTOS {
             if (!task_info->suspended) {
                 task_info->resume_acknowledged = true;
                 task_info->resume_ack_cv.notify_all();
-                LOG_DEBUG("MOCK: Task '%s' acknowledged resume",
-                          task_name.c_str());
+                // LOG_DEBUG("MOCK: Task '%s' acknowledged resume",
+                //   task_name.c_str());
             }
 
-            LOG_DEBUG("MOCK: Task '%s' resumed", task_name.c_str());
+            // LOG_DEBUG("MOCK: Task '%s' resumed", task_name.c_str());
         }
 
         return false;
@@ -802,7 +802,7 @@ class RTOSMock : public RTOS {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
             wakeTimeMs = virtualTimeMs_ + ms;
             waitingTasks_[&cv] = wakeTimeMs;
-            // LOG_DEBUG("MOCK: Task will wait until virtual time %llu ms",
+            // // LOG_DEBUG("MOCK: Task will wait until virtual time %llu ms",
             //           (unsigned long long)wakeTimeMs);
         }
 
@@ -813,7 +813,7 @@ class RTOSMock : public RTOS {
             return virtualTimeMs_ >= wakeTimeMs;
         });
 
-        // LOG_DEBUG("MOCK: Task woke up after waiting until %llu ms",
+        // // LOG_DEBUG("MOCK: Task woke up after waiting until %llu ms",
         //           (unsigned long long)wakeTimeMs);
 
         // Clean up (in case we were woken by something other than advanceTime)
@@ -1162,7 +1162,7 @@ class RTOSMock : public RTOS {
             auto it = tasks_.find(static_cast<std::thread*>(this_task));
             if (it == tasks_.end()) {
                 this_task = nullptr;  // Reset the cache
-                LOG_DEBUG("MOCK: Task deleted during WaitForNotify");
+                // LOG_DEBUG("MOCK: Task deleted during WaitForNotify");
                 return QueueResult::kError;
             }
 

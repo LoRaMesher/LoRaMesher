@@ -504,16 +504,16 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         if (result == os::QueueResult::kOk) {
             std::string taskName = radio->current_config_.getRadioTypeString();
             // Periodic monitoring
-            utils::TaskMonitor::MonitorTask(
-                radio->processing_task_, taskName.c_str(),
-                config::TaskConfig::kMinStackWatermark);
+            // utils::TaskMonitor::MonitorTask(
+            //     radio->processing_task_, taskName.c_str(),
+            //     config::TaskConfig::kMinStackWatermark);
 
             LOG_DEBUG("Notification received");
             radio->HandleInterrupt();
             // Periodic monitoring
-            utils::TaskMonitor::MonitorTask(
-                radio->processing_task_, taskName.c_str(),
-                config::TaskConfig::kMinStackWatermark);
+            // utils::TaskMonitor::MonitorTask(
+            //     radio->processing_task_, taskName.c_str(),
+            //     config::TaskConfig::kMinStackWatermark);
         } else {
             LOG_DEBUG("Notification timeout");
         }
