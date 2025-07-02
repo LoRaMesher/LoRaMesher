@@ -82,13 +82,13 @@ class SyncBeaconMessageTest : public ::testing::Test {
     void CreateMessages() {
         // Create original sync beacon
         original_msg = SyncBeaconMessage::CreateOriginal(
-            dest, src, network_id, total_slots, slot_duration_ms,
+            dest, src, network_id, total_slots, slot_duration_ms, src,
             original_timestamp_ms, max_hops);
 
         // Create forwarded sync beacon
         forwarded_msg = SyncBeaconMessage::CreateForwarded(
             dest, 0x5678,  // Different forwarding node
-            network_id, total_slots, slot_duration_ms,
+            network_id, total_slots, slot_duration_ms, src,
             2,                           // Hop count 2
             original_timestamp_ms, 100,  // 100ms propagation delay
             max_hops);
@@ -260,7 +260,8 @@ TEST_F(SyncBeaconMessageTest, BaseMessageConversion) {
     EXPECT_EQ(base_msg.GetDestination(), dest);
 
     // Verify payload is empty (sync beacons store all data in header)
-    EXPECT_EQ(base_msg.GetPayload().size(), 0);
+    EXPECT_EQ(base_msg.GetPayload().size(),
+              SyncBeaconHeader::SyncBeaconFieldsSize());
 }
 
 /**
@@ -271,7 +272,7 @@ TEST_F(SyncBeaconMessageTest, InvalidParameters) {
     auto invalid_msg = SyncBeaconMessage::CreateOriginal(
         dest, src, network_id,
         0,  // Invalid: zero slots
-        slot_duration_ms, original_timestamp_ms, max_hops);
+        slot_duration_ms, src, original_timestamp_ms, max_hops);
 
     EXPECT_FALSE(invalid_msg.has_value());
 
@@ -279,13 +280,13 @@ TEST_F(SyncBeaconMessageTest, InvalidParameters) {
     auto invalid_duration_msg =
         SyncBeaconMessage::CreateOriginal(dest, src, network_id, total_slots,
                                           0,  // Invalid: zero slot duration
-                                          original_timestamp_ms, max_hops);
+                                          src, original_timestamp_ms, max_hops);
 
     EXPECT_FALSE(invalid_duration_msg.has_value());
 
     // Test forwarded beacon with hop count exceeding max
     auto invalid_forwarded = SyncBeaconMessage::CreateForwarded(
-        dest, 0x5678, network_id, total_slots, slot_duration_ms,
+        dest, 0x5678, network_id, total_slots, slot_duration_ms, src,
         10,  // Hop count exceeds max_hops (5)
         original_timestamp_ms, 100, max_hops);
 

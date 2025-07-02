@@ -239,8 +239,8 @@ TEST_F(JoinRequestMessageTest, ConversionToBaseMessageTest) {
     // And: Payload should contain JoinRequest fields + additional info
     const std::vector<uint8_t>& payload = base_msg.GetPayload();
 
-    // Payload should have at least 3 bytes (capabilities, battery, slots) plus additional info
-    ASSERT_EQ(payload.size(), 3 + additional_info.size());
+    ASSERT_EQ(payload.size(), JoinRequestHeader::JoinRequestFieldsSize() +
+                                  additional_info.size());
 
     // Check capabilities, battery level, slots
     EXPECT_EQ(payload[0], capabilities);
@@ -249,7 +249,8 @@ TEST_F(JoinRequestMessageTest, ConversionToBaseMessageTest) {
 
     // Check additional info
     for (size_t i = 0; i < additional_info.size(); i++) {
-        EXPECT_EQ(payload[3 + i], additional_info[i]);
+        EXPECT_EQ(payload[JoinRequestHeader::JoinRequestFieldsSize() + i],
+                  additional_info[i]);
     }
 }
 

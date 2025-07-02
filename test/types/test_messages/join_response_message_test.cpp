@@ -224,8 +224,8 @@ TEST_F(JoinResponseMessageTest, ConversionToBaseMessageTest) {
     // And: Payload should contain JoinResponse fields + superframe info
     const std::vector<uint8_t>& payload = base_msg.GetPayload();
 
-    // Payload should have 4 bytes (network_id, allocated_slots, status) plus superframe info
-    ASSERT_EQ(payload.size(), 4 + superframe_info.size());
+    // Payload should have 6 bytes (network_id, allocated_slots, status, next_hop) plus superframe info
+    ASSERT_EQ(payload.size(), 6 + superframe_info.size());
 
     // Network ID should be in the first two bytes (little endian)
     uint16_t extracted_network_id =
@@ -238,7 +238,8 @@ TEST_F(JoinResponseMessageTest, ConversionToBaseMessageTest) {
 
     // Check superframe info
     for (size_t i = 0; i < superframe_info.size(); i++) {
-        EXPECT_EQ(payload[4 + i], superframe_info[i]);
+        EXPECT_EQ(payload[JoinResponseHeader::JoinResponseFieldsSize() + i],
+                  superframe_info[i]);
     }
 }
 
