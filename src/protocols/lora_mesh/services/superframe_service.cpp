@@ -211,7 +211,8 @@ uint32_t SuperframeService::GetDiscoveryTimeout() {
     }
 
     // Discovery timeout is the duration of discovery slots
-    return total_slots_ * slot_duration_ms_;
+    // TODO: Calculate this correctly.
+    return total_slots_ * slot_duration_ms_ * 3;
 }
 
 uint16_t SuperframeService::GetCurrentSlot() const {

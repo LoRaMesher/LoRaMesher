@@ -283,8 +283,8 @@ SYNC_BEACON = 0x46,  // Multi-hop synchronization beacon
 
 **SYNC_BEACON Format (Optimized)**:
 
-*Message Size*: 19 bytes total (6-byte base header + 13-byte sync fields)
-- **Optimization**: Reduced from 33 bytes (42% size reduction)  
+*Message Size*: 21 bytes total (6-byte base header + 15-byte sync fields)
+- **Optimization**: Reduced from 33 bytes (36% size reduction)  
 - **Power Impact**: Lower transmission time and energy consumption
 
 ```cpp
@@ -295,10 +295,11 @@ struct SyncBeaconHeader {
     MessageType type = SYNC_BEACON;      // Message type 0x46 (1 byte)
     uint8_t payload_size = 0;            // No payload data (1 byte)
     
-    // Core synchronization fields (9 bytes)
+    // Core synchronization fields (11 bytes)
     uint16_t network_id;                 // Network identifier (2 bytes)
     uint8_t total_slots;                 // Slots in complete superframe (1 byte)
     uint16_t slot_duration_ms;           // Individual slot duration (2 bytes) [OPTIMIZED: was 4 bytes]
+    AddressType network_manager;         // Network Manager address (2 bytes)
     
     // Multi-hop forwarding fields (4 bytes)
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
@@ -309,7 +310,6 @@ struct SyncBeaconHeader {
 
 // Calculated fields (not transmitted):
 // - superframe_duration_ms = total_slots * slot_duration_ms
-// - Network Manager address = determined from hop_count == 0
 ```
 
 #### 3.2.4 Data Messages
@@ -810,10 +810,11 @@ struct SyncBeaconHeader {
     MessageType type = SYNC_BEACON;      // Message type 0x46 (1 byte)
     uint8_t payload_size = 0;            // No payload data (1 byte)
     
-    // Core synchronization fields (9 bytes)
+    // Core synchronization fields (11 bytes)
     uint16_t network_id;                 // Network identifier (2 bytes)
     uint8_t total_slots;                 // Slots in complete superframe (1 byte)
     uint16_t slot_duration_ms;           // Individual slot duration (2 bytes)
+    AddressType network_manager;         // Network Manager address (2 bytes)
     
     // Multi-hop forwarding fields (4 bytes)
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
@@ -821,7 +822,7 @@ struct SyncBeaconHeader {
     uint32_t propagation_delay_ms;       // Accumulated forwarding delay (4 bytes)
     uint8_t max_hops;                    // Network diameter limit (1 byte)
 };
-// Total: 19 bytes (optimized from 33 bytes - 42% reduction)
+// Total: 21 bytes (optimized from 33 bytes - 36% reduction)
 ```
 
 #### 5.3.2 Time Synchronization Algorithm
@@ -1287,14 +1288,14 @@ void ProcessJoinResponse(const JoinResponse& response) {
 
 | LoRa Configuration | Max Frame Size | Sync Beacon Size | Data Message Size |
 |-------------------|----------------|------------------|-------------------|
-| SF7, BW125, CR4/5 | 255 bytes | 19 bytes (optimized) | 246 bytes |
-| SF8, BW125, CR4/5 | 255 bytes | 19 bytes (optimized) | 246 bytes |
-| SF9, BW125, CR4/5 | 255 bytes | 19 bytes (optimized) | 246 bytes |
-| SF10, BW125, CR4/5 | 255 bytes | 19 bytes (optimized) | 246 bytes |
-| SF11, BW125, CR4/5 | 255 bytes | 19 bytes (optimized) | 246 bytes |
-| SF12, BW125, CR4/5 | 255 bytes | 19 bytes (optimized) | 246 bytes |
+| SF7, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
+| SF8, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
+| SF9, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
+| SF10, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
+| SF11, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
+| SF12, BW125, CR4/5 | 255 bytes | 21 bytes (optimized) | 246 bytes |
 
-*Note: Sync beacons optimized to 19 bytes (42% reduction) for faster transmission and lower power consumption. Header overhead is 9 bytes, leaving 246 bytes for data payload.*
+*Note: Sync beacons optimized to 21 bytes (36% reduction) for faster transmission and lower power consumption. Header overhead is 9 bytes, leaving 246 bytes for data payload.*
 
 ---
 
@@ -1407,7 +1408,7 @@ void handleNetworkPartition() {
 
 | Frame Size | SF7 | SF8 | SF9 | SF10 | SF11 | SF12 |
 |------------|-----|-----|-----|------|------|------|
-| 19 bytes (Sync Beacon) | 25ms | 46ms | 82ms | 164ms | 329ms | 658ms |
+| 21 bytes (Sync Beacon) | 25ms | 46ms | 82ms | 164ms | 329ms | 658ms |
 | 50 bytes | 51ms | 103ms | 185ms | 371ms | 741ms | 1.4s |
 | 100 bytes | 82ms | 144ms | 267ms | 535ms | 1.0s | 2.1s |
 | 200 bytes | 144ms | 267ms | 493ms | 989ms | 1.9s | 3.9s |
@@ -1532,11 +1533,11 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 ### Core Capabilities
 - **Reliable Routing**: Distance-vector algorithm with link quality metrics and deterministic control slot allocation
 - **Power-Aware TDMA**: 70% sleep time with 30% target duty cycle for battery-powered operation
-- **Multi-Hop Synchronization**: Collision-free hop-layered sync beacon forwarding with 42% message size optimization
+- **Multi-Hop Synchronization**: Collision-free hop-layered sync beacon forwarding with 36% message size optimization
 - **Scalable Architecture**: Service-oriented design supporting 2-50 node networks efficiently
 
 ### Advanced Features
-- **Optimized Sync Beacons**: 19-byte messages (reduced from 33 bytes) for faster transmission and lower power consumption
+- **Optimized Sync Beacons**: 21-byte messages (reduced from 33 bytes) for faster transmission and lower power consumption
 - **Deterministic Slot Allocation**: Address-based ordering ensures all nodes calculate identical schedules
 - **Hop-Layered Forwarding**: Sequential transmission by hop distance eliminates inter-hop collisions
 - **Network Synchronization**: Hierarchical timing coordination with ±50ms accuracy across multi-hop networks
