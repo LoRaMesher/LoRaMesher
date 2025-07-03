@@ -169,41 +169,35 @@ Result RoutingTableMessage::SetLinkQualityFor(AddressType node_address,
 }
 
 BaseMessage RoutingTableMessage::ToBaseMessage() const {
-    // Calculate total message size
-    size_t total_message_size = GetTotalPayloadSize() + BaseHeader::Size();
-    if (total_message_size > BaseMessage::kMaxPayloadSize) {
+    // Calculate payload size (only routing table fields + entries, no BaseHeader)
+    size_t payload_size = RoutingTableHeader::RoutingTableFieldsSize();
+    for (const auto& entry : entries_) {
+        payload_size += entry.Size();
+    }
+
+    if (payload_size > BaseMessage::kMaxPayloadSize) {
         LOG_ERROR("Routing table message payload too large: %zu > %zu",
-                  total_message_size, BaseMessage::kMaxPayloadSize);
+                  payload_size, BaseMessage::kMaxPayloadSize);
         return BaseMessage(header_.GetDestination(), header_.GetSource(),
                            MessageType::ROUTE_TABLE, {});
     }
 
-    std::vector<uint8_t> payload(total_message_size);
+    std::vector<uint8_t> payload(payload_size);
     utils::ByteSerializer serializer(payload);
 
-    // Serialize the header-specific fields
-    Result result = header_.Serialize(serializer);
-    if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to serialize routing table header");
-        return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::ROUTE_TABLE, {});
-    }
+    // Serialize only the routing table specific fields (not the BaseHeader part)
+    serializer.WriteUint16(header_.GetNetworkManager());
+    serializer.WriteUint8(header_.GetTableVersion());
+    serializer.WriteUint8(header_.GetEntryCount());
 
     // Serialize all network node routes
     for (const auto& entry : entries_) {
         entry.Serialize(serializer);
     }
 
-    // Create the base message with our serialized content as payload
-    auto base_message = BaseMessage::CreateFromSerialized(payload);
-    if (!base_message.has_value()) {
-        LOG_ERROR("Failed to create base message from routing table message");
-        // Return an empty message as fallback
-        return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::ROUTE_TABLE, {});
-    }
-
-    return base_message.value();
+    // Create the base message with the correct type and our payload
+    return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                       MessageType::ROUTE_TABLE, payload);
 }
 
 std::optional<std::vector<uint8_t>> RoutingTableMessage::Serialize() const {
