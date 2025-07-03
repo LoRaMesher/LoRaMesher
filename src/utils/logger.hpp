@@ -285,6 +285,7 @@ class Logger {
     std::mutex logger_mutex_;
 
     void LogMessage(LogLevel level, const std::string& message);
+    std::string FormatMessageWithAddress(const std::string& message) const;
 };
 
 /**

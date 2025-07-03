@@ -1,4 +1,5 @@
 #include "logger.hpp"
+#include "os/os_port.hpp"
 
 namespace loramesher {
 
@@ -14,7 +15,8 @@ void Logger::LogMessage(LogLevel level, const std::string& message) {
     std::unique_lock<std::mutex> lock(logger_mutex_, std::try_to_lock);
     if (lock.owns_lock()) {
         if (level >= min_log_level_ && handler_) {
-            handler_->Write(level, message);
+            std::string formatted_message = FormatMessageWithAddress(message);
+            handler_->Write(level, formatted_message);
         }
     }
 }
@@ -27,6 +29,16 @@ void Logger::Reset() {
         logger_mutex_.~mutex();
         new (&logger_mutex_) std::mutex();
     }
+}
+
+std::string Logger::FormatMessageWithAddress(const std::string& message) const {
+    // Get the node address from the current task
+    std::string node_address = GetRTOS().GetCurrentTaskNodeAddress();
+    if (!node_address.empty()) {
+        // Create a formatted string with node address prefix
+        return "[" + node_address + "] " + message;
+    }
+    return message;
 }
 
 // Global logger instance
