@@ -56,6 +56,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     void TearDown() override {
+        // Clean up network adapters FIRST to prevent race conditions
+        network_adapters_.clear();
+
         // Stop and clean up all nodes
         for (auto& node : nodes_) {
             if (node->protocol) {
@@ -67,9 +70,6 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
         nodes_.clear();
         message_log_.clear();
-
-        // Clean up network adapters
-        network_adapters_.clear();
     }
 
     /**

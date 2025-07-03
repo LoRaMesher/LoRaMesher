@@ -11,6 +11,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <queue>
 #include <random>
 #include <vector>
 
@@ -122,6 +123,18 @@ class VirtualNetwork {
                       << std::endl;
             return;
         }
+
+        std::string hex_data;
+        if (data.size() > 0) {
+            char hex_byte[4];  // Extra space for the format
+            for (uint8_t byte : data) {
+                snprintf(hex_byte, sizeof(hex_byte), "%02X ", byte);
+                hex_data += hex_byte;
+            }
+        }
+
+        LOG_DEBUG("Transmitting message from 0x%04X, hex: %s", source,
+                  hex_data.c_str());
 
         // Determine which nodes should receive the message
         for (auto& node_pair : nodes_) {
@@ -419,8 +432,10 @@ class VirtualNetwork {
 
         pending_messages_.push_back(msg);
 
-        LOG_DEBUG("Queued message from 0x%04X to 0x%04X for delivery at %u ms",
-                  source, destination, delivery_time);
+        LOG_DEBUG(
+            "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery at %u "
+            "ms",
+            current_time_, source, destination, delivery_time);
     }
 
     /**
@@ -623,29 +638,41 @@ class RadioToNetworkAdapter : public IRadioReceiver {
 
         // Set up packet data storage
         EXPECT_CALL(*radio_, getPacketLength())
+            .WillRepeatedly(testing::Invoke([this]() -> size_t {
+                if (message_queue_.empty()) {
+                    return 0;
+                }
+                return message_queue_.front().data.size();
+            }));
+
+        EXPECT_CALL(*radio_, getRSSI())
             .WillRepeatedly(testing::Invoke(
-                [this]() -> size_t { return received_data_.size(); }));
+                [this]() -> int8_t { return message_queue_.front().rssi; }));
 
-        EXPECT_CALL(*radio_, getRSSI()).WillRepeatedly(testing::Return(rssi_));
-
-        EXPECT_CALL(*radio_, getSNR()).WillRepeatedly(testing::Return(snr_));
+        EXPECT_CALL(*radio_, getSNR())
+            .WillRepeatedly(testing::Invoke(
+                [this]() -> int8_t { return message_queue_.front().snr; }));
 
         EXPECT_CALL(*radio_, readData(testing::_, testing::_))
-            .WillRepeatedly(testing::Invoke([this](uint8_t* data,
-                                                   size_t len) -> Result {
-                if (received_data_.empty()) {
-                    return Result(LoraMesherErrorCode::kHardwareError,
-                                  "No data received");
-                }
+            .WillRepeatedly(
+                testing::Invoke([this](uint8_t* data, size_t len) -> Result {
+                    if (message_queue_.empty()) {
+                        return Result(LoraMesherErrorCode::kHardwareError,
+                                      "No data received");
+                    }
 
-                if (len < received_data_.size()) {
-                    return Result(LoraMesherErrorCode::kBufferOverflow,
-                                  "Buffer too small");
-                }
+                    auto current_message = message_queue_.front();
+                    message_queue_.pop();
 
-                std::copy(received_data_.begin(), received_data_.end(), data);
-                return Result::Success();
-            }));
+                    if (len < current_message.data.size()) {
+                        return Result(LoraMesherErrorCode::kBufferOverflow,
+                                      "Buffer too small");
+                    }
+
+                    std::copy(current_message.data.begin(),
+                              current_message.data.end(), data);
+                    return Result::Success();
+                }));
         EXPECT_CALL(*radio_, getTimeOnAir(testing::_))
             .WillRepeatedly(testing::Invoke([this](uint8_t length) -> uint32_t {
                 return length * 10;  // TODO: Mock time on air
@@ -697,24 +724,31 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                 }));
     }
 
-    ~RadioToNetworkAdapter() override { network_.UnregisterNode(address_); }
+    ~RadioToNetworkAdapter() override {
+        // Clear callback to prevent calls during destruction
+        original_callback_ = nullptr;
+
+        // Clear message queue to prevent access after destruction
+        while (!message_queue_.empty()) {
+            message_queue_.pop();
+        }
+
+        // Unregister from network
+        network_.UnregisterNode(address_);
+    }
 
     void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
                         int8_t snr) override {
-        // Store parameters for the mock radio to use
-        received_data_ = data;
-        rssi_ = rssi;
-        snr_ = snr;
-
-        LOG_DEBUG("Received message on address 0x%04X: %s", address_,
-                  std::string(data.begin(), data.end()).c_str());
+        // Queue the message to prevent race conditions with multiple simultaneous messages
+        QueuedMessage msg;
+        msg.data = data;
+        msg.rssi = rssi;
+        msg.snr = snr;
+        message_queue_.push(msg);
 
         // Call the original callback if set
         if (original_callback_) {
-            LOG_DEBUG("Calling received callback");
             original_callback_();
-        } else {
-            LOG_WARNING("No received callback set");
         }
     }
 
@@ -737,12 +771,16 @@ class RadioToNetworkAdapter : public IRadioReceiver {
     }
 
    private:
+    struct QueuedMessage {
+        std::vector<uint8_t> data;
+        int8_t rssi;
+        int8_t snr;
+    };
+
     radio::test::MockRadio* radio_;
     VirtualNetwork& network_;
     AddressType address_;
-    std::vector<uint8_t> received_data_;
-    int8_t rssi_{-65};
-    int8_t snr_{8};
+    std::queue<QueuedMessage> message_queue_;
     void (*original_callback_)() = nullptr;
     loramesher::radio::RadioState current_radio_state_{
         loramesher::radio::RadioState::kIdle};  ///< Track current radio state
