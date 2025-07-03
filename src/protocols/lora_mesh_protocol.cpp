@@ -218,7 +218,7 @@ Result LoRaMeshProtocol::Stop() {
         superframe_service_->StopSuperframe();
     }
 
-    // Clean up task
+    // Clean up task - let the mock RTOS handle task termination
     if (protocol_task_handle_) {
         GetRTOS().DeleteTask(protocol_task_handle_);
         protocol_task_handle_ = nullptr;
@@ -360,6 +360,12 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
     auto& rtos = GetRTOS();
 
+    // Set node address in RTOS for multi-node identification in logs
+    char address_str[8];
+    snprintf(address_str, sizeof(address_str), "0x%04X",
+             protocol->GetNodeAddress());
+    rtos.SetCurrentTaskNodeAddress(address_str);
+
     LOG_INFO("Protocol task started");
 
     Result result = Result::Success();
@@ -370,7 +376,7 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
         // If paused, just wait
         if (protocol->is_paused_) {
-            rtos.delay(100);
+            rtos.delay(1000);
             continue;
         }
 
@@ -407,12 +413,6 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
             case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
             case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
                 // Normal operation - messages are sent based on slot schedule
-                // TODO: Optimize this to avoid repeatedly checking state
-                result = protocol->AddRoutingMessageToQueueService();
-                if (!result) {
-                    LOG_ERROR("Failed to add routing message: %s",
-                              result.GetErrorMessage().c_str());
-                }
                 break;
 
             case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
@@ -429,7 +429,8 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 break;
         }
 
-        // Yield to other tasks
+        // Yield to other tasks with shorter delay for faster shutdown
+        // rtos.delay(10);  // Reduced from 100ms to 10ms for faster response to stop_requested_
         rtos.YieldTask();
     }
 
@@ -483,8 +484,8 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         }
     }
 
-    LOG_DEBUG("Slot %d transition: type=%s%s", current_slot,
-              slot_utils::SlotTypeToString(slot_type).c_str(),
+    LOG_DEBUG("[0x%04X] Slot %d transition: type=%s%s", GetNodeAddress(),
+              current_slot, slot_utils::SlotTypeToString(slot_type).c_str(),
               new_superframe ? " (new superframe)" : "");
 
     // Handle new superframe
@@ -554,7 +555,42 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
     switch (slot_type) {
         case SlotAllocation::SlotType::TX:
-        case SlotAllocation::SlotType::CONTROL_TX:
+        case SlotAllocation::SlotType::CONTROL_TX: {
+            // State-based message sending for CONTROL_TX
+            auto state = network_service_->GetState();
+
+            if (state == lora_mesh::INetworkService::ProtocolState::
+                             NORMAL_OPERATION ||
+                state == lora_mesh::INetworkService::ProtocolState::
+                             NETWORK_MANAGER) {
+                // Normal operation - send routing table updates
+                result = AddRoutingMessageToQueueService();
+                if (!result) {
+                    LOG_DEBUG("Failed to add routing message to queue: %s",
+                              result.GetErrorMessage().c_str());
+                }
+            }
+
+            // Extract and send the queued message
+            auto message =
+                message_queue_service_->ExtractMessageOfType(slot_type);
+            if (message) {
+                // Send via hardware
+                result = hardware_->SendMessage(*message);
+                if (!result) {
+                    LOG_ERROR("Failed to send control message: %s",
+                              result.GetErrorMessage().c_str());
+                } else {
+                    LOG_DEBUG("Sent control message type %d from state %d",
+                              static_cast<int>(message->GetType()),
+                              static_cast<int>(state));
+                }
+            } else {
+                LOG_DEBUG("No control message to send in state %d",
+                          static_cast<int>(state));
+            }
+            break;
+        }
         case SlotAllocation::SlotType::DISCOVERY_TX: {
             // Get next message from queue
             auto message =
@@ -600,6 +636,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 auto message =
                     message_queue_service_->ExtractMessageOfType(slot_type);
                 if (message) {
+                    // TODO: Send using this -> 10.1.3 Collision Mitigation for Same-Hop Forwarders
                     result = hardware_->SendMessage(*message);
                     if (!result) {
                         LOG_ERROR("Failed to send sync beacon: %s",
@@ -630,9 +667,34 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
         }
 
+        case SlotAllocation::SlotType::DISCOVERY_RX: {
+            // Check if there are any discovery messages to transmit first
+            auto discovery_message =
+                message_queue_service_->ExtractMessageOfType(
+                    SlotAllocation::SlotType::DISCOVERY_TX);
+            if (discovery_message) {
+                // TODO: Send using this -> 10.1.3 Collision Mitigation for Same-Hop Forwarders
+                // Send discovery message instead of receiving
+                result = hardware_->SendMessage(*discovery_message);
+                if (!result) {
+                    LOG_ERROR("Failed to send discovery message: %s",
+                              result.GetErrorMessage().c_str());
+                } else {
+                    LOG_DEBUG(
+                        "Sent discovery message during DISCOVERY_RX slot");
+                }
+            } else {
+                // No discovery messages to send, set radio to receive mode
+                result = hardware_->setState(radio::RadioState::kReceive);
+                if (!result) {
+                    LOG_ERROR("Failed to set radio to receive: %s",
+                              result.GetErrorMessage().c_str());
+                }
+            }
+            break;
+        }
         case SlotAllocation::SlotType::RX:
         case SlotAllocation::SlotType::CONTROL_RX:
-        case SlotAllocation::SlotType::DISCOVERY_RX:
         case SlotAllocation::SlotType::SYNC_BEACON_RX:
             // Set radio to receive mode for all RX slot types
             result = hardware_->setState(radio::RadioState::kReceive);
