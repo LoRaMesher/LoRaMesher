@@ -99,34 +99,26 @@ size_t JoinRequestMessage::GetTotalSize() const {
 }
 
 BaseMessage JoinRequestMessage::ToBaseMessage() const {
-    // Calculate payload size
-    size_t payload_size = GetTotalSize();
+    // Calculate payload size (only JOIN_REQUEST specific fields + additional info)
+    size_t payload_size =
+        JoinRequestHeader::JoinRequestFieldsSize() + additional_info_.size();
     std::vector<uint8_t> payload(payload_size);
-
     utils::ByteSerializer serializer(payload);
 
-    Result result = header_.Serialize(serializer);
-    if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to serialize join request message header");
-        return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::JOIN_REQUEST, {});
-    }
+    // Serialize only the JOIN_REQUEST specific fields (not the BaseHeader part)
+    serializer.WriteUint8(header_.GetCapabilities());
+    serializer.WriteUint8(header_.GetBatteryLevel());
+    serializer.WriteUint8(header_.GetRequestedSlots());
+    serializer.WriteUint16(header_.GetNextHop());
 
     // Add any additional information
     if (!additional_info_.empty()) {
         serializer.WriteBytes(additional_info_.data(), additional_info_.size());
     }
 
-    // Create the base message with our serialized content as payload
-    auto base_message = BaseMessage::CreateFromSerialized(payload);
-    if (!base_message.has_value()) {
-        LOG_ERROR("Failed to create base message from join request");
-        // Return an empty message as fallback
-        return BaseMessage(header_.GetDestination(), header_.GetSource(),
-                           MessageType::SYNC_BEACON, {});
-    }
-
-    return base_message.value();
+    // Create the base message with the correct type and our payload
+    return BaseMessage(header_.GetDestination(), header_.GetSource(),
+                       MessageType::JOIN_REQUEST, payload);
 }
 
 std::optional<std::vector<uint8_t>> JoinRequestMessage::Serialize() const {
