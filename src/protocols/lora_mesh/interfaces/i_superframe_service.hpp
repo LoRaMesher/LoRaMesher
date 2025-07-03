@@ -61,6 +61,16 @@ class ISuperframeService {
     virtual void SetSynchronized(bool synchronized) = 0;
 
     /**
+     * @brief Synchronize with external superframe timing
+     * 
+     * @param external_slot_start_time Time when external slot started
+     * @param external_slot Slot number of external superframe
+     * @return Result Success if synchronized successfully
+     */
+    virtual Result SynchronizeWith(uint32_t external_slot_start_time,
+                                   uint16_t external_slot) = 0;
+
+    /**
      * @brief Update superframe configuration
      * 
      * @param total_slots Total number of slots in superframe
