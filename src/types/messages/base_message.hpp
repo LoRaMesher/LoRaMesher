@@ -159,23 +159,21 @@ class BaseMessage {
      * 
      * @return AddressType Destination address
      */
-    const AddressType GetDestination() const {
-        return header_.GetDestination();
-    }
+    AddressType GetDestination() const { return header_.GetDestination(); }
 
     /**
      * @brief Gets the source address of the message
      * 
      * @return AddressType Source address
      */
-    const AddressType GetSource() const { return header_.GetSource(); }
+    AddressType GetSource() const { return header_.GetSource(); }
 
     /**
      * @brief Gets the message type
      * 
      * @return MessageType Type of the message
      */
-    const MessageType GetType() const { return header_.GetType(); }
+    MessageType GetType() const { return header_.GetType(); }
 
    private:
     /**
