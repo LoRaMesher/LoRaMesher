@@ -574,6 +574,10 @@ bool NetworkService::IsNetworkCreator() const {
 }
 
 Result NetworkService::ProcessReceivedMessage(const BaseMessage& message) {
+    LOG_DEBUG("Processing received message type %d from 0x%04X to 0x%04X",
+              static_cast<int>(message.GetType()), message.GetSource(),
+              message.GetDestination());
+
     // Route message to appropriate handler based on type
     switch (message.GetType()) {
         case MessageType::ROUTE_TABLE:
@@ -761,13 +765,6 @@ Result NetworkService::SlotTableToSuperframe() {
 }
 
 Result NetworkService::CreateNetwork() {
-    // Pause supeframe_service
-    Result result = superframe_service_->StopSuperframe();
-    if (!result) {
-        LOG_ERROR("Failed to stop superframe while creating network");
-        return result;
-    }
-
     // Set ourselves as network manager
     SetNetworkManager(node_address_);
 
@@ -789,14 +786,29 @@ Result NetworkService::CreateNetwork() {
     LOG_INFO("Added network manager node 0x%04X", node_address_);
 
     // Initialize slot table as network manager
-    result = UpdateSlotTable();
+    Result result = UpdateSlotTable();
     if (!result) {
         LOG_ERROR("Failed to update slot table");
         return result;
     }
 
-    // Notify superframe if available
+    // Update superframe service configuration with new slot table
     if (superframe_service_) {
+        // Get the updated slot table
+        const auto& slot_table = GetSlotTable();
+        uint16_t total_slots = static_cast<uint16_t>(slot_table.size());
+        uint32_t slot_duration =
+            1000;  // Use standard slot duration for network manager
+
+        // Update the superframe configuration without stopping/starting
+        result = superframe_service_->UpdateSuperframeConfig(
+            total_slots, slot_duration, true);
+        if (!result) {
+            LOG_ERROR("Failed to update superframe configuration: %s",
+                      result.GetErrorMessage().c_str());
+            return result;
+        }
+
         superframe_service_->SetSynchronized(true);
         NotifySuperframeOfNetworkChanges();
     }
@@ -1013,6 +1025,8 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
 }
 
 Result NetworkService::ProcessJoinRequest(const BaseMessage& message) {
+    LOG_DEBUG("Processing JOIN_REQUEST from 0x%04X", message.GetSource());
+
     auto join_request_opt =
         JoinRequestMessage::CreateFromSerialized(*message.Serialize());
 
@@ -1555,7 +1569,7 @@ Result NetworkService::SetDiscoverySlots() {
         SlotAllocation slot;
         slot.slot_number = i;
         slot.target_address =
-            INetworkService::kBroadcastAddress;  // Discovery to boradcast
+            INetworkService::kBroadcastAddress;  // Discovery to broadcast
         slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
 
         slot_table_[i] = slot;
@@ -1610,9 +1624,16 @@ Result NetworkService::SetJoiningSlots() {
                 active_slots++;
                 // Convert first discovery TX slot to send join requests to network manager
                 if (discovery_tx_added == 0) {
+                    LOG_DEBUG(
+                        "Converting slot %d from DISCOVERY_RX to DISCOVERY_TX "
+                        "for joining",
+                        slot.slot_number);
                     slot.target_address = network_manager_;
                     slot.type = SlotAllocation::SlotType::DISCOVERY_TX;
                     discovery_tx_added++;
+                } else {
+                    LOG_DEBUG("Keeping slot %d as DISCOVERY_RX for joining",
+                              slot.slot_number);
                 }
                 break;
 
@@ -1827,7 +1848,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
 
     // Deserialize sync beacon message
     auto sync_beacon_opt =
-        SyncBeaconMessage::CreateFromSerialized(message.GetPayload());
+        SyncBeaconMessage::CreateFromSerialized(*message.Serialize());
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to deserialize sync beacon message");
         return Result::Error(LoraMesherErrorCode::kSerializationError);
@@ -1898,10 +1919,39 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
         uint8_t total_slots = sync_beacon.GetTotalSlots();
         uint16_t slot_duration = sync_beacon.GetSlotDuration();
 
-        // TODO: Update superframe service with new timing information
         LOG_DEBUG(
             "Sync beacon timing: duration %d ms, slots %d, slot_duration %d ms",
             superframe_duration, total_slots, slot_duration);
+
+        // Update superframe configuration to match network manager
+        Result config_result = superframe_service_->UpdateSuperframeConfig(
+            total_slots, slot_duration, false);
+        if (!config_result.IsSuccess()) {
+            LOG_WARNING(
+                "Failed to update superframe config from sync beacon: %s",
+                config_result.GetErrorMessage().c_str());
+        } else {
+            LOG_DEBUG("Updated superframe config: %d slots, %d ms per slot",
+                      total_slots, slot_duration);
+        }
+
+        // Calculate current slot at the Network Manager when the beacon was sent
+        uint32_t nm_superframe_elapsed =
+            (estimated_nm_time % superframe_duration);
+        uint16_t nm_current_slot =
+            static_cast<uint16_t>(nm_superframe_elapsed / slot_duration);
+
+        // Synchronize our superframe timing with the Network Manager's timing
+        Result sync_result = superframe_service_->SynchronizeWith(
+            estimated_nm_time, nm_current_slot);
+        if (!sync_result.IsSuccess()) {
+            LOG_WARNING("Failed to synchronize superframe timing: %s",
+                        sync_result.GetErrorMessage().c_str());
+        } else {
+            LOG_INFO(
+                "Synchronized superframe with Network Manager timing (slot %d)",
+                nm_current_slot);
+        }
     }
 
     // Check if we should forward this beacon
