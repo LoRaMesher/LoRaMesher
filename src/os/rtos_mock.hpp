@@ -128,7 +128,6 @@ class RTOSMock : public RTOS {
         {
             std::lock_guard<std::mutex> lock(timeMutex_);
 
-            uint64_t oldTime = virtualTimeMs_;
             virtualTimeMs_ += ms;
 
             // Find tasks that should wake up within the new time window
@@ -1104,7 +1103,6 @@ class RTOSMock : public RTOS {
         }
 
         // Wait for notification, resume, or stop request
-        bool condition_met = false;
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
@@ -1143,14 +1141,12 @@ class RTOSMock : public RTOS {
 
             if (timeout == MAX_DELAY) {
                 // Use our waitFor helper with a very long timeout
-                condition_met = waitFor(
-                    task_info->notify_cv, lock,
-                    3600 * 1000,  // 1 hour timeout as MAX_DELAY equivalent
-                    wait_predicate);
+                waitFor(task_info->notify_cv, lock,
+                        3600 * 1000,  // 1 hour timeout as MAX_DELAY equivalent
+                        wait_predicate);
             } else {
                 // Regular timeout case
-                condition_met = waitFor(task_info->notify_cv, lock, timeout,
-                                        wait_predicate);
+                waitFor(task_info->notify_cv, lock, timeout, wait_predicate);
             }
         }
 
@@ -1394,18 +1390,18 @@ class RTOSMock : public RTOS {
         // Wait until either:
         // 1. The predicate becomes true
         // 2. The virtual time advances beyond our wake time
-        bool result = cv.wait_until(
-            lock, std::chrono::steady_clock::now() + std::chrono::hours(1),
-            [this, wakeTimeMs, &pred]() {
-                // Check if the predicate is true (normal wake up)
-                if (pred()) {
-                    return true;
-                }
+        cv.wait_until(lock,
+                      std::chrono::steady_clock::now() + std::chrono::hours(1),
+                      [this, wakeTimeMs, &pred]() {
+                          // Check if the predicate is true (normal wake up)
+                          if (pred()) {
+                              return true;
+                          }
 
-                // Check if we've reached the virtual timeout
-                std::lock_guard<std::mutex> timeLock(timeMutex_);
-                return virtualTimeMs_ >= wakeTimeMs;
-            });
+                          // Check if we've reached the virtual timeout
+                          std::lock_guard<std::mutex> timeLock(timeMutex_);
+                          return virtualTimeMs_ >= wakeTimeMs;
+                      });
 
         // Clean up our wait registration
         {
@@ -1415,6 +1411,40 @@ class RTOSMock : public RTOS {
 
         // Return true only if the predicate is satisfied
         return pred();
+    }
+
+    /**
+     * @brief Set the node address for the current task
+     * @param address The node address as a string (e.g., "0x1001")
+     */
+    void SetCurrentTaskNodeAddress(const std::string& address) override {
+        // std::lock_guard<std::mutex> lock(tasksMutex_);
+
+        // // Find the current task
+        // std::thread::id current_id = std::this_thread::get_id();
+        // for (auto& [thread_ptr, task_info] : tasks_) {
+        //     if (task_info.thread_id == current_id) {
+        //         task_info.node_address = address;
+        //         break;
+        //     }
+        // }
+    }
+
+    /**
+     * @brief Get the node address for the current task
+     * @return The node address as a string, or empty string if not set
+     */
+    std::string GetCurrentTaskNodeAddress() const override {
+        // std::lock_guard<std::mutex> lock(tasksMutex_);
+
+        // // Find the current task
+        // std::thread::id current_id = std::this_thread::get_id();
+        // for (const auto& [thread_ptr, task_info] : tasks_) {
+        //     if (task_info.thread_id == current_id) {
+        //         return task_info.node_address;
+        //     }
+        // }
+        return "";
     }
 
    private:
@@ -1439,6 +1469,9 @@ class RTOSMock : public RTOS {
         bool resume_acknowledged = false;
         std::condition_variable suspend_ack_cv;
         std::condition_variable resume_ack_cv;
+
+        // For logging context
+        std::string node_address;
     };
 
     TimeMode timeMode_;       ///< Current time mode (real or virtual)
@@ -1451,7 +1484,7 @@ class RTOSMock : public RTOS {
     std::vector<TimerCallback> timerCallbacks_;  ///< Timer callbacks
 
     std::map<std::thread*, TaskInfo> tasks_;
-    std::mutex tasksMutex_;
+    mutable std::mutex tasksMutex_;
     std::vector<void (*)()> registeredISRs_;
     std::mutex isrMutex_;
 };
@@ -1462,7 +1495,7 @@ class RTOSMock : public RTOS {
  * @brief Provides access to the RTOS singleton instance
  * @return Reference to the RTOS singleton instance
 */
-static os::RTOS& GetRTOS() {
+[[maybe_unused]] static os::RTOS& GetRTOS() {
     return os::RTOS::instance();
 }
 

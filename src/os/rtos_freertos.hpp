@@ -341,6 +341,26 @@ class RTOSFreeRTOS : public RTOS {
      * Allows a task to yield execution to other tasks of equal priority.
      */
     inline void YieldTask() override { taskYIELD(); }
+
+    /**
+     * @brief Set the node address for the current task
+     * @param address The node address as a string (e.g., "0x1001")
+     * Note: In FreeRTOS, this uses a simple global variable since ESP32 typically runs single mesh node
+     */
+    void SetCurrentTaskNodeAddress(const std::string& address) override {
+        // For ESP32/FreeRTOS, use a simple static variable since we typically have one mesh node per device
+        static std::string current_node_address;
+        current_node_address = address;
+    }
+
+    /**
+     * @brief Get the node address for the current task
+     * @return The node address as a string, or empty string if not set
+     */
+    std::string GetCurrentTaskNodeAddress() const override {
+        static std::string current_node_address;
+        return current_node_address;
+    }
 };
 
 }  // namespace os
@@ -349,7 +369,7 @@ class RTOSFreeRTOS : public RTOS {
  * @brief Provides access to the RTOS singleton instance
  * @return Reference to the RTOS singleton instance
 */
-static os::RTOS& GetRTOS() {
+[[maybe_unused]] static os::RTOS& GetRTOS() {
     return os::RTOS::instance();
 }
 

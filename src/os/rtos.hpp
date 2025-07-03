@@ -324,6 +324,18 @@ class RTOS {
      */
     virtual void YieldTask() = 0;
 
+    /**
+     * @brief Set the node address for the current task
+     * @param address The node address as a string (e.g., "0x1001")
+     */
+    virtual void SetCurrentTaskNodeAddress(const std::string& address) = 0;
+
+    /**
+     * @brief Get the node address for the current task
+     * @return The node address as a string, or empty string if not set
+     */
+    virtual std::string GetCurrentTaskNodeAddress() const = 0;
+
    protected:
     RTOS() = default;
     virtual ~RTOS() = default;
