@@ -3,7 +3,7 @@
  * @brief Implementation of the LoraMesher library
  */
 #include "loramesher.hpp"
-#include "os/rtos.hpp"
+#include "os/os_port.hpp"
 
 namespace loramesher {
 
@@ -204,6 +204,7 @@ std::shared_ptr<protocols::LoRaMeshProtocol> LoraMesher::GetLoRaMeshProtocol() {
 }
 
 void LoraMesher::OnRadioEvent(std::unique_ptr<radio::RadioEvent> event) {
+    (void)event;
     // Skip if the event is not a received message
     // if (event->getType() != radio::RadioEventType::kReceived) {
     //     LOG_DEBUG("Received non-message radio event: %d",
