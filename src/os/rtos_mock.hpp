@@ -1418,16 +1418,16 @@ class RTOSMock : public RTOS {
      * @param address The node address as a string (e.g., "0x1001")
      */
     void SetCurrentTaskNodeAddress(const std::string& address) override {
-        // std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::mutex> lock(tasksMutex_);
 
-        // // Find the current task
-        // std::thread::id current_id = std::this_thread::get_id();
-        // for (auto& [thread_ptr, task_info] : tasks_) {
-        //     if (task_info.thread_id == current_id) {
-        //         task_info.node_address = address;
-        //         break;
-        //     }
-        // }
+        // Find the current task
+        std::thread::id current_id = std::this_thread::get_id();
+        for (auto& [thread_ptr, task_info] : tasks_) {
+            if (task_info.thread_id == current_id) {
+                task_info.node_address = address;
+                break;
+            }
+        }
     }
 
     /**
@@ -1435,15 +1435,20 @@ class RTOSMock : public RTOS {
      * @return The node address as a string, or empty string if not set
      */
     std::string GetCurrentTaskNodeAddress() const override {
-        // std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::unique_lock<std::mutex> lock(tasksMutex_, std::try_to_lock);
 
-        // // Find the current task
-        // std::thread::id current_id = std::this_thread::get_id();
-        // for (const auto& [thread_ptr, task_info] : tasks_) {
-        //     if (task_info.thread_id == current_id) {
-        //         return task_info.node_address;
-        //     }
-        // }
+        // If we can't acquire the lock, return empty string to avoid deadlock
+        if (!lock.owns_lock()) {
+            return "";
+        }
+
+        // Find the current task
+        std::thread::id current_id = std::this_thread::get_id();
+        for (const auto& [thread_ptr, task_info] : tasks_) {
+            if (task_info.thread_id == current_id) {
+                return task_info.node_address;
+            }
+        }
         return "";
     }
 
