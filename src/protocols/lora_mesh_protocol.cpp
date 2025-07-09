@@ -455,7 +455,10 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
             if (message) {
                 // Only process received events as received messages
                 if (event->getType() == radio::RadioEventType::kReceived) {
-                    network_service_->ProcessReceivedMessage(*message);
+                    // Extract the reception timestamp from the RadioEvent
+                    int32_t reception_timestamp = event->getTimestamp();
+                    network_service_->ProcessReceivedMessage(
+                        *message, reception_timestamp);
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
                     // TODO: Handle transmitted events (e.g., update transmission statistics)
@@ -556,6 +559,12 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
     switch (slot_type) {
         case SlotAllocation::SlotType::TX:
         case SlotAllocation::SlotType::CONTROL_TX: {
+            // Apply guard time delay for TX slots to allow RX nodes to prepare
+            uint32_t guard_time_ms = config_.getGuardTime();
+            if (guard_time_ms > 0) {
+                LOG_DEBUG("Applying guard time delay: %u ms", guard_time_ms);
+                GetRTOS().delay(guard_time_ms);
+            }
             // State-based message sending for CONTROL_TX
             auto state = network_service_->GetState();
 
@@ -592,6 +601,14 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
         }
         case SlotAllocation::SlotType::DISCOVERY_TX: {
+            // Apply guard time delay for discovery transmission
+            uint32_t guard_time_ms = config_.getGuardTime();
+            if (guard_time_ms > 0) {
+                LOG_DEBUG("Applying guard time delay for discovery: %u ms",
+                          guard_time_ms);
+                GetRTOS().delay(guard_time_ms);
+            }
+
             // Get next message from queue
             auto message =
                 message_queue_service_->ExtractMessageOfType(slot_type);
@@ -619,6 +636,14 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
         }
 
         case SlotAllocation::SlotType::SYNC_BEACON_TX: {
+            // Apply guard time delay for sync beacon transmission
+            uint32_t guard_time_ms = config_.getGuardTime();
+            if (guard_time_ms > 0) {
+                LOG_DEBUG("Applying guard time delay for sync beacon: %u ms",
+                          guard_time_ms);
+                GetRTOS().delay(guard_time_ms);
+            }
+
             // Handle sync beacon transmission based on network role and hop distance
             auto state = network_service_->GetState();
 
@@ -673,6 +698,16 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 message_queue_service_->ExtractMessageOfType(
                     SlotAllocation::SlotType::DISCOVERY_TX);
             if (discovery_message) {
+                // Apply guard time delay for discovery transmission
+                uint32_t guard_time_ms = config_.getGuardTime();
+                if (guard_time_ms > 0) {
+                    LOG_DEBUG(
+                        "Applying guard time delay for discovery in RX slot: "
+                        "%u ms",
+                        guard_time_ms);
+                    GetRTOS().delay(guard_time_ms);
+                }
+
                 // TODO: Send using this -> 10.1.3 Collision Mitigation for Same-Hop Forwarders
                 // Send discovery message instead of receiving
                 result = hardware_->SendMessage(*discovery_message);
@@ -731,6 +766,7 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
     service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.guard_time_ms = config.getGuardTime();
 
     // Message queue configuration
     service_config.message_queue_size = 10;

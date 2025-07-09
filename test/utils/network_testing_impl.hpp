@@ -27,6 +27,9 @@ using ::testing::A;
 namespace loramesher {
 namespace test {
 
+size_t constexpr kGetTimeOnAirOverhead =
+    100;  // Overhead in ms for time on air calculations
+
 /**
  * @brief Interface for radio receivers in the virtual network
  */
@@ -150,15 +153,6 @@ class VirtualNetwork {
                 continue;
             }
 
-            // Check if destination radio can receive (not transmitting/sleeping)
-            if (!dest_node.radio->CanReceive()) {
-                loramesher::radio::RadioState radio_state =
-                    dest_node.radio->GetRadioState();
-                LOG_DEBUG("Node 0x%04X cannot receive (state: %d) - CONTINUE",
-                          dest_address, static_cast<int>(radio_state));
-                continue;
-            }
-
             // Check if link is active
             if (!IsLinkActive(source, dest_address)) {
                 continue;
@@ -171,7 +165,8 @@ class VirtualNetwork {
 
             // Calculate delivery time
             uint32_t delay = GetLinkDelay(source, dest_address);
-            uint32_t delivery_time = current_time_ + delay;
+            uint32_t delivery_time =
+                current_time_ + delay + kGetTimeOnAirOverhead;
 
             // Queue the message for delivery
             QueueMessageDelivery(source, dest_address, data, delivery_time,
@@ -319,7 +314,8 @@ class VirtualNetwork {
      * @param node2 Second node address
      * @param delay_ms Delay in milliseconds
      */
-    void SetMessageDelay(uint32_t node1, uint32_t node2, uint32_t delay_ms) {
+    void SetMessageDelay(uint32_t node1, uint32_t node2,
+                         uint32_t delay_ms = 50) {
         // Ensure bidirectional delay update
         if (nodes_.find(node1) != nodes_.end()) {
             nodes_[node1].link_delays[node2] = delay_ms;
@@ -460,22 +456,29 @@ class VirtualNetwork {
         // Check if destination node exists
         auto it = nodes_.find(msg.destination);
         if (it == nodes_.end()) {
+            LOG_ERROR(
+                "Message delivery failed - Node 0x%04X not found in network",
+                msg.destination);
             return;
         }
 
         // Get the destination radio
         auto* radio = it->second.radio;
         if (!radio) {
+            LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
+                      msg.destination);
             return;
         }
 
         // Double-check that the radio can still receive when delivery time arrives
         if (!radio->CanReceive()) {
             radio::RadioState radio_state = radio->GetRadioState();
-            LOG_DEBUG(
-                "Message delivery cancelled - Node 0x%04X cannot receive "
+            LOG_ERROR(
+                "[%u ms] - Message delivery cancelled - Node 0x%04X cannot "
+                "receive "
                 "(state: %d)",
-                msg.destination, static_cast<int>(radio_state));
+                GetCurrentTime(), msg.destination,
+                static_cast<int>(radio_state));
             return;
         }
 
@@ -646,12 +649,20 @@ class RadioToNetworkAdapter : public IRadioReceiver {
             }));
 
         EXPECT_CALL(*radio_, getRSSI())
-            .WillRepeatedly(testing::Invoke(
-                [this]() -> int8_t { return message_queue_.front().rssi; }));
+            .WillRepeatedly(testing::Invoke([this]() -> int8_t {
+                if (message_queue_.empty()) {
+                    return -100;  // Default RSSI value when no message
+                }
+                return message_queue_.front().rssi;
+            }));
 
         EXPECT_CALL(*radio_, getSNR())
-            .WillRepeatedly(testing::Invoke(
-                [this]() -> int8_t { return message_queue_.front().snr; }));
+            .WillRepeatedly(testing::Invoke([this]() -> int8_t {
+                if (message_queue_.empty()) {
+                    return 0;  // Default SNR value when no message
+                }
+                return message_queue_.front().snr;
+            }));
 
         EXPECT_CALL(*radio_, readData(testing::_, testing::_))
             .WillRepeatedly(
@@ -720,6 +731,11 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                     // Transmit via the virtual network
                     network_.TransmitMessage(address, packet);
 
+                    // After sending, reset the radio state
+                    // to receive mode
+                    current_radio_state_ =
+                        loramesher::radio::RadioState::kReceive;
+
                     return Result::Success();
                 }));
     }
@@ -749,6 +765,8 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         // Call the original callback if set
         if (original_callback_) {
             original_callback_();
+        } else {
+            LOG_ERROR("No original callback set for received message");
         }
     }
 

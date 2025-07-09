@@ -135,7 +135,8 @@ class NetworkService : public INetworkService {
      * @param message Routing table message to process
      * @return Result Success or error details
      */
-    Result ProcessRoutingTableMessage(const BaseMessage& message) override;
+    Result ProcessRoutingTableMessage(const BaseMessage& message,
+                                      int32_t reception_timestamp) override;
 
     /**
      * @brief Send a routing table update to the network
@@ -232,9 +233,11 @@ class NetworkService : public INetworkService {
      * Routes messages to appropriate handlers based on message type.
      * 
      * @param message The received message
+     * @param reception_timestamp Timestamp when the message was received (from RadioEvent)
      * @return Result Success or error details
      */
-    Result ProcessReceivedMessage(const BaseMessage& message) override;
+    Result ProcessReceivedMessage(const BaseMessage& message,
+                                  int32_t reception_timestamp) override;
 
     // INetworkService superframe integration
 
@@ -368,7 +371,8 @@ class NetworkService : public INetworkService {
      * @param message Join request message
      * @return Result Success or error
      */
-    Result ProcessJoinRequest(const BaseMessage& message);
+    Result ProcessJoinRequest(const BaseMessage& message,
+                              int32_t reception_timestamp);
 
     /**
      * @brief Process a join response from network manager
@@ -379,7 +383,8 @@ class NetworkService : public INetworkService {
      * @param message Join response message
      * @return Result Success or error
      */
-    Result ProcessJoinResponse(const BaseMessage& message);
+    Result ProcessJoinResponse(const BaseMessage& message,
+                               int32_t reception_timestamp);
 
     /**
      * @brief Send a join response to a node
@@ -406,7 +411,8 @@ class NetworkService : public INetworkService {
      * @param message Sync beacon message
      * @return Result Success or error
      */
-    Result ProcessSyncBeacon(const BaseMessage& message);
+    Result ProcessSyncBeacon(const BaseMessage& message,
+                             int32_t reception_timestamp);
 
     /**
      * @brief Send an original sync beacon (Network Manager only)
@@ -462,7 +468,8 @@ class NetworkService : public INetworkService {
      * @param message Slot request message
      * @return Result Success or error
      */
-    Result ProcessSlotRequest(const BaseMessage& message);
+    Result ProcessSlotRequest(const BaseMessage& message,
+                              int32_t reception_timestamp);
 
     /**
      * @brief Process a slot allocation message
@@ -472,7 +479,8 @@ class NetworkService : public INetworkService {
      * @param message Slot allocation message
      * @return Result Success or error
      */
-    Result ProcessSlotAllocation(const BaseMessage& message);
+    Result ProcessSlotAllocation(const BaseMessage& message,
+                                 int32_t reception_timestamp);
 
     /**
      * @brief Send a slot request to network manager

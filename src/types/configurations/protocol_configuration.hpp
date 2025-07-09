@@ -182,12 +182,14 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param data_slots Number of data slots in the superframe
      * @param joining_timeout_ms Timeout for joining the network in milliseconds
      * @param max_network_nodes Maximum number of nodes in the network
+     * @param guard_time_ms TX guard time for RX readiness in milliseconds
      */
     explicit LoRaMeshProtocolConfig(
         AddressType node_address = 0, uint32_t hello_interval = 60000,
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
         uint8_t max_packet_size = 255, uint8_t default_data_slots = 1,
-        uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50)
+        uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50,
+        uint32_t guard_time_ms = 50)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),
@@ -195,7 +197,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
           max_packet_size_(max_packet_size),
           default_data_slots_(default_data_slots),
           joining_timeout_ms_(joining_timeout_ms),
-          max_network_nodes_(max_network_nodes) {}
+          max_network_nodes_(max_network_nodes),
+          guard_time_ms_(guard_time_ms) {}
 
     /**
      * @brief Get the protocol type
@@ -311,6 +314,22 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
     /**
+     * @brief Get the TX guard time for RX readiness
+     * 
+     * @return uint32_t Guard time in milliseconds
+     */
+    uint32_t getGuardTime() const { return guard_time_ms_; }
+
+    /**
+     * @brief Set the TX guard time for RX readiness
+     * 
+     * @param guard_time_ms Guard time in milliseconds
+     */
+    void setGuardTime(uint32_t guard_time_ms) {
+        guard_time_ms_ = guard_time_ms;
+    }
+
+    /**
      * @brief Check if configuration is valid
      * 
      * @return bool True if configuration is valid
@@ -320,8 +339,10 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
                hello_interval_ <= 3600000 &&  // Maximum 1 hour
                route_timeout_ >
                    hello_interval_ &&  // Route timeout must be greater than hello interval
-               max_hops_ > 0 &&  // At least 1 hop
-               max_hops_ <= 16;  // Maximum 16 hops
+               max_hops_ > 0 &&         // At least 1 hop
+               max_hops_ <= 16 &&       // Maximum 16 hops
+               guard_time_ms_ >= 10 &&  // At least 10ms guard time
+               guard_time_ms_ <= 500;   // Maximum 500ms guard time
     }
 
     /**
@@ -345,6 +366,12 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (max_hops_ > 16) {
             return "Max hops too large (maximum 16)";
         }
+        if (guard_time_ms_ < 10) {
+            return "Guard time too short (minimum 10ms)";
+        }
+        if (guard_time_ms_ > 500) {
+            return "Guard time too long (maximum 500ms)";
+        }
         return "";
     }
 
@@ -360,7 +387,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint32_t joining_timeout_ms_ =
         hello_interval_ * 3;  ///< Joining timeout in ms
     uint8_t max_network_nodes_ =
-        50;  ///< Maximum number of nodes in the network
+        50;                        ///< Maximum number of nodes in the network
+    uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
 };
 
 /**

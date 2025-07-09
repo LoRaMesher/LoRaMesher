@@ -48,9 +48,11 @@ class INetworkDiscoveryService {
      * @brief Process a message received during discovery
      * 
      * @param message The received message
+     * @param reception_timestamp Timestamp when the message was received (from RadioEvent)
      * @return Result Success if processed correctly, error details otherwise
      */
-    virtual Result ProcessReceivedMessage(const BaseMessage& message) = 0;
+    virtual Result ProcessReceivedMessage(const BaseMessage& message,
+                                          int32_t reception_timestamp) = 0;
 
     /**
      * @brief Set the discovery timeout

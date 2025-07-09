@@ -56,6 +56,7 @@ class INetworkService {
         uint8_t default_data_slots = 1;       ///< Default data slots to request
         uint8_t default_control_slots = 1;    ///< Default control slots
         uint8_t default_discovery_slots = 1;  ///< Default discovery slots
+        uint32_t guard_time_ms = 50;  ///< TX guard time for RX readiness
     };
 
     static constexpr AddressType kBroadcastAddress =
@@ -130,7 +131,8 @@ class INetworkService {
      * @param message Routing table message
      * @return Result Success or error
      */
-    virtual Result ProcessRoutingTableMessage(const BaseMessage& message) = 0;
+    virtual Result ProcessRoutingTableMessage(const BaseMessage& message,
+                                              int32_t reception_timestamp) = 0;
 
     /**
      * @brief Send a routing table update message
@@ -208,9 +210,11 @@ class INetworkService {
      * @brief Process message received during discovery
      * 
      * @param message The received message
+     * @param reception_timestamp Timestamp when the message was received (from RadioEvent)
      * @return Result Success or error
      */
-    virtual Result ProcessReceivedMessage(const BaseMessage& message) = 0;
+    virtual Result ProcessReceivedMessage(const BaseMessage& message,
+                                          int32_t reception_timestamp) = 0;
 
     // Superframe integration
 

@@ -211,7 +211,8 @@ size_t NetworkService::RemoveInactiveNodes() {
     return initial_size - network_nodes_.size();
 }
 
-Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
+Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
+                                                  int32_t reception_timestamp) {
     // Deserialize routing table message
     RoutingTableMessage routing_msg(message);
 
@@ -219,11 +220,11 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
     auto network_manager = routing_msg.GetNetworkManager();
     auto table_version = routing_msg.GetTableVersion();
     auto entries = routing_msg.GetEntries();
-    auto current_time = GetRTOS().getTickCount();
 
     LOG_INFO(
-        "Received routing table update from 0x%04X: version %d, %zu entries",
-        source, table_version, entries.size());
+        "Received routing table update from 0x%04X: version %d, %zu entries at "
+        "timestamp %d",
+        source, table_version, entries.size(), reception_timestamp);
 
     // Process routing entries
     bool routing_changed = false;
@@ -240,7 +241,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
     // Update time synchronization if message is from network manager
     if (source == network_manager_) {
         is_synchronized_ = true;
-        last_sync_time_ = current_time;
+        last_sync_time_ = reception_timestamp;
     }
 
     // First, handle the source node as a direct neighbor
@@ -251,7 +252,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
         if (source_node_it != network_nodes_.end()) {
             // Update existing source node
             source_node_it->ReceivedRoutingMessage(
-                routing_msg.GetLinkQualityFor(node_address_), current_time);
+                routing_msg.GetLinkQualityFor(node_address_),
+                reception_timestamp);
 
             // TODO: Network quality, not hops.
             if (source_node_it->routing_entry.hop_count != 1 ||
@@ -270,7 +272,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
         } else {
             // Add source as new direct neighbor
             uint8_t battery = 100;
-            NetworkNodeRoute new_node(source, battery, current_time);
+            NetworkNodeRoute new_node(source, battery, reception_timestamp);
             new_node.next_hop = source;
             new_node.routing_entry.hop_count = 1;
             new_node.routing_entry.link_quality = 128;  // Initial quality
@@ -279,7 +281,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
 
             // Register the received message
             new_node.ReceivedRoutingMessage(
-                routing_msg.GetLinkQualityFor(node_address_), current_time);
+                routing_msg.GetLinkQualityFor(node_address_),
+                reception_timestamp);
 
             network_nodes_.push_back(new_node);
             node_updated = true;
@@ -327,12 +330,13 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
         if (node_it != network_nodes_.end()) {
             // Update if this is a better route
             NetworkNodeRoute potential_route(dest, source, actual_hop_count,
-                                             actual_link_quality, current_time);
+                                             actual_link_quality,
+                                             reception_timestamp);
 
             if (!node_it->is_active ||
                 potential_route.IsBetterRouteThan(*node_it)) {
                 bool changed = node_it->UpdateFromRoutingTableEntry(
-                    entry, source, current_time);
+                    entry, source, reception_timestamp);
 
                 // Update additional node info if available
                 if (entry.allocated_data_slots > 0) {
@@ -360,8 +364,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message) {
             new_node.next_hop = source;
             new_node.routing_entry.hop_count = actual_hop_count;
             new_node.routing_entry.link_quality = actual_link_quality;
-            new_node.last_updated = current_time;
-            new_node.last_seen = current_time;
+            new_node.last_updated = reception_timestamp;
+            new_node.last_seen = reception_timestamp;
             new_node.is_active = true;
 
             network_nodes_.push_back(new_node);
@@ -573,34 +577,44 @@ bool NetworkService::IsNetworkCreator() const {
     return network_creator_;
 }
 
-Result NetworkService::ProcessReceivedMessage(const BaseMessage& message) {
-    LOG_DEBUG("Processing received message type %d from 0x%04X to 0x%04X",
-              static_cast<int>(message.GetType()), message.GetSource(),
-              message.GetDestination());
+Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
+                                              int32_t reception_timestamp) {
+    LOG_INFO(
+        "*** RECEIVED MESSAGE: type %d from 0x%04X to 0x%04X (my state: %d, "
+        "timestamp: %d) ***",
+        static_cast<int>(message.GetType()), message.GetSource(),
+        message.GetDestination(), static_cast<int>(state_),
+        reception_timestamp);
+    LOG_DEBUG(
+        "Processing received message type %d from 0x%04X to 0x%04X at "
+        "timestamp %d",
+        static_cast<int>(message.GetType()), message.GetSource(),
+        message.GetDestination(), reception_timestamp);
 
     // Route message to appropriate handler based on type
     switch (message.GetType()) {
         case MessageType::ROUTE_TABLE:
-            return ProcessRoutingTableMessage(message);
+            return ProcessRoutingTableMessage(message, reception_timestamp);
 
         case MessageType::JOIN_REQUEST:
-            return ProcessJoinRequest(message);
+            return ProcessJoinRequest(message, reception_timestamp);
 
         case MessageType::JOIN_RESPONSE:
-            return ProcessJoinResponse(message);
+            return ProcessJoinResponse(message, reception_timestamp);
 
         case MessageType::SLOT_REQUEST:
-            return ProcessSlotRequest(message);
+            return ProcessSlotRequest(message, reception_timestamp);
 
         case MessageType::SLOT_ALLOCATION:
-            return ProcessSlotAllocation(message);
+            return ProcessSlotAllocation(message, reception_timestamp);
 
         case MessageType::SYNC_BEACON:
-            return ProcessSyncBeacon(message);
+            return ProcessSyncBeacon(message, reception_timestamp);
 
         case MessageType::DATA_MSG:
             // Data messages handled by upper layers
-            LOG_DEBUG("Received DATA_MSG from 0x%04X", message.GetSource());
+            LOG_DEBUG("Received DATA_MSG from 0x%04X at timestamp %d",
+                      message.GetSource(), reception_timestamp);
             // TODO: Forward to application layer
             break;
 
@@ -1021,10 +1035,22 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
     LOG_INFO("Join request queued for manager 0x%04X, requesting %d slots",
              manager_address, requested_slots);
 
+    // Debug: Log current slot information for timing verification
+    LOG_DEBUG(
+        "Join request - Current state: %d, Network manager: 0x%04X, Message "
+        "type: %d",
+        static_cast<int>(state_), network_manager_,
+        static_cast<int>(join_request->ToBaseMessage().GetType()));
+
     return Result::Success();
 }
 
-Result NetworkService::ProcessJoinRequest(const BaseMessage& message) {
+Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
+                                          int32_t reception_timestamp) {
+    LOG_INFO(
+        "*** PROCESSING JOIN_REQUEST from 0x%04X (state: %d, network_manager: "
+        "0x%04X) ***",
+        message.GetSource(), static_cast<int>(state_), network_manager_);
     LOG_DEBUG("Processing JOIN_REQUEST from 0x%04X", message.GetSource());
 
     auto join_request_opt =
@@ -1089,7 +1115,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message) {
     return Result::Success();
 }
 
-Result NetworkService::ProcessJoinResponse(const BaseMessage& message) {
+Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
+                                           int32_t reception_timestamp) {
     // Only process in joining state
     if (state_ != ProtocolState::JOINING) {
         LOG_DEBUG("Ignoring join response - not in joining state");
@@ -1184,7 +1211,8 @@ Result NetworkService::SendJoinResponse(AddressType dest,
 
 // Slot management implementations
 
-Result NetworkService::ProcessSlotRequest(const BaseMessage& message) {
+Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
+                                          int32_t reception_timestamp) {
     // Only network manager processes slot requests
     if (network_manager_ != node_address_) {
         LOG_DEBUG("Ignoring slot request - not network manager");
@@ -1240,7 +1268,8 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message) {
     return Result::Success();
 }
 
-Result NetworkService::ProcessSlotAllocation(const BaseMessage& message) {
+Result NetworkService::ProcessSlotAllocation(const BaseMessage& message,
+                                             int32_t reception_timestamp) {
     // Only accept from network manager
     if (message.GetSource() != network_manager_) {
         LOG_WARNING("Ignoring slot allocation from non-manager 0x%04X",
@@ -1836,7 +1865,8 @@ uint32_t NetworkService::GetJoinTimeout() {
     return 60000;  // TODO: Change to an actual value or configurable.
 }
 
-Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
+Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
+                                         int32_t reception_timestamp) {
     // Process sync beacons in discovery, joining, normal operation, and network manager states
     if (state_ != ProtocolState::DISCOVERY &&
         state_ != ProtocolState::NORMAL_OPERATION &&
@@ -1855,10 +1885,13 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
     }
 
     const auto& sync_beacon = sync_beacon_opt.value();
-    uint32_t current_time = GetRTOS().getTickCount();
 
-    LOG_INFO("Received sync beacon from 0x%04X, hop count %d",
-             sync_beacon.GetSource(), sync_beacon.GetHopCount());
+    uint32_t unsigned_reception_timestamp =
+        static_cast<uint32_t>(reception_timestamp);
+
+    LOG_INFO("Received sync beacon from 0x%04X, hop count %d at timestamp %u",
+             sync_beacon.GetSource(), sync_beacon.GetHopCount(),
+             unsigned_reception_timestamp);
 
     // Update network manager from the sync beacon header
     AddressType beacon_nm = sync_beacon.GetNetworkManager();
@@ -1907,11 +1940,19 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
 
     // Update synchronization state
     is_synchronized_ = true;
-    last_sync_time_ = current_time;
+    last_sync_time_ = unsigned_reception_timestamp;
 
-    // Calculate original timing for synchronization
+    // Calculate original timing for synchronization using actual reception timestamp
+    // Apply guard time and transmission delay compensation
+    uint32_t guard_time_compensation = config_.guard_time_ms;
+    uint32_t transmission_delay_compensation =
+        sync_beacon.GetTotalSize() * 10;  // Rough estimate: 10ms per byte
+    uint32_t total_delay_compensation =
+        guard_time_compensation + transmission_delay_compensation;
+
     uint32_t estimated_nm_time =
-        sync_beacon.CalculateOriginalTiming(current_time);
+        sync_beacon.CalculateOriginalTiming(unsigned_reception_timestamp) -
+        total_delay_compensation;
 
     // Update superframe timing if we have a superframe service
     if (superframe_service_) {
@@ -1957,7 +1998,11 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message) {
     // Check if we should forward this beacon
     if (ShouldForwardSyncBeacon(sync_beacon)) {
         // Calculate processing delay (time from reception to forwarding)
-        uint32_t processing_delay = 10;  // Fixed 10ms processing delay for now
+        // Include guard time and transmission delay
+        uint32_t guard_time_delay = config_.guard_time_ms;
+        uint32_t transmission_delay =
+            sync_beacon.GetTotalSize() * 10;  // Rough estimate: 10ms per byte
+        uint32_t processing_delay = 10 + guard_time_delay + transmission_delay;
 
         Result forward_result =
             ForwardSyncBeacon(sync_beacon, processing_delay);
@@ -1983,8 +2028,6 @@ Result NetworkService::SendSyncBeacon() {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
-    uint32_t current_time = GetRTOS().getTickCount();
-
     // Get actual total slots from the slot table
     uint16_t total_slots = static_cast<uint16_t>(slot_table_.size());
     if (total_slots == 0) {
@@ -1994,6 +2037,8 @@ Result NetworkService::SendSyncBeacon() {
     }
 
     // Create original sync beacon with actual parameters
+    // Note: original_timestamp is not used for synchronization (see CalculateOriginalTiming)
+    // Synchronization uses reception_time - propagation_delay instead
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
         0xFFFF,         // Broadcast destination
         node_address_,  // Network manager as source
@@ -2001,9 +2046,8 @@ Result NetworkService::SendSyncBeacon() {
         total_slots,    // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
         node_address_,  // Network manager address
-        static_cast<uint16_t>(current_time &
-                              0xFFFF),  // Original timestamp (16-bit)
-        network_max_hops_);             // Use actual max hops from network
+        0,  // Original timestamp set to 0 (irrelevant for sync - propagation_delay is used)
+        network_max_hops_);  // Use actual max hops from network
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
@@ -2100,17 +2144,14 @@ Result NetworkService::HandleSuperframeStart() {
         return Result::Success();  // Ignore in other states
     }
 
-    // Network Manager sends sync beacon at start of each superframe
+    // Sync beacon transmission is handled by slot-based processing
+    // in ProcessSlotMessages() when SYNC_BEACON_TX slot is encountered.
+    // This prevents duplicate transmissions at superframe start.
     if (state_ == ProtocolState::NETWORK_MANAGER &&
         network_manager_ == node_address_) {
-        LOG_DEBUG("Network Manager sending sync beacon");
-
-        Result result = SendSyncBeacon();
-        if (!result.IsSuccess()) {
-            LOG_WARNING("Failed to send sync beacon: %s",
-                        result.GetErrorMessage().c_str());
-            return result;
-        }
+        LOG_DEBUG(
+            "Network Manager superframe start - sync beacon will be sent in "
+            "slot 0");
     } else {
         // Regular nodes listen for sync beacons but don't send them
         LOG_DEBUG("Node listening for sync beacon");
