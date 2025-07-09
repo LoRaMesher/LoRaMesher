@@ -19,6 +19,8 @@
 #include "protocols/lora_mesh_protocol.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/radio/radio_state.hpp"
+#include "utils/file_log_handler.hpp"
+#include "utils/logger.hpp"
 
 namespace loramesher {
 namespace test {
@@ -49,10 +51,17 @@ class LoRaMeshTestFixture : public ::testing::Test {
     std::map<AddressType, std::vector<BaseMessage>> message_log_;
     std::vector<std::unique_ptr<RadioToNetworkAdapter>> network_adapters_;
 
-    LoRaMeshTestFixture() : time_controller_(virtual_network_) {}
+    // File logging support
+    std::unique_ptr<FileLogHandler> file_log_handler_;
+    std::unique_ptr<LogHandler> original_log_handler_;
+    std::string log_directory_;
+
+    LoRaMeshTestFixture()
+        : time_controller_(virtual_network_), log_directory_("test_logs") {}
 
     void SetUp() override {
-        // Nothing else needed here as we initialize in the constructor
+        // Set up file logging for this test
+        SetupFileLogging();
     }
 
     void TearDown() override {
@@ -70,6 +79,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
         nodes_.clear();
         message_log_.clear();
+
+        // Clean up file logging
+        CleanupFileLogging();
     }
 
     /**
@@ -843,6 +855,93 @@ class LoRaMeshTestFixture : public ::testing::Test {
                 SetLinkStatus(node, *(nodes_[node_index + 1].get()), true);
             }
         }
+    }
+
+   private:
+    /**
+     * @brief Set up file logging for the current test
+     */
+    void SetupFileLogging() {
+        // Create log directory if it doesn't exist
+        CreateLogDirectory();
+
+        // Get current test info from GoogleTest
+        const ::testing::TestInfo* test_info =
+            ::testing::UnitTest::GetInstance()->current_test_info();
+        std::string test_name = std::string(test_info->test_case_name()) + "_" +
+                                std::string(test_info->name());
+
+        // Create unique log filename
+        std::string log_filename = log_directory_ + "/" + test_name + ".log";
+
+        try {
+            // Create file log handler
+            file_log_handler_ =
+                std::make_unique<FileLogHandler>(log_filename, false, true);
+
+            // Set the file handler as the active logger
+            LOG.SetHandler(std::move(file_log_handler_));
+
+            // Log test start
+            LOG_INFO("=== Test Started: %s ===", test_name.c_str());
+
+        } catch (const std::exception& e) {
+            // If file logging fails, continue with console logging
+            std::cerr << "Warning: Could not set up file logging: " << e.what()
+                      << std::endl;
+        }
+    }
+
+    /**
+     * @brief Clean up file logging after test completion
+     */
+    void CleanupFileLogging() {
+        if (file_log_handler_ && file_log_handler_->IsOpen()) {
+            // Log test end
+            LOG_INFO("=== Test Completed ===");
+            LOG_FLUSH();
+
+            // Get the log filename before cleanup
+            std::string log_filename = file_log_handler_->GetFilename();
+
+            // Reset to default console handler
+            LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
+
+            // Clean up file handler
+            file_log_handler_.reset();
+
+            // Print log file location for user
+            std::cout << "Test log saved to: " << log_filename << std::endl;
+        }
+    }
+
+    /**
+     * @brief Create log directory if it doesn't exist
+     */
+    void CreateLogDirectory() {
+        // Use system command to create directory (cross-platform)
+        std::string command = "mkdir -p " + log_directory_;
+        system(command.c_str());
+    }
+
+   public:
+    /**
+     * @brief Set custom log directory
+     * @param directory Directory path for log files
+     */
+    void SetLogDirectory(const std::string& directory) {
+        log_directory_ = directory;
+    }
+
+    /**
+     * @brief Get current log file path
+     * @return Path to current log file, or empty string if not logging to file
+     */
+    std::string GetLogFilePath() const {
+        if (file_log_handler_ && file_log_handler_->IsOpen()) {
+            return file_log_handler_->GetFilename();
+        }
+        return "";
     }
 };
 

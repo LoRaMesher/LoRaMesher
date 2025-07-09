@@ -1,0 +1,141 @@
+[DEBUG] [23110366 ms] - MOCK: Switching to virtual time mode, initialized to 23110366 ms
+[INFO] [23110366 ms] - [0x1001] Protocol task started
+[INFO] [23110366 ms] - Network service configured with node address 0x1001
+[INFO] [23110366 ms] - [0x1002] Protocol task started
+[INFO] [23110366 ms] - Network service configured with node address 0x1002
+[DEBUG] [23110366 ms] - Starting LoRaMesh protocol... for node 0x1001
+[INFO] [23110366 ms] - Superframe service started - 10 slots, 2650ms per slot
+[DEBUG] [23110366 ms] - Starting superframe discovery
+[DEBUG] [23110366 ms] - [0x1001] Slot 0 transition: type=SLEEP (new superframe)
+[DEBUG] [23113016 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23115666 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23118316 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23120966 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23123616 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23126266 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23128916 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23131566 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23134216 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23136866 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23136916 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23136916 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23136916 ms] - Sending message to 0xFFFF, type: 70
+[DEBUG] [23136916 ms] - Transmitting message from 0x1001, hex: FF FF 01 10 46 0F 01 00 0B E8 03 01 10 00 00 00 00 00 00 00 05
+[DEBUG] [23136916 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23136916 ms] - [23136916 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23137016 ms
+[DEBUG] [23139566 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23142216 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23144866 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23147516 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23150166 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23152816 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23155466 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23158116 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23160766 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23163416 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23163466 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23163466 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23163466 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23163466 ms] - [23163466 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23163566 ms
+[DEBUG] [23166066 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23168716 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23171366 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23174016 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23176666 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23179316 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23181966 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23184616 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23187266 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23189916 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23189966 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23189966 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23189966 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23189966 ms] - [23189966 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23190066 ms
+[DEBUG] [23192566 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23195216 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23197866 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23200516 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23203166 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23205816 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23208466 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23211116 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23213766 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23216416 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23216466 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23216466 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23216466 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23216466 ms] - [23216466 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23216566 ms
+[DEBUG] [23219016 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23221666 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23224316 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23226966 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23229616 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23232266 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23234916 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23237566 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23240216 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23240216 ms] - Starting LoRaMesh protocol... for node 0x1002
+[INFO] [23240216 ms] - Superframe service started - 10 slots, 2650ms per slot
+[DEBUG] [23240216 ms] - Starting superframe discovery
+[DEBUG] [23240216 ms] - [0x1002] Slot 0 transition: type=SYNC_BEACON_RX (new superframe)
+[DEBUG] [23242866 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23242916 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23242916 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23242916 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23242916 ms] - [23242916 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23243016 ms
+[DEBUG] [23242866 ms] - [0x1002] Slot 1 transition: type=SLEEP
+[DEBUG] [23245516 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23245516 ms] - [0x1002] Slot 2 transition: type=SLEEP
+[DEBUG] [23248166 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23248166 ms] - [0x1002] Slot 3 transition: type=SLEEP
+[DEBUG] [23250816 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23250816 ms] - [0x1002] Slot 4 transition: type=SLEEP
+[DEBUG] [23253466 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23253466 ms] - [0x1002] Slot 5 transition: type=SLEEP
+[DEBUG] [23256116 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23256116 ms] - [0x1002] Slot 6 transition: type=SLEEP
+[DEBUG] [23258766 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23258766 ms] - [0x1002] Slot 7 transition: type=SLEEP
+[DEBUG] [23261416 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23261416 ms] - [0x1002] Slot 8 transition: type=SLEEP
+[DEBUG] [23264066 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23264066 ms] - [0x1002] Slot 9 transition: type=SLEEP
+[DEBUG] [23266716 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23266716 ms] - [0x1002] Slot 0 transition: type=SYNC_BEACON_RX (new superframe)
+[DEBUG] [23269366 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23269416 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23269416 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23269416 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23269416 ms] - [23269416 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23269516 ms
+[DEBUG] [23269366 ms] - [0x1002] Slot 1 transition: type=SLEEP
+[DEBUG] [23272016 ms] - [0x1001] Slot 1 transition: type=SLEEP
+[DEBUG] [23272016 ms] - [0x1002] Slot 2 transition: type=SLEEP
+[DEBUG] [23274666 ms] - [0x1001] Slot 2 transition: type=SLEEP
+[DEBUG] [23274666 ms] - [0x1002] Slot 3 transition: type=SLEEP
+[DEBUG] [23277316 ms] - [0x1001] Slot 3 transition: type=SLEEP
+[DEBUG] [23277316 ms] - [0x1002] Slot 4 transition: type=SLEEP
+[DEBUG] [23279966 ms] - [0x1001] Slot 4 transition: type=SLEEP
+[DEBUG] [23279966 ms] - [0x1002] Slot 5 transition: type=SLEEP
+[DEBUG] [23282616 ms] - [0x1001] Slot 5 transition: type=SLEEP
+[DEBUG] [23282616 ms] - [0x1002] Slot 6 transition: type=SLEEP
+[DEBUG] [23285266 ms] - [0x1001] Slot 6 transition: type=SLEEP
+[DEBUG] [23285266 ms] - [0x1002] Slot 7 transition: type=SLEEP
+[DEBUG] [23287916 ms] - [0x1001] Slot 7 transition: type=SLEEP
+[DEBUG] [23287916 ms] - [0x1002] Slot 8 transition: type=SLEEP
+[DEBUG] [23290566 ms] - [0x1001] Slot 8 transition: type=SLEEP
+[DEBUG] [23290566 ms] - [0x1002] Slot 9 transition: type=SLEEP
+[DEBUG] [23293216 ms] - [0x1001] Slot 9 transition: type=SLEEP
+[DEBUG] [23293216 ms] - [0x1002] Slot 0 transition: type=SYNC_BEACON_RX (new superframe)
+[DEBUG] [23295866 ms] - [0x1001] Slot 0 transition: type=SYNC_BEACON_TX (new superframe)
+[DEBUG] [23295916 ms] - Applying guard time delay for sync beacon: 50 ms
+[INFO] [23295916 ms] - Queued sync beacon for transmission: 11 total slots, 5 max hops
+[DEBUG] [23295916 ms] - Transmitting message from 0x1001 to 0x1002
+[DEBUG] [23295916 ms] - [23295916 ms] - Queued message from 0x1001 to 0x1002 for delivery at 23296016 ms
+[ERROR] [23296016 ms] - Message delivery cancelled - Node 0x1002 cannot receive (state: 4)
+[DEBUG] [23295866 ms] - [0x1002] Slot 1 transition: type=SLEEP
+[INFO] [23296016 ms] - [0x1001] Protocol task ending
+[INFO] [23296016 ms] - Superframe service stopped after 9 completed superframes
+[INFO] [23296016 ms] - LoRaMesh protocol stopped
+[INFO] [23296016 ms] - [0x1002] Protocol task ending
+[INFO] [23296016 ms] - Superframe service stopped after 6 completed superframes
+[INFO] [23296016 ms] - LoRaMesh protocol stopped

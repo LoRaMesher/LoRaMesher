@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LoRaMesh Log Analyzer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-section {
+            border: 2px dashed #bdc3c7;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            background: #f8f9fa;
+        }
+        .upload-section.dragover {
+            border-color: #3498db;
+            background: #e8f4f8;
+        }
+        .file-input {
+            margin: 20px 0;
+        }
+        .btn {
+            background: #3498db;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .btn:hover {
+            background: #2980b9;
+        }
+        .visualization-container {
+            display: none;
+            margin-top: 20px;
+        }
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #ecf0f1;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background: #ecf0f1;
+            border: none;
+            cursor: pointer;
+            margin-right: 5px;
+            border-radius: 4px 4px 0 0;
+        }
+        .tab.active {
+            background: #3498db;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .timeline-container {
+            width: 100%;
+            border: 1px solid #ddd;
+        }
+        .timeline-controls {
+            background: #f8f9fa;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .timeline-controls label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .timeline-controls input[type="range"] {
+            flex: 1;
+            margin: 0 10px;
+        }
+        .timeline-controls button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .timeline-controls button:hover {
+            background: #2980b9;
+        }
+        .timeline {
+            width: 100%;
+            height: 400px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            position: relative;
+        }
+        .timeline-content {
+            position: relative;
+            height: 100%;
+            min-width: 100%;
+        }
+        .node-timeline {
+            height: 80px;
+            border-bottom: 1px solid #eee;
+            position: relative;
+        }
+        .node-label {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: bold;
+            color: #2c3e50;
+            width: 100px;
+            z-index: 10;
+            background: white;
+            padding: 2px 5px;
+        }
+        .slot-bar {
+            height: 30px;
+            position: absolute;
+            top: 25px;
+            border-radius: 4px;
+            color: white;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.85;
+            border: 1px solid rgba(0,0,0,0.3);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+        .slot-bar:hover {
+            opacity: 1;
+            transform: scaleY(1.15);
+            z-index: 100;
+            box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+            border-width: 2px;
+        }
+        .slot-sleep { background: #95a5a6; }
+        .slot-tx { background: #e74c3c; }
+        .slot-rx { background: #27ae60; }
+        .slot-sync_beacon_tx { background: #f39c12; }
+        .slot-sync_beacon_rx { background: #f39c12; }
+        .slot-discovery { background: #9b59b6; }
+        .slot-discovery_rx { background: #9b59b6; }
+        .slot-discovery_tx { background: #8e44ad; }
+        .slot-control_tx { background: #e67e22; }
+        .slot-control_rx { background: #d35400; }
+        .slot-joining { background: #16a085; }
+        .slot-data { background: #2980b9; }
+        .network-graph {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #ddd;
+        }
+        .message-flow {
+            width: 100%;
+            height: 400px;
+            border: 1px solid #ddd;
+            overflow-y: auto;
+        }
+        .message-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+        }
+        .message-time {
+            font-family: monospace;
+            color: #7f8c8d;
+            margin-right: 15px;
+            min-width: 100px;
+        }
+        .message-content {
+            flex: 1;
+        }
+        .message-from {
+            font-weight: bold;
+            color: #e74c3c;
+        }
+        .message-to {
+            font-weight: bold;
+            color: #27ae60;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .stat-label {
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+        .log-info {
+            background: #e8f4f8;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .error {
+            color: #e74c3c;
+            background: #fdf2f2;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LoRaMesh Log Analyzer</h1>
+        
+        <div class="upload-section" id="uploadSection">
+            <h3>Upload Log File</h3>
+            <p>Drag and drop a log file here or click to select</p>
+            <input type="file" id="fileInput" accept=".txt,.log" style="display: none;">
+            <button class="btn" onclick="document.getElementById('fileInput').click()">Select File</button>
+        </div>
+
+        <div class="visualization-container" id="visualizationContainer">
+            <div class="log-info" id="logInfo"></div>
+            
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('timeline')">Timeline</button>
+                <button class="tab" onclick="showTab('network')">Network</button>
+                <button class="tab" onclick="showTab('messages')">Messages</button>
+                <button class="tab" onclick="showTab('stats')">Statistics</button>
+            </div>
+
+            <div id="timeline" class="tab-content active">
+                <h3>Slot Timeline</h3>
+                <div class="timeline-container">
+                    <div class="timeline-controls">
+                        <label>Zoom:</label>
+                        <button onclick="zoomOut()">-</button>
+                        <input type="range" id="zoomSlider" min="1" max="100" value="10" oninput="updateZoom()">
+                        <button onclick="zoomIn()">+</button>
+                        <span id="zoomLevel">10x</span>
+                        
+                        <label style="margin-left: 20px;">Time Range:</label>
+                        <input type="range" id="timeRangeSlider" min="0" max="100" value="0" oninput="updateTimeRange()">
+                        <span id="timeRangeLabel">0ms - 1000ms</span>
+                        
+                        <button onclick="resetView()" style="margin-left: 20px;">Reset View</button>
+                    </div>
+                    <div class="timeline" id="slotTimeline">
+                        <div class="timeline-content" id="timelineContent"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="network" class="tab-content">
+                <h3>Network Topology</h3>
+                <div class="network-graph" id="networkGraph"></div>
+            </div>
+
+            <div id="messages" class="tab-content">
+                <h3>Message Flow</h3>
+                <div class="message-flow" id="messageFlow"></div>
+            </div>
+
+            <div id="stats" class="tab-content">
+                <h3>Network Statistics</h3>
+                <div class="stats-grid" id="statsGrid"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class LogAnalyzer {
+            constructor() {
+                this.nodes = new Map();
+                this.messages = [];
+                this.events = [];
+                this.timeRange = { start: 0, end: 0 };
+                this.zoomLevel = 10;
+                this.timeWindowStart = 0;
+                this.timeWindowEnd = 0;
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                const uploadSection = document.getElementById('uploadSection');
+                const fileInput = document.getElementById('fileInput');
+
+                uploadSection.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadSection.classList.add('dragover');
+                });
+
+                uploadSection.addEventListener('dragleave', () => {
+                    uploadSection.classList.remove('dragover');
+                });
+
+                uploadSection.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadSection.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.processFile(files[0]);
+                    }
+                });
+
+                fileInput.addEventListener('change', (e) => {
+                    if (e.target.files.length > 0) {
+                        this.processFile(e.target.files[0]);
+                    }
+                });
+            }
+
+            processFile(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        this.parseLog(e.target.result);
+                        this.showVisualization();
+                    } catch (error) {
+                        this.showError('Error parsing log file: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            parseLog(logContent) {
+                const lines = logContent.split('\n');
+                this.events = [];
+                this.messages = [];
+                this.nodes.clear();
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+
+                    // Parse timestamp and node info
+                    const timestampMatch = line.match(/\[(\d+) ms\]/);
+                    const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
+                    
+                    if (timestampMatch) {
+                        const timestamp = parseInt(timestampMatch[1]);
+                        const nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                        
+                        // Parse slot transitions
+                        const slotMatch = line.match(/Slot (\d+) transition: type=(\w+)/);
+                        if (slotMatch) {
+                            const slotNum = parseInt(slotMatch[1]);
+                            const slotType = slotMatch[2];
+                            
+                            this.events.push({
+                                timestamp,
+                                nodeId,
+                                type: 'slot_transition',
+                                slotNum,
+                                slotType
+                            });
+                        }
+
+                        // Parse message transmissions
+                        const transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        if (transmitMatch) {
+                            this.messages.push({
+                                timestamp,
+                                from: transmitMatch[1],
+                                to: transmitMatch[2],
+                                type: 'transmission'
+                            });
+                        }
+
+                        // Parse message queuing
+                        const queueMatch = line.match(/Queued message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        if (queueMatch) {
+                            this.messages.push({
+                                timestamp,
+                                from: queueMatch[1],
+                                to: queueMatch[2],
+                                type: 'queued'
+                            });
+                        }
+
+                        // Parse protocol states
+                        const stateMatch = line.match(/Protocol task started|Network service configured|Starting LoRaMesh protocol/);
+                        if (stateMatch) {
+                            this.events.push({
+                                timestamp,
+                                nodeId,
+                                type: 'protocol_event',
+                                event: line.match(/\] (.+)$/)[1]
+                            });
+                        }
+
+                        // Track nodes
+                        if (nodeId !== 'unknown') {
+                            if (!this.nodes.has(nodeId)) {
+                                this.nodes.set(nodeId, {
+                                    id: nodeId,
+                                    firstSeen: timestamp,
+                                    lastSeen: timestamp,
+                                    slots: [],
+                                    states: []
+                                });
+                            }
+                            this.nodes.get(nodeId).lastSeen = timestamp;
+                        }
+                    }
+                }
+
+                // Calculate time range
+                const allTimestamps = this.events.map(e => e.timestamp);
+                this.timeRange.start = Math.min(...allTimestamps);
+                this.timeRange.end = Math.max(...allTimestamps);
+
+                console.log('Parsed log:', {
+                    events: this.events.length,
+                    messages: this.messages.length,
+                    nodes: this.nodes.size,
+                    timeRange: this.timeRange
+                });
+            }
+
+            showVisualization() {
+                document.getElementById('visualizationContainer').style.display = 'block';
+                this.updateLogInfo();
+                this.renderTimeline();
+                this.renderMessages();
+                this.renderStats();
+            }
+
+            updateLogInfo() {
+                const info = document.getElementById('logInfo');
+                info.innerHTML = `
+                    <strong>Log Analysis Results:</strong>
+                    ${this.nodes.size} nodes detected, 
+                    ${this.events.length} events parsed, 
+                    ${this.messages.length} messages tracked,
+                    Time range: ${this.timeRange.start}ms - ${this.timeRange.end}ms
+                `;
+            }
+
+            renderTimeline() {
+                const timelineContent = document.getElementById('timelineContent');
+                timelineContent.innerHTML = '';
+
+                // Initialize time window if not set
+                if (this.timeWindowEnd === 0) {
+                    this.timeWindowStart = this.timeRange.start;
+                    this.timeWindowEnd = this.timeRange.end;
+                }
+
+                const windowDuration = this.timeWindowEnd - this.timeWindowStart;
+                const totalDuration = this.timeRange.end - this.timeRange.start;
+                
+                // Calculate pixels per millisecond based on zoom level
+                const basePixelsPerMs = 1200 / totalDuration;
+                const pixelsPerMs = basePixelsPerMs * this.zoomLevel;
+                
+                // Set content width based on zoom
+                const contentWidth = totalDuration * pixelsPerMs + 200;
+                timelineContent.style.width = `${contentWidth}px`;
+
+                this.nodes.forEach((node, nodeId) => {
+                    const nodeDiv = document.createElement('div');
+                    nodeDiv.className = 'node-timeline';
+                    
+                    const label = document.createElement('div');
+                    label.className = 'node-label';
+                    label.textContent = `Node 0x${nodeId}`;
+                    nodeDiv.appendChild(label);
+
+                    // Get slot events for this node
+                    const nodeSlots = this.events.filter(e => 
+                        e.nodeId === nodeId && e.type === 'slot_transition'
+                    );
+
+                    // Render individual slot transitions (don't group them)
+                    nodeSlots.forEach((slot, index) => {
+                        const nextSlot = nodeSlots[index + 1];
+                        const slotEnd = nextSlot ? nextSlot.timestamp : slot.timestamp + 100; // Default 100ms if no next slot
+                        
+                        this.addSlotBar(nodeDiv, {
+                            slotType: slot.slotType,
+                            start: slot.timestamp,
+                            end: slotEnd,
+                            slotNum: slot.slotNum
+                        }, pixelsPerMs);
+                    });
+
+                    timelineContent.appendChild(nodeDiv);
+                });
+
+                // Update control labels
+                this.updateControlLabels();
+            }
+
+            addSlotBar(nodeDiv, slot, pixelsPerMs) {
+                const bar = document.createElement('div');
+                bar.className = `slot-bar slot-${slot.slotType.toLowerCase()}`;
+                
+                const left = (slot.start - this.timeRange.start) * pixelsPerMs + 110;
+                const width = Math.max(2, (slot.end - slot.start) * pixelsPerMs);
+                
+                bar.style.left = `${left}px`;
+                bar.style.width = `${width}px`;
+                
+                // Only show text if width is sufficient
+                if (width > 40) {
+                    bar.textContent = `${slot.slotType} #${slot.slotNum}`;
+                } else if (width > 20) {
+                    bar.textContent = `#${slot.slotNum}`;
+                }
+                
+                // Enhanced tooltip with detailed information
+                const duration = slot.end - slot.start;
+                const relativeTime = (slot.start - this.timeRange.start).toFixed(1);
+                
+                bar.title = `🔸 Slot ${slot.slotNum}: ${slot.slotType}
+📅 Start: ${slot.start}ms
+⏱️ End: ${slot.end}ms  
+⏳ Duration: ${duration}ms
+📊 Relative: ${relativeTime}ms from start`;
+                
+                nodeDiv.appendChild(bar);
+            }
+
+            updateControlLabels() {
+                const zoomLevelSpan = document.getElementById('zoomLevel');
+                const timeRangeLabel = document.getElementById('timeRangeLabel');
+                const timeRangeSlider = document.getElementById('timeRangeSlider');
+                
+                if (zoomLevelSpan) {
+                    zoomLevelSpan.textContent = `${this.zoomLevel}x`;
+                }
+                
+                if (timeRangeLabel) {
+                    timeRangeLabel.textContent = `${this.timeWindowStart}ms - ${this.timeWindowEnd}ms`;
+                }
+                
+                if (timeRangeSlider) {
+                    const totalDuration = this.timeRange.end - this.timeRange.start;
+                    const windowDuration = this.timeWindowEnd - this.timeWindowStart;
+                    const maxStart = totalDuration - windowDuration;
+                    const currentStart = this.timeWindowStart - this.timeRange.start;
+                    
+                    timeRangeSlider.max = maxStart;
+                    timeRangeSlider.value = currentStart;
+                }
+            }
+
+            renderMessages() {
+                const messageFlow = document.getElementById('messageFlow');
+                messageFlow.innerHTML = '';
+
+                this.messages.forEach(msg => {
+                    const msgDiv = document.createElement('div');
+                    msgDiv.className = 'message-item';
+                    
+                    msgDiv.innerHTML = `
+                        <div class="message-time">${msg.timestamp}ms</div>
+                        <div class="message-content">
+                            <span class="message-from">0x${msg.from}</span> 
+                            → 
+                            <span class="message-to">0x${msg.to}</span>
+                            <span style="margin-left: 10px; color: #7f8c8d;">${msg.type}</span>
+                        </div>
+                    `;
+                    
+                    messageFlow.appendChild(msgDiv);
+                });
+            }
+
+            renderStats() {
+                const statsGrid = document.getElementById('statsGrid');
+                statsGrid.innerHTML = '';
+
+                const stats = [
+                    { label: 'Total Nodes', value: this.nodes.size },
+                    { label: 'Total Events', value: this.events.length },
+                    { label: 'Messages Sent', value: this.messages.length },
+                    { label: 'Duration (ms)', value: this.timeRange.end - this.timeRange.start }
+                ];
+
+                stats.forEach(stat => {
+                    const card = document.createElement('div');
+                    card.className = 'stat-card';
+                    card.innerHTML = `
+                        <div class="stat-value">${stat.value}</div>
+                        <div class="stat-label">${stat.label}</div>
+                    `;
+                    statsGrid.appendChild(card);
+                });
+            }
+
+            showError(message) {
+                const error = document.createElement('div');
+                error.className = 'error';
+                error.textContent = message;
+                document.querySelector('.container').insertBefore(error, document.querySelector('.upload-section'));
+            }
+        }
+
+        function showTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+
+        // Initialize the analyzer
+        const analyzer = new LogAnalyzer();
+
+        // Zoom control functions
+        function zoomIn() {
+            const zoomSlider = document.getElementById('zoomSlider');
+            const newValue = Math.min(100, parseInt(zoomSlider.value) + 5);
+            zoomSlider.value = newValue;
+            updateZoom();
+        }
+
+        function zoomOut() {
+            const zoomSlider = document.getElementById('zoomSlider');
+            const newValue = Math.max(1, parseInt(zoomSlider.value) - 5);
+            zoomSlider.value = newValue;
+            updateZoom();
+        }
+
+        function updateZoom() {
+            const zoomSlider = document.getElementById('zoomSlider');
+            analyzer.zoomLevel = parseInt(zoomSlider.value);
+            analyzer.renderTimeline();
+        }
+
+        function updateTimeRange() {
+            const timeRangeSlider = document.getElementById('timeRangeSlider');
+            const totalDuration = analyzer.timeRange.end - analyzer.timeRange.start;
+            const windowDuration = totalDuration / analyzer.zoomLevel;
+            const sliderValue = parseInt(timeRangeSlider.value);
+            
+            analyzer.timeWindowStart = analyzer.timeRange.start + sliderValue;
+            analyzer.timeWindowEnd = analyzer.timeWindowStart + windowDuration;
+            
+            analyzer.renderTimeline();
+        }
+
+        function resetView() {
+            const zoomSlider = document.getElementById('zoomSlider');
+            const timeRangeSlider = document.getElementById('timeRangeSlider');
+            
+            zoomSlider.value = 10;
+            timeRangeSlider.value = 0;
+            
+            analyzer.zoomLevel = 10;
+            analyzer.timeWindowStart = analyzer.timeRange.start;
+            analyzer.timeWindowEnd = analyzer.timeRange.end;
+            
+            analyzer.renderTimeline();
+        }
+    </script>
+</body>
+</html>
