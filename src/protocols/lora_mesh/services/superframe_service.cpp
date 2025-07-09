@@ -405,14 +405,11 @@ Result SuperframeService::UpdateSuperframeState() {
             // Only handle new superframe if auto-advance is enabled
             if (auto_advance_) {
                 HandleNewSuperframe();
-            } else {
-                LOG_DEBUG("New superframe detected but auto-advance disabled");
-                // Reset the superframe start time to the current time
             }
         }
 
         // Call callback for slot transition
-        if (superframe_callback_) {
+        if (superframe_callback_ && !new_superframe) {
             superframe_callback_(current_slot, new_superframe);
         }
 
@@ -420,11 +417,6 @@ Result SuperframeService::UpdateSuperframeState() {
 
         LOG_DEBUG("Slot transition: slot %d%s", current_slot,
                   new_superframe ? " (new superframe)" : "");
-    }
-
-    // Check if auto-advance is enabled and we need to handle a new superframe
-    if (auto_advance_ && CheckForNewSuperframe()) {
-        HandleNewSuperframe();
     }
 
     // Update synchronization status
