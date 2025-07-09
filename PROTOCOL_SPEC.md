@@ -778,7 +778,7 @@ struct SuperframeConfig {
     uint16_t slot_duration_ms;      // Duration of each slot (ms)
     uint8_t total_slots;           // Number of slots in superframe
     uint32_t superframe_duration_ms; // Total superframe duration (ms)
-    uint8_t guard_time_ms;         // Guard time between slots (ms)
+    uint8_t guard_time_ms;         // TX guard time for RX readiness (ms)
     uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms)
     uint8_t max_hops;              // Network diameter limit
     float target_duty_cycle;       // Target power efficiency (0.3 = 30%)
@@ -789,7 +789,7 @@ SuperframeConfig defaultConfig = {
     .slot_duration_ms = 1000,      // 1 second per slot
     .total_slots = 20,             // Variable based on network size
     .superframe_duration_ms = 20000, // 20 second superframe
-    .guard_time_ms = 50,           // 50ms guard time
+    .guard_time_ms = 50,           // 50ms TX guard time for RX readiness
     .sync_tolerance_ms = 100,      // 100ms sync tolerance
     .max_hops = 5,                 // Maximum network diameter
     .target_duty_cycle = 0.3f      // 30% active, 70% sleep
@@ -993,6 +993,134 @@ for (size_t i = 0; i < ordered_nodes.size(); ++i) {
 - **Network Manager Priority**: Network Manager always gets first control slot
 - **Scalable**: Works reliably across 2-50 node networks
 - **Synchronization Independent**: No coordination required between nodes
+
+### 5.6 TX Guard Time Mechanism
+
+#### 5.6.1 Purpose and Motivation
+
+The TX guard time mechanism addresses the fundamental challenge of RX readiness in TDMA-based mesh networks. When a node begins transmitting at the precise start of its allocated slot, other nodes may not have sufficient time to transition from sleep/idle state to active reception, resulting in lost synchronization and data packets.
+
+**Problem Statement:**
+- **RX Setup Time**: Nodes require finite time to transition from sleep to active reception
+- **Clock Drift**: Small timing differences between nodes can cause missed receptions
+- **Synchronization Preservation**: Lost sync beacons can cause network fragmentation
+- **LoRa Radio Constraints**: SX126x/SX127x radios need setup time for frequency, spreading factor, and RX configuration
+
+#### 5.6.2 Guard Time Implementation
+
+**Core Concept**: TX nodes delay their transmission by a configurable guard time to ensure RX nodes are ready to receive.
+
+```cpp
+// Guard time configuration
+struct GuardTimeConfig {
+    uint32_t guard_time_ms;        // TX delay for RX readiness (default: 50ms)
+    uint32_t transmission_delay_ms; // Calculated via get_time_on_air()
+    uint32_t sync_compensation_ms;  // Timing compensation for sync beacons
+};
+
+// Implementation in slot processing
+void ProcessSlotMessages(uint16_t current_slot, SlotAllocation::SlotType slot_type) {
+    switch (slot_type) {
+        case SlotAllocation::SlotType::SYNC_BEACON_TX:
+        case SlotAllocation::SlotType::CONTROL_TX:
+        case SlotAllocation::SlotType::DATA_TX:
+            // Apply guard time delay before transmission
+            uint32_t guard_delay = config_.guard_time_ms;
+            
+            // Sleep for guard time to allow RX nodes to prepare
+            GetRTOS().DelayTask(guard_delay);
+            
+            // Proceed with transmission
+            TransmitSlotMessage(current_slot, slot_type);
+            break;
+            
+        case SlotAllocation::SlotType::SYNC_BEACON_RX:
+        case SlotAllocation::SlotType::CONTROL_RX:
+        case SlotAllocation::SlotType::DATA_RX:
+            // RX nodes start listening immediately (no guard time)
+            ReceiveSlotMessage(current_slot, slot_type);
+            break;
+    }
+}
+```
+
+#### 5.6.3 Timing Compensation for Synchronization
+
+**Challenge**: Guard time delays can cause timing drift in sync beacon reception, leading to network desynchronization.
+
+**Solution**: Compensate for guard time and transmission delays when processing sync beacons.
+
+```cpp
+void ProcessSyncBeacon(const SyncBeaconHeader& sync_beacon) {
+    // Calculate total delay introduced by guard time mechanism
+    uint32_t guard_delay = config_.guard_time_ms;
+    uint32_t transmission_delay = GetTimeOnAir(sync_beacon);
+    uint32_t total_delay = guard_delay + transmission_delay;
+    
+    // Compensate for delays when synchronizing
+    uint32_t compensated_timestamp = sync_beacon.original_timestamp_ms + total_delay;
+    
+    // Apply compensation to superframe synchronization
+    superframe_service_->SynchronizeWith(compensated_timestamp, current_slot);
+    
+    // Update propagation delay for multi-hop forwarding
+    if (sync_beacon.hop_count > 0) {
+        uint32_t updated_delay = sync_beacon.propagation_delay_ms + total_delay;
+        ForwardSyncBeacon(sync_beacon, updated_delay);
+    }
+}
+```
+
+#### 5.6.4 Multi-Hop Synchronization with Guard Time
+
+**Forward Sync Beacon with Accumulated Timing**:
+```cpp
+void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_type) {
+    // Create forwarded beacon with updated timing
+    SyncBeaconHeader forward_beacon = received_beacon;
+    forward_beacon.source = node_address_;
+    forward_beacon.hop_count = received_beacon.hop_count + 1;
+    
+    // Accumulate guard time and transmission delays
+    uint32_t guard_delay = config_.guard_time_ms;
+    uint32_t transmission_delay = GetTimeOnAir(forward_beacon);
+    forward_beacon.propagation_delay_ms = 
+        received_beacon.propagation_delay_ms + guard_delay + transmission_delay;
+    
+    // Apply guard time before forwarding
+    GetRTOS().DelayTask(guard_delay);
+    
+    // Forward with accumulated timing compensation
+    TransmitMessage(forward_beacon);
+}
+```
+
+#### 5.6.5 Configuration Guidelines
+
+**Guard Time Selection**:
+- **Minimum**: 20ms (basic radio setup time)
+- **Recommended**: 50ms (reliable for most network conditions)
+- **Maximum**: 100ms (high-latency environments)
+
+**Considerations**:
+- **Network Size**: Larger networks may need longer guard times
+- **Clock Accuracy**: Poor clock accuracy requires longer guard times
+- **Power Constraints**: Longer guard times reduce effective slot utilization
+- **Latency Requirements**: Applications requiring low latency should minimize guard time
+
+#### 5.6.6 Benefits and Trade-offs
+
+**Benefits**:
+- **Improved Synchronization**: Higher sync beacon reception success rate
+- **Reduced Packet Loss**: Better RX readiness reduces data loss
+- **Network Stability**: More reliable TDMA coordination
+- **Adaptive Timing**: Compensates for hardware and clock variations
+
+**Trade-offs**:
+- **Reduced Slot Utilization**: Guard time reduces effective transmission time
+- **Increased Latency**: Additional delay in slot processing
+- **Power Consumption**: Longer active periods during guard time
+- **Complexity**: Additional timing calculations and compensation logic
 
 ### 5.7 Power-Aware Slot Allocation
 
