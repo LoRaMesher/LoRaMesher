@@ -245,14 +245,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
      */
     bool AdvanceTime(uint32_t time_ms, uint32_t timeout_ms = 0,
                      uint32_t check_interval_ms = 10,
-                     uint32_t real_sleep_ms = 10,
+                     uint32_t real_sleep_ms = 2,
                      std::function<bool()> condition = nullptr) {
-        // If no condition was provided, nothing to wait for
+
+        // If no condition was provided, advance time directly
         if (!condition) {
             time_controller_.AdvanceTime(time_ms);
 
             if (real_sleep_ms > 0) {
-                // Sleep for the specified real time to allow tasks to execute
+                // Minimal sleep to allow tasks to execute
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(real_sleep_ms));
             }
@@ -260,33 +261,31 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return true;
         }
 
-        // Calculate the time step for each check iteration
-        const uint32_t kTimeStepMs =
-            (check_interval_ms > 0) ? check_interval_ms : 1;
-
-        // Calculate how much simulated time to advance in each step
-        const uint32_t kSimTimePerStepMs =
-            (time_ms > 0) ? std::max(time_ms / (timeout_ms / kTimeStepMs),
-                                     static_cast<uint32_t>(1))
-                          : 0;
-
-        uint32_t elapsed_ms = 0;
-        const uint32_t kEffectiveTimeoutMs =
-            (timeout_ms > 0) ? timeout_ms : time_ms;
-
-        // Check the condition immediately before starting the loop
+        // Check condition immediately before starting the loop
         if (condition()) {
             return true;
         }
 
-        // Continue checking until timeout
-        while (elapsed_ms < kEffectiveTimeoutMs) {
-            LOG_DEBUG("Advancing time by %u ms", kSimTimePerStepMs);
-            // Advance simulation time
-            time_controller_.AdvanceTime(kSimTimePerStepMs);
-            elapsed_ms += kTimeStepMs;
+        // Calculate optimal time stepping parameters
+        const uint32_t kEffectiveTimeoutMs =
+            (timeout_ms > 0) ? timeout_ms : time_ms;
+        const uint32_t kOptimalTimeStepMs = CalculateOptimalTimeStep(
+            time_ms, kEffectiveTimeoutMs, check_interval_ms);
 
-            // Real sleep to allow tasks to execute
+        uint32_t elapsed_ms = 0;
+        uint32_t total_sim_time_advanced = 0;
+
+        // Continue checking until timeout or condition is met
+        while (elapsed_ms < kEffectiveTimeoutMs) {
+            // Calculate time to advance in this iteration
+            uint32_t time_to_advance = kOptimalTimeStepMs;
+
+            // Advance simulation time
+            time_controller_.AdvanceTime(time_to_advance);
+            elapsed_ms += time_to_advance;
+            total_sim_time_advanced += time_to_advance;
+
+            // Minimal real sleep to allow tasks to execute
             if (real_sleep_ms > 0) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(real_sleep_ms));
@@ -302,12 +301,50 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     /**
+     * @brief Calculate optimal time step for AdvanceTime function
+     *
+     * @param total_time_ms Total time to advance
+     * @param timeout_ms Timeout for condition checking
+     * @param check_interval_ms Desired check interval
+     * @return Optimal time step in milliseconds
+     */
+    uint32_t CalculateOptimalTimeStep(uint32_t total_time_ms,
+                                      uint32_t timeout_ms,
+                                      uint32_t check_interval_ms) {
+        // Always use check_interval_ms as the base, but optimize for performance
+        uint32_t base_step = std::max(check_interval_ms, 1u);
+
+        // For timeout mode, we need to balance responsiveness with performance
+        if (timeout_ms > 0) {
+            // Use larger steps for better performance, but not too large
+            // that we miss the condition check window
+            uint32_t efficient_step = std::min(base_step * 2, 50u);
+            return std::min(efficient_step,
+                            timeout_ms / 10);  // At least 10 checks
+        }
+
+        // For non-timeout mode, use check_interval_ms directly
+        return base_step;
+    }
+
+    /**
      * @brief Get the discovery timeout period used by the protocol
      *
      * @return Discovery timeout in milliseconds
      */
     uint32_t GetDiscoveryTimeout(TestNode& node) {
         return node.protocol->GetDiscoveryTimeout();
+    }
+
+    /**
+     * @brief Get the superframe duration
+     * 
+     * @return Superframe duration in milliseconds
+     */
+    uint32_t GetSuperframeDuration(TestNode& node) {
+        auto slot_duration = GetSlotDuration(node);
+        auto slot_table = node.protocol->GetSlotTable();
+        return slot_table.size() * slot_duration;
     }
 
     /**
