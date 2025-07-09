@@ -178,7 +178,7 @@ class SuperframeService : public ISuperframeService {
       * @return Result Success if synchronized successfully
       */
     Result SynchronizeWith(uint32_t external_slot_start_time,
-                           uint16_t external_slot);
+                           uint16_t external_slot) override;
 
     /**
       * @brief Set superframe callback
