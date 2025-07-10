@@ -163,7 +163,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         node->mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
 
         // Connect the mock radio to our virtual network
-        ConnectRadioToNetwork(node->mock_radio, node->address);
+        ConnectRadioToNetwork(node->mock_radio, node->address, radio_ptr);
 
         // Create the protocol instance
         node->protocol = std::make_unique<protocols::LoRaMeshProtocol>();
@@ -200,12 +200,14 @@ class LoRaMeshTestFixture : public ::testing::Test {
      *
      * @param mock_radio Mock radio to connect
      * @param address Node address to use
+     * @param radio_lib_instance RadioLibRadio instance for instance-aware notifications
      */
     void ConnectRadioToNetwork(radio::test::MockRadio* mock_radio,
-                               AddressType address) {
+                               AddressType address,
+                               radio::RadioLibRadio* radio_lib_instance) {
         // Create and track the adapter for proper cleanup
         auto adapter = std::make_unique<RadioToNetworkAdapter>(
-            mock_radio, virtual_network_, address);
+            mock_radio, virtual_network_, address, radio_lib_instance);
 
         // Register the node with the virtual network
         virtual_network_.RegisterNode(address, adapter.get());

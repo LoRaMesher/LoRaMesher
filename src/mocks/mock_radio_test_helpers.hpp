@@ -7,6 +7,8 @@
 #include "../test/utils/mock_radio.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio.hpp"
+#include "os/os_port.hpp"
+#include "utils/logger.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -43,6 +45,33 @@ test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio) {
     return GetMockForTesting(*mock_radio);
 }
 
+}  // namespace radio
+}  // namespace loramesher
+
+// Implementation of NotifyProcessingTask for test MockRadio
+// This is implemented here because we need access to RadioLibRadio's private members
+namespace loramesher {
+namespace radio {
+namespace test {
+
+void MockRadio::NotifyProcessingTask() {
+    if (radio_lib_instance_ && radio_lib_instance_->processing_task_) {
+        LOG_DEBUG(
+            "MockRadio: Notifying processing task for RadioLibRadio instance "
+            "%p",
+            static_cast<void*>(radio_lib_instance_));
+        GetRTOS().NotifyTaskFromISR(radio_lib_instance_->processing_task_);
+    } else {
+        LOG_ERROR(
+            "MockRadio: Cannot notify processing task - instance: %p, task: %p",
+            static_cast<void*>(radio_lib_instance_),
+            radio_lib_instance_
+                ? static_cast<void*>(radio_lib_instance_->processing_task_)
+                : nullptr);
+    }
+}
+
+}  // namespace test
 }  // namespace radio
 }  // namespace loramesher
 

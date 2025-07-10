@@ -2,10 +2,15 @@
 #pragma once
 
 #include <gmock/gmock.h>
+#include "os/os_port.hpp"
 #include "types/radio/radio.hpp"
 
 namespace loramesher {
 namespace radio {
+
+// Forward declaration
+class RadioLibRadio;
+
 namespace test {
 
 class MockRadio : public IRadio {
@@ -50,6 +55,25 @@ class MockRadio : public IRadio {
     MOCK_METHOD(Result, setState, (RadioState state), (override));
     MOCK_METHOD(RadioState, getState, (), (override));
     MOCK_METHOD(Result, ClearActionReceive, (), (override));
+
+    // Test-specific methods for RadioLibRadio instance awareness
+    /**
+     * @brief Set the associated RadioLibRadio instance for this mock
+     * @param instance Pointer to the RadioLibRadio instance
+     */
+    void SetRadioLibInstance(RadioLibRadio* instance) {
+        radio_lib_instance_ = instance;
+    }
+
+    /**
+     * @brief Notify the processing task of the associated RadioLibRadio instance
+     * This bypasses the singleton pattern issue by directly notifying the correct instance
+     */
+    void NotifyProcessingTask();
+
+   private:
+    RadioLibRadio* radio_lib_instance_ =
+        nullptr;  ///< Associated RadioLibRadio instance
 };
 
 }  // namespace test

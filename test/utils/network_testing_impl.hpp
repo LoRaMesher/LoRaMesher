@@ -22,6 +22,13 @@
 #include "types/error_codes/result.hpp"
 #include "types/radio/radio_state.hpp"
 
+// Forward declaration for RadioLibRadio
+namespace loramesher {
+namespace radio {
+class RadioLibRadio;
+}
+}  // namespace loramesher
+
 using ::testing::A;
 
 namespace loramesher {
@@ -543,8 +550,6 @@ class VirtualTimeController {
     void AdvanceTime(uint32_t time_ms) {
         // LOG_DEBUG("Advancing time by %u ms", time_ms);
         current_time_ += time_ms;
-        network_.AdvanceTime(time_ms);
-        ProcessTimeDependentEvents();
 
 #ifdef LORAMESHER_BUILD_NATIVE
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
@@ -555,6 +560,9 @@ class VirtualTimeController {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
 #endif  // LORAMESHER_BUILD_NATIVE
+
+        network_.AdvanceTime(time_ms);
+        ProcessTimeDependentEvents();
     }
 
     /**
@@ -631,8 +639,18 @@ VirtualTimeController* VirtualTimeController::instance_ = nullptr;
 class RadioToNetworkAdapter : public IRadioReceiver {
    public:
     RadioToNetworkAdapter(radio::test::MockRadio* radio,
-                          VirtualNetwork& network, AddressType address)
+                          VirtualNetwork& network, AddressType address,
+                          radio::RadioLibRadio* radio_lib_instance)
         : radio_(radio), network_(network), address_(address) {
+
+        // Set the RadioLibRadio instance on the MockRadio for instance-aware notifications
+        radio_->SetRadioLibInstance(radio_lib_instance);
+        LOG_DEBUG(
+            "[0x%04X] RadioToNetworkAdapter: Set RadioLibRadio instance %p on "
+            "MockRadio %p",
+            address_, static_cast<void*>(radio_lib_instance),
+            static_cast<void*>(radio_));
+
         // Set up original callback saving
         EXPECT_CALL(*radio_, setActionReceive(A<void (*)(void)>()))
             .WillRepeatedly(
@@ -643,9 +661,18 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         EXPECT_CALL(*radio_, getPacketLength())
             .WillRepeatedly(testing::Invoke([this]() -> size_t {
                 if (message_queue_.empty()) {
+                    LOG_ERROR(
+                        "[0x%04X] MockRadio: getPacketLength() - No messages "
+                        "in queue (queue empty)",
+                        address_);
                     return 0;
                 }
-                return message_queue_.front().data.size();
+                size_t packet_size = message_queue_.front().data.size();
+                LOG_DEBUG(
+                    "[0x%04X] MockRadio: getPacketLength() - Queue size: %zu, "
+                    "packet size: %zu",
+                    address_, message_queue_.size(), packet_size);
+                return packet_size;
             }));
 
         EXPECT_CALL(*radio_, getRSSI())
@@ -668,14 +695,26 @@ class RadioToNetworkAdapter : public IRadioReceiver {
             .WillRepeatedly(
                 testing::Invoke([this](uint8_t* data, size_t len) -> Result {
                     if (message_queue_.empty()) {
+                        LOG_ERROR(
+                            "[0x%04X] MockRadio: readData() - No data received",
+                            address_);
                         return Result(LoraMesherErrorCode::kHardwareError,
                                       "No data received");
                     }
 
                     auto current_message = message_queue_.front();
                     message_queue_.pop();
+                    LOG_DEBUG(
+                        "[0x%04X] MockRadio: readData() - Consumed message, "
+                        "queue size after pop: %zu",
+                        address_, message_queue_.size());
 
                     if (len < current_message.data.size()) {
+                        LOG_ERROR(
+                            "[0x%04X] MockRadio: readData() - Buffer too small "
+                            "for received message: "
+                            "expected %zu, got %zu",
+                            address_, current_message.data.size(), len);
                         return Result(LoraMesherErrorCode::kBufferOverflow,
                                       "Buffer too small");
                     }
@@ -762,12 +801,16 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         msg.snr = snr;
         message_queue_.push(msg);
 
-        // Call the original callback if set
-        if (original_callback_) {
-            original_callback_();
-        } else {
-            LOG_ERROR("No original callback set for received message");
-        }
+        LOG_DEBUG(
+            "[0x%04X] RadioToNetworkAdapter: Received message, queue size: %zu",
+            address_, message_queue_.size());
+
+        // Use instance-aware notification instead of static ISR callback
+        LOG_DEBUG(
+            "[0x%04X] RadioToNetworkAdapter: Notifying processing task via "
+            "MockRadio",
+            address_);
+        radio_->NotifyProcessingTask();
     }
 
     /**
@@ -799,7 +842,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
     VirtualNetwork& network_;
     AddressType address_;
     std::queue<QueuedMessage> message_queue_;
-    void (*original_callback_)() = nullptr;
+    std::function<void()> original_callback_ = nullptr;  ///< Original callback
     loramesher::radio::RadioState current_radio_state_{
         loramesher::radio::RadioState::kIdle};  ///< Track current radio state
 };
