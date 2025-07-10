@@ -539,7 +539,7 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
     return PerformDiscovery(discovery_timeout_ms);
 }
 
-Result NetworkService::StartJoining(AddressType manager_address,
+Result NetworkService::StartJoining(AddressType /* manager_address */,
                                     uint32_t join_timeout_ms) {
     // Check if already successfully joined a network (in normal operation)
     if (GetState() == ProtocolState::NORMAL_OPERATION) {
@@ -668,7 +668,7 @@ void NetworkService::SetNetworkManager(AddressType manager_address) {
 
 Result NetworkService::Configure(const NetworkConfig& config) {
     // Validate configuration
-    if (config.max_hops == 0 || config.max_hops > 255) {
+    if (config.max_hops == 0) {
         return Result(LoraMesherErrorCode::kInvalidParameter,
                       "Invalid max_hops");
     }
@@ -889,7 +889,7 @@ void NetworkService::ResetLinkQualityStats() {
     }
 }
 
-bool NetworkService::UpdateNetworkTopology(bool notify_superframe) {
+bool NetworkService::UpdateNetworkTopology(bool /* notify_superframe */) {
     //TODO: Could implement additional topology analysis here
     // std::lock_guard<std::mutex> lock(network_mutex_);
     // Check if we have any nodes
@@ -1030,7 +1030,7 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
 }
 
 Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
-                                          int32_t reception_timestamp) {
+                                          int32_t /* reception_timestamp */) {
     LOG_INFO(
         "*** PROCESSING JOIN_REQUEST from 0x%04X (state: %d, network_manager: "
         "0x%04X) ***",
@@ -1068,39 +1068,49 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     LOG_INFO("Join request from 0x%04X: caps=0x%02X, battery=%d%%, slots=%d",
              source, capabilities, battery_level, requested_slots);
 
+    // Check if a join is already pending for this superframe
+    if (pending_join_request_) {
+        LOG_INFO(
+            "Join request from 0x%04X rejected - join already pending this "
+            "superframe",
+            source);
+        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0);
+    }
+
     // Determine if node should be accepted
     auto [accepted, allocated_slots] =
         ShouldAcceptJoin(source, capabilities, requested_slots);
 
-    // Update node information
-    if (accepted) {
-        LOG_DEBUG("Adding node 0x%04X to network with %d slots", source,
-                  allocated_slots);
-        UpdateNetworkNode(source, battery_level, false, allocated_slots,
-                          capabilities);
+    if (!accepted) {
+        LOG_INFO("Join request from 0x%04X rejected - network constraints",
+                 source);
+        return SendJoinResponse(source, JoinResponseHeader::REJECTED, 0);
     }
 
-    // Send response
-    JoinResponseStatus status =
-        accepted ? JoinResponseStatus::ACCEPTED : JoinResponseStatus::REJECTED;
+    // Buffer the join request for next superframe boundary
+    pending_join_request_ = true;
+    pending_join_data_ = *join_request_opt;
 
-    Result result = SendJoinResponse(source, status, allocated_slots);
+    LOG_INFO(
+        "Join request from 0x%04X buffered for next superframe, allocated %d "
+        "slots",
+        source, allocated_slots);
+
+    // Send immediate acceptance response
+    Result result =
+        SendJoinResponse(source, JoinResponseHeader::ACCEPTED, allocated_slots);
     if (!result) {
+        // Clear pending join if response fails
+        pending_join_request_ = false;
+        pending_join_data_.reset();
         return result;
-    }
-
-    // Update network if accepted
-    if (accepted) {
-        LOG_INFO("Node 0x%04X accepted with %d slots", source, allocated_slots);
-        UpdateSlotTable();
-        BroadcastSlotAllocation();
     }
 
     return Result::Success();
 }
 
 Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
-                                           int32_t reception_timestamp) {
+                                           int32_t /* reception_timestamp */) {
     // Only process in joining state
     if (state_ != ProtocolState::JOINING) {
         LOG_DEBUG("Ignoring join response - not in joining state");
@@ -1151,6 +1161,26 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
         }
 
         LOG_INFO("Successfully joined network 0x%04X", network_id);
+    } else if (status == JoinResponseStatus::RETRY_LATER) {
+        LOG_INFO("Join request temporarily rejected, retrying after delay");
+
+        // Calculate retry delay based on configuration
+        // Approximate superframe duration if service is available
+        uint32_t estimated_superframe_duration = 20000;  // Default fallback
+        if (superframe_service_) {
+            // Estimate based on slot count and duration
+            estimated_superframe_duration =
+                slot_table_.size() * superframe_service_->GetSlotDuration();
+        }
+        uint32_t base_delay_ms =
+            config_.retry_delay_superframes * estimated_superframe_duration;
+
+        // TODO: Implement retry scheduling mechanism
+        // For now, just return to discovery which will eventually retry
+        LOG_DEBUG(
+            "Retry delay calculated as %u ms, returning to discovery for now",
+            base_delay_ms);
+        SetState(ProtocolState::DISCOVERY);
     } else {
         LOG_WARNING("Join rejected with status %d", static_cast<int>(status));
 
@@ -1196,7 +1226,7 @@ Result NetworkService::SendJoinResponse(AddressType dest,
 // Slot management implementations
 
 Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
-                                          int32_t reception_timestamp) {
+                                          int32_t /* reception_timestamp */) {
     // Only network manager processes slot requests
     if (network_manager_ != node_address_) {
         LOG_DEBUG("Ignoring slot request - not network manager");
@@ -1252,8 +1282,8 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
     return Result::Success();
 }
 
-Result NetworkService::ProcessSlotAllocation(const BaseMessage& message,
-                                             int32_t reception_timestamp) {
+Result NetworkService::ProcessSlotAllocation(
+    const BaseMessage& message, int32_t /* reception_timestamp */) {
     // Only accept from network manager
     if (message.GetSource() != network_manager_) {
         LOG_WARNING("Ignoring slot allocation from non-manager 0x%04X",
@@ -1743,7 +1773,8 @@ Result NetworkService::PerformJoining(uint32_t timeout_ms) {
 // Helper method implementations
 
 std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
-    AddressType node_address, uint8_t capabilities, uint8_t requested_slots) {
+    AddressType node_address, uint8_t /* capabilities */,
+    uint8_t requested_slots) {
 
     // Check network capacity
     if (network_nodes_.size() >= config_.max_network_nodes) {
@@ -1769,7 +1800,7 @@ std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
 }
 
 void NetworkService::AllocateDataSlotsBasedOnRouting(
-    bool is_network_manager, uint16_t available_data_slots) {
+    bool /* is_network_manager */, uint16_t /* available_data_slots */) {
 
     // const auto& superframe = superframe_service_->GetSuperframeConfig();
     // uint16_t slot_index = 0;
@@ -2124,6 +2155,59 @@ Result NetworkService::HandleSuperframeStart() {
         // Regular nodes listen for sync beacons but don't send them
         LOG_DEBUG("Node listening for sync beacon");
     }
+
+    return Result::Success();
+}
+
+Result NetworkService::ApplyPendingJoin() {
+    // Only apply if we're the network manager and have a pending join
+    if (state_ != ProtocolState::NETWORK_MANAGER ||
+        network_manager_ != node_address_ || !pending_join_request_) {
+        return Result::Success();
+    }
+
+    LOG_INFO(
+        "Applying pending join request for node 0x%04X at superframe boundary",
+        pending_join_data_->GetSource());
+
+    // Extract join request information
+    auto source = pending_join_data_->GetSource();
+    auto capabilities = pending_join_data_->GetCapabilities();
+    auto battery_level = pending_join_data_->GetBatteryLevel();
+    auto requested_slots = pending_join_data_->GetRequestedSlots();
+
+    // Determine allocated slots (re-evaluate to be safe)
+    auto [accepted, allocated_slots] =
+        ShouldAcceptJoin(source, capabilities, requested_slots);
+
+    if (accepted) {
+        // Update network state with the joining node
+        LOG_DEBUG("Adding node 0x%04X to network with %d slots", source,
+                  allocated_slots);
+        UpdateNetworkNode(source, battery_level, false, allocated_slots,
+                          capabilities);
+
+        // Update slot allocation (this will be reflected in the sync beacon total_slots field)
+        Result result = UpdateSlotTable();
+        if (!result) {
+            LOG_ERROR("Failed to update slot table for pending join: %s",
+                      result.GetErrorMessage().c_str());
+            pending_join_request_ = false;
+            return result;
+        }
+
+        LOG_INFO("Node 0x%04X successfully added to network with %d slots",
+                 source, allocated_slots);
+    } else {
+        LOG_WARNING(
+            "Pending join for node 0x%04X no longer accepted due to network "
+            "changes",
+            source);
+    }
+
+    // Clear the pending join flag and data
+    pending_join_request_ = false;
+    pending_join_data_.reset();
 
     return Result::Success();
 }

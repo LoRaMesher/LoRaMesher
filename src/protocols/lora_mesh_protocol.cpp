@@ -220,7 +220,6 @@ Result LoRaMeshProtocol::Stop() {
         superframe_service_->StopSuperframe();
     }
 
-    // Clean up task - let the mock RTOS handle task termination
     if (protocol_task_handle_) {
         GetRTOS().DeleteTask(protocol_task_handle_);
         protocol_task_handle_ = nullptr;
@@ -651,6 +650,14 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
             if (state ==
                 lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
+                // Apply pending join requests at superframe boundary (before sync beacon)
+                result = network_service_->ApplyPendingJoin();
+                if (!result) {
+                    LOG_ERROR("Failed to apply pending join: %s",
+                              result.GetErrorMessage().c_str());
+                    // Continue with sync beacon transmission despite join application failure
+                }
+
                 // Network Manager: First queue the sync beacon, then extract and send it
                 result = network_service_->SendSyncBeacon();
                 if (!result) {

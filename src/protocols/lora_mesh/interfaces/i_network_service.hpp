@@ -57,6 +57,16 @@ class INetworkService {
         uint8_t default_control_slots = 1;    ///< Default control slots
         uint8_t default_discovery_slots = 1;  ///< Default discovery slots
         uint32_t guard_time_ms = 50;  ///< TX guard time for RX readiness
+
+        // Join request retry configuration
+        uint8_t retry_delay_superframes =
+            3;  ///< Delay in superframes for RETRY_LATER responses (default: 3)
+        uint8_t max_join_retries =
+            5;  ///< Maximum number of join retry attempts (default: 5)
+        float backoff_multiplier =
+            1.5f;  ///< Exponential backoff multiplier (default: 1.5)
+        uint32_t max_retry_delay_ms =
+            60000;  ///< Maximum retry delay cap in ms (default: 60s)
     };
 
     static constexpr AddressType kBroadcastAddress =

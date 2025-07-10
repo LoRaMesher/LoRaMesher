@@ -239,13 +239,18 @@ struct JoinRequest {
 struct JoinResponse {
     uint8_t messageType;     // 0x22
     uint16_t nodeId;         // Target node ID
-    uint8_t status;          // JOIN_ACCEPTED(0) or JOIN_DENIED(1)
-    uint16_t assignedSlot;   // Allocated slot number
+    uint8_t status;          // JOIN_ACCEPTED(0), JOIN_DENIED(1), or RETRY_LATER(2)
+    uint16_t assignedSlot;   // Allocated slot number (valid only if ACCEPTED)
     uint32_t superframeTime; // Current superframe timing
     uint16_t networkId;      // Network identification
     uint8_t checksum;        // Message integrity check
 };
 ```
+
+**JOIN_RESPONSE Status Codes**:
+- `JOIN_ACCEPTED = 0`: Join request accepted, slot allocated
+- `JOIN_DENIED = 1`: Join request denied due to network constraints
+- `RETRY_LATER = 2`: Join request temporarily rejected, retry after delay
 
 #### 3.2.2 Routing Messages
 ```cpp
@@ -825,6 +830,45 @@ struct SyncBeaconHeader {
 // Total: 21 bytes (optimized from 33 bytes - 36% reduction)
 ```
 
+#### 5.3.1.1 Slot Allocation Updates via Sync Beacon
+
+The sync beacon serves dual purposes: network synchronization and slot allocation coordination. When a new node joins the network, the `total_slots` field communicates the updated superframe structure to all nodes.
+
+**Slot Allocation Update Process**:
+
+1. **Join Request Buffering**: Network Manager buffers join requests until superframe boundary
+2. **Superframe Boundary**: At sync beacon transmission, apply pending joins
+3. **Updated Sync Beacon**: `total_slots` field reflects new network size
+4. **Network-Wide Update**: All nodes recalculate slot allocations based on new `total_slots`
+
+```cpp
+void ProcessSyncBeaconForSlotUpdates(const SyncBeaconHeader& beacon) {
+    // Check if slot allocation has changed
+    if (beacon.total_slots_ != current_total_slots_) {
+        LOG_INFO("Slot allocation update detected: %d -> %d slots", 
+                 current_total_slots_, beacon.total_slots_);
+        
+        // Recalculate slot allocations for new network size
+        RecalculateSlotAllocation(beacon.total_slots_);
+        current_total_slots_ = beacon.total_slots_;
+        
+        // If joining node, complete join process
+        if (current_state_ == JOINING_PENDING) {
+            CompleteJoinProcess();
+        }
+    }
+    
+    // Continue with normal synchronization processing
+    ProcessTimeSynchronization(beacon);
+}
+```
+
+**Benefits of Sync Beacon Slot Updates**:
+- **No Additional Messages**: Leverages existing sync beacon infrastructure
+- **Network-Wide Coordination**: All nodes receive updates simultaneously
+- **Deterministic Timing**: Updates occur at predictable superframe boundaries
+- **Minimal Overhead**: Single byte (`total_slots`) communicates changes
+
 #### 5.3.2 Time Synchronization Algorithm
 
 ```mermaid
@@ -1314,13 +1358,68 @@ struct DiscoveryResponse {
 
 ### 6.3 Join Process
 
-#### 6.3.1 Join Request Handling
+#### 6.3.0 Join Request Flow with Superframe Coordination
+
+The following sequence diagram illustrates the coordinated join process:
+
+```mermaid
+sequenceDiagram
+    participant N1 as New Node 1
+    participant N2 as New Node 2
+    participant M as Network Manager
+    participant E as Existing Nodes
+    
+    Note over N1,E: Current superframe cycle active
+    
+    N1->>M: JOIN_REQUEST
+    M->>M: Buffer join request (first one)
+    M->>N1: JOIN_RESPONSE (ACCEPTED)
+    
+    Note over N1,E: Second join attempt during same superframe
+    N2->>M: JOIN_REQUEST  
+    M->>N2: JOIN_RESPONSE (RETRY_LATER, delay=3 superframes)
+    
+    Note over N1,E: Wait for current superframe to complete...
+    
+    Note over N1,E: Next superframe boundary - sync beacon transmission
+    M->>M: ApplyPendingJoin() - update slot allocation
+    M->>*: SYNC_BEACON (total_slots = N+1)
+    
+    N1->>N1: Receive updated sync beacon
+    N1->>N1: Transition to NORMAL_OPERATION
+    E->>E: Apply new slot allocation from sync beacon
+    
+    Note over N1,E: RETRY_LATER node waits configured delay
+    Note over N2: Wait 3 superframes...
+    N2->>M: JOIN_REQUEST (retry attempt)
+    M->>M: Buffer second join request
+    M->>N2: JOIN_RESPONSE (ACCEPTED)
+    
+    Note over N1,E: Next superframe boundary
+    M->>M: ApplyPendingJoin() - update for N2
+    M->>*: SYNC_BEACON (total_slots = N+2)
+    N2->>N2: Join completed, enter NORMAL_OPERATION
+```
+
+#### 6.3.1 Join Request Handling with Superframe Coordination
+
+The protocol implements a coordinated join process to ensure network stability and proper synchronization. Only one node can join per superframe cycle to maintain deterministic slot allocation and prevent timing conflicts.
+
+**Join Request Buffering Process**:
 
 ```cpp
 void ProcessJoinRequest(const JoinRequest& request) {
     // Validate request
     if (!validateJoinRequest(request)) {
         sendJoinResponse(request.nodeId, JOIN_DENIED, "Invalid request");
+        return;
+    }
+    
+    // Check if a join is already pending for this superframe
+    if (pending_join_request_) {
+        // Send immediate retry response with suggested delay
+        uint32_t retry_delay_ms = config_.retry_delay_superframes * GetSuperframeDuration();
+        sendJoinResponse(request.nodeId, RETRY_LATER, retry_delay_ms);
         return;
     }
     
@@ -1331,13 +1430,34 @@ void ProcessJoinRequest(const JoinRequest& request) {
         return;
     }
     
-    // Assign slot and create response
-    assignSlot(request.nodeId, availableSlot);
-    sendJoinResponse(request.nodeId, JOIN_ACCEPTED, availableSlot);
+    // Buffer the join request for next superframe boundary
+    pending_join_data_ = request;
+    pending_join_request_ = true;
     
-    // Update network state
-    addNodeToNetwork(request.nodeId, availableSlot);
-    broadcastNetworkUpdate();
+    // Send immediate acceptance response
+    sendJoinResponse(request.nodeId, JOIN_ACCEPTED, availableSlot);
+}
+```
+
+**Superframe Boundary Processing**:
+
+At the start of each superframe, during sync beacon transmission:
+
+```cpp
+void ApplyPendingJoin() {
+    if (pending_join_request_) {
+        // Update network state with buffered join
+        addNodeToNetwork(pending_join_data_.nodeId, pending_join_data_.requestedSlots);
+        
+        // Update slot allocation (reflected in sync beacon total_slots field)
+        updateSlotAllocation();
+        
+        // Clear pending join flag
+        pending_join_request_ = false;
+        
+        LOG_INFO("Applied pending join for node %d at superframe boundary", 
+                 pending_join_data_.nodeId);
+    }
 }
 ```
 
@@ -1345,22 +1465,83 @@ void ProcessJoinRequest(const JoinRequest& request) {
 
 ```cpp
 void ProcessJoinResponse(const JoinResponse& response) {
-    if (response.status == JOIN_ACCEPTED) {
-        // Join successful
-        assignedSlot = response.assignedSlot;
-        networkId = response.networkId;
-        synchronizeTime(response.superframeTime);
-        
-        // Transition to normal operation
-        changeState(NORMAL_OPERATION);
-        
-        // Start slot-based operation
-        startSlotScheduler();
-    } else {
-        // Join denied - return to discovery
-        logEvent("Join denied: " + std::string(response.reason));
-        changeState(DISCOVERY);
+    switch (response.status) {
+        case JOIN_ACCEPTED:
+            // Join successful - wait for superframe update via sync beacon
+            assignedSlot = response.assignedSlot;
+            networkId = response.networkId;
+            synchronizeTime(response.superframeTime);
+            
+            // Wait for next sync beacon with updated slot allocation
+            changeState(JOINING_PENDING);
+            break;
+            
+        case RETRY_LATER:
+            // Temporary rejection - schedule retry
+            uint32_t retry_delay = config_.retry_delay_superframes * GetSuperframeDuration();
+            scheduleJoinRetry(retry_delay);
+            logEvent("Join temporarily rejected, retrying in " + 
+                    std::to_string(retry_delay) + "ms");
+            break;
+            
+        case JOIN_DENIED:
+            // Permanent rejection - return to discovery
+            logEvent("Join denied: network full or invalid request");
+            changeState(DISCOVERY);
+            break;
     }
+}
+
+void ProcessSyncBeacon(const SyncBeaconHeader& beacon) {
+    // Normal sync beacon processing
+    synchronizeTime(beacon);
+    
+    // If waiting for join completion, check for slot allocation update
+    if (current_state == JOINING_PENDING) {
+        if (beacon.total_slots_ > previous_total_slots_) {
+            // Slot allocation updated - join complete
+            changeState(NORMAL_OPERATION);
+            startSlotScheduler();
+            LOG_INFO("Join completed, transitioning to normal operation");
+        }
+    }
+    
+    previous_total_slots_ = beacon.total_slots_;
+}
+```
+
+#### 6.3.3 RETRY_LATER Behavior and Configuration
+
+Nodes receiving `RETRY_LATER` responses implement exponential backoff with configurable parameters:
+
+```cpp
+struct JoinRetryConfig {
+    uint8_t retry_delay_superframes;    // Base delay: 2-3 superframes (default: 3)
+    uint8_t max_join_retries;           // Maximum retry attempts (default: 5)
+    float backoff_multiplier;           // Exponential backoff factor (default: 1.5)
+    uint32_t max_retry_delay_ms;        // Maximum retry delay cap (default: 60000ms)
+};
+
+void ScheduleJoinRetry(uint32_t base_delay_ms) {
+    if (join_retry_count_ >= config_.max_join_retries) {
+        LOG_ERROR("Maximum join retries exceeded, returning to discovery");
+        changeState(DISCOVERY);
+        return;
+    }
+    
+    // Calculate exponential backoff delay
+    uint32_t retry_delay = base_delay_ms * 
+        std::pow(config_.backoff_multiplier, join_retry_count_);
+    retry_delay = std::min(retry_delay, config_.max_retry_delay_ms);
+    
+    // Add random jitter to prevent synchronized retry storms
+    uint32_t jitter = GetRandomDelay(0, retry_delay / 4);
+    uint32_t final_delay = retry_delay + jitter;
+    
+    scheduleTimer(final_delay, &RetryJoinRequest);
+    join_retry_count_++;
+    
+    LOG_INFO("Scheduled join retry %d in %dms", join_retry_count_, final_delay);
 }
 ```
 

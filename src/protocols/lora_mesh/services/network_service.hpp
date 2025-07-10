@@ -458,6 +458,16 @@ class NetworkService : public INetworkService {
      */
     Result HandleSuperframeStart();
 
+    /**
+     * @brief Apply pending join request at superframe boundary
+     * 
+     * Called by the Network Manager at the start of each superframe to apply
+     * any buffered join requests. Updates slot allocation and clears pending flag.
+     * 
+     * @return Result Success or error
+     */
+    Result ApplyPendingJoin();
+
     // Slot management methods
 
     /**
@@ -723,6 +733,12 @@ class NetworkService : public INetworkService {
     uint8_t allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
     uint8_t network_max_hops_ = 5;  ///< Maximum hops received from sync beacons
+
+    // Join request buffering for superframe coordination
+    bool pending_join_request_ =
+        false;  ///< Flag indicating join request is buffered
+    std::optional<JoinRequestMessage>
+        pending_join_data_;  ///< Buffered join request data
 
     // Thread safety
     mutable std::mutex network_mutex_;
