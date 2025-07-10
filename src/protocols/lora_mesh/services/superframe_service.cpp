@@ -415,9 +415,6 @@ Result SuperframeService::UpdateSuperframeState() {
         }
 
         last_slot_ = current_slot;
-
-        LOG_DEBUG("Slot transition: slot %d%s", current_slot,
-                  new_superframe ? " (new superframe)" : "");
     }
 
     // Update synchronization status
