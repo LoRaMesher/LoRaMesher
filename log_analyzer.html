@@ -123,7 +123,7 @@
             min-width: 100%;
         }
         .node-timeline {
-            height: 80px;
+            height: 100px;
             border-bottom: 1px solid #eee;
             position: relative;
         }
@@ -142,7 +142,7 @@
         .slot-bar {
             height: 30px;
             position: absolute;
-            top: 25px;
+            top: 15px;
             border-radius: 4px;
             color: white;
             font-size: 11px;
@@ -154,6 +154,48 @@
             cursor: pointer;
             transition: all 0.2s ease;
             font-weight: 500;
+        }
+        .message-indicator {
+            height: 20px;
+            position: absolute;
+            top: 50px;
+            border-radius: 10px;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 600;
+            border: 2px solid rgba(0,0,0,0.4);
+            min-width: 20px;
+        }
+        .message-tx { 
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+        .message-rx { 
+            background: linear-gradient(135deg, #27ae60, #229954);
+            color: white;
+        }
+        .message-beacon { 
+            background: linear-gradient(135deg, #9b59b6, #8e44ad);
+            color: white;
+        }
+        .message-join { 
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+        .message-control { 
+            background: linear-gradient(135deg, #34495e, #2c3e50);
+            color: white;
+        }
+        .message-indicator:hover {
+            opacity: 1;
+            transform: scaleY(1.2);
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            border-width: 2px;
         }
         .slot-bar:hover {
             opacity: 1;
@@ -395,22 +437,58 @@
                         // Parse message transmissions
                         const transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
                         if (transmitMatch) {
+                            let messageType = 'tx';
+                            if (line.includes('type: 70')) messageType = 'beacon';
+                            else if (line.includes('type: 50')) messageType = 'control';
+                            else if (line.includes('type: 66')) messageType = 'join';
+                            
+                            // Add transmission indicator on sender node
                             this.messages.push({
                                 timestamp,
                                 from: transmitMatch[1],
                                 to: transmitMatch[2],
-                                type: 'transmission'
+                                type: messageType,
+                                nodeId: transmitMatch[1], // Node that sent the message
+                                direction: 'transmitted'
                             });
                         }
 
-                        // Parse message queuing
-                        const queueMatch = line.match(/Queued message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
-                        if (queueMatch) {
+                        // Parse message reception
+                        const receiveMatch = line.match(/\*\*\* RECEIVED MESSAGE: type (\d+) from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        if (receiveMatch) {
+                            let messageType = 'rx';
+                            const msgType = receiveMatch[1];
+                            if (msgType === '70') messageType = 'beacon';
+                            else if (msgType === '50') messageType = 'control';
+                            else if (msgType === '66') messageType = 'join';
+                            
+                            // Add reception indicator on receiver node (use nodeId from timestamp line)
                             this.messages.push({
                                 timestamp,
-                                from: queueMatch[1],
-                                to: queueMatch[2],
-                                type: 'queued'
+                                from: receiveMatch[2],
+                                to: receiveMatch[3],
+                                type: messageType,
+                                nodeId: nodeId, // Use the node ID from the log line
+                                direction: 'received'
+                            });
+                        }
+
+                        // Parse additional message reception patterns
+                        const receivedMatch = line.match(/received message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        if (receivedMatch) {
+                            let messageType = 'rx';
+                            if (line.includes('sync beacon')) messageType = 'beacon';
+                            else if (line.includes('Join request')) messageType = 'join';
+                            else if (line.includes('control')) messageType = 'control';
+                            
+                            // Add reception indicator on receiver node
+                            this.messages.push({
+                                timestamp,
+                                from: receivedMatch[1],
+                                to: receivedMatch[2],
+                                type: messageType,
+                                nodeId: receivedMatch[2], // Node that received the message
+                                direction: 'received'
                             });
                         }
 
@@ -447,9 +525,9 @@
                 this.timeRange.end = Math.max(...allTimestamps);
 
                 console.log('Parsed log:', {
-                    events: this.events.length,
-                    messages: this.messages.length,
-                    nodes: this.nodes.size,
+                    events: this.events,
+                    messages: this.messages,
+                    nodes: this.nodes,
                     timeRange: this.timeRange
                 });
             }
@@ -521,6 +599,12 @@
                         }, pixelsPerMs);
                     });
 
+                    // Render message indicators for this node
+                    const nodeMessages = this.messages.filter(m => m.nodeId === nodeId);
+                    nodeMessages.forEach(message => {
+                        this.addMessageIndicator(nodeDiv, message, pixelsPerMs);
+                    });
+
                     timelineContent.appendChild(nodeDiv);
                 });
 
@@ -558,6 +642,47 @@
                 nodeDiv.appendChild(bar);
             }
 
+            addMessageIndicator(nodeDiv, message, pixelsPerMs) {
+                const indicator = document.createElement('div');
+                indicator.className = `message-indicator message-${message.type}`;
+                
+                const left = (message.timestamp - this.timeRange.start) * pixelsPerMs + 110;
+                const width = 3; // Fixed width for message indicators
+                
+                indicator.style.left = `${left}px`;
+                indicator.style.width = `${width}px`;
+                
+                // Add message type indicator
+                const typeMap = {
+                    'tx': 'TX',
+                    'rx': 'RX',
+                    'beacon': 'B',
+                    'control': 'C',
+                    'join': 'J'
+                };
+                
+                const displayText = typeMap[message.type] || '?';
+                if (width > 15) {
+                    indicator.textContent = displayText;
+                }
+                
+                // Enhanced tooltip with message details
+                const direction = message.direction || 'unknown';
+                const directionIcon = direction === 'transmitted' ? '📤' : 
+                                    direction === 'received' ? '📥' : '📊';
+                
+                const messageInfo = `🔸 Message: ${message.type.toUpperCase()} (${direction})
+📅 Time: ${message.timestamp}ms
+📤 From: 0x${message.from}
+📥 To: 0x${message.to}
+${directionIcon} Direction: ${direction}
+📊 Relative: ${(message.timestamp - this.timeRange.start).toFixed(1)}ms from start`;
+                
+                indicator.title = messageInfo;
+                
+                nodeDiv.appendChild(indicator);
+            }
+
             updateControlLabels() {
                 const zoomLevelSpan = document.getElementById('zoomLevel');
                 const timeRangeLabel = document.getElementById('timeRangeLabel');
@@ -590,6 +715,10 @@
                     const msgDiv = document.createElement('div');
                     msgDiv.className = 'message-item';
                     
+                    const direction = msg.direction || 'unknown';
+                    const directionIcon = direction === 'transmitted' ? '📤' : 
+                                        direction === 'received' ? '📥' : '📊';
+                    
                     msgDiv.innerHTML = `
                         <div class="message-time">${msg.timestamp}ms</div>
                         <div class="message-content">
@@ -597,6 +726,7 @@
                             → 
                             <span class="message-to">0x${msg.to}</span>
                             <span style="margin-left: 10px; color: #7f8c8d;">${msg.type}</span>
+                            <span style="margin-left: 5px; color: #7f8c8d;">${directionIcon} ${direction}</span>
                         </div>
                     `;
                     
