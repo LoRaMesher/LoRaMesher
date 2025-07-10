@@ -138,26 +138,27 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     service_config_ = CreateServiceConfig(config);
 #endif  // DEBUG
 
+    // TODO: THIS IS NEEDED?
     // Update superframe configuration
-    uint32_t slot_duration_ms =
-        hardware_->getTimeOnAir(config.getMaxPacketSize()) +
-        100;  // 100ms guard time
+    // uint32_t slot_duration_ms =
+    //     hardware_->getTimeOnAir(config.getMaxPacketSize()) +
+    //     100;  // 100ms guard time
 
-    Result result =
-        superframe_service_->UpdateSlotDuration(slot_duration_ms, false);
+    // Result result =
+    //     superframe_service_->UpdateSlotDuration(slot_duration_ms, false);
 
-    if (!result) {
-        LOG_ERROR("Failed to update superframe slot duration: %s",
-                  result.GetErrorMessage().c_str());
-        return result;
-    }
+    // if (!result) {
+    //     LOG_ERROR("Failed to update superframe slot duration: %s",
+    //               result.GetErrorMessage().c_str());
+    //     return result;
+    // }
 
     // Configure network service
     lora_mesh::INetworkService::NetworkConfig net_config =
         service_config_.network_config;
     net_config.node_address = config.getNodeAddress();
 
-    result = network_service_->Configure(net_config);
+    Result result = network_service_->Configure(net_config);
     if (!result) {
         LOG_ERROR("Failed to configure network service: %s",
                   result.GetErrorMessage().c_str());
