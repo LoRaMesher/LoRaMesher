@@ -5,12 +5,13 @@
 #pragma once
 
 #include <gtest/gtest.h>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
+#include <thread>
 #include <vector>
 
-#include <thread>
 #include "../test/utils/network_testing_impl.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
@@ -919,9 +920,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @brief Create log directory if it doesn't exist
      */
     void CreateLogDirectory() {
-        // Use system command to create directory (cross-platform)
-        std::string command = "mkdir -p " + log_directory_;
-        system(command.c_str());
+        namespace fs = std::filesystem;
+        if (!fs::exists(log_directory_)) {
+            fs::create_directories(log_directory_);
+        }
     }
 
    public:

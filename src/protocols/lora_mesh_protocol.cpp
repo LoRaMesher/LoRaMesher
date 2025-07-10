@@ -41,6 +41,7 @@ Result LoRaMeshProtocol::Init(
 
     // Create superframe service
     superframe_service_ = std::make_shared<lora_mesh::SuperframeService>();
+    superframe_service_->SetNodeAddress(node_address);
 
     // Create network service
     network_service_ = std::make_shared<lora_mesh::NetworkService>(
@@ -487,8 +488,8 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         }
     }
 
-    LOG_DEBUG("[0x%04X] Slot %d transition: type=%s%s", GetNodeAddress(),
-              current_slot, slot_utils::SlotTypeToString(slot_type).c_str(),
+    LOG_DEBUG("Slot %d transition: type=%s%s", current_slot,
+              slot_utils::SlotTypeToString(slot_type).c_str(),
               new_superframe ? " (new superframe)" : "");
 
     // Handle new superframe

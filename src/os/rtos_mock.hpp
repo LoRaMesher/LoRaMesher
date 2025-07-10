@@ -1418,9 +1418,12 @@ class RTOSMock : public RTOS {
      * @param address The node address as a string (e.g., "0x1001")
      */
     void SetCurrentTaskNodeAddress(const std::string& address) override {
+        // Update thread-local cache first for immediate availability
+        setThreadLocalNodeAddress(address);
+
         std::lock_guard<std::mutex> lock(tasksMutex_);
 
-        // Find the current task
+        // Find the current task and update TaskInfo
         std::thread::id current_id = std::this_thread::get_id();
         for (auto& [thread_ptr, task_info] : tasks_) {
             if (task_info.thread_id == current_id) {
@@ -1435,6 +1438,13 @@ class RTOSMock : public RTOS {
      * @return The node address as a string, or empty string if not set
      */
     std::string GetCurrentTaskNodeAddress() const override {
+        // First try thread-local cache for best performance
+        std::string cached_address = getThreadLocalNodeAddress();
+        if (!cached_address.empty()) {
+            return cached_address;
+        }
+
+        // Fallback to mutex-protected lookup with try_to_lock to avoid deadlock
         std::unique_lock<std::mutex> lock(tasksMutex_, std::try_to_lock);
 
         // If we can't acquire the lock, return empty string to avoid deadlock
@@ -1442,10 +1452,14 @@ class RTOSMock : public RTOS {
             return "";
         }
 
-        // Find the current task
+        // Find the current task and update thread-local cache
         std::thread::id current_id = std::this_thread::get_id();
         for (const auto& [thread_ptr, task_info] : tasks_) {
             if (task_info.thread_id == current_id) {
+                // Update thread-local cache for future calls
+                if (!task_info.node_address.empty()) {
+                    setThreadLocalNodeAddress(task_info.node_address);
+                }
                 return task_info.node_address;
             }
         }
@@ -1453,6 +1467,28 @@ class RTOSMock : public RTOS {
     }
 
    private:
+    /**
+     * @brief Thread-local storage for node address cache
+     * This avoids mutex contention in GetCurrentTaskNodeAddress()
+     */
+    static thread_local std::string thread_local_node_address_;
+
+    /**
+     * @brief Set the thread-local node address cache
+     * @param address The node address to cache
+     */
+    static void setThreadLocalNodeAddress(const std::string& address) {
+        thread_local_node_address_ = address;
+    }
+
+    /**
+     * @brief Get the thread-local node address cache
+     * @return The cached node address, or empty string if not cached
+     */
+    static std::string getThreadLocalNodeAddress() {
+        return thread_local_node_address_;
+    }
+
     struct TaskInfo {
         std::string name;
         uint32_t stack_size = 0;

@@ -12,12 +12,10 @@ Logger::Logger() : logger_mutex_() {
 }
 
 void Logger::LogMessage(LogLevel level, const std::string& message) {
-    std::unique_lock<std::mutex> lock(logger_mutex_, std::try_to_lock);
-    if (lock.owns_lock()) {
-        if (level >= min_log_level_ && handler_) {
-            std::string formatted_message = FormatMessageWithAddress(message);
-            handler_->Write(level, formatted_message);
-        }
+    std::lock_guard<std::mutex> lock(logger_mutex_);
+    if (level >= min_log_level_ && handler_) {
+        std::string formatted_message = FormatMessageWithAddress(message);
+        handler_->Write(level, formatted_message);
     }
 }
 

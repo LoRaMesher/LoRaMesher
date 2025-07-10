@@ -135,13 +135,14 @@ bool SuperframeService::IsSynchronized() const {
     }
 
     // Check if we haven't lost sync due to timing drift
-    uint32_t current_time = GetRTOS().getTickCount();
-    uint32_t time_since_sync = current_time - last_sync_time_;
+    // uint32_t current_time = GetRTOS().getTickCount();
+    // uint32_t time_since_sync = current_time - last_sync_time_;
 
     // Consider synchronized if within reasonable drift limits
     // TODO: Make this configurable
-    const uint32_t MAX_SYNC_DRIFT_MS = 5000;  // 5 seconds
-    return is_synchronized_ && (time_since_sync < MAX_SYNC_DRIFT_MS);
+    // const uint32_t MAX_SYNC_DRIFT_MS = 5000;  // 5 seconds
+    // TODO: This works, however, we need to set the time_since_sync in other places.
+    return is_synchronized_;  //&& (time_since_sync < MAX_SYNC_DRIFT_MS);
 }
 
 void SuperframeService::SetSynchronized(bool synchronized) {
@@ -473,6 +474,14 @@ void SuperframeService::UpdateTaskFunction(void* param) {
 
     // RTOS instance
     auto& rtos = GetRTOS();
+
+    // Set node address for this task's logging context
+    if (service->node_address_ != 0) {
+        char address_str[8];
+        snprintf(address_str, sizeof(address_str), "0x%04X",
+                 service->node_address_);
+        rtos.SetCurrentTaskNodeAddress(address_str);
+    }
 
     // Task loop
     while (!rtos.ShouldStopOrPause()) {

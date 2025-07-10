@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iomanip>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -60,6 +61,8 @@ class FileLogHandler : public LogHandler {
      * @param message The message to be logged
      */
     void Write(LogLevel level, const std::string& message) override {
+        std::lock_guard<std::mutex> lock(file_mutex_);
+
         if (!file_stream_.is_open()) {
             return;
         }
@@ -77,13 +80,22 @@ class FileLogHandler : public LogHandler {
         // Add message
         output << message << std::endl;
 
-        file_stream_ << output.str();
+        // Write complete log line atomically and flush immediately
+        std::string complete_line = output.str();
+
+        // Force synchronous writing to prevent any buffering issues
+        file_stream_.write(complete_line.c_str(), complete_line.length());
+        file_stream_.flush();
+
+        // Force synchronization to ensure data reaches the OS
+        file_stream_.rdbuf()->pubsync();
     }
 
     /**
      * @brief Flushes buffered log messages to disk
      */
     void Flush() override {
+        std::lock_guard<std::mutex> lock(file_mutex_);
         if (file_stream_.is_open()) {
             file_stream_.flush();
         }
@@ -107,15 +119,21 @@ class FileLogHandler : public LogHandler {
     bool add_timestamps_;
     std::chrono::steady_clock::time_point start_time_{
         std::chrono::steady_clock::now()};
+    mutable std::mutex file_mutex_;  ///< Mutex to ensure atomic file writes
 
     /**
      * @brief Write a header to the log file
      */
     void WriteHeader() {
-        file_stream_ << "# LoRaMesh Test Log" << std::endl;
-        file_stream_ << "# Generated: " << GetCurrentTimeString() << std::endl;
-        file_stream_ << "# Format: [timestamp] [level] message" << std::endl;
-        file_stream_ << std::endl;
+        std::lock_guard<std::mutex> lock(file_mutex_);
+        std::string header = "# LoRaMesh Test Log\n";
+        header += "# Generated: " + GetCurrentTimeString() + "\n";
+        header += "# Format: [timestamp] [level] message\n";
+        header += "\n";
+
+        file_stream_.write(header.c_str(), header.length());
+        file_stream_.flush();
+        file_stream_.rdbuf()->pubsync();
     }
 
     /**

@@ -255,6 +255,16 @@ class SuperframeService : public ISuperframeService {
       */
     bool IsAutoAdvanceEnabled() const { return auto_advance_; }
 
+    /**
+      * @brief Set the node address for logging context
+      * 
+      * This ensures that the SuperframeService update task has the correct
+      * node address for logging purposes.
+      * 
+      * @param node_address The node address to set
+      */
+    void SetNodeAddress(uint16_t node_address) { node_address_ = node_address; }
+
    private:
     /**
       * @brief Create RTOS task for automatic updates
@@ -302,7 +312,8 @@ class SuperframeService : public ISuperframeService {
     uint16_t total_slots_ = 0;  ///< Total number of slots in the superframe
     uint32_t slot_duration_ms_ = 0;  ///< Duration of each slot in milliseconds
     uint32_t superframe_start_time_ =
-        0;  ///< Start time of current superframe cycle
+        0;                       ///< Start time of current superframe cycle
+    uint16_t node_address_ = 0;  ///< Node address for logging context
 
     bool is_running_;
     bool is_synchronized_;
