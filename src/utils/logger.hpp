@@ -188,7 +188,7 @@ class Logger {
      * @param level The minimum log level.
      */
     void SetLogLevel(LogLevel level) {
-        std::lock_guard<std::mutex> lock(logger_mutex_);
+        std::lock_guard<std::timed_mutex> lock(logger_mutex_);
         min_log_level_ = level;
     }
 
@@ -197,7 +197,7 @@ class Logger {
      * @param handler Unique pointer to the log handler implementation.
      */
     void SetHandler(std::unique_ptr<LogHandler> handler) {
-        std::lock_guard<std::mutex> lock(logger_mutex_);
+        std::lock_guard<std::timed_mutex> lock(logger_mutex_);
         handler_ = std::move(handler);
     }
 
@@ -248,7 +248,7 @@ class Logger {
      * @thread_safety Thread-safe
      */
     void Flush() {
-        std::lock_guard<std::mutex> lock(logger_mutex_);
+        std::lock_guard<std::timed_mutex> lock(logger_mutex_);
         if (handler_) {
             handler_->Flush();
         }
@@ -281,8 +281,8 @@ class Logger {
    private:
     LogLevel min_log_level_{LogLevel::kDebug};
     std::unique_ptr<LogHandler> handler_;
-    // Mutex for thread safety
-    std::mutex logger_mutex_;
+    // Timed mutex for thread safety with timeout capability
+    std::timed_mutex logger_mutex_;
 
     void LogMessage(LogLevel level, const std::string& message);
     std::string FormatMessageWithAddress(const std::string& message) const;

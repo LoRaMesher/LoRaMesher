@@ -12,7 +12,17 @@ Logger::Logger() : logger_mutex_() {
 }
 
 void Logger::LogMessage(LogLevel level, const std::string& message) {
-    std::lock_guard<std::mutex> lock(logger_mutex_);
+    // Try to acquire the mutex with a timeout to prevent deadlock
+    std::unique_lock<std::timed_mutex> lock(logger_mutex_, std::try_to_lock);
+
+    if (!lock.owns_lock()) {
+        // If we can't get the lock immediately, try with a short timeout
+        if (!lock.try_lock_for(std::chrono::milliseconds(10))) {
+            // If still can't get the lock, skip this log to prevent blocking
+            return;
+        }
+    }
+
     if (level >= min_log_level_ && handler_) {
         std::string formatted_message = FormatMessageWithAddress(message);
         handler_->Write(level, formatted_message);
@@ -20,12 +30,12 @@ void Logger::LogMessage(LogLevel level, const std::string& message) {
 }
 
 void Logger::Reset() {
-    std::unique_lock<std::mutex> lock(logger_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(logger_mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
         // The mutex is already locked, which is problematic
         // Create a new mutex to replace the locked one
-        logger_mutex_.~mutex();
-        new (&logger_mutex_) std::mutex();
+        logger_mutex_.~timed_mutex();
+        new (&logger_mutex_) std::timed_mutex();
     }
 }
 

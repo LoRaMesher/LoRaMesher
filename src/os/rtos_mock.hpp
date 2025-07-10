@@ -233,7 +233,7 @@ class RTOSMock : public RTOS {
 
         // Store task information
         {
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
             // Initialize the TaskInfo directly in the map to avoid copy assignment
             auto& task_info = tasks_[thread];
@@ -277,7 +277,7 @@ class RTOSMock : public RTOS {
 
         // Get thread information
         {
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
             auto it = tasks_.find(thread);
             if (it != tasks_.end()) {
                 thread_id = it->second.thread_id;
@@ -362,7 +362,7 @@ class RTOSMock : public RTOS {
 
         // Clean up resources
         {
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
             tasks_.erase(thread);
         }
 
@@ -384,7 +384,7 @@ class RTOSMock : public RTOS {
             auto* thread = static_cast<std::thread*>(taskHandle);
 
             {
-                std::lock_guard<std::mutex> lock(tasksMutex_);
+                std::lock_guard<std::timed_mutex> lock(tasksMutex_);
                 auto it = tasks_.find(thread);
                 if (it != tasks_.end()) {
                     thread_id = it->second.thread_id;
@@ -400,7 +400,7 @@ class RTOSMock : public RTOS {
             thread_id = std::this_thread::get_id();
 
             // Find task info for current thread
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
             for (auto& pair : tasks_) {
                 if (pair.second.thread_id == thread_id) {
                     task_name = pair.second.name;
@@ -499,7 +499,7 @@ class RTOSMock : public RTOS {
         if (taskHandle) {
             auto* thread = static_cast<std::thread*>(taskHandle);
 
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
             auto it = tasks_.find(thread);
             if (it != tasks_.end()) {
                 thread_id = it->second.thread_id;
@@ -514,7 +514,7 @@ class RTOSMock : public RTOS {
             thread_id = std::this_thread::get_id();
 
             // Find task info for current thread
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
             for (auto& pair : tasks_) {
                 if (pair.second.thread_id == thread_id) {
                     task_name = pair.second.name;
@@ -573,11 +573,11 @@ class RTOSMock : public RTOS {
                         });
 
             if (!acknowledged) {
-                LOG_DEBUG(
-                    "MOCK: Task '%s' did not acknowledge resume within "
-                    "timeout, "
-                    "but resume signal was sent successfully",
-                    task_name.c_str());
+                // LOG_DEBUG(
+                //     "MOCK: Task '%s' did not acknowledge resume within "
+                //     "timeout, "
+                //     "but resume signal was sent successfully",
+                //     task_name.c_str());
                 // Changed from WARNING to DEBUG and improved message
                 // Return true anyway as we've sent the resume signal
                 return true;
@@ -607,7 +607,7 @@ class RTOSMock : public RTOS {
 
         // Find the task info with proper locking
         {
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
             // Look for the task with this thread ID
             for (auto& pair : tasks_) {
@@ -640,9 +640,9 @@ class RTOSMock : public RTOS {
 
         // If task is suspended, wait until resumed or stop requested
         if (is_suspended) {
-            LOG_DEBUG(
-                "MOCK: Task '%s' is suspended, waiting for resume or stop",
-                task_name.c_str());
+            // LOG_DEBUG(
+            //     "MOCK: Task '%s' is suspended, waiting for resume or stop",
+            //     task_name.c_str());
 
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
@@ -855,7 +855,7 @@ class RTOSMock : public RTOS {
      * @return Current stack watermark value in bytes
      */
     uint32_t getTaskStackWatermark(TaskHandle_t taskHandle) override {
-        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
         std::thread::id current_id;
 
         if (taskHandle == nullptr) {
@@ -890,7 +890,7 @@ class RTOSMock : public RTOS {
      * @return Task state
      */
     TaskState getTaskState(TaskHandle_t taskHandle) override {
-        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
         std::thread::id current_id;
 
         if (taskHandle == nullptr) {
@@ -916,7 +916,7 @@ class RTOSMock : public RTOS {
 
     std::vector<TaskStats> getSystemTaskStats() override {
         std::vector<TaskStats> stats;
-        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
         for (const auto& [thread, info] : tasks_) {
             // Get the stack watermark for this task (or calculate it if not set)
@@ -966,7 +966,7 @@ class RTOSMock : public RTOS {
      * @param task_handle Handle to the task to notify, or nullptr for the current task
      */
     void NotifyTaskFromISR(TaskHandle_t task_handle) override {
-        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
         std::thread::id current_id;
 
         if (task_handle == nullptr) {
@@ -1000,7 +1000,7 @@ class RTOSMock : public RTOS {
         // Prevent unused parameter warnings
         (void)value;
 
-        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
         std::thread::id current_id;
 
         if (task_handle == nullptr) {
@@ -1034,7 +1034,7 @@ class RTOSMock : public RTOS {
     }
 
     QueueResult WaitForNotify(uint32_t timeout) override {
-        LOG_DEBUG("MOCK: Waiting for notification with timeout %u ms", timeout);
+        // LOG_DEBUG("MOCK: Waiting for notification with timeout %u ms", timeout);
 
         // Find the current task's handle
         thread_local TaskHandle_t this_task = nullptr;
@@ -1042,7 +1042,7 @@ class RTOSMock : public RTOS {
 
         // First time call from this thread, find the task handle
         {
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
             if (!this_task) {
                 // Try to find this thread in our task list by comparing thread IDs
@@ -1114,7 +1114,7 @@ class RTOSMock : public RTOS {
             // the ResumeTask call won't timeout waiting for acknowledgment
             auto wait_predicate = [this, task_info, initial_suspended_state]() {
                 // Check conditions under the proper lock
-                std::lock_guard<std::mutex> tasks_lock(tasksMutex_);
+                std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
                 auto it = tasks_.find(static_cast<std::thread*>(this_task));
                 if (it == tasks_.end()) {
                     return true;  // Task deleted, exit wait
@@ -1152,7 +1152,7 @@ class RTOSMock : public RTOS {
 
         // After waiting, check what happened
         {
-            std::lock_guard<std::mutex> lock(tasksMutex_);
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
             // Double-check that the task still exists
             auto it = tasks_.find(static_cast<std::thread*>(this_task));
@@ -1421,7 +1421,7 @@ class RTOSMock : public RTOS {
         // Update thread-local cache first for immediate availability
         setThreadLocalNodeAddress(address);
 
-        std::lock_guard<std::mutex> lock(tasksMutex_);
+        std::lock_guard<std::timed_mutex> lock(tasksMutex_);
 
         // Find the current task and update TaskInfo
         std::thread::id current_id = std::this_thread::get_id();
@@ -1444,12 +1444,16 @@ class RTOSMock : public RTOS {
             return cached_address;
         }
 
-        // Fallback to mutex-protected lookup with try_to_lock to avoid deadlock
-        std::unique_lock<std::mutex> lock(tasksMutex_, std::try_to_lock);
+        // Fallback to mutex-protected lookup with a short timeout
+        std::unique_lock<std::timed_mutex> lock(tasksMutex_, std::try_to_lock);
 
-        // If we can't acquire the lock, return empty string to avoid deadlock
+        // If we can't acquire the lock immediately, try with a short timeout
         if (!lock.owns_lock()) {
-            return "";
+            if (!lock.try_lock_for(std::chrono::milliseconds(5))) {
+                // If still can't get the lock after timeout, return empty to prevent deadlock
+                // This should be rare since most operations are fast
+                return "";
+            }
         }
 
         // Find the current task and update thread-local cache
@@ -1525,7 +1529,7 @@ class RTOSMock : public RTOS {
     std::vector<TimerCallback> timerCallbacks_;  ///< Timer callbacks
 
     std::map<std::thread*, TaskInfo> tasks_;
-    mutable std::mutex tasksMutex_;
+    mutable std::timed_mutex tasksMutex_;
     std::vector<void (*)()> registeredISRs_;
     std::mutex isrMutex_;
 };
