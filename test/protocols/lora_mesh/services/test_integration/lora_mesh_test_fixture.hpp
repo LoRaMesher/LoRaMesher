@@ -4,6 +4,8 @@
  */
 #pragma once
 
+// #define LORAMESHER_TEST_STORE_LOGS // If defined it will enable file logging for tests
+
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <functional>
@@ -61,8 +63,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
         : time_controller_(virtual_network_), log_directory_("test_logs") {}
 
     void SetUp() override {
-        // Set up file logging for this test
+// Set up file logging for this test
+#ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
+#endif
     }
 
     void TearDown() override {
@@ -81,8 +85,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
         nodes_.clear();
         message_log_.clear();
 
+#ifdef LORAMESHER_TEST_STORE_LOGS
         // Clean up file logging
         CleanupFileLogging();
+#endif
     }
 
     /**
