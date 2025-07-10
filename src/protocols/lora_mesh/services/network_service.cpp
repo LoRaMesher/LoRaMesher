@@ -585,11 +585,11 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
         static_cast<int>(message.GetType()), message.GetSource(),
         message.GetDestination(), static_cast<int>(state_),
         reception_timestamp);
-    LOG_DEBUG(
-        "Processing received message type %d from 0x%04X to 0x%04X at "
-        "timestamp %d",
-        static_cast<int>(message.GetType()), message.GetSource(),
-        message.GetDestination(), reception_timestamp);
+    // LOG_DEBUG(
+    //     "Processing received message type %d from 0x%04X to 0x%04X at "
+    //     "timestamp %d",
+    //     static_cast<int>(message.GetType()), message.GetSource(),
+    //     message.GetDestination(), reception_timestamp);
 
     // Route message to appropriate handler based on type
     switch (message.GetType()) {
@@ -806,23 +806,7 @@ Result NetworkService::CreateNetwork() {
         return result;
     }
 
-    // Update superframe service configuration with new slot table
     if (superframe_service_) {
-        // Get the updated slot table
-        const auto& slot_table = GetSlotTable();
-        uint16_t total_slots = static_cast<uint16_t>(slot_table.size());
-        uint32_t slot_duration =
-            1000;  // Use standard slot duration for network manager
-
-        // Update the superframe configuration without stopping/starting
-        result = superframe_service_->UpdateSuperframeConfig(
-            total_slots, slot_duration, true);
-        if (!result) {
-            LOG_ERROR("Failed to update superframe configuration: %s",
-                      result.GetErrorMessage().c_str());
-            return result;
-        }
-
         superframe_service_->SetSynchronized(true);
         NotifySuperframeOfNetworkChanges();
     }
@@ -1474,22 +1458,6 @@ Result NetworkService::UpdateSlotTable() {
             slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
             LOG_DEBUG("Allocated CONTROL_RX slot %zu for node 0x%04X (NM=%d)",
                       slot_index, addr, node.is_network_manager);
-
-            //TODO: If we want to optimize the sleep nodes we can use the following code, however,
-            // we should sometime listen all the nodes to see if we have better links
-
-            // Only listen to direct neighbors (1-hop), sleep for others
-            // if (node.IsDirectNeighbor()) {
-            //     slot_allocation.type = SlotAllocation::SlotType::CONTROL_RX;
-            //     LOG_DEBUG(
-            //         "Allocated CONTROL_RX slot %zu for neighbor 0x%04X (NM=%d)",
-            //         slot_index, addr, node.is_network_manager);
-            // } else {
-            //     slot_allocation.type = SlotAllocation::SlotType::SLEEP;
-            //     LOG_DEBUG(
-            //         "Allocated SLEEP slot %zu for non-neighbor 0x%04X (NM=%d)",
-            //         slot_index, addr, node.is_network_manager);
-            // }
         }
         slot_index++;
     }
