@@ -28,7 +28,7 @@
 //      */
 //     bool WaitForRoutingStabilization(const std::vector<TestNode*>& nodes,
 //                                      uint32_t timeout_ms = 10000) {
-//         return AdvanceTime(timeout_ms, timeout_ms, 100, 20, [&]() {
+//         return AdvanceTime(timeout_ms, timeout_ms, 100, 2, [&]() {
 //             Check if all nodes have discovered all other nodes for (auto* node :
 //                                                                     nodes) {
 //                 auto& network_nodes = node->protocol->GetNetworkNodes();
@@ -66,7 +66,7 @@
 //     ASSERT_TRUE(SendMessage(node1, node2, MessageType::DATA_MSG, payload));
 
 //     Wait for message to be received
-//     bool received = AdvanceTime(1000, 2000, 100, 10, [&]() {
+//     bool received = AdvanceTime(1000, 2000, 100, 2, [&]() {
 //         return HasReceivedMessageFrom(node2, node1.address,
 //                                       MessageType::DATA_MSG);
 //     });
@@ -105,7 +105,7 @@
 //         SendMessage(*nodes[0], *nodes[3], MessageType::DATA_MSG, payload));
 
 //     // Wait for message to be routed
-//     bool received = AdvanceTime(5000, 10000, 200, 20, [&]() {
+//     bool received = AdvanceTime(5000, 10000, 200, 2, [&]() {
 //         return HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
 //                                       MessageType::DATA_MSG);
 //     });
@@ -149,7 +149,7 @@
 //     SetLinkStatus(*nodes[0], *nodes[2], false);
 
 //     // Wait for routing tables to update
-//     bool updated = AdvanceTime(10000, 15000, 500, 20, [&]() {
+//     bool updated = AdvanceTime(10000, 15000, 500, 2, [&]() {
 //         // Check if Node1 has found alternative route to Node3
 //         auto& node1_routes = nodes[0]->protocol->GetNetworkNodes();
 //         for (const auto& route : node1_routes) {
@@ -170,7 +170,7 @@
 //         SendMessage(*nodes[0], *nodes[2], MessageType::DATA_MSG, payload));
 
 //     // Message should still arrive despite broken direct link
-//     bool received = AdvanceTime(3000, 5000, 200, 20, [&]() {
+//     bool received = AdvanceTime(3000, 5000, 200, 2, [&]() {
 //         return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
 //                                       MessageType::DATA_MSG);
 //     });
@@ -242,7 +242,7 @@
 //     ASSERT_TRUE(nodes[0]->protocol->SendMessage(message_opt.value()));
 
 //     // All other nodes should receive the broadcast
-//     bool all_received = AdvanceTime(5000, 10000, 200, 20, [&]() {
+//     bool all_received = AdvanceTime(5000, 10000, 200, 2, [&]() {
 //         for (size_t i = 1; i < nodes.size(); i++) {
 //             if (!HasReceivedMessageFrom(*nodes[i], nodes[0]->address,
 //                                         MessageType::DATA_MSG)) {
@@ -418,7 +418,7 @@
 //     uint32_t route_timeout = config.network_config.route_timeout_ms;
 
 //     bool route_expired = AdvanceTime(
-//         route_timeout + 5000, route_timeout + 10000, 1000, 20, [&]() {
+//         route_timeout + 5000, route_timeout + 10000, 1000, 2, [&]() {
 //             auto& routes = nodes[0]->protocol->GetNetworkNodes();
 //             for (const auto& route : routes) {
 //                 if (route.routing_entry.destination == nodes[2]->address) {
