@@ -70,18 +70,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     void TearDown() override {
-        // Clean up network adapters FIRST to prevent race conditions
-        network_adapters_.clear();
-
-        // Stop and clean up all nodes
+        // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
         for (auto& node : nodes_) {
             if (node->protocol) {
-                // Stop the protocol before destroying it to avoid race conditions
-                node->protocol->Stop();
+                // Stop the protocol and wait for all tasks to exit
                 node->protocol.reset();
             }
+        }
+
+        // THEN clean up hardware and network adapters after tasks have stopped
+        for (auto& node : nodes_) {
             node->hardware_manager.reset();
         }
+
+        // Finally clean up network adapters after all protocols are stopped
+        network_adapters_.clear();
         nodes_.clear();
         message_log_.clear();
 

@@ -281,6 +281,14 @@ class INetworkService {
      * @return const NetworkConfig& Current configuration
      */
     virtual const NetworkConfig& GetConfig() const = 0;
+
+    /**
+     * @brief Reset network state and clear allocated resources
+     * 
+     * Clears network nodes, slot table, and resets state to initial values.
+     * Should be called when stopping the protocol to prevent memory leaks.
+     */
+    virtual void ResetNetworkState() = 0;
 };
 
 }  // namespace lora_mesh

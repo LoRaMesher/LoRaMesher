@@ -277,8 +277,6 @@ class LoRaMeshProtocol : public Protocol {
     // Task management
     os::TaskHandle_t protocol_task_handle_;
     os::QueueHandle_t radio_event_queue_;
-    bool stop_requested_;
-    bool is_paused_;
 
     // Configuration
     LoRaMeshProtocolConfig config_;

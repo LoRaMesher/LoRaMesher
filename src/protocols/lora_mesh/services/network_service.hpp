@@ -300,6 +300,14 @@ class NetworkService : public INetworkService {
     const NetworkConfig& GetConfig() const override;
 
     /**
+     * @brief Reset network state and clear allocated resources
+     * 
+     * Clears network nodes, slot table, and resets state to initial values.
+     * Should be called when stopping the protocol to prevent memory leaks.
+     */
+    void ResetNetworkState() override;
+
+    /**
      * @brief Calculate link quality to a specific node
      * 
      * @param node_address Node address

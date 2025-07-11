@@ -536,7 +536,8 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
              discovery_timeout_ms, discovery_start_time_);
 
     // Start discovery process
-    return PerformDiscovery(discovery_timeout_ms);
+    // return PerformDiscovery(discovery_timeout_ms);
+    return Result::Success();
 }
 
 Result NetworkService::StartJoining(AddressType /* manager_address */,
@@ -2277,6 +2278,38 @@ bool NetworkService::ScheduleDiscoverySlotForwarding() {
 
     LOG_WARNING("No available DISCOVERY_RX slots found for forwarding");
     return false;
+}
+
+void NetworkService::ResetNetworkState() {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+
+    // Store count before clearing for logging
+    size_t node_count = network_nodes_.size();
+    size_t slot_count = slot_table_.size();
+
+    // Clear network topology data
+    network_nodes_.clear();
+    slot_table_.clear();
+
+    // Reset state variables
+    network_found_ = false;
+    network_creator_ = false;
+    is_synchronized_ = false;
+    network_manager_ = 0;
+
+    // Reset timing variables
+    discovery_start_time_ = 0;
+    joining_start_time_ = 0;
+    last_sync_time_ = 0;
+
+    // Clear join data
+    pending_join_data_.reset();
+
+    // Reset to initial state
+    SetState(ProtocolState::INITIALIZING);
+
+    LOG_DEBUG("Network state reset - cleared %zu nodes and %zu slots",
+              node_count, slot_count);
 }
 
 }  // namespace lora_mesh

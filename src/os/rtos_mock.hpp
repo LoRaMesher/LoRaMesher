@@ -417,8 +417,8 @@ class RTOSMock : public RTOS {
             return false;
         }
 
-        // LOG_DEBUG("MOCK: Suspending task '%s' (thread ID: %p)",
-        //           task_name.c_str(), thread_id);
+        LOG_DEBUG("MOCK: Suspending task '%s' (thread ID: %p)",
+                  task_name.c_str(), thread_id);
 
         // Set up confirmation mechanism
         {
@@ -426,8 +426,8 @@ class RTOSMock : public RTOS {
 
             // If already suspended, nothing to do
             if (task_info->suspended) {
-                // LOG_DEBUG("MOCK: Task '%s' is already suspended",
-                //   task_name.c_str());
+                LOG_DEBUG("MOCK: Task '%s' is already suspended",
+                          task_name.c_str());
                 return true;
             }
 
@@ -435,8 +435,8 @@ class RTOSMock : public RTOS {
             task_info->suspended = true;
             task_info->suspension_acknowledged = false;
 
-            // LOG_DEBUG("MOCK: Set suspended flag for task '%s'",
-            //           task_name.c_str());
+            LOG_DEBUG("MOCK: Set suspended flag for task '%s'",
+                      task_name.c_str());
         }
 
         // CRITICAL FIX: Notify ALL condition variables the task might be waiting on
@@ -446,9 +446,9 @@ class RTOSMock : public RTOS {
         task_info->suspend_ack_cv.notify_all();  // For suspend acknowledgment
         task_info->resume_ack_cv.notify_all();   // For resume acknowledgment
 
-        // LOG_DEBUG(
-        //     "MOCK: Notified all condition variables for task '%s' suspension",
-        //     task_name.c_str());
+        LOG_DEBUG(
+            "MOCK: Notified all condition variables for task '%s' suspension",
+            task_name.c_str());
 
         // For self-suspension (current task), we don't need to wait for acknowledgment
         if (!taskHandle || static_cast<std::thread*>(taskHandle)->get_id() ==
@@ -460,6 +460,10 @@ class RTOSMock : public RTOS {
         // Wait for the task to acknowledge it's suspended
         // This happens when the task calls ShouldStopOrPause()
         {
+            LOG_DEBUG(
+                "MOCK: AQUIRING lock to wait for task '%s' suspension "
+                "acknowledgment",
+                task_name.c_str());
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Wait with a reasonable timeout (500ms)
@@ -479,8 +483,8 @@ class RTOSMock : public RTOS {
                 return true;
             }
 
-            // LOG_DEBUG("MOCK: Task '%s' acknowledged suspension",
-            //   task_name.c_str());
+            LOG_DEBUG("MOCK: Task '%s' acknowledged suspension",
+                      task_name.c_str());
         }
 
         return true;
@@ -535,6 +539,8 @@ class RTOSMock : public RTOS {
         //           thread_id);
 
         {
+            LOG_DEBUG("MOCK: AQUIRING lock to resume task '%s'",
+                      task_name.c_str());
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // If not suspended, nothing to do
@@ -561,6 +567,10 @@ class RTOSMock : public RTOS {
         if (taskHandle && static_cast<std::thread*>(taskHandle)->get_id() !=
                               std::this_thread::get_id()) {
 
+            LOG_DEBUG(
+                "MOCK: AQUIRING lock to wait for task '%s' suspension "
+                "acknowledgment",
+                task_name.c_str());
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Use our waitFor helper that respects virtual time
@@ -744,6 +754,10 @@ class RTOSMock : public RTOS {
 
     QueueResult ReceiveFromQueue(QueueHandle_t queue, void* buffer,
                                  uint32_t timeout) override {
+        if (!queue || !buffer) {
+            return QueueResult::kError;
+        }
+
         auto* q = static_cast<QueueData*>(queue);
         std::unique_lock<std::mutex> lock(q->mutex);
 
@@ -1104,6 +1118,7 @@ class RTOSMock : public RTOS {
 
         // Wait for notification, resume, or stop request
         {
+            LOG_DEBUG("MOCK: AQUIRING lock to wait for notification");
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Remember the initial suspension state to detect changes
@@ -1390,18 +1405,19 @@ class RTOSMock : public RTOS {
         // Wait until either:
         // 1. The predicate becomes true
         // 2. The virtual time advances beyond our wake time
-        cv.wait_until(lock,
-                      std::chrono::steady_clock::now() + std::chrono::hours(1),
-                      [this, wakeTimeMs, &pred]() {
-                          // Check if the predicate is true (normal wake up)
-                          if (pred()) {
-                              return true;
-                          }
+        cv.wait_until(
+            lock,
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(1000),
+            [this, wakeTimeMs, &pred]() {
+                // Check if the predicate is true (normal wake up)
+                if (pred()) {
+                    return true;
+                }
 
-                          // Check if we've reached the virtual timeout
-                          std::lock_guard<std::mutex> timeLock(timeMutex_);
-                          return virtualTimeMs_ >= wakeTimeMs;
-                      });
+                // Check if we've reached the virtual timeout
+                std::lock_guard<std::mutex> timeLock(timeMutex_);
+                return virtualTimeMs_ >= wakeTimeMs;
+            });
 
         // Clean up our wait registration
         {

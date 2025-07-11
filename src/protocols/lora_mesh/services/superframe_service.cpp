@@ -491,6 +491,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
     }
 
     // Task cleanup
+    service->update_task_handle_ = nullptr;
     rtos.DeleteTask(nullptr);  // Delete self
 }
 
