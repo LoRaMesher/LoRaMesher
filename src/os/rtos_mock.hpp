@@ -27,6 +27,17 @@ namespace loramesher {
 namespace os {
 
 /**
+ * @class TaskTerminationException
+ * @brief Exception thrown when a task needs to be terminated during RTOS operations
+ */
+class TaskTerminationException : public std::exception {
+   public:
+    const char* what() const noexcept override {
+        return "Task terminated by RTOS";
+    }
+};
+
+/**
  * @class RTOSMock
  * @brief Mock implementation of RTOS interface compatible with FreeRTOS style tasks
  */
@@ -292,6 +303,9 @@ class RTOSMock : public RTOS {
                 // Set the stop flag first, before changing suspended state
                 it->second.stop_requested = true;
 
+                // Set delay interruption flag to wake up any delay() calls
+                it->second.delay_interrupted = true;
+
                 // If task is suspended, resume it so it can process the stop request
                 if (was_suspended) {
                     // LOG_DEBUG(
@@ -314,6 +328,7 @@ class RTOSMock : public RTOS {
             task_info->suspend_ack_cv
                 .notify_all();  // For suspend acknowledgment
             task_info->resume_ack_cv.notify_all();  // For resume acknowledgment
+            task_info->delay_cv.notify_all();       // For delay() calls
 
             // LOG_DEBUG(
             //     "MOCK: Notified all condition variables for task '%s' deletion",
@@ -352,7 +367,10 @@ class RTOSMock : public RTOS {
                     LOG_WARNING(
                         "MOCK: Task '%s' did not exit cleanly within timeout",
                         task_name.c_str());
-                    // We can't forcibly terminate std::thread, so we have to leak it
+                    // We can't forcibly terminate std::thread, so we have to detach it
+                    if (thread->joinable()) {
+                        thread->detach();
+                    }
                 } else {
                     // LOG_DEBUG("MOCK: Task '%s' exited cleanly",
                     //   task_name.c_str());
@@ -460,10 +478,6 @@ class RTOSMock : public RTOS {
         // Wait for the task to acknowledge it's suspended
         // This happens when the task calls ShouldStopOrPause()
         {
-            LOG_DEBUG(
-                "MOCK: AQUIRING lock to wait for task '%s' suspension "
-                "acknowledgment",
-                task_name.c_str());
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Wait with a reasonable timeout (500ms)
@@ -539,8 +553,6 @@ class RTOSMock : public RTOS {
         //           thread_id);
 
         {
-            LOG_DEBUG("MOCK: AQUIRING lock to resume task '%s'",
-                      task_name.c_str());
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // If not suspended, nothing to do
@@ -566,11 +578,6 @@ class RTOSMock : public RTOS {
         // We only wait if this isn't a self-resume
         if (taskHandle && static_cast<std::thread*>(taskHandle)->get_id() !=
                               std::this_thread::get_id()) {
-
-            LOG_DEBUG(
-                "MOCK: AQUIRING lock to wait for task '%s' suspension "
-                "acknowledgment",
-                task_name.c_str());
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Use our waitFor helper that respects virtual time
@@ -803,10 +810,35 @@ class RTOSMock : public RTOS {
             return;
         }
 
-        // In virtual time mode, calculate wake time and wait conditionally
-        std::condition_variable cv;
-        std::mutex m;
-        std::unique_lock<std::mutex> lock(m);
+        // In virtual time mode, find the current task's TaskInfo
+        std::thread::id current_id = std::this_thread::get_id();
+        TaskInfo* task_info = nullptr;
+
+        {
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+            for (auto& [thread_ptr, info] : tasks_) {
+                if (info.thread_id == current_id) {
+                    task_info = &info;
+                    break;
+                }
+            }
+        }
+
+        if (!task_info) {
+            LOG_WARNING(
+                "MOCK: Could not find TaskInfo for current thread in delay()");
+            // Fallback to real-time sleep
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            return;
+        }
+
+        // Check if stop or delay interruption was already requested
+        {
+            std::lock_guard<std::mutex> lock(task_info->mutex);
+            if (task_info->stop_requested || task_info->delay_interrupted) {
+                throw TaskTerminationException();  // Terminate task execution
+            }
+        }
 
         uint64_t wakeTimeMs;
 
@@ -814,25 +846,41 @@ class RTOSMock : public RTOS {
         {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
             wakeTimeMs = virtualTimeMs_ + ms;
-            waitingTasks_[&cv] = wakeTimeMs;
-            // // LOG_DEBUG("MOCK: Task will wait until virtual time %llu ms",
-            //           (unsigned long long)wakeTimeMs);
+            waitingTasks_[&(task_info->delay_cv)] = wakeTimeMs;
         }
 
-        // Wait until either the virtual time advances beyond our wake time,
-        // or we are explicitly woken up by advanceTime
-        cv.wait(lock, [this, wakeTimeMs]() {
-            std::lock_guard<std::mutex> timeLock(timeMutex_);
-            return virtualTimeMs_ >= wakeTimeMs;
-        });
+        // Wait until either:
+        // 1. The virtual time advances beyond our wake time
+        // 2. We are explicitly woken up by advanceTime
+        // 3. Stop or delay interruption is requested
+        {
+            std::unique_lock<std::mutex> lock(task_info->mutex);
+            task_info->delay_cv.wait(lock, [this, wakeTimeMs, task_info]() {
+                // Check stop/interruption flags first
+                if (task_info->stop_requested || task_info->delay_interrupted) {
+                    return true;
+                }
 
-        // // LOG_DEBUG("MOCK: Task woke up after waiting until %llu ms",
-        //           (unsigned long long)wakeTimeMs);
+                // Check if virtual time has advanced enough
+                std::lock_guard<std::mutex> timeLock(timeMutex_);
+                return virtualTimeMs_ >= wakeTimeMs;
+            });
+
+            // After wait returns, check if we were woken due to termination request
+            if (task_info->stop_requested || task_info->delay_interrupted) {
+                // Clean up before throwing
+                {
+                    std::lock_guard<std::mutex> timeLock(timeMutex_);
+                    waitingTasks_.erase(&(task_info->delay_cv));
+                }
+                throw TaskTerminationException();  // Terminate task execution
+            }
+        }
 
         // Clean up (in case we were woken by something other than advanceTime)
         {
             std::lock_guard<std::mutex> timeLock(timeMutex_);
-            waitingTasks_.erase(&cv);
+            waitingTasks_.erase(&(task_info->delay_cv));
         }
     }
 
@@ -1118,7 +1166,6 @@ class RTOSMock : public RTOS {
 
         // Wait for notification, resume, or stop request
         {
-            LOG_DEBUG("MOCK: AQUIRING lock to wait for notification");
             std::unique_lock<std::mutex> lock(task_info->mutex);
 
             // Remember the initial suspension state to detect changes
@@ -1530,6 +1577,10 @@ class RTOSMock : public RTOS {
         bool resume_acknowledged = false;
         std::condition_variable suspend_ack_cv;
         std::condition_variable resume_ack_cv;
+
+        // For delay interruption support
+        bool delay_interrupted = false;
+        std::condition_variable delay_cv;
 
         // For logging context
         std::string node_address;
