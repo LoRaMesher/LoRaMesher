@@ -22,20 +22,29 @@ LoRaMeshProtocol::LoRaMeshProtocol()
       radio_event_queue_(nullptr) {}
 
 LoRaMeshProtocol::~LoRaMeshProtocol() {
+    LOG_DEBUG("LoRaMeshProtocol destructor called");
     // Clean up protocol task if it exists
     if (protocol_task_handle_) {
+        LOG_DEBUG("LoRaMeshProtocol destructor deleting task handle: %p",
+                  protocol_task_handle_);
         GetRTOS().DeleteTask(protocol_task_handle_);
         protocol_task_handle_ = nullptr;
+        LOG_DEBUG("LoRaMeshProtocol task handle set to nullptr");
+    } else {
+        LOG_DEBUG("LoRaMeshProtocol task handle already null");
     }
 
     // Clean up radio event queue
     if (radio_event_queue_) {
+        DrainRadioEventQueue();
         GetRTOS().DeleteQueue(radio_event_queue_);
         radio_event_queue_ = nullptr;
     }
 
     // Clear hardware reference
     hardware_.reset();
+
+    LOG_DEBUG("LoRaMeshProtocol destructor completed");
 
     // Clear services
     message_queue_service_.reset();
@@ -246,8 +255,13 @@ Result LoRaMeshProtocol::Stop() {
     LOG_DEBUG("Stopping LoRaMesh protocol... for node 0x%04X", node_address_);
 
     if (protocol_task_handle_) {
+        LOG_DEBUG("Stop method deleting task handle: %p",
+                  protocol_task_handle_);
         GetRTOS().DeleteTask(protocol_task_handle_);
         protocol_task_handle_ = nullptr;
+        LOG_DEBUG("Stop method task handle set to nullptr");
+    } else {
+        LOG_DEBUG("Stop method task handle already null");
     }
 
     LOG_DEBUG("Protocol task deletion requested");
@@ -264,6 +278,7 @@ Result LoRaMeshProtocol::Stop() {
 
     // Clean up queue
     if (radio_event_queue_) {
+        DrainRadioEventQueue();
         GetRTOS().DeleteQueue(radio_event_queue_);
         radio_event_queue_ = nullptr;
     }
@@ -429,10 +444,6 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
         switch (state) {
             case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
-                // Check for stop request before potentially long operation
-                if (rtos.ShouldStopOrPause())
-                    break;
-
                 // Discovery is handled by NetworkService
                 result = protocol->network_service_->PerformDiscovery(
                     protocol->GetDiscoveryTimeout());
@@ -443,10 +454,6 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 break;
 
             case lora_mesh::INetworkService::ProtocolState::JOINING:
-                // Check for stop request before potentially long operation
-                if (rtos.ShouldStopOrPause())
-                    break;
-
                 // Joining is handled by NetworkService
                 result = protocol->network_service_->PerformJoining(
                     protocol->GetJoinTimeout());
@@ -458,18 +465,10 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
             case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
             case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
-                // Check for stop request before slot processing
-                if (rtos.ShouldStopOrPause())
-                    break;
-
                 // Normal operation - messages are sent based on slot schedule
                 break;
 
             case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                // Check for stop request before potentially long operation
-                if (rtos.ShouldStopOrPause())
-                    break;
-
                 // Fault recovery - may need to restart discovery
                 LOG_WARNING("Protocol in fault recovery state");
                 result = protocol->StartDiscovery();
@@ -484,12 +483,12 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
         }
 
         // Yield to other tasks with shorter delay for faster shutdown
-        // rtos.delay(10);  // Reduced from 100ms to 10ms for faster response to stop_requested_
         rtos.YieldTask();
     }
 
     LOG_INFO("Protocol task ending");
     // Note: Task handle is cleared and DeleteTask is called from Stop() method
+    LOG_DEBUG("LoRaMeshProtocol ProtocolTaskFunction exiting naturally");
 }
 
 void LoRaMeshProtocol::ProcessRadioEvents() {
@@ -695,7 +694,7 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             if (guard_time_ms > 0) {
                 LOG_DEBUG("Applying guard time delay for sync beacon: %u ms",
                           guard_time_ms);
-                // GetRTOS().delay(guard_time_ms);
+                GetRTOS().delay(guard_time_ms);
             }
 
             // Handle sync beacon transmission based on network role and hop distance
@@ -936,6 +935,23 @@ Result LoRaMeshProtocol::AddRoutingMessageToQueueService() {
     LOG_DEBUG("Routing message added to queue for transmission");
 
     return Result::Success();
+}
+
+void LoRaMeshProtocol::DrainRadioEventQueue() {
+    if (!radio_event_queue_) {
+        return;
+    }
+
+    radio::RadioEvent* raw_event_ptr = nullptr;
+
+    // Drain all remaining events from the queue
+    while (GetRTOS().ReceiveFromQueue(radio_event_queue_, &raw_event_ptr, 0) ==
+               os::QueueResult::kOk &&
+           raw_event_ptr != nullptr) {
+        // Wrap in unique_ptr for automatic cleanup
+        std::unique_ptr<radio::RadioEvent> event(raw_event_ptr);
+        // Event is automatically cleaned up when it goes out of scope
+    }
 }
 
 }  // namespace protocols

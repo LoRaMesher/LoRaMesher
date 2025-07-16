@@ -236,6 +236,14 @@ class LoRaMeshProtocol : public Protocol {
         types::protocols::lora_mesh::SlotAllocation::SlotType slot_type);
 
     /**
+     * @brief Drain all remaining events from the radio event queue
+     * 
+     * This method is called during cleanup to ensure all events are properly
+     * deleted before the queue is destroyed, preventing memory leaks.
+     */
+    void DrainRadioEventQueue();
+
+    /**
      * @brief Create service configuration from protocol config
      * 
      * @param config Protocol configuration
