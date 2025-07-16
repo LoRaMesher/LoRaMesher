@@ -376,9 +376,6 @@ Result RadioLibRadio::setState(RadioState state) {
 }
 
 bool RadioLibRadio::CreateRadioModule(RadioType type) {
-    // TODO: Clean up existing module
-    // current_module_.reset();
-
     // Create new module based on type
     switch (type) {
         case RadioType::kSx1276:

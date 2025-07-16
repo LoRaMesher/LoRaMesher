@@ -291,6 +291,7 @@ class RadioLibRadio : public IRadio {
      * @throws std::runtime_error if the current module is not a MockRadio
      */
     friend test::MockRadio& GetRadioLibMockForTesting(RadioLibRadio& radio);
+
     friend void test::MockRadio::NotifyProcessingTask();
 #endif  // DEBUG
 

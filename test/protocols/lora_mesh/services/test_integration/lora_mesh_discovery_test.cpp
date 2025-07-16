@@ -151,124 +151,128 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscoveryDelayedStart) {
     EXPECT_EQ(node.protocol->GetNetworkManager(), node.address);
 }
 
-// /**
-//  * @brief Test single node synchronization validation
-//  *
-//  * This test focuses on validating the synchronization state and its persistence
-//  * throughout the network manager lifecycle.
-//  */
-// TEST_F(LoRaMeshDiscoveryTests, SingleNodeSynchronizationValidation) {
-//     auto& node = CreateNode("SyncNode", 0x1001);
-//     ASSERT_TRUE(StartNode(node));
+/**
+ * @brief Test single node synchronization validation
+ *
+ * This test focuses on validating the synchronization state and its persistence
+ * throughout the network manager lifecycle.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeSynchronizationValidation) {
+    auto& node = CreateNode("SyncNode", 0x1001);
+    ASSERT_TRUE(StartNode(node));
 
-//     // Node should not be synchronized initially
-//     EXPECT_FALSE(node.protocol->IsSynchronized());
+    // Node should not be synchronized initially
+    EXPECT_FALSE(node.protocol->IsSynchronized());
 
-//     auto discovery_timeout = GetDiscoveryTimeout(node);
-//     auto slot_duration = GetSlotDuration(node);
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
 
-//     bool advanced = AdvanceTime(
-//         discovery_timeout + 100, discovery_timeout + 500, slot_duration, 2,
-//         [&]() { return node.protocol->IsSynchronized(); });
-//     EXPECT_TRUE(advanced) << "Node did not synchronize in time";
+    bool advanced = AdvanceTime(
+        discovery_timeout + 100, discovery_timeout + 500, slot_duration, 2,
+        [&]() { return node.protocol->IsSynchronized(); });
+    EXPECT_TRUE(advanced) << "Node did not synchronize in time";
 
-//     // Verify synchronization persists across multiple slot cycles
-//     for (int cycle = 0; cycle < 3; ++cycle) {
-//         advanced = AdvanceTime(slot_duration + 50, slot_duration + 200,
-//                                slot_duration, 2, [&]() { return true; });
-//         EXPECT_TRUE(advanced);
-//         EXPECT_TRUE(node.protocol->IsSynchronized())
-//             << "Synchronization lost in cycle " << cycle;
-//     }
-// }
+    // Verify synchronization persists across multiple slot cycles
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        advanced = AdvanceTime(slot_duration + 50, slot_duration + 200,
+                               slot_duration, 2, [&]() { return true; });
+        EXPECT_TRUE(advanced);
+        EXPECT_TRUE(node.protocol->IsSynchronized())
+            << "Synchronization lost in cycle " << cycle;
+    }
+}
 
-// /**
-//  * @brief Test single node slot management
-//  *
-//  * This test validates proper slot allocation and cycling behavior for a single node.
-//  */
-// TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
-//     auto& node = CreateNode("SlotNode", 0x1001);
-//     ASSERT_TRUE(StartNode(node));
+/**
+ * @brief Test single node slot management
+ *
+ * This test validates proper slot allocation and cycling behavior for a single node.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeSlotManagement) {
+    auto& node = CreateNode("SlotNode", 0x1001);
+    ASSERT_TRUE(StartNode(node));
 
-//     auto discovery_timeout = GetDiscoveryTimeout(node);
-//     auto slot_duration = GetSlotDuration(node);
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
 
-//     bool advanced =
-//         AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
-//                     slot_duration, 2, [&]() {
-//                         return node.protocol->GetState() ==
-//                                protocols::lora_mesh::INetworkService::
-//                                    ProtocolState::NETWORK_MANAGER;
-//                     });
-//     EXPECT_TRUE(advanced);
+    bool advanced =
+        AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
+                    slot_duration, 2, [&]() {
+                        return node.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
 
-//     auto slot_table = node.protocol->GetSlotTable();
-//     EXPECT_FALSE(slot_table.empty()) << "Slot table should not be empty";
+    EXPECT_TRUE(advanced);
+    EXPECT_EQ(node.protocol->GetNetworkManager(), node.address);
 
-//     // Verify slot progression and wraparound
-//     size_t initial_slot = node.protocol->GetCurrentSlot();
-//     for (size_t expected_slot = 0; expected_slot < slot_table.size() * 2;
-//          ++expected_slot) {
-//         size_t wrapped_slot = expected_slot % slot_table.size();
-//         advanced = AdvanceTime(
-//             slot_duration + 50, slot_duration + 200, slot_duration, 2,
-//             [&]() { return node.protocol->GetCurrentSlot() == wrapped_slot; });
-//         EXPECT_TRUE(advanced) << "Failed to advance to slot " << wrapped_slot;
-//         EXPECT_EQ(node.protocol->GetCurrentSlot(), wrapped_slot);
-//     }
-// }
+    auto slot_table = node.protocol->GetSlotTable();
+    EXPECT_FALSE(slot_table.empty()) << "Slot table should not be empty";
+    LOG_DEBUG("Slot table size: %zu", slot_table.size());
 
-// /**
-//  * @brief Test single node message generation
-//  *
-//  * This test verifies that routing messages are properly generated and transmitted.
-//  */
-// TEST_F(LoRaMeshDiscoveryTests, SingleNodeMessageGeneration) {
-//     auto& node = CreateNode("MsgNode", 0x1001);
-//     ASSERT_TRUE(StartNode(node));
+    // Verify slot progression and wraparound
+    size_t initial_slot = node.protocol->GetCurrentSlot();
+    for (size_t expected_slot = initial_slot;
+         expected_slot < slot_table.size() * 2; ++expected_slot) {
+        size_t wrapped_slot = expected_slot % slot_table.size();
+        LOG_DEBUG("Expecting slot %d - %d", expected_slot, wrapped_slot);
+        advanced = AdvanceTime(
+            slot_duration + 100, slot_duration + 200, slot_duration / 10, 20,
+            [&]() { return node.protocol->GetCurrentSlot() == wrapped_slot; });
+        EXPECT_TRUE(advanced) << "Failed to advance to slot " << wrapped_slot;
+        EXPECT_EQ(node.protocol->GetCurrentSlot(), wrapped_slot);
+    }
+}
 
-//     auto discovery_timeout = GetDiscoveryTimeout(node);
-//     auto slot_duration = GetSlotDuration(node);
+/**
+ * @brief Test single node message generation
+ *
+ * This test verifies that routing messages are properly generated and transmitted.
+ */
+TEST_F(LoRaMeshDiscoveryTests, SingleNodeMessageGeneration) {
+    auto& node = CreateNode("MsgNode", 0x1001);
+    ASSERT_TRUE(StartNode(node));
 
-//     bool advanced =
-//         AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
-//                     slot_duration, 2, [&]() {
-//                         return node.protocol->GetState() ==
-//                                protocols::lora_mesh::INetworkService::
-//                                    ProtocolState::NETWORK_MANAGER;
-//                     });
-//     EXPECT_TRUE(advanced);
+    auto discovery_timeout = GetDiscoveryTimeout(node);
+    auto slot_duration = GetSlotDuration(node);
 
-//     // Clear any initial messages
-//     virtual_network_.ClearAllSentMessages();
+    bool advanced =
+        AdvanceTime(discovery_timeout + 100, discovery_timeout + 500,
+                    slot_duration, 2, [&]() {
+                        return node.protocol->GetState() ==
+                               protocols::lora_mesh::INetworkService::
+                                   ProtocolState::NETWORK_MANAGER;
+                    });
+    EXPECT_TRUE(advanced);
 
-//     // Wait for message generation - need to wait for a full superframe cycle
-//     // to hit the CONTROL_TX slot
-//     auto slot_table = node.protocol->GetSlotTable();
-//     uint32_t superframe_duration = slot_table.size() * slot_duration;
+    // Clear any initial messages
+    virtual_network_.ClearAllSentMessages();
 
-//     advanced = AdvanceTime(
-//         superframe_duration + slot_duration,
-//         superframe_duration + slot_duration * 2, slot_duration, 2, [&]() {
-//             return virtual_network_.GetSentMessageCount(node.address) > 0;
-//         });
+    // Wait for message generation - need to wait for a full superframe cycle
+    // to hit the CONTROL_TX slot
+    auto slot_table = node.protocol->GetSlotTable();
+    uint32_t superframe_duration = slot_table.size() * slot_duration;
 
-//     EXPECT_TRUE(advanced) << "No messages generated";
+    advanced = AdvanceTime(
+        superframe_duration + slot_duration,
+        superframe_duration + slot_duration * 2, slot_duration, 2, [&]() {
+            return virtual_network_.GetSentMessageCount(node.address) > 0;
+        });
 
-//     auto messages = virtual_network_.GetLastSentMessages(node.address, 5);
-//     EXPECT_FALSE(messages.empty()) << "Expected routing messages";
+    EXPECT_TRUE(advanced) << "No messages generated";
 
-//     // Verify message generation continues - wait for another superframe cycle
-//     size_t initial_count = virtual_network_.GetSentMessageCount(node.address);
-//     advanced = AdvanceTime(
-//         superframe_duration, superframe_duration + slot_duration, slot_duration,
-//         2, [&]() {
-//             return virtual_network_.GetSentMessageCount(node.address) >
-//                    initial_count;
-//         });
-//     EXPECT_TRUE(advanced) << "Message generation stopped";
-// }
+    auto messages = virtual_network_.GetLastSentMessages(node.address, 5);
+    EXPECT_FALSE(messages.empty()) << "Expected routing messages";
+
+    // Verify message generation continues - wait for another superframe cycle
+    size_t initial_count = virtual_network_.GetSentMessageCount(node.address);
+    advanced = AdvanceTime(
+        superframe_duration, superframe_duration + slot_duration, slot_duration,
+        2, [&]() {
+            return virtual_network_.GetSentMessageCount(node.address) >
+                   initial_count;
+        });
+    EXPECT_TRUE(advanced) << "Message generation stopped";
+}
 
 // /**
 //   * @brief Test two node network formation with sequential start

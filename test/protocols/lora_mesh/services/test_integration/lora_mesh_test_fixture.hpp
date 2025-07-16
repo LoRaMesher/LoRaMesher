@@ -125,27 +125,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
             node->pin_config = pin_config;
         }
 
-        // Use provided radio config or create one with MockRadio type
-        // TODO: This is needed?
-        // if (radio_config.getRadioType() == RadioType::kUnknown) {
-        //     RadioConfig mock_config;
-        //     mock_config.setRadioType(RadioType::kMockRadio);
-        //     mock_config.setFrequency(868.0f);
-        //     mock_config.setSpreadingFactor(7);
-        //     mock_config.setBandwidth(125.0f);
-        //     mock_config.setCodingRate(5);  // 4/5
-        //     mock_config.setPower(17);      // 17 dBm
-        //     mock_config.setSyncWord(0x12);
-        //     mock_config.setCRC(true);
-        //     mock_config.setPreambleLength(8);
-        //     node->radio_config = mock_config;
-        // } else {
-        node->radio_config = radio_config;
-        // }
+        RadioConfig mock_config;
+        mock_config.setRadioType(RadioType::kMockRadio);
+        mock_config.setFrequency(868.0f);
+        mock_config.setSpreadingFactor(7);
+        mock_config.setBandwidth(125.0f);
+        mock_config.setCodingRate(5);  // 4/5
+        mock_config.setPower(17);      // 17 dBm
+        mock_config.setSyncWord(0x12);
+        mock_config.setCRC(true);
+        mock_config.setPreambleLength(8);
+        node->radio_config = mock_config;
 
         // Create and initialize the hardware manager with our pin and radio config
         node->hardware_manager = std::make_shared<hardware::HardwareManager>(
-            node->pin_config, node->radio_config);
+            node->pin_config, mock_config);
 
         Result result = node->hardware_manager->Initialize();
         if (!result) {
