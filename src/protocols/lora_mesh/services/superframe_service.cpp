@@ -36,8 +36,9 @@ SuperframeService::SuperframeService(uint16_t total_slots,
 SuperframeService::~SuperframeService() {
     // Make sure we stop the service and task
     // Note: StopSuperframe() not called in destructor to avoid virtual function call during destruction
-
+    LOG_DEBUG("SuperframeService destructor called");
     DeleteUpdateTask();
+    LOG_DEBUG("SuperframeService destructor completed");
 }
 
 Result SuperframeService::StartSuperframe() {
@@ -406,6 +407,8 @@ Result SuperframeService::UpdateSuperframeState() {
             // Only handle new superframe if auto-advance is enabled
             if (auto_advance_) {
                 HandleNewSuperframe();
+            } else {
+                // TODO: Stop until set to advance.
             }
         }
 
@@ -454,8 +457,13 @@ bool SuperframeService::CreateUpdateTask() {
 
 void SuperframeService::DeleteUpdateTask() {
     if (update_task_handle_) {
+        LOG_DEBUG("Deleting superframe update task handle: %p",
+                  update_task_handle_);
         GetRTOS().DeleteTask(update_task_handle_);
         update_task_handle_ = nullptr;
+        LOG_DEBUG("Superframe update task handle set to nullptr");
+    } else {
+        LOG_DEBUG("Superframe update task handle already null");
     }
 
     LOG_DEBUG("Superframe update task deleted");
@@ -490,9 +498,9 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         rtos.YieldTask();
     }
 
-    // Task cleanup
-    service->update_task_handle_ = nullptr;
-    rtos.DeleteTask(nullptr);  // Delete self
+    // Task cleanup - don't self-delete to avoid race condition with destructor
+    // The destructor will handle task deletion
+    LOG_DEBUG("SuperframeService UpdateTaskFunction exiting naturally");
 }
 
 bool SuperframeService::CheckForNewSuperframe() {
