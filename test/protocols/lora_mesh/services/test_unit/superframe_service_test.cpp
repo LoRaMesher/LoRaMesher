@@ -112,6 +112,85 @@ TEST_F(SuperframeServiceLifecycleTest, MultipleStartStop) {
     }
 }
 
+/**
+ * @brief Test rapid creation and destruction to reproduce race condition
+ * 
+ * This test rapidly creates and destroys SuperframeService instances
+ * to try to reproduce the race condition that causes SIGABRT.
+ */
+TEST(SuperframeServiceRaceConditionTest, RapidCreateDestroy) {
+    const int iterations = 50;
+
+    for (int i = 0; i < iterations; ++i) {
+        LOG_DEBUG("=== Race condition test iteration %d ===", i);
+
+        // Create service
+        auto service = std::make_shared<SuperframeService>();
+
+        // Start superframe
+        Result result = service->StartSuperframe();
+        EXPECT_TRUE(result) << "Start failed on iteration " << i << ": "
+                            << result.GetErrorMessage();
+
+        // Let it run for a very short time
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+        // Stop superframe
+        result = service->StopSuperframe();
+        EXPECT_TRUE(result) << "Stop failed on iteration " << i << ": "
+                            << result.GetErrorMessage();
+
+        // Immediately destroy service (this should trigger the race condition)
+        service.reset();
+
+        // Brief pause to let any cleanup complete
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+/**
+ * @brief Test concurrent access to SuperframeService
+ * 
+ * This test creates multiple threads that simultaneously start/stop
+ * and destroy SuperframeService instances.
+ */
+TEST(SuperframeServiceRaceConditionTest, ConcurrentAccess) {
+    const int num_threads = 5;
+    const int iterations_per_thread = 10;
+    std::vector<std::thread> threads;
+
+    for (int t = 0; t < num_threads; ++t) {
+        threads.emplace_back([t, iterations_per_thread]() {
+            for (int i = 0; i < iterations_per_thread; ++i) {
+                LOG_DEBUG("=== Thread %d, iteration %d ===", t, i);
+
+                auto service = std::make_shared<SuperframeService>();
+
+                Result result = service->StartSuperframe();
+                EXPECT_TRUE(result)
+                    << "Thread " << t << " start failed on iteration " << i;
+
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(5 + (t * 2)));
+
+                result = service->StopSuperframe();
+                EXPECT_TRUE(result)
+                    << "Thread " << t << " stop failed on iteration " << i;
+
+                // Destroy immediately
+                service.reset();
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        });
+    }
+
+    // Wait for all threads to complete
+    for (auto& thread : threads) {
+        thread.join();
+    }
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

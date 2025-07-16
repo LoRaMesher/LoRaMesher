@@ -323,6 +323,190 @@ TEST_F(RTOSMockTimeTest, SimpleQueueOperation) {
     EXPECT_EQ(state->receivedValue, testValue);
 }
 
+/**
+ * @brief Test that creates a task that sleeps indefinitely and then kills it from outside
+ */
+TEST_F(RTOSMockTimeTest, CreateTaskSleepAndKillFromOutside) {
+    // Create shared state to track task lifecycle
+    struct SharedState {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> taskSleeping{false};
+        std::atomic<bool> taskCompleted{false};
+        std::atomic<bool> shouldExit{false};
+        std::atomic<uint32_t> startTime{0};
+    };
+
+    auto state = std::make_shared<SharedState>();
+
+    // Create a task parameter with proper memory management
+    auto* taskParam = new std::shared_ptr<SharedState>(state);
+    taskParameterCleanup_.push_back(
+        [taskParam]() { delete taskParam; });  // Track for cleanup
+
+    os::TaskHandle_t task = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto state = *static_cast<std::shared_ptr<SharedState>*>(param);
+
+            // Record start time and set started flag
+            state->startTime = GetRTOS().getTickCount();
+            state->taskStarted = true;
+
+            // Signal that we're about to sleep
+            state->taskSleeping = true;
+
+            // Sleep for a long time but check for exit periodically
+            while (!state->shouldExit) {
+                GetRTOS().delay(
+                    1000);  // Sleep in chunks so we can check exit flag
+            }
+
+            // This should be reached when shouldExit is set
+            state->taskCompleted = true;
+        },
+        "SleepingTask", 2048, taskParam, 1, &task));
+
+    if (task) {
+        taskHandles_.push_back(task);
+    }
+
+    ASSERT_NE(task, nullptr);
+
+    // Wait for task to start and begin sleeping
+    uint32_t waitAttempts = 0;
+    while (!state->taskSleeping && waitAttempts < 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waitAttempts++;
+    }
+    ASSERT_TRUE(state->taskStarted) << "Task did not start within timeout";
+    ASSERT_TRUE(state->taskSleeping)
+        << "Task did not begin sleeping within timeout";
+
+    // Task should not be completed yet (it's sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance some virtual time to ensure task is deep in sleep
+    rtosMock_->advanceTime(500);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed (still sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance more time to trigger another sleep cycle
+    rtosMock_->advanceTime(1000);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed (still sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Now signal the task to exit gracefully before deletion
+    state->shouldExit = true;
+
+    // Advance time to let task process the exit signal
+    rtosMock_->advanceTime(1100);
+    WaitForTasksToExecute();
+
+    // Task should now be completed
+    EXPECT_TRUE(state->taskCompleted);
+
+    // Now kill the task from outside (it should already be finished)
+    rtos_->DeleteTask(task);
+
+    // Remove from our tracking since we manually deleted it
+    auto it = std::find(taskHandles_.begin(), taskHandles_.end(), task);
+    if (it != taskHandles_.end()) {
+        *it =
+            nullptr;  // Mark as deleted so TearDown doesn't try to delete again
+    }
+}
+
+/**
+ * @brief Test that forcefully kills a task while it's actually sleeping
+ */
+TEST_F(RTOSMockTimeTest, ForceKillSleepingTask) {
+    // Create shared state to track task lifecycle
+    struct SharedState {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> taskSleeping{false};
+        std::atomic<bool> taskCompleted{false};
+        std::atomic<uint32_t> startTime{0};
+    };
+
+    auto state = std::make_shared<SharedState>();
+
+    // Create a task parameter with proper memory management
+    auto* taskParam = new std::shared_ptr<SharedState>(state);
+    taskParameterCleanup_.push_back(
+        [taskParam]() { delete taskParam; });  // Track for cleanup
+
+    os::TaskHandle_t task = nullptr;
+    EXPECT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto state = *static_cast<std::shared_ptr<SharedState>*>(param);
+
+            try {
+                // Record start time and set started flag
+                state->startTime = GetRTOS().getTickCount();
+                state->taskStarted = true;
+
+                // Signal that we're about to sleep
+                state->taskSleeping = true;
+
+                // Sleep for a very long time - this should be interrupted by task deletion
+                GetRTOS().delay(100000);  // 100 seconds
+
+                // This should not be reached if task is killed
+                state->taskCompleted = true;
+            } catch (...) {
+                // Task was forcefully terminated, this is expected
+            }
+        },
+        "ForceKillTask", 2048, taskParam, 1, &task));
+
+    if (task) {
+        taskHandles_.push_back(task);
+    }
+
+    ASSERT_NE(task, nullptr);
+
+    // Wait for task to start and begin sleeping
+    uint32_t waitAttempts = 0;
+    while (!state->taskSleeping && waitAttempts < 50) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        waitAttempts++;
+    }
+    ASSERT_TRUE(state->taskStarted) << "Task did not start within timeout";
+    ASSERT_TRUE(state->taskSleeping)
+        << "Task did not begin sleeping within timeout";
+
+    // Task should not be completed yet (it's sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Advance some virtual time to ensure task is deep in sleep
+    rtosMock_->advanceTime(1000);
+    WaitForTasksToExecute();
+
+    // Task should still not be completed (still sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+
+    // Now forcefully kill the task while it's sleeping
+    rtos_->DeleteTask(task);
+
+    // Remove from our tracking since we manually deleted it
+    auto it = std::find(taskHandles_.begin(), taskHandles_.end(), task);
+    if (it != taskHandles_.end()) {
+        *it =
+            nullptr;  // Mark as deleted so TearDown doesn't try to delete again
+    }
+
+    // Advance more time and wait for execution
+    rtosMock_->advanceTime(1000);
+    WaitForTasksToExecute();
+
+    // Task should never have completed normally (it was killed while sleeping)
+    EXPECT_FALSE(state->taskCompleted);
+}
+
 }  // namespace test
 }  // namespace loramesher
 
