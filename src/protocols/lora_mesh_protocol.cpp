@@ -34,6 +34,11 @@ LoRaMeshProtocol::~LoRaMeshProtocol() {
         LOG_DEBUG("LoRaMeshProtocol task handle already null");
     }
 
+    // Clear hardware callback to prevent use-after-free
+    if (hardware_) {
+        hardware_->setActionReceive(nullptr);
+    }
+
     // Clean up radio event queue
     if (radio_event_queue_) {
         DrainRadioEventQueue();
@@ -274,6 +279,11 @@ Result LoRaMeshProtocol::Stop() {
     // Reset network state to prevent memory leaks (after task is suspended)
     if (network_service_) {
         network_service_->ResetNetworkState();
+    }
+
+    // Clear hardware callback to prevent use-after-free
+    if (hardware_) {
+        hardware_->setActionReceive(nullptr);
     }
 
     // Clean up queue
