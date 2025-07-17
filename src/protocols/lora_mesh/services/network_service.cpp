@@ -1944,15 +1944,13 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
     // Calculate original timing for synchronization using actual reception timestamp
     // Apply guard time and transmission delay compensation
-    uint32_t guard_time_compensation = config_.guard_time_ms;
+    // TODO: This should be the ToA
     uint32_t transmission_delay_compensation =
         sync_beacon.GetTotalSize() * 10;  // Rough estimate: 10ms per byte
-    uint32_t total_delay_compensation =
-        guard_time_compensation + transmission_delay_compensation;
 
     uint32_t estimated_nm_time =
         sync_beacon.CalculateOriginalTiming(unsigned_reception_timestamp) -
-        total_delay_compensation;
+        transmission_delay_compensation;
 
     // Update superframe timing if we have a superframe service
     if (superframe_service_) {
@@ -1998,11 +1996,11 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     // Check if we should forward this beacon
     if (ShouldForwardSyncBeacon(sync_beacon)) {
         // Calculate processing delay (time from reception to forwarding)
-        // Include guard time and transmission delay
-        uint32_t guard_time_delay = config_.guard_time_ms;
+        // Include transmission delay but not guard time (it's passed separately)
+        // TODO: this should be calculated, not a magic number
         uint32_t transmission_delay =
             sync_beacon.GetTotalSize() * 10;  // Rough estimate: 10ms per byte
-        uint32_t processing_delay = 10 + guard_time_delay + transmission_delay;
+        uint32_t processing_delay = 10 + transmission_delay;
 
         Result forward_result =
             ForwardSyncBeacon(sync_beacon, processing_delay);
@@ -2037,17 +2035,16 @@ Result NetworkService::SendSyncBeacon() {
     }
 
     // Create original sync beacon with actual parameters
-    // Note: original_timestamp is not used for synchronization (see CalculateOriginalTiming)
-    // Synchronization uses reception_time - propagation_delay instead
+    // Note: guard_time_ms is added to propagation_delay for timing synchronization
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
         0xFFFF,         // Broadcast destination
         node_address_,  // Network manager as source
         1,              // TODO: Get actual network ID
         total_slots,    // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
-        node_address_,  // Network manager address
-        0,  // Original timestamp set to 0 (irrelevant for sync - propagation_delay is used)
-        network_max_hops_);  // Use actual max hops from network
+        node_address_,          // Network manager address
+        config_.guard_time_ms,  // Guard time added to propagation delay
+        network_max_hops_);     // Use actual max hops from network
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
@@ -2071,8 +2068,8 @@ Result NetworkService::SendSyncBeacon() {
 Result NetworkService::ForwardSyncBeacon(
     const SyncBeaconMessage& original_beacon, uint32_t processing_delay) {
     // Create forwarded beacon from the original
-    auto forwarded_beacon_opt =
-        original_beacon.CreateForwardedBeacon(node_address_, processing_delay);
+    auto forwarded_beacon_opt = original_beacon.CreateForwardedBeacon(
+        node_address_, processing_delay, config_.guard_time_ms);
 
     if (!forwarded_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create forwarded sync beacon");
