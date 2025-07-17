@@ -854,6 +854,7 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
     return service_config;
 }
 
+#ifdef DEBUG
 LoRaMeshProtocol::ServiceConfiguration
 LoRaMeshProtocol::CreateServiceConfigForTest(
     const LoRaMeshProtocolConfig& config) {
@@ -881,6 +882,7 @@ LoRaMeshProtocol::CreateServiceConfigForTest(
 
     return service_config;
 }
+#endif  // DEBUG
 
 Result LoRaMeshProtocol::StartDiscovery() {
     if (!superframe_service_) {
