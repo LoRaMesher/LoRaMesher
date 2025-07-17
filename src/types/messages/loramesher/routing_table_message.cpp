@@ -143,13 +143,7 @@ uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
 size_t RoutingTableMessage::GetTotalPayloadSize() const {
     // Base size: header + network manager + entry count
     size_t size = header_.RoutingTableFieldsSize();
-
-    // Add size of all network node route entries
-    for (const auto& entry : entries_) {
-        // For simplicity, we'll use a fixed size per entry
-        // In a real implementation, you may need a more sophisticated calculation
-        size += RoutingTableEntry::Size();
-    }
+    size += RoutingTableEntry::Size() * entries_.size();
 
     return size;
 }
