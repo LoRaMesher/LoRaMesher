@@ -173,23 +173,20 @@ Superframe CreateOptimizedSuperframe(uint8_t node_count,
         std::max(50, std::min(200, static_cast<int>(node_count * 5)));
 
     // Adjust slot distribution based on network size
-    float data_ratio, discovery_ratio, control_ratio;
+    float data_ratio, discovery_ratio;
 
     if (node_count <= 5) {
         // Small network: more discovery slots for dynamic joining
         data_ratio = 0.5f;
         discovery_ratio = 0.3f;
-        control_ratio = 0.2f;
     } else if (node_count <= 20) {
         // Medium network: balanced approach
         data_ratio = 0.6f;
         discovery_ratio = 0.2f;
-        control_ratio = 0.2f;
     } else {
         // Large network: more data slots, less discovery overhead
         data_ratio = 0.7f;
         discovery_ratio = 0.15f;
-        control_ratio = 0.15f;
     }
 
     uint16_t data_slots = static_cast<uint16_t>(total_slots * data_ratio);
