@@ -59,7 +59,7 @@ std::optional<PingPongHeader> PingPongHeader::Deserialize(
         return std::nullopt;
     }
 
-    MessageType type = message_type::GetMainType(base_header->GetType());
+    // MessageType type = message_type::GetMainType(base_header->GetType());
     PingPongSubtype sub_type = static_cast<PingPongSubtype>(
         message_type::GetSubtype(base_header->GetType()));
 
