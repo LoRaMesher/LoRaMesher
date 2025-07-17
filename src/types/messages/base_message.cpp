@@ -120,10 +120,10 @@ Result BaseMessage::ValidateInputs(AddressType dest, AddressType src,
         return Result::Error(LoraMesherErrorCode::kBufferOverflow);
     }
 
-    // TODO: Validate addresses (add any specific address validation rules)
-    // if (dest == 0 || src == 0) {
-    //     return Result::Error(LoraMesherErrorCode::kInvalidParameter);
-    // }
+    if (dest == 0 || src == 0) {
+        // TODO: Validate addresses (add any specific address validation rules)
+        //     return Result::Error(LoraMesherErrorCode::kInvalidParameter);
+    }
 
     // Validate message type
     return BaseHeader::IsValidMessageType(type);
