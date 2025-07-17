@@ -308,7 +308,6 @@ struct SyncBeaconHeader {
     
     // Multi-hop forwarding fields (4 bytes)
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
-    uint16_t original_timestamp_ms;      // NM's original transmission time (2 bytes) [OPTIMIZED: was 4 bytes]
     uint32_t propagation_delay_ms;       // Accumulated forwarding delay (4 bytes)
     uint8_t max_hops;                    // Network diameter limit (1 byte)
 };
@@ -823,7 +822,6 @@ struct SyncBeaconHeader {
     
     // Multi-hop forwarding fields (4 bytes)
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
-    uint16_t original_timestamp_ms;      // NM's original transmission time (2 bytes)
     uint32_t propagation_delay_ms;       // Accumulated forwarding delay (4 bytes)
     uint8_t max_hops;                    // Network diameter limit (1 byte)
 };
@@ -1101,11 +1099,8 @@ void ProcessSyncBeacon(const SyncBeaconHeader& sync_beacon) {
     uint32_t transmission_delay = GetTimeOnAir(sync_beacon);
     uint32_t total_delay = guard_delay + transmission_delay;
     
-    // Compensate for delays when synchronizing
-    uint32_t compensated_timestamp = sync_beacon.original_timestamp_ms + total_delay;
-    
     // Apply compensation to superframe synchronization
-    superframe_service_->SynchronizeWith(compensated_timestamp, current_slot);
+    superframe_service_->SynchronizeWith(total_delay, current_slot);
     
     // Update propagation delay for multi-hop forwarding
     if (sync_beacon.hop_count > 0) {
