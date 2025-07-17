@@ -16,3 +16,6 @@
 
 // SX1280_MOD
 #include "LM_SX1280.h"
+
+// RFM95_MOD
+#include "LM_RFM95.h"
