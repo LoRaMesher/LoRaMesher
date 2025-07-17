@@ -47,14 +47,12 @@ class SyncBeaconHeader : public BaseHeader {
      * @param slot_duration_ms Individual slot duration in milliseconds
      * @param network_manager Address of the network manager
      * @param hop_count Hops from Network Manager
-     * @param original_timestamp_ms NM's original transmission time
      * @param propagation_delay_ms Accumulated forwarding delay
      * @param max_hops Network diameter limit
      */
     SyncBeaconHeader(AddressType dest, AddressType src, uint16_t network_id,
                      uint8_t total_slots, uint16_t slot_duration_ms,
                      AddressType network_manager, uint8_t hop_count,
-                     uint16_t original_timestamp_ms,
                      uint32_t propagation_delay_ms, uint8_t max_hops);
 
     // Core synchronization field getters (optimized)
@@ -68,8 +66,6 @@ class SyncBeaconHeader : public BaseHeader {
 
     // Multi-hop forwarding field getters (optimized)
     uint8_t GetHopCount() const { return hop_count_; }
-
-    uint16_t GetOriginalTimestamp() const { return original_timestamp_ms_; }
 
     uint32_t GetPropagationDelay() const { return propagation_delay_ms_; }
 
@@ -95,13 +91,12 @@ class SyncBeaconHeader : public BaseHeader {
      * @brief Sets the multi-hop forwarding information (optimized)
      * 
      * @param hop_count Hops from Network Manager
-     * @param original_timestamp_ms NM's original transmission time
      * @param propagation_delay_ms Accumulated forwarding delay
      * @param max_hops Network diameter limit
      * @return Result Success if setting succeeded, error otherwise
      */
-    Result SetForwardingInfo(uint8_t hop_count, uint16_t original_timestamp_ms,
-                             uint32_t propagation_delay_ms, uint8_t max_hops);
+    Result SetForwardingInfo(uint8_t hop_count, uint32_t propagation_delay_ms,
+                             uint8_t max_hops);
 
     /**
      * @brief Adds propagation delay for forwarding
@@ -132,10 +127,12 @@ class SyncBeaconHeader : public BaseHeader {
      * 
      * @param forwarding_node Address of the node doing the forwarding
      * @param processing_delay Processing and transmission delay to add
+     * @param guard_time_ms Guard time to add to propagation delay
      * @return SyncBeaconHeader Beacon prepared for forwarding
      */
     SyncBeaconHeader CreateForwardedBeacon(AddressType forwarding_node,
-                                           uint32_t processing_delay) const;
+                                           uint32_t processing_delay,
+                                           uint32_t guard_time_ms) const;
 
     /**
      * @brief Serializes the header to a byte serializer
@@ -161,17 +158,13 @@ class SyncBeaconHeader : public BaseHeader {
      * @return size_t Size of the sync beacon header fields in bytes
      */
     static constexpr size_t SyncBeaconFieldsSize() {
-        return sizeof(uint16_t) +  // network_id
-               sizeof(uint8_t) +   // total_slots
-               sizeof(uint16_t) +  // slot_duration_ms (optimized from uint32_t)
+        return sizeof(uint16_t) +     // network_id
+               sizeof(uint8_t) +      // total_slots
+               sizeof(uint16_t) +     // slot_duration_ms
                sizeof(AddressType) +  // network_manager
                sizeof(uint8_t) +      // hop_count
-               sizeof(
-                   uint16_t) +  // original_timestamp_ms (optimized from uint32_t)
-               sizeof(uint32_t) +  // propagation_delay_ms
-               sizeof(uint8_t);    // max_hops
-        // Removed: superframe_number (4 bytes), superframe_duration_ms (2 bytes),
-        //          original_source (2 bytes), sequence_number (2 bytes)
+               sizeof(uint32_t) +     // propagation_delay_ms
+               sizeof(uint8_t);       // max_hops
     }
 
     /**
@@ -184,25 +177,17 @@ class SyncBeaconHeader : public BaseHeader {
     }
 
    private:
-    // Core synchronization fields (optimized)
+    // Core synchronization fields
     uint16_t network_id_ = 0;   ///< Network identifier
     uint8_t total_slots_ = 10;  ///< Number of slots in superframe
     uint16_t slot_duration_ms_ =
         1000;  ///< Individual slot duration (optimized from uint32_t)
     AddressType network_manager_ = 0;  ///< Address of the network manager
 
-    // Multi-hop forwarding fields (optimized)
-    uint8_t hop_count_ = 0;  ///< Hops from Network Manager
-    uint16_t original_timestamp_ms_ =
-        0;  ///< NM's original transmission time (optimized from uint32_t)
+    // Multi-hop forwarding fields
+    uint8_t hop_count_ = 0;              ///< Hops from Network Manager
     uint32_t propagation_delay_ms_ = 0;  ///< Accumulated forwarding delay
     uint8_t max_hops_ = 5;               ///< Network diameter limit
-
-    // Removed fields (total savings: 10 bytes):
-    // - uint32_t superframe_number_ (4 bytes) - Can be calculated from timing
-    // - uint16_t superframe_duration_ms_ (2 bytes) - Can be calculated from slots * slot_duration
-    // - AddressType original_source_ (2 bytes) - Redundant with routing information
-    // - uint16_t sequence_number_ (2 bytes) - Loop prevention handled differently
 };
 
 }  // namespace loramesher
