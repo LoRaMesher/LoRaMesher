@@ -13,7 +13,7 @@ SyncBeaconMessage::SyncBeaconMessage(const SyncBeaconHeader& header)
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
     AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
     uint16_t slot_duration_ms, AddressType network_manager,
-    uint16_t original_timestamp_ms, uint8_t max_hops) {
+    uint32_t guard_time_ms, uint8_t max_hops) {
 
     // Validate parameters
     if (total_slots == 0) {
@@ -31,8 +31,8 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
                             slot_duration_ms, network_manager);
 
     // Set timing and forwarding info for original beacon
-    Result result =
-        header.SetForwardingInfo(0, original_timestamp_ms, 0, max_hops);
+    // Use guard_time_ms as the propagation delay for original beacon
+    Result result = header.SetForwardingInfo(0, guard_time_ms, max_hops);
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to set forwarding info: %s",
                   result.GetErrorMessage().c_str());
@@ -45,8 +45,7 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateOriginal(
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwarded(
     AddressType dest, AddressType src, uint16_t network_id, uint8_t total_slots,
     uint16_t slot_duration_ms, AddressType network_manager, uint8_t hop_count,
-    uint16_t original_timestamp_ms, uint32_t propagation_delay_ms,
-    uint8_t max_hops) {
+    uint32_t propagation_delay_ms, uint32_t guard_time_ms, uint8_t max_hops) {
 
     // Validate parameters
     if (hop_count > max_hops) {
@@ -55,9 +54,10 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwarded(
     }
 
     // Create the header with optimized forwarding information
-    SyncBeaconHeader header(
-        dest, src, network_id, total_slots, slot_duration_ms, network_manager,
-        hop_count, original_timestamp_ms, propagation_delay_ms, max_hops);
+    // Add guard_time_ms to the propagation delay
+    SyncBeaconHeader header(dest, src, network_id, total_slots,
+                            slot_duration_ms, network_manager, hop_count,
+                            propagation_delay_ms + guard_time_ms, max_hops);
 
     return SyncBeaconMessage(header);
 }
@@ -114,10 +114,6 @@ uint8_t SyncBeaconMessage::GetHopCount() const {
     return header_.GetHopCount();
 }
 
-uint16_t SyncBeaconMessage::GetOriginalTimestamp() const {
-    return header_.GetOriginalTimestamp();
-}
-
 uint32_t SyncBeaconMessage::GetPropagationDelay() const {
     return header_.GetPropagationDelay();
 }
@@ -147,11 +143,12 @@ bool SyncBeaconMessage::ShouldBeForwardedBy(uint8_t node_hop_count) const {
 }
 
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwardedBeacon(
-    AddressType forwarding_node, uint32_t processing_delay) const {
+    AddressType forwarding_node, uint32_t processing_delay,
+    uint32_t guard_time_ms) const {
 
     // Create forwarded header
-    SyncBeaconHeader forwarded_header =
-        header_.CreateForwardedBeacon(forwarding_node, processing_delay);
+    SyncBeaconHeader forwarded_header = header_.CreateForwardedBeacon(
+        forwarding_node, processing_delay, guard_time_ms);
 
     return SyncBeaconMessage(forwarded_header);
 }
