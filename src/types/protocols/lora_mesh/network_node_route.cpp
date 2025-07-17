@@ -53,7 +53,7 @@ void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
 
 // NetworkNodeRoute implementation
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint32_t time)
-    : routing_entry(addr, 0, 0, 0), last_updated(time), last_seen(time) {}
+    : routing_entry(addr, 0, 0, 0), last_seen(time), last_updated(time) {}
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
                                    uint32_t time, bool is_manager, uint8_t caps,
@@ -61,11 +61,11 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
     : routing_entry(addr, 0, 0, slots),
       battery_level(battery),
       last_seen(time),
-      last_updated(time),
       is_network_manager(is_manager),
       capabilities(caps),
-      is_active(true),
-      next_hop(0) {
+      next_hop(0),
+      last_updated(time),
+      is_active(true) {
     LOG_DEBUG(
         "New routing entry created with address 0x%04X, "
         "battery %d%%, manager %s, slots %d",
@@ -75,9 +75,9 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
                                    uint8_t hops, uint8_t quality, uint32_t time)
     : routing_entry(dest, hops, quality, 0),
+      last_seen(time),
       next_hop(next),
       last_updated(time),
-      last_seen(time),
       is_active(true) {}
 
 bool NetworkNodeRoute::IsExpired(uint32_t current_time,
