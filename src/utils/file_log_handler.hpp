@@ -67,28 +67,33 @@ class FileLogHandler : public LogHandler {
             return;
         }
 
-        std::stringstream output;
+        // Build complete log line in buffer
+        buffer_.clear();
 
         // Add timestamp if enabled
         if (add_timestamps_) {
-            output << "[" << GetTimestamp() << "] ";
+            buffer_ += "[";
+            buffer_ += GetTimestamp();
+            buffer_ += "] ";
         }
 
         // Add log level
-        output << "[" << GetLevelString(level) << "] ";
+        buffer_ += "[";
+        buffer_ += GetLevelString(level);
+        buffer_ += "] ";
 
         // Add message
-        output << message << std::endl;
+        buffer_ += message;
+        buffer_ += '\n';
 
-        // Write complete log line atomically and flush immediately
-        std::string complete_line = output.str();
+        // Write to file stream without immediate flush
+        file_stream_.write(buffer_.c_str(), buffer_.length());
 
-        // Force synchronous writing to prevent any buffering issues
-        file_stream_.write(complete_line.c_str(), complete_line.length());
-        file_stream_.flush();
-
-        // Force synchronization to ensure data reaches the OS
-        file_stream_.rdbuf()->pubsync();
+        // Only flush on error level or every N writes for performance
+        if (level == LogLevel::kError ||
+            (++write_count_ % flush_interval_ == 0)) {
+            file_stream_.flush();
+        }
     }
 
     /**
@@ -99,6 +104,15 @@ class FileLogHandler : public LogHandler {
         if (file_stream_.is_open()) {
             file_stream_.flush();
         }
+    }
+
+    /**
+     * @brief Set the flush interval for performance tuning
+     * @param interval Number of writes between forced flushes (default: 10)
+     */
+    void SetFlushInterval(size_t interval) {
+        std::lock_guard<std::mutex> lock(file_mutex_);
+        flush_interval_ = interval;
     }
 
     /**
@@ -120,6 +134,9 @@ class FileLogHandler : public LogHandler {
     std::chrono::steady_clock::time_point start_time_{
         std::chrono::steady_clock::now()};
     mutable std::mutex file_mutex_;  ///< Mutex to ensure atomic file writes
+    std::string buffer_;         ///< Reusable buffer for log line construction
+    size_t write_count_{0};      ///< Counter for writes since last flush
+    size_t flush_interval_{10};  ///< Number of writes between forced flushes
 
     /**
      * @brief Write a header to the log file
@@ -132,8 +149,7 @@ class FileLogHandler : public LogHandler {
         header += "\n";
 
         file_stream_.write(header.c_str(), header.length());
-        file_stream_.flush();
-        file_stream_.rdbuf()->pubsync();
+        file_stream_.flush();  // Flush header immediately
     }
 
     /**
