@@ -131,7 +131,14 @@ void LoraMesher::initializeLoRa() {
 
 #ifdef ARDUINO
     if (config.spi == nullptr) {
+  #ifdef LORA_MISO
+    // SPI.begin which picks up SCK MISO, MOSI, CS rather than LORA_MISO etc
+    // ttgo-lora32-v21new defines LORA_SCK the same as MISO, MOSI, CS etc so it works on default
+    // lilygo_t3_s3_sx127x howwever defines LORA_MISO etc but defines SCK, MISO etc as the same as SD_SCK instead so LoraMesher fails trying to talk to the SD
+        SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS)
+  #else 
         SPI.begin();
+  #endif
         config.spi = &SPI;
     }
 
