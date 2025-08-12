@@ -466,6 +466,12 @@ public:
     uint32_t getSentControlBytes() { return sentControlBytes; }
 
     /**
+     * @brief Checks if the node is a gateway
+     *
+     */
+    static bool isGatewayRole() { return RoleService::isGateway(); };
+
+    /**
      * @brief Defines that the node is a gateway
      *
      */
