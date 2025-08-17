@@ -4,8 +4,8 @@
 
 //Using LILYGO TTGO T-BEAM v1.1 
 #define BOARD_LED   4
-#define LED_ON      LOW
-#define LED_OFF     HIGH
+#define LED_ON      HIGH
+#define LED_OFF     LOW
 
 #define DATA_NUM 6
 
