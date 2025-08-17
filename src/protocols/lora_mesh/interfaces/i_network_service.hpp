@@ -142,7 +142,7 @@ class INetworkService {
      * @return Result Success or error
      */
     virtual Result ProcessRoutingTableMessage(const BaseMessage& message,
-                                              int32_t reception_timestamp) = 0;
+                                              uint32_t reception_timestamp) = 0;
 
     /**
      * @brief Send a routing table update message
@@ -224,7 +224,7 @@ class INetworkService {
      * @return Result Success or error
      */
     virtual Result ProcessReceivedMessage(const BaseMessage& message,
-                                          int32_t reception_timestamp) = 0;
+                                          uint32_t reception_timestamp) = 0;
 
     // Superframe integration
 

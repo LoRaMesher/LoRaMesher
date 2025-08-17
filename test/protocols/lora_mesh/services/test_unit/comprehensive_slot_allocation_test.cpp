@@ -97,7 +97,8 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
         // Create network service
         network_service_ =
             std::make_unique<protocols::lora_mesh::NetworkService>(
-                test_node_address_, mock_message_queue, mock_superframe);
+                test_node_address_, mock_message_queue, mock_superframe,
+                nullptr);
 
         // Configure basic network settings
         NetworkConfig config;

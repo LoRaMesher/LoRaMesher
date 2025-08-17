@@ -52,7 +52,7 @@ class INetworkDiscoveryService {
      * @return Result Success if processed correctly, error details otherwise
      */
     virtual Result ProcessReceivedMessage(const BaseMessage& message,
-                                          int32_t reception_timestamp) = 0;
+                                          uint32_t reception_timestamp) = 0;
 
     /**
      * @brief Set the discovery timeout

@@ -166,7 +166,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
         node->mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
 
         // Connect the mock radio to our virtual network
-        ConnectRadioToNetwork(node->mock_radio, node->address, radio_ptr);
+        ConnectRadioToNetwork(node->mock_radio, node->address, radio_ptr,
+                              mock_config);
 
         // Create the protocol instance
         node->protocol = std::make_unique<protocols::LoRaMeshProtocol>();
@@ -204,13 +205,18 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param mock_radio Mock radio to connect
      * @param address Node address to use
      * @param radio_lib_instance RadioLibRadio instance for instance-aware notifications
+     * @param radio_config Radio configuration for ToA calculations
      */
     void ConnectRadioToNetwork(radio::test::MockRadio* mock_radio,
                                AddressType address,
-                               radio::RadioLibRadio* radio_lib_instance) {
+                               radio::RadioLibRadio* radio_lib_instance,
+                               const RadioConfig& radio_config) {
         // Create and track the adapter for proper cleanup
         auto adapter = std::make_unique<RadioToNetworkAdapter>(
             mock_radio, virtual_network_, address, radio_lib_instance);
+
+        // Set the radio configuration for ToA calculations
+        adapter->SetRadioConfig(radio_config);
 
         // Register the node with the virtual network
         virtual_network_.RegisterNode(address, adapter.get());
@@ -287,11 +293,16 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Calculate optimal time stepping parameters
         const uint32_t kEffectiveTimeoutMs =
             (timeout_ms > 0) ? timeout_ms : time_ms;
-        const uint32_t kOptimalTimeStepMs = CalculateOptimalTimeStep(
-            time_ms, kEffectiveTimeoutMs, check_interval_ms);
+        const uint32_t kOptimalTimeStepMs = check_interval_ms;
+        // CalculateOptimalTimeStep(
+        //     time_ms, kEffectiveTimeoutMs, check_interval_ms);
 
         uint32_t elapsed_ms = 0;
         uint32_t total_sim_time_advanced = 0;
+
+        LOG_DEBUG(
+            "Starting time advancement: total=%u ms, timeout=%u ms, step=%u ms",
+            time_ms, kEffectiveTimeoutMs, kOptimalTimeStepMs);
 
         // Continue checking until timeout or condition is met
         while (elapsed_ms < kEffectiveTimeoutMs) {
@@ -343,6 +354,17 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
         // For non-timeout mode, use check_interval_ms directly
         return base_step;
+    }
+
+    /**
+     * @brief Get the guard time used by the protocol
+     * 
+     * @param node Node to get the guard time for
+     * @return Guard time in milliseconds
+     */
+    uint32_t GetGuardTime(TestNode& node) const {
+        return node.protocol->GetServiceConfiguration()
+            .network_config.guard_time_ms;
     }
 
     /**

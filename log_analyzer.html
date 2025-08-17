@@ -454,7 +454,7 @@
                         }
 
                         // Parse message reception
-                        const receiveMatch = line.match(/\*\*\* RECEIVED MESSAGE: type (\d+) from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        const receiveMatch = line.match(/\*\*\* RECEIVED MESSAGE: type 0x([0-9A-Fa-f]+) from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
                         if (receiveMatch) {
                             let messageType = 'rx';
                             const msgType = receiveMatch[1];

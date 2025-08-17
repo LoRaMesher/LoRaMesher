@@ -30,7 +30,7 @@ class NetworkServiceLifecycleTest : public ::testing::Test {
 
         // Create network service
         service_ = std::make_unique<NetworkService>(
-            0x1001, message_queue_service_, superframe_service_);
+            0x1001, message_queue_service_, superframe_service_, nullptr);
     }
 
     void TearDown() override {

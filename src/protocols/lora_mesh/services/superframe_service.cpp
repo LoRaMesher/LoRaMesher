@@ -5,6 +5,7 @@
 
 #include "superframe_service.hpp"
 #include <algorithm>
+#include <cstdlib>
 
 #include "os/os_port.hpp"
 
@@ -226,11 +227,26 @@ uint16_t SuperframeService::GetCurrentSlot() const {
 
     if (auto_advance_) {
         if (current_time < superframe_start_time_) {
+            // LOG_DEBUG(
+            //     "[TIMING_SLOT] Node 0x%04X: current_time (%u) < "
+            //     "superframe_start_time_ (%u), returning slot 0",
+            //     node_address_, current_time, superframe_start_time_);
             return 0;  // Before superframe started
         }
 
         uint32_t elapsed = current_time - superframe_start_time_;
         uint32_t slot_index = (elapsed / slot_duration_ms_) % total_slots_;
+
+        // Log detailed slot calculation periodically (every 10th call to avoid spam)
+        // static uint32_t call_counter = 0;
+        // call_counter++;
+        // if (call_counter % 100000 == 0) {
+        //     LOG_DEBUG(
+        //         "[TIMING_SLOT] Node 0x%04X slot calculation: current_time=%u, "
+        //         "start_time=%u, elapsed=%u, slot_duration=%u, slot_index=%u",
+        //         node_address_, current_time, superframe_start_time_, elapsed,
+        //         slot_duration_ms_, slot_index);
+        // }
 
         return static_cast<uint16_t>(slot_index);
     } else {
@@ -313,25 +329,85 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
                       "Superframe not running");
     }
 
+    // Validate external_slot parameter
+    if (external_slot >= total_slots_) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "External slot index exceeds total slots");
+    }
+
     // Calculate when the external superframe started
     uint32_t slot_duration = slot_duration_ms_;
+    uint32_t elapsed_time = external_slot * slot_duration;
+    uint32_t current_time = GetRTOS().getTickCount();
+
+    // Enhanced diagnostic logging for timing analysis - ALWAYS LOG
+    LOG_INFO("[TIMING_SYNC] Node 0x%04X synchronization START:", node_address_);
+    LOG_INFO("[TIMING_SYNC]   external_slot_start_time: %u ms",
+             external_slot_start_time);
+    LOG_INFO("[TIMING_SYNC]   external_slot: %u", external_slot);
+    LOG_DEBUG("[TIMING_SYNC]   slot_duration: %u ms", slot_duration);
+    LOG_DEBUG("[TIMING_SYNC]   elapsed_time: %llu ms", elapsed_time);
+    LOG_DEBUG("[TIMING_SYNC]   current_time: %u ms", current_time);
+    LOG_DEBUG("[TIMING_SYNC]   old_superframe_start: %u ms",
+              superframe_start_time_);
+
+    // Check for potential underflow - this is the critical fix
+    if (elapsed_time > external_slot_start_time) {
+        LOG_ERROR(
+            "[TIMING_SYNC] Underflow detected: elapsed_time (%u) > "
+            "external_slot_start_time (%u)",
+            elapsed_time, external_slot_start_time);
+        // Instead of failing, use the external slot start time as reference
+        // This handles cases where slot calculation produces invalid timing
+        LOG_INFO(
+            "[TIMING_SYNC] Using external_slot_start_time as superframe "
+            "reference");
+        superframe_start_time_ = external_slot_start_time;
+        is_synchronized_ = true;
+        last_sync_time_ = current_time;
+        return Result::Success();
+    }
+
     uint32_t calculated_superframe_start =
-        external_slot_start_time - (external_slot * slot_duration);
+        external_slot_start_time - elapsed_time;
+
+    // Additional validation: ensure calculated time is reasonable
+    // Superframe start should be in the past but not too far in the future
+    if (calculated_superframe_start >
+        current_time + (slot_duration * total_slots_)) {
+        LOG_ERROR(
+            "[TIMING_SYNC] Invalid calculated_superframe_start (%u) > "
+            "reasonable future time (%u)",
+            calculated_superframe_start,
+            current_time + (slot_duration * total_slots_));
+        // Fall back to using current time as base
+        LOG_INFO(
+            "[TIMING_SYNC] Using current_time as superframe reference "
+            "fallback");
+        superframe_start_time_ = current_time;
+        is_synchronized_ = true;
+        last_sync_time_ = current_time;
+        return Result::Success();
+    }
 
     // Adjust our superframe to match
     uint32_t old_start = superframe_start_time_;
     superframe_start_time_ = calculated_superframe_start;
 
-    LOG_DEBUG("Previous superframe start time: %dms, new start time: %dms",
-              old_start, calculated_superframe_start);
+    LOG_INFO("[TIMING_SYNC]   calculated_superframe_start: %u ms",
+             calculated_superframe_start);
+    LOG_INFO(
+        "[TIMING_SYNC] Previous superframe start time: %dms, new start time: "
+        "%dms",
+        old_start, calculated_superframe_start);
 
     // Calculate drift
     int32_t drift =
         static_cast<int32_t>(calculated_superframe_start - old_start);
-    sync_drift_accumulator_ += abs(drift);
+    sync_drift_accumulator_ += std::abs(drift);
 
     is_synchronized_ = true;
-    last_sync_time_ = GetRTOS().getTickCount();
+    last_sync_time_ = current_time;
 
     LOG_INFO("Synchronized superframe with external timing (drift: %dms)",
              drift);

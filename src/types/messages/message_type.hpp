@@ -156,6 +156,7 @@ inline bool IsValidType(MessageType type) {
 
     return true;
 }
+
 }  // namespace message_type
 
 }  // namespace loramesher

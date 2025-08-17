@@ -78,7 +78,7 @@ Result LoRaMeshProtocol::Init(
 
     // Create network service
     network_service_ = std::make_shared<lora_mesh::NetworkService>(
-        node_address, message_queue_service_, superframe_service_);
+        node_address, message_queue_service_, superframe_service_, hardware_);
 
     // Initialize radio event queue
     radio_event_queue_ =
@@ -525,7 +525,7 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                 // Only process received events as received messages
                 if (event->getType() == radio::RadioEventType::kReceived) {
                     // Extract the reception timestamp from the RadioEvent
-                    int32_t reception_timestamp = event->getTimestamp();
+                    uint32_t reception_timestamp = event->getTimestamp();
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp);
                 } else if (event->getType() ==
@@ -718,14 +718,6 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
             if (state ==
                 lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER) {
-                // Apply pending join requests at superframe boundary (before sync beacon)
-                result = network_service_->ApplyPendingJoin();
-                if (!result) {
-                    LOG_ERROR("Failed to apply pending join: %s",
-                              result.GetErrorMessage().c_str());
-                    // Continue with sync beacon transmission despite join application failure
-                }
-
                 // Network Manager: First queue the sync beacon, then extract and send it
                 result = network_service_->SendSyncBeacon();
                 if (!result) {

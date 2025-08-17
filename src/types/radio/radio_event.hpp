@@ -1,10 +1,10 @@
 // src/radio/radio_event.hpp
 #pragma once
 
-#include <chrono>
 #include <cstdint>
 #include <memory>
 
+#include "os/os_port.hpp"
 #include "types/messages/base_message.hpp"
 
 namespace loramesher {
@@ -51,9 +51,7 @@ class RadioEvent {
     RadioEvent(RadioEventType type, std::unique_ptr<BaseMessage> message)
         : type_(type),
           message_(std::move(message)),
-          timestamp_(std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::system_clock::now().time_since_epoch())
-                         .count()) {}
+          timestamp_(GetRTOS().getTickCount()) {}
 
     /**
      * @brief Constructor for events without message
@@ -147,13 +145,13 @@ class RadioEvent {
      * @brief Sets the event timestamp
      * @param timestamp Event occurrence time
      */
-    void setTimestamp(int32_t timestamp) { timestamp_ = timestamp; }
+    void setTimestamp(uint32_t timestamp) { timestamp_ = timestamp; }
 
     /**
      * @brief Gets the event timestamp
      * @return Current timestamp value
      */
-    int32_t getTimestamp() const { return timestamp_; }
+    uint32_t getTimestamp() const { return timestamp_; }
 
     /**
      * @brief Checks if event has a valid message
@@ -207,10 +205,10 @@ class RadioEvent {
    private:
     RadioEventType type_;  ///< Type of radio event
     std::unique_ptr<BaseMessage> message_ =
-        nullptr;             ///< Optional message associated with event
-    int8_t rssi_ = 0;        ///< Received Signal Strength Indicator
-    int8_t snr_ = 0;         ///< Signal-to-Noise Ratio
-    int32_t timestamp_ = 0;  ///< Event timestamp
+        nullptr;              ///< Optional message associated with event
+    int8_t rssi_ = 0;         ///< Received Signal Strength Indicator
+    int8_t snr_ = 0;          ///< Signal-to-Noise Ratio
+    uint32_t timestamp_ = 0;  ///< Event timestamp
 };
 
 /**

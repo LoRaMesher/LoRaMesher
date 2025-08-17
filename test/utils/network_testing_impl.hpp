@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -34,8 +35,69 @@ using ::testing::A;
 namespace loramesher {
 namespace test {
 
-size_t constexpr kGetTimeOnAirOverhead =
-    100;  // Overhead in ms for time on air calculations
+/**
+ * @brief Calculate Time-on-Air for LoRa transmission
+ * 
+ * @param payload_length Length of payload in bytes
+ * @param sf Spreading Factor (7-12)
+ * @param bw Bandwidth in Hz (125000, 250000, 500000)
+ * @param cr Coding Rate (5-8 for 4/5 to 4/8)
+ * @param preamble_length Preamble length in symbols (default: 8)
+ * @param header_enabled Whether explicit header is enabled (default: true)
+ * @param crc_enabled Whether CRC is enabled (default: true)
+ * @return Time-on-Air in milliseconds
+ */
+inline uint32_t CalculateLoRaTimeOnAir(uint8_t payload_length, uint8_t sf = 7,
+                                       uint32_t bw = 125000, uint8_t cr = 5,
+                                       uint8_t preamble_length = 8,
+                                       bool header_enabled = true,
+                                       bool crc_enabled = true) {
+    // Symbol duration in seconds
+    double symbol_duration = (1 << sf) / static_cast<double>(bw);
+
+    // Preamble duration in seconds
+    double preamble_duration = (preamble_length + 4.25) * symbol_duration;
+
+    // Payload calculation
+    double payload_symbols = 0;
+    if (payload_length > 0) {
+        // Calculate payload symbols using LoRa formula
+        int payload_bits = payload_length * 8;
+        int header_bits = header_enabled ? 20 : 0;
+        int crc_bits = crc_enabled ? 16 : 0;
+
+        // Total bits including header and CRC
+        int total_bits = payload_bits + header_bits + crc_bits;
+
+        // Calculate number of symbols needed
+        double symbols_per_payload =
+            8 + std::max(0.0, std::ceil((total_bits - 4 * sf + 28 +
+                                         16 * (crc_enabled ? 1 : 0) -
+                                         20 * (header_enabled ? 0 : 1)) /
+                                        (4.0 * (sf - 2))));
+
+        payload_symbols = symbols_per_payload * symbol_duration;
+    }
+
+    // Total time in seconds
+    double total_time = preamble_duration + payload_symbols;
+
+    // Convert to milliseconds and round up
+    return static_cast<uint32_t>(std::ceil(total_time * 1000));
+}
+
+/**
+ * @brief Get Time-on-Air overhead for virtual network simulation
+ * 
+ * Uses realistic LoRa parameters for testing:
+ * - SF7, BW125kHz, CR4/5, 8 symbol preamble
+ * 
+ * @param payload_length Length of payload in bytes
+ * @return Time-on-Air in milliseconds
+ */
+inline uint32_t GetTimeOnAirOverhead(uint8_t payload_length) {
+    return CalculateLoRaTimeOnAir(payload_length, 7, 125000, 5, 8, true, true);
+}
 
 /**
  * @brief Interface for radio receivers in the virtual network
@@ -145,6 +207,8 @@ class VirtualNetwork {
 
         LOG_DEBUG("Transmitting message from 0x%04X, hex: %s", source,
                   hex_data.c_str());
+        uint32_t toa = GetTimeOnAirOverhead(static_cast<uint8_t>(data.size()));
+        LOG_DEBUG("Time-on-Air for message: %u ms", toa);
 
         // Determine which nodes should receive the message
         for (auto& node_pair : nodes_) {
@@ -172,8 +236,7 @@ class VirtualNetwork {
 
             // Calculate delivery time
             uint32_t delay = GetLinkDelay(source, dest_address);
-            uint32_t delivery_time =
-                current_time_ + delay + kGetTimeOnAirOverhead;
+            uint32_t delivery_time = current_time_ + delay + toa;
 
             // Queue the message for delivery
             QueueMessageDelivery(source, dest_address, data, delivery_time,
@@ -725,8 +788,16 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                 }));
         EXPECT_CALL(*radio_, getTimeOnAir(testing::_))
             .WillRepeatedly(testing::Invoke([this](uint8_t length) -> uint32_t {
-                return length * 10;  // TODO: Mock time on air
-            }));                     // Default value
+                // Use the stored radio configuration for ToA calculation
+                return CalculateLoRaTimeOnAir(
+                    length, radio_config_.getSpreadingFactor(),
+                    static_cast<uint32_t>(radio_config_.getBandwidth() *
+                                          1000),  // Convert kHz to Hz
+                    radio_config_.getCodingRate(),
+                    radio_config_.getPreambleLength(),
+                    true,  // header enabled
+                    radio_config_.getCRC());
+            }));
         EXPECT_CALL(*radio_, ClearActionReceive())
             .WillRepeatedly(testing::Return(Result::Success()));
         EXPECT_CALL(*radio_, Sleep())
@@ -831,6 +902,13 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         return current_radio_state_;
     }
 
+    /**
+     * @brief Set radio configuration for ToA calculations
+     * 
+     * @param config Radio configuration with LoRa parameters
+     */
+    void SetRadioConfig(const RadioConfig& config) { radio_config_ = config; }
+
    private:
     struct QueuedMessage {
         std::vector<uint8_t> data;
@@ -845,6 +923,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
     std::function<void()> original_callback_ = nullptr;  ///< Original callback
     loramesher::radio::RadioState current_radio_state_{
         loramesher::radio::RadioState::kIdle};  ///< Track current radio state
+    RadioConfig radio_config_;  ///< Radio configuration for ToA calculations
 };
 
 }  // namespace test

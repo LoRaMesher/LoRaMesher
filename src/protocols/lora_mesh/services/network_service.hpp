@@ -13,6 +13,7 @@
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
+#include "types/hardware/i_hardware_manager.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
@@ -42,13 +43,14 @@ class NetworkService : public INetworkService {
      * 
      * @param node_address Local node address
      * @param message_queue_service Message queue service for outgoing messages
-     * @param time_provider Time provider for timing operations
      * @param superframe_service Optional superframe service for TDMA integration
+     * @param hardware_manager Hardware manager for ToA calculations
      */
     NetworkService(
         AddressType node_address,
         std::shared_ptr<IMessageQueueService> message_queue_service,
-        std::shared_ptr<ISuperframeService> superframe_service = nullptr);
+        std::shared_ptr<ISuperframeService> superframe_service = nullptr,
+        std::shared_ptr<hardware::IHardwareManager> hardware_manager = nullptr);
 
     /**
      * @brief Virtual destructor
@@ -136,7 +138,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error details
      */
     Result ProcessRoutingTableMessage(const BaseMessage& message,
-                                      int32_t reception_timestamp) override;
+                                      uint32_t reception_timestamp) override;
 
     /**
      * @brief Send a routing table update to the network
@@ -237,7 +239,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error details
      */
     Result ProcessReceivedMessage(const BaseMessage& message,
-                                  int32_t reception_timestamp) override;
+                                  uint32_t reception_timestamp) override;
 
     // INetworkService superframe integration
 
@@ -380,7 +382,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result ProcessJoinRequest(const BaseMessage& message,
-                              int32_t reception_timestamp);
+                              uint32_t reception_timestamp);
 
     /**
      * @brief Process a join response from network manager
@@ -392,7 +394,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result ProcessJoinResponse(const BaseMessage& message,
-                               int32_t reception_timestamp);
+                               uint32_t reception_timestamp);
 
     /**
      * @brief Send a join response to a node
@@ -420,7 +422,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result ProcessSyncBeacon(const BaseMessage& message,
-                             int32_t reception_timestamp);
+                             uint32_t reception_timestamp);
 
     /**
      * @brief Send an original sync beacon (Network Manager only)
@@ -487,7 +489,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result ProcessSlotRequest(const BaseMessage& message,
-                              int32_t reception_timestamp);
+                              uint32_t reception_timestamp);
 
     /**
      * @brief Process a slot allocation message
@@ -498,7 +500,7 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result ProcessSlotAllocation(const BaseMessage& message,
-                                 int32_t reception_timestamp);
+                                 uint32_t reception_timestamp);
 
     /**
      * @brief Send a slot request to network manager
@@ -606,6 +608,23 @@ class NetworkService : public INetworkService {
     bool WouldExceedLimit() const;
 
     /**
+     * @brief Perform timing synchronization with Network Manager using sync beacon
+     * 
+     * This function handles the timing synchronization logic that was previously
+     * duplicated in ProcessSyncBeacon for both DISCOVERY and other states.
+     * It calculates the Network Manager's timing and synchronizes the local
+     * superframe to match.
+     * 
+     * @param sync_beacon The received sync beacon message
+     * @param reception_timestamp When the sync beacon was received
+     * @param context_name Context for logging (e.g., "Discovery", "Normal")
+     * @return Result Success if synchronization succeeded, error otherwise
+     */
+    Result PerformTimingSynchronization(const SyncBeaconMessage& sync_beacon,
+                                        uint32_t reception_timestamp,
+                                        const std::string& context_name);
+
+    /**
      * @brief Remove oldest node to make space
      * 
      * @return bool True if a node was removed
@@ -643,6 +662,14 @@ class NetworkService : public INetworkService {
      * @return uint8_t Comprehensive link quality (0-255)
      */
     uint8_t CalculateComprehensiveLinkQuality(AddressType node_address);
+
+    /**
+     * @brief Calculate Time-on-Air for a message
+     * 
+     * @param message_size Size of the message in bytes
+     * @return uint32_t Time-on-Air in milliseconds
+     */
+    uint32_t CalculateTimeOnAir(uint8_t message_size) const;
 
     /**
      * @brief Calculate link stability metric
@@ -721,6 +748,10 @@ class NetworkService : public INetworkService {
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
     std::shared_ptr<ISuperframeService> superframe_service_;
+    std::shared_ptr<hardware::IHardwareManager> hardware_manager_;
+
+    // ToA cache for performance optimization
+    mutable std::unordered_map<uint8_t, uint32_t> toa_cache_;
 
     // Network state
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute> network_nodes_;
