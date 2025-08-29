@@ -89,4 +89,9 @@ std::optional<JoinRequestHeader> JoinRequestHeader::Deserialize(
     return header;
 }
 
+Result JoinRequestHeader::SetRequestedSlots(uint8_t requested_slots) {
+    requested_slots_ = requested_slots;
+    return Result::Success();
+}
+
 }  // namespace loramesher

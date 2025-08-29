@@ -50,19 +50,15 @@ Result SuperframeService::StartSuperframe() {
 
     // Initialize timing
     uint32_t current_time = GetRTOS().getTickCount();
-    superframe_start_time_ = current_time;
+    if (update_start_time_in_new_superframe) {
+        superframe_start_time_ = current_time;
+    }
     service_start_time_ = current_time;
     last_sync_time_ = current_time;
 
     is_running_ = true;
     is_synchronized_ = true;  // Consider synchronized when starting
-    last_slot_ = 0;
-
-    // Reset statistics
-    superframes_completed_ = 0;
-    total_timing_error_ms_ = 0;
-    timing_samples_ = 0;
-    sync_drift_accumulator_ = 0;
+    last_slot_ = 0xFFFF;
 
     // Create the update task
     if (update_task_handle_ != nullptr) {
@@ -114,20 +110,28 @@ Result SuperframeService::HandleNewSuperframe() {
     superframes_completed_++;
 
     // Update superframe start time
-    uint32_t current_time = GetRTOS().getTickCount();
-    superframe_start_time_ = current_time;
+    if (update_start_time_in_new_superframe) {
+        uint32_t current_time = GetRTOS().getTickCount();
+        superframe_start_time_ = current_time;
+    }
+
     last_slot_ = 0;
 
     // Update timing statistics
     UpdateTimingStats();
+
+    LOG_DEBUG("Started superframe #%d", superframes_completed_);
 
     // Notify callback if set
     if (superframe_callback_) {
         superframe_callback_(0, true);  // Slot 0, new superframe
     }
 
-    LOG_DEBUG("Started superframe #%d", superframes_completed_);
+    return Result::Success();
+}
 
+Result SuperframeService::DoNotUpdateStartTimeOnNewSuperframe() {
+    update_start_time_in_new_superframe = false;
     return Result::Success();
 }
 
@@ -324,11 +328,6 @@ uint32_t SuperframeService::GetTimeInSlot() const {
 
 Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
                                           uint16_t external_slot) {
-    if (!is_running_) {
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "Superframe not running");
-    }
-
     // Validate external_slot parameter
     if (external_slot >= total_slots_) {
         return Result(LoraMesherErrorCode::kInvalidArgument,
@@ -477,8 +476,8 @@ Result SuperframeService::UpdateSuperframeState() {
         // Check if we've wrapped around (new superframe)
         bool new_superframe = false;
 
-        // Detect new superframe by checking if we wrapped from high to low slot
-        if (current_slot < last_slot_) {
+        // Detect new superframe
+        if (current_slot == 0) {
             new_superframe = true;
             // Only handle new superframe if auto-advance is enabled
             if (auto_advance_) {

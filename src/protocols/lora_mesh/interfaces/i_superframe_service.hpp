@@ -82,6 +82,15 @@ class ISuperframeService {
                                           uint32_t slot_duration_ms = 0,
                                           bool update_superframe = true) = 0;
 
+    /**
+     * @brief Prevent updating the start time on a new superframe
+     * It is used when synchronizing with an external time source and
+     * still we want to execute a new superframe without resetting the start time.
+     * 
+     * @return Result Success if the operation completed successfully
+     */
+    virtual Result DoNotUpdateStartTimeOnNewSuperframe() = 0;
+
     virtual uint32_t GetSlotDuration() const = 0;
 
     static constexpr uint32_t DEFAULT_DISCOVERY_SLOT_COUNT = 10;

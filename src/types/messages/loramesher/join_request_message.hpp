@@ -107,6 +107,14 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
     size_t GetTotalSize() const;
 
     /**
+     * @brief Sets the requested data slots
+     * 
+     * @param requested_slots Number of data slots requested
+     * @return Result Status of the operation
+     */
+    Result SetRequestedSlots(uint8_t requested_slots);
+
+    /**
       * @brief Converts to a BaseMessage for transmission
       * 
       * @return BaseMessage The converted base message

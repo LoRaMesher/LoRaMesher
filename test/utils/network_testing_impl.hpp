@@ -215,9 +215,6 @@ class VirtualNetwork {
             uint32_t dest_address = node_pair.first;
             NodeInfo& dest_node = node_pair.second;
 
-            LOG_DEBUG("Transmitting message from 0x%04X to 0x%04X", source,
-                      dest_address);
-
             // Skip the source node
             if (dest_address == source) {
                 LOG_DEBUG("Skipping transmission to self (0x%04X)", source);
@@ -370,9 +367,10 @@ class VirtualNetwork {
         auto& links = it1->second.active_links;
         auto it2 = links.find(node2);
 
-        // If explicit link status not set, default to active
-        if (it2 == links.end())
-            return true;
+        // If explicit link status not set, default to inactive
+        if (it2 == links.end()) {
+            return false;
+        }
 
         return it2->second;
     }

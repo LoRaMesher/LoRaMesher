@@ -546,6 +546,11 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
 
 void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
                                         bool new_superframe) {
+    // Handle new superframe
+    if (new_superframe) {
+        network_service_->HandleSuperframeStart();
+    }
+
     // Get current slot type from allocation table
     SlotAllocation::SlotType slot_type = SlotAllocation::SlotType::SLEEP;
 
@@ -559,12 +564,6 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
     LOG_DEBUG("Slot %d transition: type=%s%s", current_slot,
               slot_utils::SlotTypeToString(slot_type).c_str(),
               new_superframe ? " (new superframe)" : "");
-
-    // Handle new superframe
-    if (new_superframe) {
-        // Schedule routing message expectations for link quality tracking
-        network_service_->ScheduleRoutingMessageExpectations();
-    }
 
     // Process messages based on slot type
     ProcessSlotMessages(slot_type);

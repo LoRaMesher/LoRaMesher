@@ -93,6 +93,14 @@ class JoinRequestHeader : public BaseHeader {
                               uint8_t requested_slots);
 
     /**
+     * @brief Sets the requested data slots
+     * 
+     * @param requested_slots Number of data slots requested
+     * @return Result Success if setting succeeded, error code otherwise
+     */
+    Result SetRequestedSlots(uint8_t requested_slots);
+
+    /**
       * @brief Serializes the header to a byte serializer
       * 
       * Extends the base header serialization with join request specific fields.

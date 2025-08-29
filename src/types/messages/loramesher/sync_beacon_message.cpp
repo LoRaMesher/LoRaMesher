@@ -206,4 +206,17 @@ std::optional<std::vector<uint8_t>> SyncBeaconMessage::Serialize() const {
     return serialized;
 }
 
+void SyncBeaconMessage::Print() const {
+    LOG_INFO("SyncBeaconMessage:");
+    LOG_INFO("  Source: {0x%04X}", GetSource());
+    LOG_INFO("  Destination: {0x%04X}", GetDestination());
+    LOG_INFO("  Network ID: {0x%04X}", GetNetworkId());
+    LOG_INFO("  Total Slots: {%d}", GetTotalSlots());
+    LOG_INFO("  Slot Duration: {%d}", GetSlotDuration());
+    LOG_INFO("  Network Manager: {0x%04X}", GetNetworkManager());
+    LOG_INFO("  Hop Count: {%d}", GetHopCount());
+    LOG_INFO("  Propagation Delay: {%u}", GetPropagationDelay());
+    LOG_INFO("  Max Hops: {%d}", GetMaxHops());
+}
+
 }  // namespace loramesher

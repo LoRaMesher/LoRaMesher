@@ -82,6 +82,10 @@ class MockSuperframeService : public protocols::lora_mesh::ISuperframeService {
                            uint16_t external_slot) override {
         return Result::Success();
     }
+
+    Result DoNotUpdateStartTimeOnNewSuperframe() override {
+        return Result::Success();
+    }
 };
 
 /**

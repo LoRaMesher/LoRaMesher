@@ -398,10 +398,9 @@ TEST_F(SuperframeServiceSynchronizeWithTest, SynchronizeWithLargeTimeValues) {
  * @brief Test synchronization without running superframe
  */
 TEST_F(SuperframeServiceSynchronizeWithTest, SynchronizeWithoutRunning) {
-    // Don't start the superframe service
     auto result = service_->SynchronizeWith(1000, 3);
-    EXPECT_FALSE(result.IsSuccess())
-        << "SynchronizeWith should fail when service not running";
+    EXPECT_TRUE(result.IsSuccess())
+        << "SynchronizeWith should succeed when service not running";
 }
 
 /**

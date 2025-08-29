@@ -29,6 +29,9 @@ namespace loramesher {
 namespace protocols {
 namespace lora_mesh {
 
+static const uint8_t kMaxNoReceivedSyncBeacons =
+    5;  ///< Max number of superframes without receiving sync beacons // TODO: set it configurable?
+
 /**
  * @brief Unified implementation of network service
  * 
@@ -744,6 +747,13 @@ class NetworkService : public INetworkService {
      */
     Result SlotTableToSuperframe();
 
+    /**
+     * @brief Get max hops from routing table
+     * 
+     * @return uint8_t Maximum hops from routing table
+     */
+    uint8_t GetMaxHopsFromRoutingTable() const;
+
     // Member variables
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
@@ -771,7 +781,11 @@ class NetworkService : public INetworkService {
         ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
     uint8_t allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
-    uint8_t network_max_hops_ = 5;  ///< Maximum hops received from sync beacons
+    uint8_t network_max_hops_ =
+        5;  ///< Number of hops received from sync beacons
+    uint8_t allocated_data_slots_ = 1;  ///< Number of data slots allocated
+    uint8_t no_received_sync_beacon_count_ =
+        0;  ///< Count of nº superframes without receiving sync beacons
 
     // Join request buffering for superframe coordination
     bool pending_join_request_ =

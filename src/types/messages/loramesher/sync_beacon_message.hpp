@@ -166,6 +166,8 @@ class SyncBeaconMessage : public IConvertibleToBaseMessage {
      */
     std::optional<std::vector<uint8_t>> Serialize() const override;
 
+    void Print() const;
+
    private:
     /**
      * @brief Private constructor

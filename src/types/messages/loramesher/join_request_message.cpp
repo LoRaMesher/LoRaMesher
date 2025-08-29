@@ -98,6 +98,10 @@ size_t JoinRequestMessage::GetTotalSize() const {
     return header_.GetSize() + additional_info_.size();
 }
 
+Result JoinRequestMessage::SetRequestedSlots(uint8_t requested_slots) {
+    return header_.SetRequestedSlots(requested_slots);
+}
+
 BaseMessage JoinRequestMessage::ToBaseMessage() const {
     // Calculate payload size (only JOIN_REQUEST specific fields + additional info)
     size_t payload_size =

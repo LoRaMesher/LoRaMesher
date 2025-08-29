@@ -54,6 +54,15 @@ class SuperframeService : public ISuperframeService {
     Result StopSuperframe() override;
     Result HandleNewSuperframe() override;
 
+    /**
+     * @brief Prevent updating the start time on a new superframe
+     * It is used when synchronizing with an external time source and
+     * still we want to execute a new superframe without resetting the start time.
+     * 
+     * @return Result Success if the operation completed successfully
+     */
+    Result DoNotUpdateStartTimeOnNewSuperframe() override;
+
     bool IsSynchronized() const override;
 
     void SetSynchronized(bool synchronized) override;
@@ -318,6 +327,8 @@ class SuperframeService : public ISuperframeService {
     bool is_running_;
     bool is_synchronized_;
     bool auto_advance_;
+    bool update_start_time_in_new_superframe =
+        true;  ///< Flag to control start time updates
     uint16_t last_slot_;
     uint32_t service_start_time_;
     SuperframeCallback superframe_callback_;
