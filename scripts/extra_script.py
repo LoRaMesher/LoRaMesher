@@ -8,7 +8,12 @@
 Import("env")
 from os.path import join, realpath
 
-env.Replace(CC="clang", CXX="clang++")
+# Get current platform
+current_platform = env.get("PIOPLATFORM", "")
+
+# Only use clang for native builds
+if current_platform in ["native", "test_native"]:
+    env.Replace(CC="clang", CXX="clang++")
 
 # Get global environment
 global_env = DefaultEnvironment()
@@ -24,7 +29,7 @@ def set_platform_cpp_standard(environment, platform):
     environment.Replace(CXXFLAGS=[flag for flag in environment.get("CXXFLAGS", []) if "-std=gnu++11" not in flag])
     
     # Set platform-specific flags
-    if platform == "native":
+    if platform in ["native", "test_native"]:
         print("LoRaMesher: Setting native platform flags (C++20)")
         environment.Append(CXXFLAGS=["-std=c++20", "-std=gnu++20"])
     
@@ -35,9 +40,6 @@ def set_platform_cpp_standard(environment, platform):
     # You can add more platform-specific settings here as needed
     else:
         print(f"LoRaMesher: Unknown platform '{platform}', no custom flags applied")
-
-# Get current platform
-current_platform = env.get("PIOPLATFORM", "")
 
 # Apply C++ standard settings to the library environment
 set_platform_cpp_standard(env, current_platform)
