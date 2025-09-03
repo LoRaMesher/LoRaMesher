@@ -63,7 +63,7 @@ public:
      * @param payloadSize Payload size
      * @return DataPacket*
      */
-    static DataPacket* createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize);
+    static DataPacket* createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, const uint8_t payloadSize);
 
     /**
      * @brief Create an Empty Packet
