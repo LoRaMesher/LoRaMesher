@@ -250,7 +250,7 @@ public:
      * @param payload Payload to send
      * @param payloadSize Payload size to be send in Bytes
      */
-    void sendPacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
+    void sendPacket(uint16_t dst, const uint8_t* payload, uint32_t payloadSize) {
         //Cannot send an empty packet
         if (payloadSize == 0)
             return;
