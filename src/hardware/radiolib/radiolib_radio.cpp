@@ -139,7 +139,10 @@ Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
         }
     }
 
-    Result start_receive_result = StartReceive();
+    // TODO: What to do here?
+    // Result start_receive_result = StartReceive();
+    // status.MergeErrors(start_receive_result);
+    Result start_receive_result = Sleep();
     status.MergeErrors(start_receive_result);
 
     return status;
