@@ -157,8 +157,6 @@ void SuperframeService::SetSynchronized(bool synchronized) {
         // Reset drift accumulator when synchronized
         sync_drift_accumulator_ = 0;
         last_sync_time_ = GetRTOS().getTickCount();
-        // If synchronized, reset start time to last sync time
-        superframe_start_time_ = last_sync_time_;
     }
     LOG_INFO("Superframe synchronization state set to %s",
              synchronized ? "true" : "false");
@@ -350,7 +348,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     LOG_DEBUG("[TIMING_SYNC]   old_superframe_start: %u ms",
               superframe_start_time_);
 
-    // Check for potential underflow - this is the critical fix
+    // Check for potential underflow
     if (elapsed_time > external_slot_start_time) {
         LOG_ERROR(
             "[TIMING_SYNC] Underflow detected: elapsed_time (%u) > "
@@ -367,18 +365,15 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         return Result::Success();
     }
 
-    uint32_t calculated_superframe_start =
-        external_slot_start_time - elapsed_time;
+    uint32_t superframe_duration = slot_duration * total_slots_;
 
     // Additional validation: ensure calculated time is reasonable
     // Superframe start should be in the past but not too far in the future
-    if (calculated_superframe_start >
-        current_time + (slot_duration * total_slots_)) {
+    if (external_slot_start_time > current_time + superframe_duration) {
         LOG_ERROR(
             "[TIMING_SYNC] Invalid calculated_superframe_start (%u) > "
             "reasonable future time (%u)",
-            calculated_superframe_start,
-            current_time + (slot_duration * total_slots_));
+            external_slot_start_time, current_time + superframe_duration);
         // Fall back to using current time as base
         LOG_INFO(
             "[TIMING_SYNC] Using current_time as superframe reference "
@@ -391,18 +386,17 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
 
     // Adjust our superframe to match
     uint32_t old_start = superframe_start_time_;
-    superframe_start_time_ = calculated_superframe_start;
+    superframe_start_time_ = external_slot_start_time;
 
     LOG_INFO("[TIMING_SYNC]   calculated_superframe_start: %u ms",
-             calculated_superframe_start);
+             external_slot_start_time);
     LOG_INFO(
         "[TIMING_SYNC] Previous superframe start time: %dms, new start time: "
         "%dms",
-        old_start, calculated_superframe_start);
+        old_start, external_slot_start_time);
 
     // Calculate drift
-    int32_t drift =
-        static_cast<int32_t>(calculated_superframe_start - old_start);
+    int32_t drift = static_cast<int32_t>(external_slot_start_time - old_start);
     sync_drift_accumulator_ += std::abs(drift);
 
     is_synchronized_ = true;
@@ -565,6 +559,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
 
     // Task loop
     while (!rtos.ShouldStopOrPause()) {
+        // TODO: Do not update every tick, implement a more efficient timing mechanism
 
         // Update superframe state
         service->UpdateSuperframeState();

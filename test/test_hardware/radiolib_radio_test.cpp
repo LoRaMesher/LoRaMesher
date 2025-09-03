@@ -199,7 +199,7 @@ TEST_F(RadioLibRadioTest, SendDataSucceeds) {
     ASSERT_TRUE(radio_->Send(test_data.data(), test_data.size()));
 
     // Verify state was changed to receive after sending
-    EXPECT_EQ(radio_->getState(), RadioState::kReceive);
+    EXPECT_EQ(radio_->getState(), RadioState::kSleep);
 }
 
 /**

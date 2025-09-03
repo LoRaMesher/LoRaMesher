@@ -173,6 +173,22 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
         SetupNetworkTopology(node_address, state, network_manager,
                              expected_hop_distance, other_nodes);
 
+        // Get max hop count defined by other_nodes
+        uint8_t max_hop_count = 0;
+        for (const auto& [addr, hop_distance] : other_nodes) {
+            if (hop_distance > max_hop_count) {
+                max_hop_count = hop_distance;
+            }
+        }
+
+        network_service_->SetMaxHopCount(max_hop_count);
+
+        // TODO: Get the number of slots, arbitrary number. May be fixed latter
+        uint8_t total_slots = network_service_->GetNetworkSize() * 30;
+
+        // Set the number of slots for this device
+        network_service_->SetNumberOfSlotsPerSuperframe(total_slots);
+
         // Update slot table to trigger allocation
         Result result = network_service_->UpdateSlotTable();
         ASSERT_TRUE(result.IsSuccess())
@@ -194,11 +210,17 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
                 << ", Actual: " << slot_utils::SlotTypeToString(actual_type);
         }
 
-        // Log the complete slot allocation for debugging
+        // Log the complete slot allocation for debugging in table format (5 per row)
         LOG_INFO("Complete slot allocation for %s:", test_name.c_str());
-        for (size_t i = 0; i < slot_table.size(); i++) {
-            LOG_INFO("  Slot %zu: %s", i,
-                     slot_table[i].GetTypeString().c_str());
+        for (size_t i = 0; i < slot_table.size(); i += 10) {
+            std::string row = "  ";
+            for (size_t j = 0; j < 10 && (i + j) < slot_table.size(); j++) {
+                row += std::to_string(i + j) + ":" +
+                       slot_table[i + j].GetTypeString();
+                if (j < 4 && (i + j + 1) < slot_table.size())
+                    row += " | ";
+            }
+            LOG_INFO("%s", row.c_str());
         }
     }
 
@@ -674,6 +696,12 @@ TEST_F(ComprehensiveSlotAllocationTest, ControlSlots_DeterministicOrdering) {
                              {node_address, 2}  // This node
                          });
 
+    // TODO: Get the number of slots, arbitrary number. May be fixed latter
+    uint8_t total_slots = 255;
+
+    // Set the number of slots for this device
+    network_service_->SetNumberOfSlotsPerSuperframe(total_slots);
+
     Result result = network_service_->UpdateSlotTable();
     ASSERT_TRUE(result.IsSuccess());
 
@@ -791,6 +819,12 @@ TEST_F(ComprehensiveSlotAllocationTest, SleepSlots_PowerEfficiency) {
                              {0x1004, 3},  // Hop-3 node
                          });
 
+    // TODO: Get the number of slots, arbitrary number. May be fixed latter
+    uint8_t total_slots = 50;
+
+    // Set the number of slots for this device
+    network_service_->SetNumberOfSlotsPerSuperframe(total_slots);
+
     Result result = network_service_->UpdateSlotTable();
     ASSERT_TRUE(result.IsSuccess());
 
@@ -831,6 +865,12 @@ TEST_F(ComprehensiveSlotAllocationTest, SleepSlots_DutyCycleOptimization) {
                              {0x1007, 3},
                              {0x1008, 3},  // Hop-3 nodes
                          });
+
+    // TODO: Get the number of slots, arbitrary number. May be fixed latter
+    uint8_t total_slots = 255;
+
+    // Set the number of slots for this device
+    network_service_->SetNumberOfSlotsPerSuperframe(total_slots);
 
     Result result = network_service_->UpdateSlotTable();
     ASSERT_TRUE(result.IsSuccess());

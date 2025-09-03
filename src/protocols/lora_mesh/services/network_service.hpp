@@ -32,6 +32,9 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons // TODO: set it configurable?
 
+static const uint8_t kMinSlots = 16;  ///< Minimum number of slots in superframe
+static const float kTargetDutyCycle = 0.3f;  ///< Target duty cycle (percentage)
+
 /**
  * @brief Unified implementation of network service
  * 
@@ -584,6 +587,16 @@ class NetworkService : public INetworkService {
      */
     Result PerformJoining(uint32_t timeout_ms);
 
+    /**
+     * @brief Set the number of slots per superframe
+     */
+    void SetNumberOfSlotsPerSuperframe(uint8_t slots) override;
+
+    /**
+     * @brief Set the max number of hops of the actual network
+     */
+    void SetMaxHopCount(uint8_t max_hops) override;
+
    private:
     /**
      * @brief Find node by address
@@ -781,9 +794,12 @@ class NetworkService : public INetworkService {
         ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
     uint8_t allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+
+    // Superframe parameters
     uint8_t network_max_hops_ =
-        5;  ///< Number of hops received from sync beacons
-    uint8_t allocated_data_slots_ = 1;  ///< Number of data slots allocated
+        0;  ///< Number of hops received from sync beacons
+    uint8_t number_of_slots_per_superframe_ =
+        0;  ///< Number of allocated slots x superframe, received from sync beacon
     uint8_t no_received_sync_beacon_count_ =
         0;  ///< Count of nº superframes without receiving sync beacons
 

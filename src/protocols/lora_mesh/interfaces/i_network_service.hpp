@@ -289,6 +289,16 @@ class INetworkService {
      * Should be called when stopping the protocol to prevent memory leaks.
      */
     virtual void ResetNetworkState() = 0;
+
+    /**
+     * @brief Set the number of slots per superframe
+     */
+    virtual void SetNumberOfSlotsPerSuperframe(uint8_t slots) = 0;
+
+    /**
+     * @brief Set the max number of hops of the actual network
+     */
+    virtual void SetMaxHopCount(uint8_t max_hops) = 0;
 };
 
 }  // namespace lora_mesh

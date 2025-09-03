@@ -74,12 +74,13 @@ Result SyncBeaconHeader::SetForwardingInfo(uint8_t hop_count,
 
 SyncBeaconHeader SyncBeaconHeader::CreateForwardedBeacon(
     AddressType forwarding_node, uint32_t processing_delay,
-    uint32_t guard_time_ms) const {
+    uint32_t  //guard_time_ms
+) const {
     // Create a new header with optimized fields and forwarding node as source
     SyncBeaconHeader forwarded(
         GetDestination(), forwarding_node, network_id_, total_slots_,
         slot_duration_ms_, network_manager_, hop_count_ + 1,
-        propagation_delay_ms_ + processing_delay + guard_time_ms, max_hops_);
+        propagation_delay_ms_ + processing_delay, max_hops_);
 
     return forwarded;
 }

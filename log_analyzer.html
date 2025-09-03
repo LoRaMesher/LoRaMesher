@@ -170,12 +170,9 @@
             border: 2px solid rgba(0,0,0,0.4);
             min-width: 20px;
         }
+        /* Transmitted messages (darker/saturated colors) */
         .message-tx { 
             background: linear-gradient(135deg, #e74c3c, #c0392b);
-            color: white;
-        }
-        .message-rx { 
-            background: linear-gradient(135deg, #27ae60, #229954);
             color: white;
         }
         .message-beacon { 
@@ -188,6 +185,48 @@
         }
         .message-control { 
             background: linear-gradient(135deg, #34495e, #2c3e50);
+            color: white;
+        }
+        .message-routing { 
+            background: linear-gradient(135deg, #e67e22, #d35400);
+            color: white;
+        }
+        .message-system { 
+            background: linear-gradient(135deg, #95a5a6, #7f8c8d);
+            color: white;
+        }
+        .message-unknown { 
+            background: linear-gradient(135deg, #bdc3c7, #95a5a6);
+            color: white;
+        }
+
+        /* Received messages (lighter/pastel colors) */
+        .message-rx { 
+            background: linear-gradient(135deg, #27ae60, #229954);
+            color: white;
+        }
+        .message-beacon-rx { 
+            background: linear-gradient(135deg, #c39bd3, #bb8fce);
+            color: white;
+        }
+        .message-join-rx { 
+            background: linear-gradient(135deg, #7fb3d3, #6c9bd1);
+            color: white;
+        }
+        .message-control-rx { 
+            background: linear-gradient(135deg, #85929e, #7d8693);
+            color: white;
+        }
+        .message-routing-rx { 
+            background: linear-gradient(135deg, #f0b27a, #eb984e);
+            color: white;
+        }
+        .message-system-rx { 
+            background: linear-gradient(135deg, #b2babb, #a6acaf);
+            color: white;
+        }
+        .message-unknown-rx { 
+            background: linear-gradient(135deg, #d5dbdb, #cacfd2);
             color: white;
         }
         .message-indicator:hover {
@@ -284,6 +323,73 @@
             border-radius: 4px;
             margin: 10px 0;
         }
+        .legend-container {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .legend-header {
+            background: #e9ecef;
+            padding: 12px 15px;
+            cursor: pointer;
+            font-weight: bold;
+            color: #495057;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .legend-header:hover {
+            background: #dee2e6;
+        }
+        .legend-content {
+            padding: 15px;
+            display: none;
+        }
+        .legend-content.show {
+            display: block;
+        }
+        .legend-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .legend-section {
+            background: white;
+            border-radius: 6px;
+            padding: 15px;
+            border: 1px solid #e9ecef;
+        }
+        .legend-section h4 {
+            margin: 0 0 12px 0;
+            color: #495057;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 16px;
+            border-radius: 3px;
+            margin-right: 10px;
+            border: 1px solid rgba(0,0,0,0.2);
+        }
+        .legend-text {
+            font-size: 13px;
+            color: #495057;
+        }
+        .toggle-icon {
+            font-size: 12px;
+            transition: transform 0.3s ease;
+        }
+        .toggle-icon.rotated {
+            transform: rotate(180deg);
+        }
     </style>
 </head>
 <body>
@@ -299,6 +405,71 @@
 
         <div class="visualization-container" id="visualizationContainer">
             <div class="log-info" id="logInfo"></div>
+            
+            <div class="legend-container">
+                <div class="legend-header" onclick="toggleLegend()">
+                    <span>📊 Message Type Color Legend</span>
+                    <span class="toggle-icon" id="toggleIcon">▼</span>
+                </div>
+                <div class="legend-content" id="legendContent">
+                    <div class="legend-grid">
+                        <div class="legend-section">
+                            <h4>📤 Transmitted Messages (Darker Colors)</h4>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);"></div>
+                                <span class="legend-text">SYNC_BEACON</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #3498db, #2980b9);"></div>
+                                <span class="legend-text">JOIN_REQUEST/RESPONSE</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #e67e22, #d35400);"></div>
+                                <span class="legend-text">ROUTE_TABLE</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #34495e, #2c3e50);"></div>
+                                <span class="legend-text">CONTROL</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #e74c3c, #c0392b);"></div>
+                                <span class="legend-text">DATA</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #95a5a6, #7f8c8d);"></div>
+                                <span class="legend-text">SYSTEM</span>
+                            </div>
+                        </div>
+                        <div class="legend-section">
+                            <h4>📥 Received Messages (Lighter Colors)</h4>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #c39bd3, #bb8fce);"></div>
+                                <span class="legend-text">SYNC_BEACON</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #7fb3d3, #6c9bd1);"></div>
+                                <span class="legend-text">JOIN_REQUEST/RESPONSE</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #f0b27a, #eb984e);"></div>
+                                <span class="legend-text">ROUTE_TABLE</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #85929e, #7d8693);"></div>
+                                <span class="legend-text">CONTROL</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #27ae60, #229954);"></div>
+                                <span class="legend-text">DATA</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #b2babb, #a6acaf);"></div>
+                                <span class="legend-text">SYSTEM</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             
             <div class="tabs">
                 <button class="tab active" onclick="showTab('timeline')">Timeline</button>
@@ -347,6 +518,101 @@
     </div>
 
     <script>
+        // MessageType mapping from message_type.hpp
+        const MessageType = {
+            ANY: 0x00,
+            
+            // Main categories (high nibble)
+            DATA_MSG: 0x10,
+            CONTROL_MSG: 0x20,
+            ROUTING_MSG: 0x30,
+            SYSTEM_MSG: 0x40,
+            
+            // Specific message types
+            DATA: 0x11,
+            
+            ACK: 0x21,
+            PING: 0x23,
+            PONG: 0x24,
+            
+            HELLO: 0x31,
+            ROUTE_TABLE: 0x32,
+            
+            SYNC: 0x41,
+            JOIN_REQUEST: 0x42,
+            JOIN_RESPONSE: 0x43,
+            SLOT_REQUEST: 0x44,
+            SLOT_ALLOCATION: 0x45,
+            SYNC_BEACON: 0x46
+        };
+
+        // Message type name mapping
+        const MessageTypeName = {
+            [MessageType.ANY]: 'ANY',
+            [MessageType.DATA]: 'DATA',
+            [MessageType.ACK]: 'ACK',
+            [MessageType.PING]: 'PING',
+            [MessageType.PONG]: 'PONG',
+            [MessageType.HELLO]: 'HELLO',
+            [MessageType.ROUTE_TABLE]: 'ROUTE_TABLE',
+            [MessageType.SYNC]: 'SYNC',
+            [MessageType.JOIN_REQUEST]: 'JOIN_REQUEST',
+            [MessageType.JOIN_RESPONSE]: 'JOIN_RESPONSE',
+            [MessageType.SLOT_REQUEST]: 'SLOT_REQUEST',
+            [MessageType.SLOT_ALLOCATION]: 'SLOT_ALLOCATION',
+            [MessageType.SYNC_BEACON]: 'SYNC_BEACON'
+        };
+
+        // Helper functions for message type categorization
+        function getMainType(type) {
+            return type & 0xF0;
+        }
+
+        function getMessageTypeInfo(typeValue, direction = 'transmitted') {
+            // Convert string to number if needed
+            const numType = typeof typeValue === 'string' ? 
+                (typeValue.startsWith('0x') ? parseInt(typeValue, 16) : parseInt(typeValue, 10)) : 
+                typeValue;
+            
+            const typeName = MessageTypeName[numType];
+            if (!typeName) {
+                return { name: 'UNKNOWN', category: 'unknown', cssClass: direction === 'received' ? 'unknown-rx' : 'unknown' };
+            }
+            
+            const mainType = getMainType(numType);
+            let category, cssClass;
+            
+            switch (mainType) {
+                case MessageType.DATA_MSG:
+                    category = 'data';
+                    cssClass = direction === 'received' ? 'tx' : 'tx'; // Keep tx for both for now
+                    break;
+                case MessageType.CONTROL_MSG:
+                    category = 'control';
+                    cssClass = direction === 'received' ? 'control-rx' : 'control';
+                    break;
+                case MessageType.ROUTING_MSG:
+                    category = 'routing';
+                    cssClass = direction === 'received' ? 'routing-rx' : 'routing';
+                    break;
+                case MessageType.SYSTEM_MSG:
+                    category = 'system';
+                    if (numType === MessageType.SYNC_BEACON) {
+                        cssClass = direction === 'received' ? 'beacon-rx' : 'beacon';
+                    } else if (numType === MessageType.JOIN_REQUEST || numType === MessageType.JOIN_RESPONSE) {
+                        cssClass = direction === 'received' ? 'join-rx' : 'join';
+                    } else {
+                        cssClass = direction === 'received' ? 'system-rx' : 'system';
+                    }
+                    break;
+                default:
+                    category = 'unknown';
+                    cssClass = direction === 'received' ? 'unknown-rx' : 'unknown';
+            }
+            
+            return { name: typeName, category, cssClass };
+        }
+
         class LogAnalyzer {
             constructor() {
                 this.nodes = new Map();
@@ -356,6 +622,7 @@
                 this.zoomLevel = 10;
                 this.timeWindowStart = 0;
                 this.timeWindowEnd = 0;
+                this.pendingTransmission = null;
                 this.setupEventListeners();
             }
 
@@ -406,6 +673,7 @@
                 this.events = [];
                 this.messages = [];
                 this.nodes.clear();
+                this.pendingTransmission = null;
 
                 for (let i = 0; i < lines.length; i++) {
                     const line = lines[i].trim();
@@ -434,20 +702,49 @@
                             });
                         }
 
-                        // Parse message transmissions
-                        const transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        // Parse message transmissions - handle "Sending message" pattern first
+                        const sendingMatch = line.match(/Sending message to 0x([0-9A-Fa-f]+), type: (\d+)/);
+                        if (sendingMatch) {
+                            const messageTypeInfo = getMessageTypeInfo(sendingMatch[2], 'transmitted');
+                            
+                            // Store pending transmission with type info
+                            this.pendingTransmission = {
+                                timestamp,
+                                nodeId,
+                                to: sendingMatch[1],
+                                messageTypeInfo
+                            };
+                        }
+
+                        // Parse "Transmitting message from X to Y" pattern - try multiple variations
+                        let transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                        if (!transmitMatch) {
+                            // Try without "to X" part
+                            transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+)/);
+                            if (transmitMatch) {
+                                transmitMatch[2] = 'FFFF'; // Default to broadcast if no "to" specified
+                            }
+                        }
+                        
                         if (transmitMatch) {
-                            let messageType = 'tx';
-                            if (line.includes('type: 70')) messageType = 'beacon';
-                            else if (line.includes('type: 50')) messageType = 'control';
-                            else if (line.includes('type: 66')) messageType = 'join';
+                            let messageTypeInfo = { name: 'UNKNOWN', category: 'unknown', cssClass: 'tx' };
+                            
+                            // Use pending transmission info if available and matches
+                            if (this.pendingTransmission && 
+                                this.pendingTransmission.nodeId === nodeId &&
+                                Math.abs(this.pendingTransmission.timestamp - timestamp) < 100) {
+                                messageTypeInfo = this.pendingTransmission.messageTypeInfo;
+                                this.pendingTransmission = null; // Clear pending transmission
+                            }
                             
                             // Add transmission indicator on sender node
                             this.messages.push({
                                 timestamp,
                                 from: transmitMatch[1],
                                 to: transmitMatch[2],
-                                type: messageType,
+                                type: messageTypeInfo.cssClass,
+                                typeName: messageTypeInfo.name,
+                                category: messageTypeInfo.category,
                                 nodeId: transmitMatch[1], // Node that sent the message
                                 direction: 'transmitted'
                             });
@@ -456,18 +753,16 @@
                         // Parse message reception
                         const receiveMatch = line.match(/\*\*\* RECEIVED MESSAGE: type 0x([0-9A-Fa-f]+) from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
                         if (receiveMatch) {
-                            let messageType = 'rx';
-                            const msgType = receiveMatch[1];
-                            if (msgType === '70') messageType = 'beacon';
-                            else if (msgType === '50') messageType = 'control';
-                            else if (msgType === '66') messageType = 'join';
+                            const messageTypeInfo = getMessageTypeInfo('0x' + receiveMatch[1], 'received');
                             
                             // Add reception indicator on receiver node (use nodeId from timestamp line)
                             this.messages.push({
                                 timestamp,
                                 from: receiveMatch[2],
                                 to: receiveMatch[3],
-                                type: messageType,
+                                type: messageTypeInfo.cssClass,
+                                typeName: messageTypeInfo.name,
+                                category: messageTypeInfo.category,
                                 nodeId: nodeId, // Use the node ID from the log line
                                 direction: 'received'
                             });
@@ -476,17 +771,27 @@
                         // Parse additional message reception patterns
                         const receivedMatch = line.match(/received message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
                         if (receivedMatch) {
-                            let messageType = 'rx';
-                            if (line.includes('sync beacon')) messageType = 'beacon';
-                            else if (line.includes('Join request')) messageType = 'join';
-                            else if (line.includes('control')) messageType = 'control';
+                            // Try to infer message type from context
+                            let messageTypeInfo = { name: 'UNKNOWN', category: 'unknown', cssClass: 'rx' };
+                            
+                            if (line.includes('sync beacon')) {
+                                messageTypeInfo = getMessageTypeInfo(MessageType.SYNC_BEACON, 'received');
+                            } else if (line.includes('Join request')) {
+                                messageTypeInfo = getMessageTypeInfo(MessageType.JOIN_REQUEST, 'received');
+                            } else if (line.includes('routing table')) {
+                                messageTypeInfo = getMessageTypeInfo(MessageType.ROUTE_TABLE, 'received');
+                            } else if (line.includes('control')) {
+                                messageTypeInfo = { name: 'CONTROL', category: 'control', cssClass: 'control-rx' };
+                            }
                             
                             // Add reception indicator on receiver node
                             this.messages.push({
                                 timestamp,
                                 from: receivedMatch[1],
                                 to: receivedMatch[2],
-                                type: messageType,
+                                type: messageTypeInfo.cssClass,
+                                typeName: messageTypeInfo.name,
+                                category: messageTypeInfo.category,
                                 nodeId: receivedMatch[2], // Node that received the message
                                 direction: 'received'
                             });
@@ -652,30 +957,58 @@
                 indicator.style.left = `${left}px`;
                 indicator.style.width = `${width}px`;
                 
-                // Add message type indicator
+                // Add message type indicator based on the actual message type name
                 const typeMap = {
                     'tx': 'TX',
                     'rx': 'RX',
                     'beacon': 'B',
                     'control': 'C',
-                    'join': 'J'
+                    'join': 'J',
+                    'routing': 'R',
+                    'system': 'S',
+                    'unknown': '?'
                 };
                 
-                const displayText = typeMap[message.type] || '?';
+                // Use the typeName if available, otherwise fall back to type
+                let displayText = '?';
+                if (message.typeName) {
+                    // Create shorter display text from typeName
+                    switch (message.typeName) {
+                        case 'SYNC_BEACON': displayText = 'B'; break;
+                        case 'JOIN_REQUEST': 
+                        case 'JOIN_RESPONSE': displayText = 'J'; break;
+                        case 'ROUTE_TABLE': displayText = 'R'; break;
+                        case 'DATA': displayText = 'D'; break;
+                        case 'ACK': displayText = 'A'; break;
+                        case 'PING': displayText = 'P'; break;
+                        case 'PONG': displayText = 'P'; break;
+                        case 'HELLO': displayText = 'H'; break;
+                        case 'SYNC': displayText = 'S'; break;
+                        case 'SLOT_REQUEST': 
+                        case 'SLOT_ALLOCATION': displayText = 'S'; break;
+                        default: displayText = typeMap[message.type] || '?';
+                    }
+                } else {
+                    displayText = typeMap[message.type] || '?';
+                }
                 if (width > 15) {
                     indicator.textContent = displayText;
                 }
                 
-                // Enhanced tooltip with message details
+                // Enhanced tooltip with detailed message type information
                 const direction = message.direction || 'unknown';
                 const directionIcon = direction === 'transmitted' ? '📤' : 
                                     direction === 'received' ? '📥' : '📊';
                 
-                const messageInfo = `🔸 Message: ${message.type.toUpperCase()} (${direction})
+                const typeName = message.typeName || message.type.toUpperCase();
+                const category = message.category || 'unknown';
+                
+                const messageInfo = `🔸 Message: ${typeName} (${category})
 📅 Time: ${message.timestamp}ms
 📤 From: 0x${message.from}
 📥 To: 0x${message.to}
 ${directionIcon} Direction: ${direction}
+📂 Category: ${category}
 📊 Relative: ${(message.timestamp - this.timeRange.start).toFixed(1)}ms from start`;
                 
                 indicator.title = messageInfo;
@@ -719,13 +1052,24 @@ ${directionIcon} Direction: ${direction}
                     const directionIcon = direction === 'transmitted' ? '📤' : 
                                         direction === 'received' ? '📥' : '📊';
                     
+                    const typeName = msg.typeName || msg.type.toUpperCase();
+                    const category = msg.category || 'unknown';
+                    const categoryIcon = {
+                        'data': '📊',
+                        'control': '⚙️',
+                        'routing': '🗺️',
+                        'system': '🔧',
+                        'unknown': '❓'
+                    }[category] || '❓';
+                    
                     msgDiv.innerHTML = `
                         <div class="message-time">${msg.timestamp}ms</div>
                         <div class="message-content">
                             <span class="message-from">0x${msg.from}</span> 
                             → 
                             <span class="message-to">0x${msg.to}</span>
-                            <span style="margin-left: 10px; color: #7f8c8d;">${msg.type}</span>
+                            <span style="margin-left: 10px; color: #2c3e50; font-weight: bold;">${typeName}</span>
+                            <span style="margin-left: 5px; color: #7f8c8d;">${categoryIcon} ${category}</span>
                             <span style="margin-left: 5px; color: #7f8c8d;">${directionIcon} ${direction}</span>
                         </div>
                     `;
@@ -830,6 +1174,21 @@ ${directionIcon} Direction: ${direction}
             analyzer.timeWindowEnd = analyzer.timeRange.end;
             
             analyzer.renderTimeline();
+        }
+
+        function toggleLegend() {
+            const content = document.getElementById('legendContent');
+            const icon = document.getElementById('toggleIcon');
+            
+            if (content.classList.contains('show')) {
+                content.classList.remove('show');
+                icon.classList.remove('rotated');
+                icon.textContent = '▼';
+            } else {
+                content.classList.add('show');
+                icon.classList.add('rotated');
+                icon.textContent = '▲';
+            }
         }
     </script>
 </body>

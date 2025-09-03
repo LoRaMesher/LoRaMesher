@@ -188,9 +188,8 @@ TEST_F(SyncBeaconMessageTest, CreateForwardedFromOriginal) {
     // Verify hop count incremented
     EXPECT_EQ(forwarded_opt->GetHopCount(), 1);
 
-    // Verify propagation delay updated (original 50ms + processing 25ms + guard 50ms)
-    EXPECT_EQ(forwarded_opt->GetPropagationDelay(),
-              50 + processing_delay + guard_time_ms);
+    // Verify propagation delay updated (original 50ms + processing 25ms)
+    EXPECT_EQ(forwarded_opt->GetPropagationDelay(), 50 + processing_delay);
 }
 
 /**

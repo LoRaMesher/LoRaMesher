@@ -223,17 +223,11 @@ TEST_F(SuperframeServiceSynchronizeWithTest, BasicSynchronization) {
     ASSERT_TRUE(service_->StartSuperframe().IsSuccess());
 
     // Test basic synchronization
-    // If external node is at slot 3 and its slot started at time 1000ms
-    // The external superframe should have started at 1000 - (3 * 100) = 700ms
-    uint32_t external_slot_start_time = 1000;
+    // If external node is at slot 3 and its slot started at time (x)ms
     uint16_t external_slot = 3;
     uint32_t slot_duration = 100;
-
-    // Calculate expected superframe start time
-    uint32_t expected_superframe_start =
-        external_slot_start_time - (external_slot * slot_duration);
-    EXPECT_EQ(expected_superframe_start, 700)
-        << "Expected calculation verification failed";
+    uint32_t external_slot_start_time =
+        GetRTOS().getTickCount() - external_slot * slot_duration;
 
     auto result =
         service_->SynchronizeWith(external_slot_start_time, external_slot);
@@ -254,7 +248,7 @@ TEST_F(SuperframeServiceSynchronizeWithTest, BasicSynchronization) {
     // Calculate what the current slot should be based on the synchronized timing
     uint32_t current_time = GetRTOS().getTickCount();
     uint32_t time_since_superframe_start =
-        current_time - expected_superframe_start;
+        current_time - external_slot_start_time;
     uint32_t superframe_duration =
         10 * slot_duration;  // 10 slots * 100ms = 1000ms
     uint32_t time_in_current_superframe =
