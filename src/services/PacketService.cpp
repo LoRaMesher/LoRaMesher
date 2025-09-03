@@ -136,7 +136,7 @@ ControlPacket* PacketService::createEmptyControlPacket(uint16_t dst, uint16_t sr
     return packet;
 }
 
-DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t type, uint8_t* payload, uint8_t payloadSize) {
+DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t type, const uint8_t* payload, uint8_t payloadSize) {
     DataPacket* packet = PacketFactory::createPacket<DataPacket>(payload, payloadSize);
     packet->dst = dst;
     packet->src = src;
