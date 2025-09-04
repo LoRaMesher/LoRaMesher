@@ -28,17 +28,48 @@ SuperframeService::SuperframeService(uint16_t total_slots,
       service_start_time_(0),
       update_interval_ms_(DEFAULT_UPDATE_INTERVAL_MS),
       update_task_handle_(nullptr),
+      notification_queue_(nullptr),
       superframes_completed_(0),
       total_timing_error_ms_(0),
       timing_samples_(0),
       last_sync_time_(0),
-      sync_drift_accumulator_(0) {}
+      sync_drift_accumulator_(0) {
+    // Create notification queue for update task
+    notification_queue_ = GetRTOS().CreateQueue(
+        NOTIFICATION_QUEUE_SIZE, sizeof(SuperframeNotificationType));
+    if (!notification_queue_) {
+        LOG_ERROR("Failed to create superframe notification queue");
+    }
+}
 
 SuperframeService::~SuperframeService() {
     // Make sure we stop the service and task
-    // Note: StopSuperframe() not called in destructor to avoid virtual function call during destruction
     LOG_DEBUG("SuperframeService destructor called");
+
+    // First stop the superframe to set is_running_ = false
+    // This will cause the UpdateTaskFunction loop to exit
+    if (is_running_) {
+        is_running_ = false;
+        is_synchronized_ = false;
+
+        // Wake up the task if it's blocked in ReceiveFromQueue by sending a notification
+        // This ensures the task sees is_running_ = false quickly
+        if (notification_queue_) {
+            SuperframeNotificationType stop_notification =
+                SuperframeNotificationType::STARTED;
+            GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
+        }
+    }
+
+    // Now safely delete the task (it should exit its loop due to is_running_ = false)
     DeleteUpdateTask();
+
+    // Clean up notification queue after task is safely deleted
+    if (notification_queue_) {
+        GetRTOS().DeleteQueue(notification_queue_);
+        notification_queue_ = nullptr;
+    }
+
     LOG_DEBUG("SuperframeService destructor completed");
 }
 
@@ -74,6 +105,9 @@ Result SuperframeService::StartSuperframe() {
 
     LOG_INFO("Superframe service started - %d slots, %dms per slot",
              total_slots_, slot_duration_ms_);
+
+    // Notify update task that superframe has started
+    NotifyUpdateTask(SuperframeNotificationType::STARTED);
 
     return Result::Success();
 }
@@ -127,6 +161,9 @@ Result SuperframeService::HandleNewSuperframe() {
         superframe_callback_(0, true);  // Slot 0, new superframe
     }
 
+    // Notify update task that a new frame has started
+    NotifyUpdateTask(SuperframeNotificationType::NEW_FRAME);
+
     return Result::Success();
 }
 
@@ -177,6 +214,9 @@ Result SuperframeService::UpdateSuperframeConfig(uint16_t total_slots,
         slot_duration_ms_ = slot_duration_ms;
     }
 
+    // Notify update task of configuration changes (timing recalculation needed)
+    NotifyUpdateTask(SuperframeNotificationType::CONFIG_CHANGED);
+
     if (update_superframe) {
         Result result = HandleNewSuperframe();
         if (!result.IsSuccess()) {
@@ -201,11 +241,11 @@ Result SuperframeService::StartSuperframeDiscovery() {
                                   DEFAULT_SLOT_DURATION_MS);
 }
 
-uint32_t SuperframeService::GetSuperframeDuration() {
+uint32_t SuperframeService::GetSuperframeDuration() const {
     return total_slots_ * slot_duration_ms_;
 }
 
-uint32_t SuperframeService::GetSuperframeEndTime() {
+uint32_t SuperframeService::GetSuperframeEndTime() const {
     // Calculate end time based on start time and duration
     return superframe_start_time_ + GetSuperframeDuration();
 }
@@ -298,13 +338,14 @@ uint32_t SuperframeService::GetTimeRemainingInSlot() {
     }
 
     uint32_t current_time = GetRTOS().getTickCount();
-    uint32_t slot_end_time = GetSuperframeEndTime();
+    uint16_t current_slot = GetCurrentSlot();
+    uint32_t current_slot_end_time = GetSlotEndTime(current_slot);
 
-    if (current_time >= slot_end_time) {
+    if (current_time >= current_slot_end_time) {
         return 0;
     }
 
-    return slot_end_time - current_time;
+    return current_slot_end_time - current_time;
 }
 
 uint32_t SuperframeService::GetTimeInSlot() const {
@@ -404,6 +445,9 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
 
     LOG_INFO("Synchronized superframe with external timing (drift: %dms)",
              drift);
+
+    // Notify update task of synchronization update (immediate recalculation needed)
+    NotifyUpdateTask(SuperframeNotificationType::SYNC_UPDATED);
 
     return Result::Success();
 }
@@ -557,15 +601,52 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         rtos.SetCurrentTaskNodeAddress(address_str);
     }
 
-    // Task loop
-    while (!rtos.ShouldStopOrPause()) {
-        // TODO: Do not update every tick, implement a more efficient timing mechanism
+    // Task loop with queue-based efficient waiting
+    SuperframeNotificationType notification;
+    while (!rtos.ShouldStopOrPause() && service->is_running_) {
+        // Double-check that the notification queue is still valid
+        if (!service->notification_queue_) {
+            LOG_DEBUG("UpdateTask: notification queue deleted, exiting");
+            break;
+        }
 
-        // Update superframe state
-        service->UpdateSuperframeState();
+        // Calculate timeout until next meaningful event (slot transition or superframe end)
+        uint32_t timeout_ms = service->CalculateNextEventTimeout();
 
-        // Sleep for update interval
-        rtos.YieldTask();
+        // Wait for notification or timeout
+        auto queue_result = rtos.ReceiveFromQueue(service->notification_queue_,
+                                                  &notification, timeout_ms);
+
+        if (queue_result == os::QueueResult::kOk) {
+            // Received notification - handle based on notification type
+            LOG_DEBUG("UpdateTask received notification: %d",
+                      static_cast<int>(notification));
+
+            switch (notification) {
+                case SuperframeNotificationType::CONFIG_CHANGED:
+                case SuperframeNotificationType::SYNC_UPDATED:
+                case SuperframeNotificationType::STARTED:
+                    // These notifications only require timeout recalculation, not state updates
+                    LOG_DEBUG(
+                        "Notification requires timeout recalculation only");
+                    // Timeout will be recalculated in next loop iteration
+                    break;
+
+                case SuperframeNotificationType::NEW_FRAME:
+                    // New frame may require state update to handle slot transitions
+                    LOG_DEBUG(
+                        "New frame notification - checking state transitions");
+                    service->UpdateSuperframeState();
+                    break;
+            }
+        } else if (queue_result == os::QueueResult::kTimeout) {
+            // Natural timeout - time for next slot/superframe transition
+            LOG_DEBUG(
+                "UpdateTask timeout - checking for slot/frame transitions");
+            // Always update state on natural timeout (slot/frame boundary reached)
+            service->UpdateSuperframeState();
+        }
+        // For other queue results (error, empty), continue with normal processing
     }
 
     // Task cleanup - don't self-delete to avoid race condition with destructor
@@ -608,6 +689,58 @@ void SuperframeService::UpdateTimingStats() {
 
     total_timing_error_ms_ += timing_error;
     timing_samples_++;
+}
+
+uint32_t SuperframeService::CalculateNextEventTimeout() const {
+    if (!is_running_) {
+        return MAX_DELAY;  // Not running, sleep indefinitely
+    }
+
+    uint32_t current_time = GetRTOS().getTickCount();
+
+    // Calculate time until next slot boundary
+    uint16_t current_slot = GetCurrentSlot();
+    uint32_t current_slot_start =
+        superframe_start_time_ + (current_slot * slot_duration_ms_);
+    uint32_t next_slot_time = current_slot_start + slot_duration_ms_;
+
+    // Calculate time until superframe end
+    uint32_t superframe_end_time = GetSuperframeEndTime();
+
+    // Choose the earlier of next slot or superframe end
+    uint32_t next_event_time = std::min(next_slot_time, superframe_end_time);
+
+    // If we're past the event time, return minimum delay to check immediately
+    if (current_time >= next_event_time) {
+        return 1;  // 1ms minimum to avoid busy waiting
+    }
+
+    uint32_t timeout = next_event_time - current_time;
+
+    // Cap timeout to reasonable maximum to ensure periodic updates
+    const uint32_t MAX_TIMEOUT_MS = 5000;  // 5 seconds maximum sleep
+    return std::min(timeout, MAX_TIMEOUT_MS);
+}
+
+void SuperframeService::NotifyUpdateTask(
+    SuperframeNotificationType notification_type) {
+    if (!notification_queue_) {
+        LOG_DEBUG("Notification queue not initialized, skipping notification");
+        return;
+    }
+
+    auto& rtos = GetRTOS();
+    auto result = rtos.SendToQueue(notification_queue_, &notification_type,
+                                   0);  // Non-blocking send
+
+    if (result != os::QueueResult::kOk) {
+        LOG_WARNING(
+            "Failed to send notification to update task queue (type: %d)",
+            static_cast<int>(notification_type));
+    } else {
+        LOG_DEBUG("Sent notification to update task (type: %d)",
+                  static_cast<int>(notification_type));
+    }
 }
 
 }  // namespace lora_mesh

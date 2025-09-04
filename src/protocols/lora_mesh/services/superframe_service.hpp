@@ -19,6 +19,16 @@ namespace protocols {
 namespace lora_mesh {
 
 /**
+ * @brief Notification types for superframe update queue
+ */
+enum class SuperframeNotificationType : uint8_t {
+    STARTED = 1,     ///< Superframe started, begin timer calculations
+    NEW_FRAME,       ///< New frame cycle started, recalculate timeout
+    CONFIG_CHANGED,  ///< Configuration changed, recalculate timeout
+    SYNC_UPDATED     ///< External sync updated, immediate recalculation
+};
+
+/**
   * @brief Callback type for superframe events
   */
 using SuperframeCallback =
@@ -116,7 +126,7 @@ class SuperframeService : public ISuperframeService {
       * 
       * @return uint32_t Duration of the superframe in milliseconds
       */
-    uint32_t GetSuperframeDuration();
+    uint32_t GetSuperframeDuration() const;
 
     /**
      * @brief Get Superframe Discovery timeout
@@ -316,7 +326,27 @@ class SuperframeService : public ISuperframeService {
      * 
      * @return uint32_t End time of the superframe in milliseconds
      */
-    uint32_t GetSuperframeEndTime();
+    uint32_t GetSuperframeEndTime() const;
+
+    /**
+     * @brief Calculate timeout until next significant event
+     * 
+     * Calculates milliseconds until next slot transition or superframe end,
+     * whichever comes first. Used by UpdateTaskFunction for efficient sleeping.
+     * 
+     * @return uint32_t Milliseconds to next event, or MAX_DELAY if not running
+     */
+    uint32_t CalculateNextEventTimeout() const;
+
+    /**
+     * @brief Notify update task of immediate processing requirement
+     * 
+     * Sends notification to update task queue to wake it up immediately
+     * for configuration changes or external events.
+     * 
+     * @param notification_type Type of notification to send
+     */
+    void NotifyUpdateTask(SuperframeNotificationType notification_type);
 
     uint16_t total_slots_ = 0;  ///< Total number of slots in the superframe
     uint32_t slot_duration_ms_ = 0;  ///< Duration of each slot in milliseconds
@@ -336,6 +366,7 @@ class SuperframeService : public ISuperframeService {
     // Task management
     uint32_t update_interval_ms_;
     os::TaskHandle_t update_task_handle_;
+    os::QueueHandle_t notification_queue_;
 
     // Statistics
     mutable uint32_t superframes_completed_;
@@ -348,6 +379,7 @@ class SuperframeService : public ISuperframeService {
     static constexpr uint32_t DEFAULT_UPDATE_INTERVAL_MS = 20;
     static constexpr uint32_t TASK_STACK_SIZE = 2048;
     static constexpr uint32_t TASK_PRIORITY = 3;
+    static constexpr uint32_t NOTIFICATION_QUEUE_SIZE = 8;
 };
 
 }  // namespace lora_mesh
