@@ -526,8 +526,6 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     }
 
     LOG_DEBUG("RadioLibRadio event processing task ending");
-    radio->processing_task_ = nullptr;
-    GetRTOS().DeleteTask(nullptr);
 }
 
 }  // namespace radio
