@@ -792,8 +792,6 @@ Result NetworkService::CreateNetwork() {
 
     LOG_INFO("Created new network as manager 0x%04X", node_address_);
 
-    superframe_service_->SetSynchronized(true);
-
     // Set ourselves as network manager
     SetNetworkManager(node_address_);
 
@@ -802,6 +800,8 @@ Result NetworkService::CreateNetwork() {
     last_sync_time_ = GetRTOS().getTickCount();
     network_found_ = true;
     network_creator_ = true;
+
+    superframe_service_->SetSynchronized(true);
 
     // Update state
     SetState(ProtocolState::NETWORK_MANAGER);
@@ -1046,7 +1046,7 @@ uint8_t NetworkService::CalculateComprehensiveLinkQuality(
     // Get base reception statistics
     uint8_t reception_ratio = node_it->link_stats.CalculateQuality();
 
-    // Signal strength would come from radio hardware
+    // TODO: Signal strength would come from radio hardware
     uint8_t signal_strength = 200;  // Placeholder
 
     // Calculate stability
@@ -2323,12 +2323,12 @@ Result NetworkService::HandleSuperframeStart() {
     } else if (state_ == ProtocolState::JOINING) {
         // In joining state, the previous message has not been response correctly.
         // Send again a JoinRequest.
-        Result join_req_result =
-            SendJoinRequest(network_manager_, config_.default_data_slots);
-        if (!join_req_result) {
-            LOG_ERROR("Failed to resend JoinRequest: %s",
-                      join_req_result.GetErrorMessage().c_str());
-        }
+        // Result join_req_result =
+        //     SendJoinRequest(network_manager_, config_.default_data_slots);
+        // if (!join_req_result) {
+        //     LOG_ERROR("Failed to resend JoinRequest: %s",
+        //               join_req_result.GetErrorMessage().c_str());
+        // }
 
     } else {
         // TODO: If no received sync beacon for x times set to FaultRecovery
