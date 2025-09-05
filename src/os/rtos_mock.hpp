@@ -42,6 +42,9 @@ class TaskTerminationException : public std::exception {
  * @brief Mock implementation of RTOS interface compatible with FreeRTOS style tasks
  */
 class RTOSMock : public RTOS {
+   private:
+    struct TaskInfo;  // Forward declaration
+
    public:
     /**
      * @brief Struct representing a timer callback registration
@@ -330,6 +333,16 @@ class RTOSMock : public RTOS {
             task_info->resume_ack_cv.notify_all();  // For resume acknowledgment
             task_info->delay_cv.notify_all();       // For delay() calls
 
+            // CRITICAL: Notify all queue condition variables the task is waiting on
+            {
+                std::lock_guard<std::mutex> lock(task_info->mutex);
+                for (auto* queue_cv : task_info->waiting_on_queue_cvs) {
+                    if (queue_cv) {
+                        queue_cv->notify_all();  // For ReceiveFromQueue calls
+                    }
+                }
+            }
+
             // LOG_DEBUG(
             //     "MOCK: Notified all condition variables for task '%s' deletion",
             //     task_name.c_str());
@@ -385,7 +398,7 @@ class RTOSMock : public RTOS {
         }
 
         delete thread;
-        // LOG_DEBUG("MOCK: Task '%s' deleted", task_name.c_str());
+        LOG_DEBUG("MOCK: Task '%s' deleted", task_name.c_str());
     }
 
     /**
@@ -463,6 +476,16 @@ class RTOSMock : public RTOS {
             .notify_all();  // For WaitForNotify - THIS WAS MISSING!
         task_info->suspend_ack_cv.notify_all();  // For suspend acknowledgment
         task_info->resume_ack_cv.notify_all();   // For resume acknowledgment
+
+        // CRITICAL: Notify all queue condition variables the task is waiting on
+        {
+            std::lock_guard<std::mutex> lock(task_info->mutex);
+            for (auto* queue_cv : task_info->waiting_on_queue_cvs) {
+                if (queue_cv) {
+                    queue_cv->notify_all();  // For ReceiveFromQueue calls
+                }
+            }
+        }
 
         LOG_DEBUG(
             "MOCK: Notified all condition variables for task '%s' suspension",
@@ -570,6 +593,17 @@ class RTOSMock : public RTOS {
         // Notify the task to wake up - notify ALL condition variables
         task_info->cv.notify_all();         // For ShouldStopOrPause
         task_info->notify_cv.notify_all();  // For WaitForNotify - CRITICAL!
+
+        // CRITICAL: Notify all queue condition variables the task is waiting on
+        {
+            std::lock_guard<std::mutex> lock(task_info->mutex);
+            for (auto* queue_cv : task_info->waiting_on_queue_cvs) {
+                if (queue_cv) {
+                    queue_cv->notify_all();  // For ReceiveFromQueue calls
+                }
+            }
+        }
+
         // LOG_DEBUG(
         //     "MOCK: Task '%s' resume signal sent to all condition variables",
         //     task_name.c_str());
@@ -670,7 +704,7 @@ class RTOSMock : public RTOS {
             // Wait with timeout to prevent indefinite blocking
             // Use our waitFor helper that respects virtual time
             bool status = waitFor(
-                task_info->cv, lock, 500 /* 500ms timeout */, [task_info]() {
+                task_info->cv, lock, 500000 /* 500ms timeout */, [task_info]() {
                     return !task_info->suspended || task_info->stop_requested;
                 });
 
@@ -773,13 +807,106 @@ class RTOSMock : public RTOS {
                 return QueueResult::kEmpty;
             }
 
-            // Use our waitFor helper that respects virtual time
-            bool success = waitFor(q->notEmpty, lock, timeout,
-                                   [q]() { return !q->data.empty(); });
+            // Check if this is a registered task or non-task thread (e.g., test thread)
+            std::thread::id current_thread_id = std::this_thread::get_id();
+            TaskInfo* task_info = nullptr;
+            bool is_registered_task = false;
 
-            if (!success) {
-                return QueueResult::kTimeout;
+            {
+                std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
+                for (auto& [thread_ptr, info] : tasks_) {
+                    if (info.thread_id == current_thread_id) {
+                        task_info = &info;
+                        is_registered_task = true;
+                        break;
+                    }
+                }
             }
+
+            if (is_registered_task) {
+                // Check if the task was deleted while waiting
+                if (isCurrentTaskDeleted()) {
+                    return QueueResult::kError;
+                }
+
+                // Register that this task is waiting on this queue's condition variable
+                registerQueueCV(&q->notEmpty);
+
+                // Use task-aware waitFor with suspension detection
+                bool initial_suspended_state = task_info->suspended;
+                bool initial_stop_requested = task_info->stop_requested;
+
+                bool success = waitFor(
+                    q->notEmpty, lock, timeout,
+                    [this, q, current_thread_id, initial_suspended_state,
+                     initial_stop_requested]() {
+                        // Check if queue has data (normal case)
+                        if (!q->data.empty()) {
+                            return true;
+                        }
+
+                        // Check task state with proper locking
+                        std::lock_guard<std::timed_mutex> tasks_lock(
+                            tasksMutex_);
+                        for (const auto& [thread_ptr, task_info] : tasks_) {
+                            if (task_info.thread_id == current_thread_id) {
+                                // Return true if:
+                                // 1. Task is deleted/stop requested
+                                // 2. Suspension state changed (got suspended or resumed)
+                                return task_info.stop_requested ||
+                                       (task_info.suspended !=
+                                        initial_suspended_state);
+                            }
+                        }
+
+                        // Task not found, assume deleted
+                        return true;
+                    });
+
+                // Unregister the condition variable after waiting
+                unregisterQueueCV(&q->notEmpty);
+
+                // Check if the task was deleted while waiting
+                if (isCurrentTaskDeleted()) {
+                    return QueueResult::kError;
+                }
+
+                if (!success) {
+                    return QueueResult::kTimeout;
+                }
+            } else {
+                // Non-task thread (e.g., test thread) - use simple timeout wait
+                bool success = waitFor(q->notEmpty, lock, timeout, [q]() {
+                    // Simple predicate: just check if queue has data
+                    return !q->data.empty();
+                });
+
+                if (!success) {
+                    return QueueResult::kTimeout;
+                }
+            }
+        }
+
+        // Check again if task was deleted before proceeding (only for registered tasks)
+        std::thread::id current_thread_id = std::this_thread::get_id();
+        bool is_registered_task = false;
+        {
+            std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
+            for (const auto& [thread_ptr, info] : tasks_) {
+                if (info.thread_id == current_thread_id) {
+                    is_registered_task = true;
+                    break;
+                }
+            }
+        }
+
+        if (is_registered_task && isCurrentTaskDeleted()) {
+            return QueueResult::kError;
+        }
+
+        // Check if data is available
+        if (q->data.empty()) {
+            return QueueResult::kEmpty;
         }
 
         auto& item = q->data.front();
@@ -1556,6 +1683,79 @@ class RTOSMock : public RTOS {
         return thread_local_node_address_;
     }
 
+    /**
+     * @brief Find the current task's TaskInfo by thread ID (lock-free version)
+     * @param current_id The thread ID to search for
+     * @param tasks_lock_held Whether tasksMutex_ is already held by caller
+     * @return Pointer to TaskInfo or nullptr if not found
+     */
+    TaskInfo* findCurrentTaskInfoUnsafe(std::thread::id current_id) {
+        for (auto& [thread_ptr, task_info] : tasks_) {
+            if (task_info.thread_id == current_id) {
+                return &task_info;
+            }
+        }
+        return nullptr;
+    }
+
+    /**
+     * @brief Register a queue condition variable that the current task is waiting on
+     * @param cv Pointer to the condition variable
+     * @return true if successfully registered, false otherwise
+     */
+    bool registerQueueCV(std::condition_variable* cv) {
+        if (!cv)
+            return false;
+
+        std::thread::id current_id = std::this_thread::get_id();
+        TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
+        if (!task_info) {
+            return false;
+        }
+
+        task_info->waiting_on_queue_cvs.push_back(cv);
+        return true;
+    }
+
+    /**
+     * @brief Unregister a queue condition variable that the current task was waiting on
+     * @param cv Pointer to the condition variable
+     * @return true if successfully unregistered, false otherwise
+     */
+    bool unregisterQueueCV(std::condition_variable* cv) {
+        if (!cv)
+            return false;
+
+        std::thread::id current_id = std::this_thread::get_id();
+        TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
+        if (!task_info)
+            return false;
+
+        auto& cvs = task_info->waiting_on_queue_cvs;
+        auto it = std::find(cvs.begin(), cvs.end(), cv);
+        if (it != cvs.end()) {
+            cvs.erase(it);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * @brief Check if the current task has been marked for deletion
+     * @return true if task should stop, false otherwise
+     */
+    bool isCurrentTaskDeleted() {
+        std::thread::id current_id = std::this_thread::get_id();
+        TaskInfo* task_info = findCurrentTaskInfoUnsafe(current_id);
+        if (!task_info) {
+            LOG_ERROR("Current task not found");
+            return false;  // If we can't find the task, assume it's not deleted or it is not created.
+        }
+
+        // Quick check without locking the task mutex to avoid deadlock
+        return task_info->stop_requested;
+    }
+
     struct TaskInfo {
         std::string name;
         uint32_t stack_size = 0;
@@ -1584,6 +1784,9 @@ class RTOSMock : public RTOS {
 
         // For logging context
         std::string node_address;
+
+        // For tracking queue condition variables the task is waiting on
+        std::vector<std::condition_variable*> waiting_on_queue_cvs;
     };
 
     TimeMode timeMode_;       ///< Current time mode (real or virtual)

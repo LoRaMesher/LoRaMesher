@@ -15,6 +15,7 @@ TEST(RTOSMockTest, ImplementArduinoTests) {
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <thread>
 #include "os/rtos_mock.hpp"
 
@@ -1052,6 +1053,322 @@ TEST_F(RTOSMockTest, FocusedSuspendResumeInWaitForNotify) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     rtosInstance->DeleteTask(taskHandle);
     delete params;
+}
+
+/**
+ * @brief Test ReceiveFromQueue task deletion issue - reproduces the superframe_service error
+ * 
+ * This test simulates the scenario where a task is waiting in ReceiveFromQueue 
+ * and gets deleted. The fix should ensure ReceiveFromQueue returns kError instead
+ * of kOk after timeout, preventing the deleted task from continuing execution.
+ */
+TEST_F(RTOSMockTest, ReceiveFromQueueTaskDeletionTest) {
+    // Setup test parameters
+    struct TestParams {
+        QueueHandle_t queue;
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> inReceiveFromQueue{false};
+        std::atomic<QueueResult> receiveResult{QueueResult::kTimeout};
+        std::atomic<bool> taskContinuedAfterReceive{false};
+        std::atomic<bool> shouldExit{false};
+        std::atomic<bool> taskCompleted{
+            false};  // New: signals when task is completely done
+    };
+
+    auto* params = new TestParams();
+    TaskHandle_t taskHandle;
+
+    // Create a queue for testing - use GetRTOS() consistently
+    params->queue = GetRTOS().CreateQueue(5, sizeof(int));
+    ASSERT_NE(params->queue, nullptr);
+
+    // Task function that waits on ReceiveFromQueue
+    auto taskFunction = [](void* param) {
+        auto* testParams = static_cast<TestParams*>(param);
+        testParams->taskStarted.store(true);
+
+        try {
+            while (!GetRTOS().ShouldStopOrPause() &&
+                   !testParams->shouldExit.load()) {
+                // Signal that we're about to enter ReceiveFromQueue
+                testParams->inReceiveFromQueue.store(true);
+
+                int receivedData = 0;
+                // This should block and wait - simulating superframe_service behavior
+                auto result =
+                    GetRTOS().ReceiveFromQueue(testParams->queue, &receivedData,
+                                               5000 /* 5 second timeout */);
+
+                // Store the result
+                testParams->receiveResult.store(result);
+
+                // If we get kError, the task should exit cleanly without processing
+                if (result == QueueResult::kError) {
+                    break;
+                }
+
+                // Signal we continued after ReceiveFromQueue (only for non-error cases)
+                testParams->taskContinuedAfterReceive.store(true);
+
+                // If we get kOk, process the data (simulating normal operation)
+                if (result == QueueResult::kOk) {
+                    // Do some work...
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                // Small delay to prevent tight loop on timeout
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        } catch (const std::exception& e) {
+            // Task should exit cleanly when deleted
+            std::cout << "Task caught exception (expected): " << e.what()
+                      << std::endl;
+        }
+
+        // Signal that the task has completely finished
+        testParams->taskCompleted.store(true);
+    };
+
+    // Create the task - use GetRTOS() consistently
+    bool created = GetRTOS().CreateTask(
+        taskFunction, "ReceiveFromQueueTestTask", 4096, params, 1, &taskHandle);
+    ASSERT_TRUE(created);
+    ASSERT_NE(taskHandle, nullptr);
+
+    // Wait for task to start
+    int attempts = 0;
+    while (!params->taskStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(params->taskStarted.load());
+
+    // Wait for task to enter ReceiveFromQueue
+    attempts = 0;
+    while (!params->inReceiveFromQueue.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(params->inReceiveFromQueue.load());
+
+    // Give the task a moment to actually enter the ReceiveFromQueue wait state
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    std::cout << "Task is now waiting in ReceiveFromQueue, deleting task..."
+              << std::endl;
+
+    // Signal to the task to exit
+    params->shouldExit.store(true);
+
+    // Now delete the task while it's waiting in ReceiveFromQueue
+    // This is the critical test - the task should NOT continue with kOk result
+    GetRTOS().DeleteTask(taskHandle);
+    taskHandle = nullptr;  // Prevent further use
+
+    // Wait for the task to completely finish before checking results
+    // This ensures the task thread has stopped accessing params
+    int completion_attempts = 0;
+    while (!params->taskCompleted.load() && completion_attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        completion_attempts++;
+    }
+
+    // Ensure the task actually completed
+    EXPECT_TRUE(params->taskCompleted.load())
+        << "Task should have completed after deletion";
+
+    // Check the results
+    std::cout << "ReceiveFromQueue result: "
+              << static_cast<int>(params->receiveResult.load()) << std::endl;
+    std::cout << "Task continued after receive: "
+              << params->taskContinuedAfterReceive.load() << std::endl;
+
+    // The key assertion: ReceiveFromQueue should return kError, not kOk or kTimeout
+    // when the task is deleted while waiting
+    if (params->receiveResult.load() == QueueResult::kOk) {
+        FAIL() << "BUG REPRODUCED: ReceiveFromQueue returned kOk after task "
+                  "deletion! "
+               << "This would cause the superframe_service error.";
+    }
+
+    // With the fix, we expect kError when task is deleted
+    EXPECT_EQ(params->receiveResult.load(), QueueResult::kError)
+        << "ReceiveFromQueue should return kError when task is deleted";
+
+    // The task should not continue processing after being deleted
+    EXPECT_FALSE(params->taskContinuedAfterReceive.load())
+        << "Task should not continue execution after deletion";
+
+    // Clean up - queue first, then params (task is already completed)
+    GetRTOS().DeleteQueue(params->queue);
+    delete params;
+
+    std::cout << "ReceiveFromQueue task deletion test completed." << std::endl;
+}
+
+/**
+ * @brief Test ReceiveFromQueue task suspended issue
+ * 
+ * This test simulates the scenario where a task is setted suspended
+ * and multiple notifications are being made before resuming the task
+ */
+TEST_F(RTOSMockTest, ReceiveFromQueueTaskSuspended) {
+    // Setup test parameters
+    struct TestParams {
+        QueueHandle_t queue;
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> inReceiveFromQueue{false};
+        std::atomic<QueueResult> receiveResult{QueueResult::kTimeout};
+        std::atomic<uint8_t> taskContinuedAfterReceive{0};
+        std::atomic<bool> shouldExit{false};
+        std::atomic<bool> taskCompleted{
+            false};  // New: signals when task is completely done
+    };
+
+    auto* params = new TestParams();
+    TaskHandle_t taskHandle;
+
+    // Create a queue for testing - use GetRTOS() consistently
+    params->queue = GetRTOS().CreateQueue(5, sizeof(int));
+    ASSERT_NE(params->queue, nullptr);
+
+    // Task function that waits on ReceiveFromQueue
+    auto taskFunction = [](void* param) {
+        auto* testParams = static_cast<TestParams*>(param);
+        testParams->taskStarted.store(true);
+        uint8_t loops_num = 0;
+
+        try {
+            while (!GetRTOS().ShouldStopOrPause() &&
+                   !testParams->shouldExit.load()) {
+                // Signal that we're about to enter ReceiveFromQueue
+                testParams->inReceiveFromQueue.store(true);
+
+                int receivedData = 0;
+                // This should block and wait - simulating superframe_service behavior
+                auto result =
+                    GetRTOS().ReceiveFromQueue(testParams->queue, &receivedData,
+                                               5000 /* 5 second timeout */);
+
+                // Store the result
+                testParams->receiveResult.store(result);
+
+                // If we get kError, the task should exit cleanly without processing
+                if (result == QueueResult::kError) {
+                    break;
+                }
+
+                // If we get kOk, process the data (simulating normal operation)
+                if (result == QueueResult::kOk) {
+                    loops_num++;
+
+                    ASSERT_EQ(receivedData, loops_num)
+                        << "Received data should match sent data";
+
+                    // Signal we continued after ReceiveFromQueue (only for non-error cases)
+                    testParams->taskContinuedAfterReceive.store(loops_num);
+                    // Do some work...
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                // Small delay to prevent tight loop on timeout
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        } catch (const std::exception& e) {
+            // Task should exit cleanly when deleted
+            std::cout << "Task caught exception (expected): " << e.what()
+                      << std::endl;
+        }
+
+        // Signal that the task has completely finished
+        testParams->taskCompleted.store(true);
+    };
+
+    // Create the task - use GetRTOS() consistently
+    bool created = GetRTOS().CreateTask(
+        taskFunction, "ReceiveFromQueueTestTask", 4096, params, 1, &taskHandle);
+    ASSERT_TRUE(created);
+    ASSERT_NE(taskHandle, nullptr);
+
+    // Wait for task to start
+    int attempts = 0;
+    while (!params->taskStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(params->taskStarted.load());
+
+    // Wait for task to enter ReceiveFromQueue
+    attempts = 0;
+    while (!params->inReceiveFromQueue.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(params->inReceiveFromQueue.load());
+
+    EXPECT_TRUE(GetRTOS().SuspendTask(taskHandle));
+
+    int* sendData = new int[3]{1, 2, 3};
+
+    // Send multiple values into the queue:
+    EXPECT_TRUE(GetRTOS().SendToQueue(params->queue, &sendData[0], 0) ==
+                QueueResult::kOk);
+    EXPECT_TRUE(GetRTOS().SendToQueue(params->queue, &sendData[1], 0) ==
+                QueueResult::kOk);
+    EXPECT_TRUE(GetRTOS().SendToQueue(params->queue, &sendData[2], 0) ==
+                QueueResult::kOk);
+
+    delete[] sendData;
+
+    EXPECT_TRUE(GetRTOS().ResumeTask(taskHandle));
+
+    // Give the task a moment to actually enter the ReceiveFromQueue wait state
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Check if the task is still in the ReceiveFromQueue state
+    EXPECT_EQ(params->taskContinuedAfterReceive.load(), 3);
+
+    // Signal to the task to exit
+    params->shouldExit.store(true);
+
+    // Now delete the task while it's waiting in ReceiveFromQueue
+    // This is the critical test - the task should NOT continue with kOk result
+    GetRTOS().DeleteTask(taskHandle);
+    taskHandle = nullptr;  // Prevent further use
+
+    // Wait for the task to completely finish before checking results
+    // This ensures the task thread has stopped accessing params
+    int completion_attempts = 0;
+    while (!params->taskCompleted.load() && completion_attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        completion_attempts++;
+    }
+
+    // Ensure the task actually completed
+    EXPECT_TRUE(params->taskCompleted.load())
+        << "Task should have completed after deletion";
+
+    // Check the results
+    std::cout << "ReceiveFromQueue result: "
+              << static_cast<int>(params->receiveResult.load()) << std::endl;
+
+    // The key assertion: ReceiveFromQueue should return kError, not kOk or kTimeout
+    // when the task is deleted while waiting
+    if (params->receiveResult.load() == QueueResult::kOk) {
+        FAIL() << "BUG REPRODUCED: ReceiveFromQueue returned kOk after task "
+                  "deletion! "
+               << "This would cause the superframe_service error.";
+    }
+
+    // With the fix, we expect kError when task is deleted
+    EXPECT_EQ(params->receiveResult.load(), QueueResult::kError)
+        << "ReceiveFromQueue should return kError when task is deleted";
+
+    // Clean up - queue first, then params (task is already completed)
+    GetRTOS().DeleteQueue(params->queue);
+    delete params;
+
+    std::cout << "ReceiveFromQueue task deletion test completed." << std::endl;
 }
 
 #endif  // ARDUINO
