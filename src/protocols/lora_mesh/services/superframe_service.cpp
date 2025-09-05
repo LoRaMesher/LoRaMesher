@@ -81,15 +81,19 @@ Result SuperframeService::StartSuperframe() {
 
     // Initialize timing
     uint32_t current_time = GetRTOS().getTickCount();
+    // We cannot update this superframe since after the syncronization,
+    // we are setting this to start, and we do not want to update our
+    // superframe_start_time_.
     if (update_start_time_in_new_superframe) {
         superframe_start_time_ = current_time;
+        is_synchronized_ = true;  // Consider synchronized when starting
+        last_slot_ = 0xFFFF;
     }
+
     service_start_time_ = current_time;
     last_sync_time_ = current_time;
 
     is_running_ = true;
-    is_synchronized_ = true;  // Consider synchronized when starting
-    last_slot_ = 0xFFFF;
 
     // Create the update task
     if (update_task_handle_ != nullptr) {
@@ -123,7 +127,8 @@ Result SuperframeService::StopSuperframe() {
 
     // Stop the update task
     if (update_task_handle_) {
-        GetRTOS().SuspendTask(update_task_handle_);
+        GetRTOS().DeleteTask(update_task_handle_);
+        update_task_handle_ = nullptr;
     }
 
     LOG_INFO("Superframe service stopped after %d completed superframes",
@@ -134,19 +139,21 @@ Result SuperframeService::StopSuperframe() {
 
 Result SuperframeService::HandleNewSuperframe() {
     if (!is_running_) {
-        Result result = StartSuperframe();
-        if (!result) {
-            LOG_ERROR("Failed to start superframe");
-            return result;
-        }
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Superframe not running");
     }
 
     superframes_completed_++;
 
     // Update superframe start time
+    // We need this because, if it is not a manager this node should not update the superframe_start_time_ unless
+    // is from a syncronization node.
     if (update_start_time_in_new_superframe) {
         uint32_t current_time = GetRTOS().getTickCount();
         superframe_start_time_ = current_time;
+    } else {
+        superframe_start_time_ =
+            superframe_start_time_ + GetSuperframeDuration();
     }
 
     last_slot_ = 0;
@@ -403,6 +410,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         superframe_start_time_ = external_slot_start_time;
         is_synchronized_ = true;
         last_sync_time_ = current_time;
+        last_slot_ = external_slot - 1;
         return Result::Success();
     }
 
@@ -422,6 +430,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         superframe_start_time_ = current_time;
         is_synchronized_ = true;
         last_sync_time_ = current_time;
+        last_slot_ = external_slot - 1;
         return Result::Success();
     }
 
@@ -436,9 +445,14 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         "%dms",
         old_start, external_slot_start_time);
 
+    // TODO: Old_start should be stored and used here. This won't work now because
+    // Other nodes that are not network manager, would update this after the superframe_start_time_ has been updated
+    // After a full superframe has compleated.
     // Calculate drift
     int32_t drift = static_cast<int32_t>(external_slot_start_time - old_start);
     sync_drift_accumulator_ += std::abs(drift);
+
+    last_slot_ = external_slot - 1;
 
     is_synchronized_ = true;
     last_sync_time_ = current_time;
@@ -569,7 +583,7 @@ bool SuperframeService::CreateUpdateTask() {
 }
 
 void SuperframeService::DeleteUpdateTask() {
-    if (update_task_handle_) {
+    if (update_task_handle_ != nullptr) {
         LOG_DEBUG("Deleting superframe update task handle: %p",
                   update_task_handle_);
         GetRTOS().DeleteTask(update_task_handle_);
@@ -613,30 +627,32 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         // Calculate timeout until next meaningful event (slot transition or superframe end)
         uint32_t timeout_ms = service->CalculateNextEventTimeout();
 
+        LOG_DEBUG("Next event timeout: %d ms", timeout_ms);
+
         // Wait for notification or timeout
         auto queue_result = rtos.ReceiveFromQueue(service->notification_queue_,
                                                   &notification, timeout_ms);
 
         if (queue_result == os::QueueResult::kOk) {
             // Received notification - handle based on notification type
-            LOG_DEBUG("UpdateTask received notification: %d",
-                      static_cast<int>(notification));
+            // LOG_DEBUG("UpdateTask received notification: %d",
+            //           static_cast<int>(notification));
 
             switch (notification) {
                 case SuperframeNotificationType::CONFIG_CHANGED:
                 case SuperframeNotificationType::SYNC_UPDATED:
-                case SuperframeNotificationType::STARTED:
                     // These notifications only require timeout recalculation, not state updates
-                    LOG_DEBUG(
-                        "Notification requires timeout recalculation only");
+                    // LOG_DEBUG(
+                    //     "Notification requires timeout recalculation only");
                     // Timeout will be recalculated in next loop iteration
                     break;
 
+                case SuperframeNotificationType::STARTED:
                 case SuperframeNotificationType::NEW_FRAME:
                     // New frame may require state update to handle slot transitions
-                    LOG_DEBUG(
-                        "New frame notification - checking state transitions");
-                    service->UpdateSuperframeState();
+                    // LOG_DEBUG(
+                    //     "New frame notification - checking state transitions");
+                    // service->UpdateSuperframeState();
                     break;
             }
         } else if (queue_result == os::QueueResult::kTimeout) {
@@ -647,10 +663,10 @@ void SuperframeService::UpdateTaskFunction(void* param) {
             service->UpdateSuperframeState();
         }
         // For other queue results (error, empty), continue with normal processing
+
+        GetRTOS().YieldTask();
     }
 
-    // Task cleanup - don't self-delete to avoid race condition with destructor
-    // The destructor will handle task deletion
     LOG_DEBUG("SuperframeService UpdateTaskFunction exiting naturally");
 }
 
@@ -710,16 +726,31 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
     // Choose the earlier of next slot or superframe end
     uint32_t next_event_time = std::min(next_slot_time, superframe_end_time);
 
-    // If we're past the event time, return minimum delay to check immediately
+    // Log all this data
+    LOG_DEBUG("Next event time: %d ms", next_event_time);
+    LOG_DEBUG("Superframe end time: %d ms", superframe_end_time);
+    LOG_DEBUG("Current time: %d ms", current_time);
+
+    // If we're past the event time, handle differently based on synchronization state
     if (current_time >= next_event_time) {
-        return 1;  // 1ms minimum to avoid busy waiting
+        // If we're past the superframe end and not updating start time in new superframe
+        // (non-manager nodes), return a longer delay to avoid busy waiting
+        if (current_time >= superframe_end_time &&
+            !update_start_time_in_new_superframe) {
+            // Wait for the next expected synchronization signal or use a reasonable timeout
+            const uint32_t SYNC_WAIT_TIMEOUT_MS =
+                1000;  // 1 second wait for sync
+            return SYNC_WAIT_TIMEOUT_MS;
+        }
+        return 1;  // 1ms minimum to avoid busy waiting for other cases
     }
 
     uint32_t timeout = next_event_time - current_time;
 
-    // Cap timeout to reasonable maximum to ensure periodic updates
+    // Cap timeout to reasonable maximum and minimum to ensure periodic updates
     const uint32_t MAX_TIMEOUT_MS = 5000;  // 5 seconds maximum sleep
-    return std::min(timeout, MAX_TIMEOUT_MS);
+    const uint32_t MIN_TIMEOUT_MS = 20;    // 20ms minimum sleep
+    return std::max(std::min(timeout, MAX_TIMEOUT_MS), MIN_TIMEOUT_MS);
 }
 
 void SuperframeService::NotifyUpdateTask(

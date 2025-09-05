@@ -50,7 +50,7 @@ class SuperframeService : public ISuperframeService {
       */
     explicit SuperframeService(
         uint16_t total_slots = DEFAULT_DISCOVERY_SLOT_COUNT,
-        uint32_t slot_duration_ms = DEFAULT_DISCOVERY_TIMEOUT_MS);
+        uint32_t slot_duration_ms = DEFAULT_SLOT_DURATION_MS);
 
     /**
       * @brief Virtual destructor
@@ -348,8 +348,9 @@ class SuperframeService : public ISuperframeService {
      */
     void NotifyUpdateTask(SuperframeNotificationType notification_type);
 
-    uint16_t total_slots_ = 0;  ///< Total number of slots in the superframe
-    uint32_t slot_duration_ms_ = 0;  ///< Duration of each slot in milliseconds
+    uint16_t total_slots_ = 16;  ///< Total number of slots in the superframe
+    uint32_t slot_duration_ms_ =
+        1000;  ///< Duration of each slot in milliseconds
     uint32_t superframe_start_time_ =
         0;                       ///< Start time of current superframe cycle
     uint16_t node_address_ = 0;  ///< Node address for logging context
