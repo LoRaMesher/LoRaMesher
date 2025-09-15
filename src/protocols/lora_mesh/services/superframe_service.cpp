@@ -111,7 +111,7 @@ Result SuperframeService::StartSuperframe() {
              total_slots_, slot_duration_ms_);
 
     // Notify update task that superframe has started
-    NotifyUpdateTask(SuperframeNotificationType::STARTED);
+    // NotifyUpdateTask(SuperframeNotificationType::STARTED);
 
     return Result::Success();
 }
@@ -127,6 +127,18 @@ Result SuperframeService::StopSuperframe() {
 
     // Stop the update task
     if (update_task_handle_) {
+        // bool suspended = GetRTOS().SuspendTask(update_task_handle_);
+        // if (!suspended) {
+        //     LOG_ERROR(
+        //         "Failed to suspend superframe update task, deleting task");
+        //     // Delete the task if suspension failed
+        //     GetRTOS().DeleteTask(update_task_handle_);
+        //     update_task_handle_ = nullptr;
+        // }
+
+        // Delete the task. Suspending the task does not work correctly.
+        // Maybe is something about the virtual time mode
+        // Hours spend: 5h
         GetRTOS().DeleteTask(update_task_handle_);
         update_task_handle_ = nullptr;
     }
@@ -148,12 +160,19 @@ Result SuperframeService::HandleNewSuperframe() {
     // Update superframe start time
     // We need this because, if it is not a manager this node should not update the superframe_start_time_ unless
     // is from a syncronization node.
+    uint32_t current_time = GetRTOS().getTickCount();
     if (update_start_time_in_new_superframe) {
-        uint32_t current_time = GetRTOS().getTickCount();
         superframe_start_time_ = current_time;
     } else {
-        superframe_start_time_ =
-            superframe_start_time_ + GetSuperframeDuration();
+        uint32_t superframe_end_time = GetSuperframeEndTime();
+        if (current_time >= superframe_end_time) {
+            superframe_start_time_ =
+                superframe_start_time_ + GetSuperframeDuration();
+        } else {
+            LOG_WARNING(
+                "New superframe requested before current one ended, "
+                "keeping previous start time");
+        }
     }
 
     last_slot_ = 0;
@@ -441,7 +460,8 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     LOG_INFO("[TIMING_SYNC]   calculated_superframe_start: %u ms",
              external_slot_start_time);
     LOG_INFO(
-        "[TIMING_SYNC] Previous superframe start time: %dms, new start time: "
+        "[TIMING_SYNC] Previous superframe start time: %dms, new start "
+        "time: "
         "%dms",
         old_start, external_slot_start_time);
 
@@ -727,9 +747,12 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
     uint32_t next_event_time = std::min(next_slot_time, superframe_end_time);
 
     // Log all this data
-    LOG_DEBUG("Next event time: %d ms", next_event_time);
-    LOG_DEBUG("Superframe end time: %d ms", superframe_end_time);
-    LOG_DEBUG("Current time: %d ms", current_time);
+    // LOG_DEBUG("Current time: %d ms", current_time);
+    // LOG_DEBUG("Current slot: %d", current_slot);
+    // LOG_DEBUG("Current slot start time: %d ms", current_slot_start);
+    // LOG_DEBUG("Next slot time: %d ms", next_slot_time);
+    // LOG_DEBUG("Next event time: %d ms", next_event_time);
+    // LOG_DEBUG("Superframe end time: %d ms", superframe_end_time);
 
     // If we're past the event time, handle differently based on synchronization state
     if (current_time >= next_event_time) {
