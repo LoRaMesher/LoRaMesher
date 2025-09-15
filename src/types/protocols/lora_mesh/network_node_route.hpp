@@ -95,6 +95,21 @@ class NetworkNodeRoute {
                      uint8_t slots = 0);
 
     /**
+     * @brief Complete constructor with all node fields and hop count
+     * 
+     * @param addr Node address
+     * @param battery Battery level (0-100%)
+     * @param time Current timestamp
+     * @param is_manager Whether this is a network manager
+     * @param caps Node capabilities bitmap
+     * @param slots Number of allocated slots
+     * @param hops Hop count to destination
+     */
+    NetworkNodeRoute(AddressType addr, uint8_t battery, uint32_t time,
+                     bool is_manager, uint8_t caps, uint8_t slots,
+                     uint8_t hops);
+
+    /**
      * @brief Constructor with routing information
      * 
      * @param dest Destination address

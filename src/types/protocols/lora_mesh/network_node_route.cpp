@@ -72,6 +72,23 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
         addr, battery, is_manager ? "yes" : "no", slots);
 }
 
+NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
+                                   uint32_t time, bool is_manager, uint8_t caps,
+                                   uint8_t slots, uint8_t hops)
+    : routing_entry(addr, hops, 200, slots),  // Default link quality of 200
+      battery_level(battery),
+      last_seen(time),
+      is_network_manager(is_manager),
+      capabilities(caps),
+      next_hop(addr),  // Simple default: next hop is the node itself
+      last_updated(time),
+      is_active(true) {
+    LOG_DEBUG(
+        "New routing entry created with address 0x%04X, "
+        "battery %d%%, manager %s, slots %d, hops %d",
+        addr, battery, is_manager ? "yes" : "no", slots, hops);
+}
+
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
                                    uint8_t hops, uint8_t quality, uint32_t time)
     : routing_entry(dest, hops, quality, 0),
