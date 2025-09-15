@@ -6,6 +6,7 @@
 #include "protocols/lora_mesh_protocol.hpp"
 #include "lora_mesh_protocol.hpp"
 #include "os/os_port.hpp"
+#include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/radio/radio_event.hpp"
 
@@ -76,9 +77,15 @@ Result LoRaMeshProtocol::Init(
     superframe_service_ = std::make_shared<lora_mesh::SuperframeService>();
     superframe_service_->SetNodeAddress(node_address);
 
+    // Create distance vector routing table
+    auto routing_table =
+        std::make_unique<lora_mesh::DistanceVectorRoutingTable>(
+            node_address, 50);  // max 50 nodes
+
     // Create network service
     network_service_ = std::make_shared<lora_mesh::NetworkService>(
-        node_address, message_queue_service_, superframe_service_, hardware_);
+        node_address, message_queue_service_, superframe_service_, hardware_,
+        std::move(routing_table));
 
     // Initialize radio event queue
     radio_event_queue_ =

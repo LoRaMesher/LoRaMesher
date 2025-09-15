@@ -12,6 +12,7 @@
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
+#include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
@@ -51,12 +52,14 @@ class NetworkService : public INetworkService {
      * @param message_queue_service Message queue service for outgoing messages
      * @param superframe_service Optional superframe service for TDMA integration
      * @param hardware_manager Hardware manager for ToA calculations
+     * @param routing_table Optional routing table implementation (default: distance-vector)
      */
     NetworkService(
         AddressType node_address,
         std::shared_ptr<IMessageQueueService> message_queue_service,
         std::shared_ptr<ISuperframeService> superframe_service = nullptr,
-        std::shared_ptr<hardware::IHardwareManager> hardware_manager = nullptr);
+        std::shared_ptr<hardware::IHardwareManager> hardware_manager = nullptr,
+        std::unique_ptr<IRoutingTable> routing_table = nullptr);
 
     /**
      * @brief Virtual destructor
@@ -121,6 +124,16 @@ class NetworkService : public INetworkService {
      * @return size_t Total number of nodes
      */
     size_t GetNetworkSize() const override;
+
+    /**
+     * @brief Get direct access to the routing table interface
+     * 
+     * Provides access to the underlying routing table for direct manipulation.
+     * Useful for testing and upper layer protocols that need precise routing control.
+     * 
+     * @return IRoutingTable* Pointer to the routing table interface
+     */
+    IRoutingTable* GetRoutingTable() { return routing_table_.get(); }
 
     /**
      * @brief Remove nodes that haven't been seen recently
@@ -599,29 +612,12 @@ class NetworkService : public INetworkService {
 
    private:
     /**
-     * @brief Find node by address
+     * @brief Get comprehensive link quality for a node
      * 
-     * @param node_address Node address to find
-     * @return Iterator to node or end()
+     * @param node_address Target node address  
+     * @return uint8_t Link quality (0-255)
      */
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::iterator
-    FindNode(AddressType node_address);
-
-    /**
-     * @brief Find node by address (const version)
-     * 
-     * @param node_address Node address to find
-     * @return Const iterator to node or end()
-     */
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::const_iterator
-    FindNode(AddressType node_address) const;
-
-    /**
-     * @brief Check if adding a node would exceed limits
-     * 
-     * @return bool True if limit would be exceeded
-     */
-    bool WouldExceedLimit() const;
+    uint8_t GetNodeLinkQuality(AddressType node_address) const;
 
     /**
      * @brief Perform timing synchronization with Network Manager using sync beacon
@@ -639,13 +635,6 @@ class NetworkService : public INetworkService {
     Result PerformTimingSynchronization(const SyncBeaconMessage& sync_beacon,
                                         uint32_t reception_timestamp,
                                         const std::string& context_name);
-
-    /**
-     * @brief Remove oldest node to make space
-     * 
-     * @return bool True if a node was removed
-     */
-    bool RemoveOldestNode();
 
     /**
      * @brief Update network topology after changes
@@ -777,7 +766,7 @@ class NetworkService : public INetworkService {
     mutable std::unordered_map<uint8_t, uint32_t> toa_cache_;
 
     // Network state
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> network_nodes_;
+    std::unique_ptr<IRoutingTable> routing_table_;
     std::vector<types::protocols::lora_mesh::SlotAllocation> slot_table_;
     NetworkConfig config_;
     RouteUpdateCallback route_update_callback_;
