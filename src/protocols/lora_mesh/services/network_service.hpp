@@ -427,7 +427,7 @@ class NetworkService : public INetworkService {
      */
     Result SendJoinResponse(
         AddressType dest, loramesher::JoinResponseHeader::ResponseStatus status,
-        uint8_t allocated_slots);
+        uint8_t allocated_slots, AddressType sponsor_address = 0);
 
     // Multi-hop synchronization beacon processing
 
@@ -709,6 +709,19 @@ class NetworkService : public INetworkService {
     Result ForwardJoinRequest(const JoinRequestMessage& join_request);
 
     /**
+     * @brief Forward join response to sponsored node
+     *
+     * Forwards a join response from the network manager to the original joining node
+     * when acting as a sponsor. Updates the destination and removes sponsor information
+     * for final delivery.
+     *
+     * @param join_response The join response to forward
+     * @return Result Success if forwarded successfully, error otherwise
+     */
+    Result ForwardJoinResponseToSponsoredNode(
+        const JoinResponseMessage& join_response);
+
+    /**
      * @brief Schedule discovery slot for forwarding
      * 
      * Finds the next available DISCOVERY_RX slot and temporarily converts
@@ -779,6 +792,8 @@ class NetworkService : public INetworkService {
     uint8_t table_version_;
     uint32_t discovery_start_time_;
     uint32_t joining_start_time_;
+    AddressType selected_sponsor_ =
+        0;  ///< Sponsor node selected during discovery (first sync beacon sender)
     uint8_t allocated_control_slots_ =
         ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
     uint8_t allocated_discovery_slots_ =

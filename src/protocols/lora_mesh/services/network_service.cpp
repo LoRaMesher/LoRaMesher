@@ -275,6 +275,13 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
     network_found_ = false;
     network_creator_ = false;
 
+    // Clear any previous sponsor selection for fresh discovery
+    if (selected_sponsor_ != 0) {
+        LOG_INFO("Clearing previous sponsor 0x%04X for fresh discovery",
+                 selected_sponsor_);
+        selected_sponsor_ = 0;
+    }
+
     // Set protocol state
     SetState(ProtocolState::DISCOVERY);
 
@@ -785,8 +792,14 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
 
     if (message_queue_service_->HasMessage(MessageType::JOIN_REQUEST)) {
         LOG_WARNING("Join request already in progress");
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "Join request already in progress");
+        // Remove the previous one to avoid duplicates
+        bool has_removed =
+            message_queue_service_->RemoveMessage(MessageType::JOIN_REQUEST);
+        if (!has_removed) {
+            LOG_ERROR("Failed to remove existing join request from queue");
+            return Result(LoraMesherErrorCode::kInvalidState,
+                          "Failed to remove existing join request from queue");
+        }
     }
 
     // Determine node capabilities
@@ -800,10 +813,10 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
     // Battery level (default to 100%)
     uint8_t battery_level = 100;
 
-    // Create join request message
-    auto join_request =
-        JoinRequestMessage::Create(manager_address, node_address_, capabilities,
-                                   battery_level, requested_slots);
+    // Create join request message with selected sponsor
+    auto join_request = JoinRequestMessage::Create(
+        manager_address, node_address_, capabilities, battery_level,
+        requested_slots, {}, 0, selected_sponsor_);
 
     if (!join_request) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -847,19 +860,32 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
 
     auto source = message.GetSource();
     auto next_hop = join_request_opt->GetHeader().GetNextHop();
+    auto sponsor_address = join_request_opt->GetHeader().GetSponsorAddress();
 
-    // If we're not the network manager and not the intended next hop, forward the message
-    if (network_manager_ != node_address_ &&
-        (next_hop == 0 || next_hop == kBroadcastAddress)) {
-        LOG_DEBUG("Forwarding join request from 0x%04X", source);
-        return ForwardJoinRequest(*join_request_opt);
+    // Handle sponsor-based join request forwarding
+    if (network_manager_ != node_address_) {
+        // If we are the designated sponsor, forward to network manager via routing table
+        if (sponsor_address != 0 && sponsor_address == node_address_) {
+            LOG_INFO("Acting as sponsor for join request from 0x%04X", source);
+            return ForwardJoinRequest(*join_request_opt);
+        }
+        // If there's a sponsor but it's not us, and the next hop is us, check if we're on the path to NM
+        else if (sponsor_address != 0 && next_hop == node_address_) {
+            // We are on the routing path, forward it
+            LOG_DEBUG(
+                "Forwarding join request from 0x%04X (on path to NM, sponsor: "
+                "0x%04X)",
+                source, sponsor_address);
+            return ForwardJoinRequest(*join_request_opt);
+        }
+        // If we're not the network manager and not involved, ignore
+        else {
+            LOG_DEBUG("Ignoring join request - not for us");
+            return Result::Success();
+        }
     }
 
-    // If we're not the network manager but we are the next hop, ignore
-    if (network_manager_ != node_address_ && next_hop != node_address_) {
-        LOG_DEBUG("Ignoring join request - not for us");
-        return Result::Success();
-    }
+    // sponsor_address = sponsor_address == node_address_ ? 0 : sponsor_address;
 
     // Now we're the network manager, process the join request
     auto capabilities = join_request_opt->GetCapabilities();
@@ -875,7 +901,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             "Join request from 0x%04X rejected - join already pending this "
             "superframe",
             source);
-        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0);
+        return SendJoinResponse(source, JoinResponseHeader::RETRY_LATER, 0,
+                                sponsor_address);
     }
 
     // Determine if node should be accepted
@@ -885,7 +912,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     if (!accepted) {
         LOG_INFO("Join request from 0x%04X rejected - network constraints",
                  source);
-        return SendJoinResponse(source, JoinResponseHeader::REJECTED, 0);
+        return SendJoinResponse(source, JoinResponseHeader::REJECTED, 0,
+                                sponsor_address);
     }
 
     // Buffer the join request for next superframe boundary
@@ -907,8 +935,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         source, allocated_slots);
 
     // Send immediate acceptance response
-    Result result =
-        SendJoinResponse(source, JoinResponseHeader::ACCEPTED, allocated_slots);
+    Result result = SendJoinResponse(source, JoinResponseHeader::ACCEPTED,
+                                     allocated_slots, sponsor_address);
     if (!result) {
         // Clear pending join if response fails
         pending_join_request_ = false;
@@ -930,25 +958,39 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
 
 Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
                                            uint32_t /* reception_timestamp */) {
-    // TODO: If the join response is not for me and the next hop is me, forward it.
-    // if (message.GetDestination() != node_address_ &&
-    //     message.GetNextHop() == node_address_) {
-    //     LOG_DEBUG("Forwarding join response from 0x%04X", message.GetSource());
-    //     return ForwardJoinResponse(message);
-    // }
+    // Deserialize to get sponsor information for forwarding logic
+    auto join_response_opt =
+        JoinResponseMessage::CreateFromSerialized(*message.Serialize());
+    if (!join_response_opt) {
+        return Result(
+            LoraMesherErrorCode::kSerializationError,
+            "Failed to deserialize join response for forwarding check");
+    }
 
-    // Only process in joining state
-    if (state_ != ProtocolState::JOINING) {
-        LOG_DEBUG("Ignoring join response - not in joining state");
+    auto target_address = join_response_opt->GetHeader().GetTargetAddress();
+    auto dest = message.GetDestination();
+
+    // Print debug info
+    LOG_DEBUG("Processing JOIN_RESPONSE from 0x%04X to 0x%04X (target: 0x%04X)",
+              message.GetSource(), dest, target_address);
+
+    // Handle sponsor-based join response forwarding
+    if (dest == node_address_ && target_address != 0) {
+        // We are the sponsor and need to forward to the target (joining node)
+        LOG_INFO("Forwarding join response to target node 0x%04X",
+                 target_address);
+        return ForwardJoinResponseToSponsoredNode(*join_response_opt);
+    } else if (dest != node_address_) {
+        // This response is not for us
+        LOG_DEBUG("Ignoring join response - not intended for us (dest: 0x%04X)",
+                  dest);
         return Result::Success();
     }
 
-    auto join_response_opt =
-        JoinResponseMessage::CreateFromSerialized(*message.Serialize());
-
-    if (!join_response_opt) {
-        return Result(LoraMesherErrorCode::kSerializationError,
-                      "Failed to deserialize join response");
+    // Only process in joining state if the response is for us
+    if (state_ != ProtocolState::JOINING) {
+        LOG_DEBUG("Ignoring join response - not in joining state");
+        return Result::Success();
     }
 
     auto status = join_response_opt->GetStatus();
@@ -976,6 +1018,13 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
                  node_address_);
 
         LOG_INFO("Successfully joined network 0x%04X", network_id);
+
+        // Clear sponsor information - we're now part of the network
+        if (selected_sponsor_ != 0) {
+            LOG_INFO("Clearing sponsor 0x%04X - successfully joined network",
+                     selected_sponsor_);
+            selected_sponsor_ = 0;
+        }
     } else if (status == JoinResponseStatus::RETRY_LATER) {
         LOG_INFO("Join request temporarily rejected, retrying after delay");
         // TODO: Check this.
@@ -998,6 +1047,14 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
         SetState(ProtocolState::DISCOVERY);
     } else {
         LOG_WARNING("Join rejected with status %d", static_cast<int>(status));
+
+        // Clear sponsor information - join was rejected, need fresh discovery
+        if (selected_sponsor_ != 0) {
+            LOG_INFO("Clearing sponsor 0x%04X - join was rejected",
+                     selected_sponsor_);
+            selected_sponsor_ = 0;
+        }
+
         // TODO: Check this
         // Return to discovery
         SetState(ProtocolState::DISCOVERY);
@@ -1008,18 +1065,34 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
 
 Result NetworkService::SendJoinResponse(AddressType dest,
                                         JoinResponseStatus status,
-                                        uint8_t allocated_slots) {
+                                        uint8_t allocated_slots,
+                                        AddressType sponsor_address) {
     // Only network manager sends join responses
     if (network_manager_ != node_address_) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Only network manager can send join responses");
     }
 
-    // Create join response
-    auto join_response =
-        JoinResponseMessage::Create(dest, node_address_,
-                                    network_manager_,  // Network ID
-                                    allocated_slots, status);
+    // Determine routing: if there's an external sponsor, route via sponsor; otherwise direct
+    // Special case: if sponsor_address == node_address_, we ARE the sponsor, so route directly
+    AddressType response_destination;
+    AddressType target_address;
+
+    if (sponsor_address != 0 && sponsor_address != node_address_) {
+        // External sponsor case: route via sponsor with target for final delivery
+        response_destination = sponsor_address;
+        target_address = dest;
+    } else {
+        // Direct case: no external sponsor OR we are the sponsor
+        response_destination = dest;
+        target_address = 0;
+    }
+
+    // Create join response with corrected addressing
+    auto join_response = JoinResponseMessage::Create(
+        response_destination, node_address_,
+        network_manager_,  // Network ID
+        allocated_slots, status, {}, 0, target_address);
 
     if (!join_response) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -1032,8 +1105,23 @@ Result NetworkService::SendJoinResponse(AddressType dest,
     message_queue_service_->AddMessageToQueue(
         SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
 
-    LOG_INFO("Join response queued for 0x%04X: status=%d, slots=%d", dest,
-             static_cast<int>(status), allocated_slots);
+    if (sponsor_address != 0 && sponsor_address != node_address_) {
+        LOG_INFO(
+            "Join response queued for 0x%04X via external sponsor 0x%04X: "
+            "status=%d, "
+            "slots=%d",
+            dest, sponsor_address, static_cast<int>(status), allocated_slots);
+    } else if (sponsor_address == node_address_) {
+        LOG_INFO(
+            "Join response queued for 0x%04X (we are the sponsor): status=%d, "
+            "slots=%d",
+            dest, static_cast<int>(status), allocated_slots);
+    } else {
+        LOG_INFO(
+            "Join response queued for 0x%04X (direct, no sponsor): status=%d, "
+            "slots=%d",
+            dest, static_cast<int>(status), allocated_slots);
+    }
 
     return Result::Success();
 }
@@ -1760,11 +1848,20 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
     // Special handling for DISCOVERY state: sync beacon indicates existing network
     if (state_ == ProtocolState::DISCOVERY) {
+        AddressType source = sync_beacon.GetSource();
+
+        // Sponsor selection: Use first sync beacon sender as sponsor
+        if (selected_sponsor_ == 0) {
+            selected_sponsor_ = source;
+            LOG_INFO(
+                "Selected sponsor node 0x%04X from first sync beacon received",
+                selected_sponsor_);
+        }
+
         auto network_id = sync_beacon.GetNetworkId();
         LOG_INFO("Discovery: Found existing network with id 0x%04X",
                  network_id);
 
-        AddressType source = sync_beacon.GetSource();
         AddressType network_manager = sync_beacon.GetNetworkManager();
 
         // Trigger transition to JOINING state
@@ -2072,18 +2169,27 @@ Result NetworkService::ForwardJoinRequest(
                       "No available discovery slots for forwarding");
     }
 
-    // Calculate next hop towards network manager
-    AddressType next_hop =
-        network_manager_;  // For now, direct to network manager
-    // TODO: Implement proper routing to find best next hop
+    // Calculate next hop towards network manager using routing table
+    AddressType next_hop = routing_table_->FindNextHop(network_manager_);
+    if (next_hop == 0) {
+        // No route to network manager, try direct connection
+        next_hop = network_manager_;
+        LOG_WARNING(
+            "No route to network manager 0x%04X, attempting direct connection",
+            network_manager_);
+        // TODO: This should be an error and remove the actual message.
+    }
 
-    // Create forwarded join request with updated next_hop
+    // Create forwarded join request preserving original source and sponsor
     auto forwarded_request = JoinRequestMessage::Create(
         join_request.GetDestination(),
-        node_address_,  // We become the source for forwarding
+        join_request
+            .GetSource(),  // Preserve original source for end-to-end tracking
         join_request.GetCapabilities(), join_request.GetBatteryLevel(),
         join_request.GetRequestedSlots(), {},  // No additional info
-        next_hop                               // Set next hop for routing
+        next_hop,                              // Set next hop for routing
+        join_request.GetHeader()
+            .GetSponsorAddress()  // Preserve sponsor address
     );
 
     if (!forwarded_request) {
@@ -2100,8 +2206,67 @@ Result NetworkService::ForwardJoinRequest(
 
     LOG_INFO(
         "Forwarded join request from 0x%04X to network manager 0x%04X via "
-        "0x%04X",
-        join_request.GetSource(), network_manager_, next_hop);
+        "next hop 0x%04X (sponsor: 0x%04X)",
+        join_request.GetSource(), network_manager_, next_hop,
+        join_request.GetHeader().GetSponsorAddress());
+
+    return Result::Success();
+}
+
+Result NetworkService::ForwardJoinResponseToSponsoredNode(
+    const JoinResponseMessage& join_response) {
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Ignoring join response forwarding in state: %d", state_);
+        return Result::Success();
+    }
+
+    // Get the final target node address (stored in target_address field)
+    AddressType joining_node = join_response.GetHeader().GetTargetAddress();
+
+    // Sanity check: we should be the current destination (sponsor)
+    if (join_response.GetDestination() != node_address_) {
+        LOG_ERROR(
+            "Attempted to forward join response but we're not the intended "
+            "recipient (0x%04X)",
+            join_response.GetDestination());
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Not the intended recipient for this response");
+    }
+
+    // Sanity check: target address should be set for sponsored responses
+    if (joining_node == 0) {
+        LOG_WARNING(
+            "Join response has no target address, treating as direct delivery");
+        return Result::Success();
+    }
+
+    // Create final join response for the joining node (remove sponsor information)
+    auto final_response = JoinResponseMessage::Create(
+        joining_node,               // Direct to joining node now
+        join_response.GetSource(),  // From network manager
+        join_response.GetNetworkId(), join_response.GetAllocatedSlots(),
+        join_response.GetStatus(), {},  // No additional info
+        0,                              // No next hop (direct delivery)
+        0                               // No sponsor (final delivery)
+    );
+
+    if (!final_response) {
+        LOG_ERROR("Failed to create final join response for sponsored node");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create final join response");
+    }
+
+    // Queue for transmission
+    auto base_msg =
+        std::make_unique<BaseMessage>(final_response->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+
+    LOG_INFO(
+        "Forwarded join response to sponsored node 0x%04X: status=%d, slots=%d",
+        joining_node, static_cast<int>(join_response.GetStatus()),
+        join_response.GetAllocatedSlots());
 
     return Result::Success();
 }
