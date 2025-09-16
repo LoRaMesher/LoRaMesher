@@ -39,7 +39,7 @@ class JoinRequestHeader : public BaseHeader {
 
     /**
       * @brief Constructor with all fields
-      * 
+      *
       * @param dest Destination address (typically broadcast or network manager)
       * @param src Source address
       * @param capabilities Node capabilities bitmap
@@ -47,11 +47,13 @@ class JoinRequestHeader : public BaseHeader {
       * @param requested_slots Number of data slots requested
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param additional_info_size To store the payload size in the base message
+      * @param sponsor_address Sponsor node address (0 for no sponsor)
       */
     JoinRequestHeader(AddressType dest, AddressType src, uint8_t capabilities,
                       uint8_t battery_level, uint8_t requested_slots,
                       AddressType next_hop = 0,
-                      uint8_t additional_info_size = 0);
+                      uint8_t additional_info_size = 0,
+                      AddressType sponsor_address = 0);
 
     /**
       * @brief Gets the node capabilities
@@ -76,10 +78,17 @@ class JoinRequestHeader : public BaseHeader {
 
     /**
       * @brief Gets the next hop for message forwarding
-      * 
+      *
       * @return AddressType Next hop address (0 for direct routing)
       */
     AddressType GetNextHop() const { return next_hop_; }
+
+    /**
+      * @brief Gets the sponsor address
+      *
+      * @return AddressType Sponsor address (0 for no sponsor)
+      */
+    AddressType GetSponsorAddress() const { return sponsor_address_; }
 
     /**
       * @brief Sets the join request specific information
@@ -94,11 +103,19 @@ class JoinRequestHeader : public BaseHeader {
 
     /**
      * @brief Sets the requested data slots
-     * 
+     *
      * @param requested_slots Number of data slots requested
      * @return Result Success if setting succeeded, error code otherwise
      */
     Result SetRequestedSlots(uint8_t requested_slots);
+
+    /**
+     * @brief Sets the sponsor address
+     *
+     * @param sponsor_address Sponsor node address (0 for no sponsor)
+     * @return Result Success if setting succeeded, error code otherwise
+     */
+    Result SetSponsorAddress(AddressType sponsor_address);
 
     /**
       * @brief Serializes the header to a byte serializer
@@ -122,14 +139,15 @@ class JoinRequestHeader : public BaseHeader {
 
     /**
       * @brief Calculates the size of the join request specific header extension
-      * 
+      *
       * @return size_t Size of the join request header fields in bytes
       */
     static constexpr size_t JoinRequestFieldsSize() {
-        return sizeof(uint8_t) +     // Capabilities
-               sizeof(uint8_t) +     // Battery level
-               sizeof(uint8_t) +     // Requested slots
-               sizeof(AddressType);  // Next hop
+        return sizeof(uint8_t) +      // Capabilities
+               sizeof(uint8_t) +      // Battery level
+               sizeof(uint8_t) +      // Requested slots
+               sizeof(AddressType) +  // Next hop
+               sizeof(AddressType);   // Sponsor address
     }
 
     /**
@@ -146,6 +164,8 @@ class JoinRequestHeader : public BaseHeader {
     uint8_t battery_level_ = 100;  ///< Battery level (0-100%)
     uint8_t requested_slots_ = 1;  ///< Requested number of data slots
     AddressType next_hop_ = 0;     ///< Next hop for message forwarding
+    AddressType sponsor_address_ =
+        0;  ///< Sponsor node address (0 = no sponsor)
 };
 
 }  // namespace loramesher

@@ -15,7 +15,8 @@ JoinRequestMessage::JoinRequestMessage(
 std::optional<JoinRequestMessage> JoinRequestMessage::Create(
     AddressType dest, AddressType src, uint8_t capabilities,
     uint8_t battery_level, uint8_t requested_slots,
-    const std::vector<uint8_t>& additional_info, AddressType next_hop) {
+    const std::vector<uint8_t>& additional_info, AddressType next_hop,
+    AddressType sponsor_address) {
 
     // Validate battery level
     if (battery_level > 100) {
@@ -25,7 +26,8 @@ std::optional<JoinRequestMessage> JoinRequestMessage::Create(
 
     // Create the header with the join request information
     JoinRequestHeader header(dest, src, capabilities, battery_level,
-                             requested_slots, next_hop, additional_info.size());
+                             requested_slots, next_hop, additional_info.size(),
+                             sponsor_address);
 
     return JoinRequestMessage(header, additional_info);
 }
@@ -114,6 +116,7 @@ BaseMessage JoinRequestMessage::ToBaseMessage() const {
     serializer.WriteUint8(header_.GetBatteryLevel());
     serializer.WriteUint8(header_.GetRequestedSlots());
     serializer.WriteUint16(header_.GetNextHop());
+    serializer.WriteUint16(header_.GetSponsorAddress());
 
     // Add any additional information
     if (!additional_info_.empty()) {

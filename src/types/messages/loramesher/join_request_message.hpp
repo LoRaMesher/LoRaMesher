@@ -23,7 +23,7 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
    public:
     /**
       * @brief Creates a new join request message
-      * 
+      *
       * @param dest Destination address (network manager or broadcast)
       * @param src Source address of the message
       * @param capabilities Node capabilities bitmap
@@ -31,6 +31,7 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
       * @param requested_slots Number of data slots requested
       * @param additional_info Optional additional information to include
       * @param next_hop Next hop for message forwarding (0 for direct)
+      * @param sponsor_address Sponsor node address (0 for no sponsor)
       * @return std::optional<JoinRequestMessage> Valid message if creation succeeded,
       *         std::nullopt otherwise
       */
@@ -38,7 +39,7 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
         AddressType dest, AddressType src, uint8_t capabilities,
         uint8_t battery_level, uint8_t requested_slots,
         const std::vector<uint8_t>& additional_info = {},
-        AddressType next_hop = 0);
+        AddressType next_hop = 0, AddressType sponsor_address = 0);
 
     /**
       * @brief Creates a join request message from serialized data

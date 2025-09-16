@@ -7,19 +7,18 @@
 
 namespace loramesher {
 
-JoinRequestHeader::JoinRequestHeader(AddressType dest, AddressType src,
-                                     uint8_t capabilities,
-                                     uint8_t battery_level,
-                                     uint8_t requested_slots,
-                                     AddressType next_hop,
-                                     uint8_t additional_info_size)
+JoinRequestHeader::JoinRequestHeader(
+    AddressType dest, AddressType src, uint8_t capabilities,
+    uint8_t battery_level, uint8_t requested_slots, AddressType next_hop,
+    uint8_t additional_info_size, AddressType sponsor_address)
     : BaseHeader(
           dest, src, MessageType::JOIN_REQUEST,
           JoinRequestHeader::JoinRequestFieldsSize() + additional_info_size),
       capabilities_(capabilities),
       battery_level_(battery_level),
       requested_slots_(requested_slots),
-      next_hop_(next_hop) {}
+      next_hop_(next_hop),
+      sponsor_address_(sponsor_address) {}
 
 Result JoinRequestHeader::SetJoinRequestInfo(uint8_t capabilities,
                                              uint8_t battery_level,
@@ -49,6 +48,7 @@ Result JoinRequestHeader::Serialize(utils::ByteSerializer& serializer) const {
     serializer.WriteUint8(battery_level_);
     serializer.WriteUint8(requested_slots_);
     serializer.WriteUint16(next_hop_);
+    serializer.WriteUint16(sponsor_address_);
 
     return Result::Success();
 }
@@ -75,22 +75,29 @@ std::optional<JoinRequestHeader> JoinRequestHeader::Deserialize(
     auto battery_level = deserializer.ReadUint8();
     auto requested_slots = deserializer.ReadUint8();
     auto next_hop = deserializer.ReadUint16();
+    auto sponsor_address = deserializer.ReadUint16();
 
-    if (!capabilities || !battery_level || !requested_slots || !next_hop) {
+    if (!capabilities || !battery_level || !requested_slots || !next_hop ||
+        !sponsor_address) {
         LOG_ERROR("Failed to deserialize join request header fields");
         return std::nullopt;
     }
 
     // Create and return the join request header
-    JoinRequestHeader header(base_header->GetDestination(),
-                             base_header->GetSource(), *capabilities,
-                             *battery_level, *requested_slots, *next_hop);
+    JoinRequestHeader header(
+        base_header->GetDestination(), base_header->GetSource(), *capabilities,
+        *battery_level, *requested_slots, *next_hop, 0, *sponsor_address);
 
     return header;
 }
 
 Result JoinRequestHeader::SetRequestedSlots(uint8_t requested_slots) {
     requested_slots_ = requested_slots;
+    return Result::Success();
+}
+
+Result JoinRequestHeader::SetSponsorAddress(AddressType sponsor_address) {
+    sponsor_address_ = sponsor_address;
     return Result::Success();
 }
 
