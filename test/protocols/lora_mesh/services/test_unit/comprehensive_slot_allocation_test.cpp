@@ -52,6 +52,8 @@ class MockMessageQueueService : public protocols::IMessageQueueService {
 
     bool HasMessage(MessageType type) const override { return false; }
 
+    bool RemoveMessage(MessageType type) override { return false; }
+
     std::vector<SlotAllocation::SlotType> queued_message_types_;
 };
 
