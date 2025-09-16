@@ -94,6 +94,13 @@ class MessageQueueService : public IMessageQueueService {
      */
     bool HasMessage(MessageType type) const override;
 
+    /**
+     * @brief Remove the first occurrence of a specific message type from any queue
+     * @param type Type of message to remove
+     * @return true if a message was removed, false if none found
+     */
+    bool RemoveMessage(MessageType type) override;
+
    private:
     std::unordered_map<types::protocols::lora_mesh::SlotAllocation::SlotType,
                        std::vector<std::unique_ptr<BaseMessage>>>

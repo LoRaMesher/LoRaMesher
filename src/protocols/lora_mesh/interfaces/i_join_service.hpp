@@ -59,15 +59,17 @@ class IJoinService {
 
     /**
      * @brief Send a join response to a node
-     * 
+     *
      * @param dest Address of the node that requested to join
      * @param status Response status (accepted/rejected)
      * @param allocated_slots Number of slots allocated (if accepted)
+     * @param sponsor_address Sponsor node address (0 for direct routing)
      * @return Result Success if response sent, error details otherwise
      */
     virtual Result SendJoinResponse(AddressType dest,
                                     JoinResponseHeader::ResponseStatus status,
-                                    uint8_t allocated_slots) = 0;
+                                    uint8_t allocated_slots,
+                                    AddressType sponsor_address = 0) = 0;
 
     /**
      * @brief Check if a node should be allowed to join

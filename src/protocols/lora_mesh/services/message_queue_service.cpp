@@ -166,6 +166,24 @@ bool MessageQueueService::HasMessage(MessageType type) const {
     return false;
 }
 
+bool MessageQueueService::RemoveMessage(MessageType type) {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    for (auto& pair : message_queues_) {
+        auto& queue = pair.second;
+        auto it = std::find_if(queue.begin(), queue.end(),
+                               [type](const std::unique_ptr<BaseMessage>& msg) {
+                                   return msg->GetType() == type;
+                               });
+        if (it != queue.end()) {
+            queue.erase(it);
+            LOG_INFO("Removed message of type %d from queue %d",
+                     static_cast<int>(type), static_cast<int>(pair.first));
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace lora_mesh
 }  // namespace protocols
 }  // namespace loramesher

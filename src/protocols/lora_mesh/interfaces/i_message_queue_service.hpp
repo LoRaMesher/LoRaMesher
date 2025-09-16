@@ -72,6 +72,13 @@ class IMessageQueueService {
      * @return bool True if any queue has messages of the specified type
      */
     virtual bool HasMessage(MessageType type) const = 0;
+
+    /**
+     * @brief Remove the first occurrence of a specific message type from any queue
+     * @param type Type of message to remove
+     * @return true if a message was removed, false if none found
+     */
+    virtual bool RemoveMessage(MessageType type) = 0;
 };
 
 }  // namespace protocols
