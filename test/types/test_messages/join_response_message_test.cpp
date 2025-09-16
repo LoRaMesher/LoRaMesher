@@ -125,6 +125,50 @@ TEST_F(JoinResponseMessageTest, CreationWithoutSuperframeInfoTest) {
 }
 
 /**
+ * @brief Test creating a JoinResponseMessage with sponsor address
+ */
+TEST_F(JoinResponseMessageTest, CreationWithSponsorTest) {
+    // Given: Test parameters with sponsor address
+    const AddressType test_sponsor = 0xBEEF;
+
+    // When: Creating a message with sponsor address
+    auto opt_msg =
+        JoinResponseMessage::Create(dest, src, network_id, allocated_slots,
+                                    status, superframe_info, 0, test_sponsor);
+
+    // Then: Message creation should succeed
+    ASSERT_TRUE(opt_msg.has_value())
+        << "Failed to create JoinResponse message with sponsor";
+
+    // And: Message should have correct sponsor address
+    EXPECT_EQ(opt_msg->GetHeader().GetTargetAddress(), test_sponsor);
+
+    // And: All other fields should be correct
+    EXPECT_EQ(opt_msg->GetDestination(), dest);
+    EXPECT_EQ(opt_msg->GetSource(), src);
+    EXPECT_EQ(opt_msg->GetNetworkId(), network_id);
+    EXPECT_EQ(opt_msg->GetAllocatedSlots(), allocated_slots);
+    EXPECT_EQ(opt_msg->GetStatus(), status);
+    EXPECT_EQ(opt_msg->GetSuperframeInfo(), superframe_info);
+}
+
+/**
+ * @brief Test creating a JoinResponseMessage without sponsor address (default 0)
+ */
+TEST_F(JoinResponseMessageTest, CreationWithoutSponsorTest) {
+    // When: Creating a message without sponsor address
+    auto opt_msg = JoinResponseMessage::Create(dest, src, network_id,
+                                               allocated_slots, status);
+
+    // Then: Message creation should succeed
+    ASSERT_TRUE(opt_msg.has_value())
+        << "Failed to create JoinResponse message without sponsor";
+
+    // And: Sponsor address should default to 0
+    EXPECT_EQ(opt_msg->GetHeader().GetTargetAddress(), 0);
+}
+
+/**
  * @brief Test serializing a JoinResponseMessage
  */
 TEST_F(JoinResponseMessageTest, SerializationTest) {
@@ -169,6 +213,44 @@ TEST_F(JoinResponseMessageTest, DeserializationTest) {
     EXPECT_EQ(deserialized_msg.GetAllocatedSlots(), allocated_slots);
     EXPECT_EQ(deserialized_msg.GetStatus(), status);
     EXPECT_EQ(deserialized_msg.GetSuperframeInfo(), superframe_info);
+    EXPECT_EQ(deserialized_msg.GetHeader().GetTargetAddress(),
+              0);  // Default target address
+}
+
+/**
+ * @brief Test serialization/deserialization with target address
+ */
+TEST_F(JoinResponseMessageTest, SponsorSerializationDeserializationTest) {
+    // Given: A message with target address
+    const AddressType target_address = 0xDEAD;
+    auto opt_msg =
+        JoinResponseMessage::Create(dest, src, network_id, allocated_slots,
+                                    status, superframe_info, 0, target_address);
+    ASSERT_TRUE(opt_msg.has_value())
+        << "Failed to create message with target address";
+
+    JoinResponseMessage target_msg = std::move(*opt_msg);
+
+    // When: Serializing and then deserializing
+    auto opt_serialized = target_msg.Serialize();
+    ASSERT_TRUE(opt_serialized.has_value())
+        << "Failed to serialize message with target address";
+
+    auto opt_deserialized =
+        JoinResponseMessage::CreateFromSerialized(*opt_serialized);
+    ASSERT_TRUE(opt_deserialized.has_value())
+        << "Failed to deserialize message with target address";
+
+    // Then: Target address should be preserved
+    EXPECT_EQ(opt_deserialized->GetHeader().GetTargetAddress(), target_address);
+
+    // And: All other fields should also be preserved
+    EXPECT_EQ(opt_deserialized->GetDestination(), dest);
+    EXPECT_EQ(opt_deserialized->GetSource(), src);
+    EXPECT_EQ(opt_deserialized->GetNetworkId(), network_id);
+    EXPECT_EQ(opt_deserialized->GetAllocatedSlots(), allocated_slots);
+    EXPECT_EQ(opt_deserialized->GetStatus(), status);
+    EXPECT_EQ(opt_deserialized->GetSuperframeInfo(), superframe_info);
 }
 
 /**
@@ -224,8 +306,9 @@ TEST_F(JoinResponseMessageTest, ConversionToBaseMessageTest) {
     // And: Payload should contain JoinResponse fields + superframe info
     const std::vector<uint8_t>& payload = base_msg.GetPayload();
 
-    // Payload should have 6 bytes (network_id, allocated_slots, status, next_hop) plus superframe info
-    ASSERT_EQ(payload.size(), 6 + superframe_info.size());
+    // Payload should have JoinResponseFieldsSize (includes sponsor address) plus superframe info
+    ASSERT_EQ(payload.size(), JoinResponseHeader::JoinResponseFieldsSize() +
+                                  superframe_info.size());
 
     // Network ID should be in the first two bytes (little endian)
     uint16_t extracted_network_id =
@@ -276,6 +359,7 @@ TEST_F(JoinResponseMessageTest, GetHeaderTest) {
     EXPECT_EQ(header.GetNetworkId(), network_id);
     EXPECT_EQ(header.GetAllocatedSlots(), allocated_slots);
     EXPECT_EQ(header.GetStatus(), status);
+    EXPECT_EQ(header.GetTargetAddress(), 0);  // Default target address
 }
 
 }  // namespace test
