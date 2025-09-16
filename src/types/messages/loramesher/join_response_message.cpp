@@ -15,11 +15,12 @@ JoinResponseMessage::JoinResponseMessage(
 std::optional<JoinResponseMessage> JoinResponseMessage::Create(
     AddressType dest, AddressType src, uint16_t network_id,
     uint8_t allocated_slots, JoinResponseHeader::ResponseStatus status,
-    const std::vector<uint8_t>& superframe_info, AddressType next_hop) {
+    const std::vector<uint8_t>& superframe_info, AddressType next_hop,
+    AddressType target_address) {
 
     // Create the header with the join response information
     JoinResponseHeader header(dest, src, network_id, allocated_slots, status,
-                              next_hop, superframe_info.size());
+                              next_hop, superframe_info.size(), target_address);
 
     return JoinResponseMessage(header, superframe_info);
 }

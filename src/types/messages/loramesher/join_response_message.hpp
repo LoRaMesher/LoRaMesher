@@ -23,7 +23,7 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
    public:
     /**
       * @brief Creates a new join response message
-      * 
+      *
       * @param dest Destination address (requesting node)
       * @param src Source address (network manager)
       * @param network_id Network identifier
@@ -31,6 +31,7 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
       * @param status Response status code
       * @param superframe_info Optional superframe configuration information
       * @param next_hop Next hop for message forwarding (0 for direct)
+      * @param sponsor_address Sponsor node address (0 for no sponsor)
       * @return std::optional<JoinResponseMessage> Valid message if creation succeeded,
       *         std::nullopt otherwise
       */
@@ -38,7 +39,7 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
         AddressType dest, AddressType src, uint16_t network_id,
         uint8_t allocated_slots, JoinResponseHeader::ResponseStatus status,
         const std::vector<uint8_t>& superframe_info = {},
-        AddressType next_hop = 0);
+        AddressType next_hop = 0, AddressType target_address = 0);
 
     /**
       * @brief Creates a join response message from serialized data

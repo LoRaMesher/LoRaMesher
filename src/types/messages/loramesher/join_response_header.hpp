@@ -36,7 +36,7 @@ class JoinResponseHeader : public BaseHeader {
 
     /**
       * @brief Constructor with all fields
-      * 
+      *
       * @param dest Destination address (requesting node)
       * @param src Source address (network manager)
       * @param network_id Network identifier
@@ -44,11 +44,13 @@ class JoinResponseHeader : public BaseHeader {
       * @param status Response status code
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param additional_info_size Additional info size to set the correct payload to BaseHeader
+      * @param target_address Target node address for final delivery (0 for direct)
       */
     JoinResponseHeader(AddressType dest, AddressType src, uint16_t network_id,
                        uint8_t allocated_slots, ResponseStatus status,
                        AddressType next_hop = 0,
-                       uint8_t additional_info_size = 0);
+                       uint8_t additional_info_size = 0,
+                       AddressType target_address = 0);
 
     /**
       * @brief Gets the network ID
@@ -73,14 +75,21 @@ class JoinResponseHeader : public BaseHeader {
 
     /**
       * @brief Gets the next hop for message forwarding
-      * 
+      *
       * @return AddressType Next hop address (0 for direct routing)
       */
     AddressType GetNextHop() const { return next_hop_; }
 
     /**
+      * @brief Gets the target address
+      *
+      * @return AddressType Target address for final delivery (0 for direct)
+      */
+    AddressType GetTargetAddress() const { return target_address_; }
+
+    /**
       * @brief Sets the join response specific information
-      * 
+      *
       * @param network_id Network identifier
       * @param allocated_slots Number of allocated data slots
       * @param status Response status code
@@ -88,6 +97,14 @@ class JoinResponseHeader : public BaseHeader {
       */
     Result SetJoinResponseInfo(uint16_t network_id, uint8_t allocated_slots,
                                ResponseStatus status);
+
+    /**
+      * @brief Sets the target address
+      *
+      * @param target_address Target node address for final delivery (0 for direct)
+      * @return Result Success if setting succeeded, error code otherwise
+      */
+    Result SetTargetAddress(AddressType target_address);
 
     /**
       * @brief Serializes the header to a byte serializer
@@ -111,14 +128,15 @@ class JoinResponseHeader : public BaseHeader {
 
     /**
       * @brief Calculates the size of the join response specific header extension
-      * 
+      *
       * @return size_t Size of the join response header fields in bytes
       */
     static constexpr size_t JoinResponseFieldsSize() {
-        return sizeof(uint16_t) +    // Network ID
-               sizeof(uint8_t) +     // Allocated slots
-               sizeof(uint8_t) +     // Status
-               sizeof(AddressType);  // Next hop
+        return sizeof(uint16_t) +     // Network ID
+               sizeof(uint8_t) +      // Allocated slots
+               sizeof(uint8_t) +      // Status
+               sizeof(AddressType) +  // Next hop
+               sizeof(AddressType);   // Target address
     }
 
     /**
@@ -135,6 +153,8 @@ class JoinResponseHeader : public BaseHeader {
     uint8_t allocated_slots_ = 0;       ///< Number of allocated data slots
     ResponseStatus status_ = ACCEPTED;  ///< Response status code
     AddressType next_hop_ = 0;          ///< Next hop for message forwarding
+    AddressType target_address_ =
+        0;  ///< Target node address for final delivery (0 = direct)
 };
 
 }  // namespace loramesher
