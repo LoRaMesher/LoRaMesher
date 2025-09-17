@@ -1,23 +1,69 @@
 # LoRaMesher Protocol Specification
 
-**Version**: 1.1  
-**Last Updated**: 2025-07-01  
-**Protocol Type**: Distance-Vector Mesh Routing with Power-Aware TDMA
+**Version**: 1.2
+**Last Updated**: 2025-09-16
+**Protocol Type**: Distance-Vector Mesh Routing with Power-Aware TDMA and Sponsor-Based Joining
 
-This document provides the complete technical specification for the LoRaMesher protocol, a distance-vector routing protocol designed for LoRa mesh networks with TDMA coordination.
+This document provides the complete technical specification for the LoRaMesher protocol, a distance-vector routing protocol designed for LoRa mesh networks with TDMA coordination. Version 1.2 introduces sponsor-based join mechanisms and enhanced routing table architecture.
 
 ## Table of Contents
 
 1. [Protocol Overview](#1-protocol-overview)
+   - 1.1 [Design Principles](#11-design-principles)
+   - 1.2 [Network Architecture](#12-network-architecture)
+   - 1.3 [Protocol Stack](#13-protocol-stack)
 2. [State Machine Specification](#2-state-machine-specification)
+   - 2.1 [Protocol States](#21-protocol-states)
+   - 2.2 [State Descriptions](#22-state-descriptions)
+   - 2.3 [State Transition Triggers](#23-state-transition-triggers)
 3. [Message Format Specification](#3-message-format-specification)
+   - 3.1 [Message Type Organization](#31-message-type-organization)
+   - 3.2 [Message Type Organization System (v1.2)](#32-message-type-organization-system-v12)
+   - 3.3 [Core Message Types](#33-core-message-types)
+     - 3.3.1 [Join Messages (Updated v1.2)](#331-join-messages-updated-v12)
+     - 3.3.2 [Routing Messages](#332-routing-messages)
+     - 3.3.3 [Routing Table Messages (New v1.2)](#333-routing-table-messages-new-v12)
+     - 3.3.4 [Synchronization Messages](#334-synchronization-messages)
+     - 3.3.5 [Data Messages](#335-data-messages)
+   - 3.4 [Message Serialization](#34-message-serialization)
 4. [Routing Algorithm](#4-routing-algorithm)
+   - 4.1 [Distance-Vector Algorithm](#41-distance-vector-algorithm)
+   - 4.2 [Loop Prevention](#42-loop-prevention)
+   - 4.3 [Route Aging](#43-route-aging)
+   - 4.5 [Routing Table Architecture (Updated v1.2)](#45-routing-table-architecture-updated-v12)
 5. [Network Synchronization (TDMA)](#5-network-synchronization-tdma)
+   - 5.1 [Superframe Structure](#51-superframe-structure)
+   - 5.2 [Timing Parameters](#52-timing-parameters)
+   - 5.3 [Synchronization Protocol](#53-synchronization-protocol)
+   - 5.4 [Slot Allocation](#54-slot-allocation)
+   - 5.5 [Multi-Hop Synchronization Strategy](#55-multi-hop-synchronization-strategy)
+   - 5.6 [TX Guard Time Mechanism](#56-tx-guard-time-mechanism)
+   - 5.7 [Power-Aware Slot Allocation](#57-power-aware-slot-allocation)
+   - 5.8 [Network Manager Election Sequence](#58-network-manager-election-sequence)
 6. [Network Discovery & Joining](#6-network-discovery--joining)
+   - 6.1 [Network Discovery Process](#61-network-discovery-process)
+   - 6.2 [Discovery Messages](#62-discovery-messages)
+   - 6.3 [Join Process](#63-join-process)
+   - 6.4 [Sponsor-Based Join Protocol (New v1.2)](#64-sponsor-based-join-protocol-new-v12)
 7. [Packet Structure](#7-packet-structure)
+   - 7.1 [Physical Layer Frame](#71-physical-layer-frame)
+   - 7.2 [LoRaMesher Frame Structure](#72-loramesher-frame-structure)
+   - 7.3 [Header Field Descriptions](#73-header-field-descriptions)
+   - 7.4 [Maximum Frame Sizes](#74-maximum-frame-sizes)
 8. [Error Handling](#8-error-handling)
+   - 8.1 [Error Classification](#81-error-classification)
+   - 8.2 [Error Recovery Mechanisms](#82-error-recovery-mechanisms)
 9. [Performance Characteristics](#9-performance-characteristics)
+   - 9.1 [Timing Requirements](#91-timing-requirements)
+   - 9.2 [Scalability Limits](#92-scalability-limits)
+   - 9.3 [LoRa Air Time Calculations](#93-lora-air-time-calculations)
+   - 9.4 [Memory Usage](#94-memory-usage)
 10. [Future Work and Research Directions](#10-future-work-and-research-directions)
+    - 10.1 [Open Research Questions](#101-open-research-questions)
+    - 10.2 [Implementation and Testing Requirements](#102-implementation-and-testing-requirements)
+    - 10.3 [System Architecture Evolution](#103-system-architecture-evolution)
+    - 10.4 [Protocol Extensions](#104-protocol-extensions)
+    - 10.5 [Performance Optimization](#105-performance-optimization)
 11. [Conclusion](#11-conclusion)
 
 ---
@@ -213,74 +259,196 @@ ROUTING_MESSAGE = 0x30,  // Routing table updates
 SYSTEM_MESSAGE  = 0x40,  // System management and diagnostics
 ```
 
-### 3.2 Core Message Types
+### 3.2 Message Type Organization System (v1.2)
 
-#### 3.2.1 Join Messages
-```cpp
-// Join process messages
-JOIN_REQUEST  = 0x21,  // Request to join network
-JOIN_RESPONSE = 0x22,  // Response to join request
-```
+LoRaMesher v1.2 uses a sophisticated bit-field organization for message types that enables systematic categorization and efficient parsing:
 
-**JOIN_REQUEST Format**:
+#### 3.2.1 Bit-Field Structure
+
 ```cpp
-struct JoinRequest {
-    uint8_t messageType;     // 0x21
-    uint16_t nodeId;         // Requesting node ID
-    uint8_t capabilities;    // Node capability flags
-    uint16_t networkId;      // Target network ID (0 for any)
-    uint8_t requestedSlots;  // Number of slots requested
-    uint8_t checksum;        // Message integrity check
+/**
+ * Message Type Organization (8-bit field):
+ * - Bits 7-4 (high nibble): Main message category
+ * - Bits 3-0 (low nibble): Subtype within the category
+ *
+ * This allows for 16 main categories with 16 subtypes each = 256 possible message types
+ */
+enum class MessageType : uint8_t {
+    // Main categories (high nibble)
+    DATA_MSG = 0x10,     // 0001 xxxx: Data message category
+    CONTROL_MSG = 0x20,  // 0010 xxxx: Control message category
+    ROUTING_MSG = 0x30,  // 0011 xxxx: Routing message category
+    SYSTEM_MSG = 0x40,   // 0100 xxxx: System message category
+
+    // Complete message types with categories + subtypes
+    // Data messages (0x1x)
+    DATA = 0x11,         // 0001 0001: Regular data message
+
+    // Control messages (0x2x)
+    ACK = 0x21,          // 0010 0001: Acknowledgment
+    PING = 0x23,         // 0010 0011: Ping request
+    PONG = 0x24,         // 0010 0100: Pong response
+
+    // Routing messages (0x3x)
+    HELLO = 0x31,        // 0011 0001: Hello packet for routing
+    ROUTE_TABLE = 0x32,  // 0011 0010: Routing table update
+
+    // System messages (0x4x)
+    SYNC = 0x41,         // 0100 0001: Synchronization packet
+    JOIN_REQUEST = 0x42, // 0100 0010: Request to join network
+    JOIN_RESPONSE = 0x43,// 0100 0011: Response to join request
+    SYNC_BEACON = 0x46,  // 0100 0110: Multi-hop sync beacon
 };
 ```
 
-**JOIN_RESPONSE Format**:
+#### 3.2.2 Category Benefits
+
+**Efficient Parsing**: Nodes can quickly determine message category using bit masking:
 ```cpp
-struct JoinResponse {
-    uint8_t messageType;     // 0x22
-    uint16_t nodeId;         // Target node ID
-    uint8_t status;          // JOIN_ACCEPTED(0), JOIN_DENIED(1), or RETRY_LATER(2)
-    uint16_t assignedSlot;   // Allocated slot number (valid only if ACCEPTED)
-    uint32_t superframeTime; // Current superframe timing
-    uint16_t networkId;      // Network identification
-    uint8_t checksum;        // Message integrity check
+MessageType main_type = static_cast<MessageType>(message_type & 0xF0);
+if (main_type == MessageType::SYSTEM_MSG) {
+    // Handle system message
+}
+```
+
+**Systematic Extension**: New message types can be added systematically within existing categories or by creating new categories.
+
+**Protocol Evolution**: The 4+4 bit structure provides room for 240+ additional message types while maintaining backward compatibility.
+
+### 3.3 Core Message Types
+
+#### 3.3.1 Join Messages (Updated v1.2)
+```cpp
+// Join process messages with sponsor support
+JOIN_REQUEST  = 0x42,  // Request to join network (with sponsor support)
+JOIN_RESPONSE = 0x43,  // Response to join request (with routing semantics)
+```
+
+**JOIN_REQUEST Format (Updated v1.2)**:
+```cpp
+struct JoinRequestHeader {
+    // Standard message header (6 bytes)
+    AddressType destination;        // Network Manager or next hop (2 bytes)
+    AddressType source;             // Requesting node address (2 bytes)
+    MessageType type = JOIN_REQUEST; // Message type 0x42 (1 byte)
+    uint8_t payload_size;           // Size of join request payload (1 byte)
+
+    // Join request specific fields (9 bytes)
+    uint8_t capabilities;           // Node capability flags (1 byte)
+    uint8_t battery_level;          // Battery level 0-100% (1 byte)
+    uint8_t requested_slots;        // Number of data slots requested (1 byte)
+    AddressType next_hop;           // Next hop for message forwarding (2 bytes)
+    AddressType sponsor_address;    // Sponsor node address (0 = no sponsor) (2 bytes)
+};
+```
+
+**JOIN_RESPONSE Format (Updated v1.2)**:
+```cpp
+struct JoinResponseHeader {
+    // Standard message header (6 bytes)
+    AddressType destination;         // Sponsor address (immediate routing) (2 bytes)
+    AddressType source;              // Network Manager address (2 bytes)
+    MessageType type = JOIN_RESPONSE; // Message type 0x43 (1 byte)
+    uint8_t payload_size;            // Size of response payload (1 byte)
+
+    // Join response specific fields (11 bytes)
+    uint16_t network_id;             // Network identifier (2 bytes)
+    uint8_t allocated_slots;         // Number of allocated data slots (1 byte)
+    ResponseStatus status;           // Response status code (1 byte)
+    AddressType next_hop;            // Next hop for message forwarding (2 bytes)
+    AddressType target_address;      // Final recipient (joining node) (2 bytes)
+
+    // Optional superframe info in payload
 };
 ```
 
 **JOIN_RESPONSE Status Codes**:
-- `JOIN_ACCEPTED = 0`: Join request accepted, slot allocated
-- `JOIN_DENIED = 1`: Join request denied due to network constraints
-- `RETRY_LATER = 2`: Join request temporarily rejected, retry after delay
+- `ACCEPTED = 0x00`: Join request accepted, slot allocated
+- `REJECTED = 0x01`: Join request rejected due to constraints
+- `CAPACITY_EXCEEDED = 0x02`: Network at capacity
+- `AUTHENTICATION_FAILED = 0x03`: Authentication failed
+- `RETRY_LATER = 0x04`: Temporarily rejected, retry after delay
 
-#### 3.2.2 Routing Messages
+**Key v1.2 Routing Semantics**:
+- **destination**: Immediate next hop for message routing
+- **target_address**: Final recipient for end-to-end delivery
+- **sponsor_address**: Intermediate node facilitating join for nodes beyond Network Manager range
+
+**Sponsor-Based Join Flow**:
+1. Joining node selects sponsor (first sync beacon sender)
+2. JOIN_REQUEST routed via sponsor to Network Manager
+3. Network Manager sends JOIN_RESPONSE to sponsor with target_address=joining_node
+4. Sponsor forwards response to final target (joining node)
+
+#### 3.3.2 Routing Messages
 ```cpp
-// Routing protocol messages
-ROUTING_UPDATE = 0x31,  // Distance-vector routing update
-ROUTE_REQUEST  = 0x32,  // Route discovery request
-ROUTE_RESPONSE = 0x33,  // Route discovery response
+// Routing protocol messages (v1.2)
+HELLO = 0x31,        // Hello packet for neighbor discovery
+ROUTE_TABLE = 0x32,  // Routing table exchange (documented in 3.2.3)
 ```
 
-**ROUTING_UPDATE Format**:
+**HELLO Format**:
 ```cpp
-struct RoutingUpdate {
-    uint8_t messageType;     // 0x31
-    uint16_t originNode;     // Node sending update
-    uint8_t numRoutes;       // Number of routes in update
-    uint32_t superframeTime; // Network synchronization time
-    
-    struct RouteEntry {
-        uint16_t destination; // Destination node ID
-        uint8_t hops;        // Hop count to destination
-        uint8_t linkQuality; // Link quality metric (0-255)
-        uint16_t nextHop;    // Next hop node ID
-        uint32_t timestamp;  // Route freshness timestamp
-    } routes[MAX_ROUTES_PER_UPDATE];
-    
-    uint8_t checksum;        // Message integrity check
+struct HelloMessage {
+    // Standard message header (6 bytes)
+    AddressType destination;     // Broadcast or target (2 bytes)
+    AddressType source;          // Sending node address (2 bytes)
+    MessageType type = HELLO;    // Message type 0x31 (1 byte)
+    uint8_t payload_size;        // Size of hello payload (1 byte)
+
+    // Hello-specific fields
+    uint32_t timestamp;          // Transmission timestamp (4 bytes)
+    uint8_t sequence_number;     // Message sequence for tracking (1 byte)
+    uint8_t link_quality;        // Local link quality assessment (1 byte)
 };
 ```
 
-#### 3.2.3 Synchronization Messages
+**Usage**:
+- **HELLO messages**: Used for neighbor discovery and link quality assessment
+- **ROUTE_TABLE messages**: Used for distance-vector routing table exchange (see section 3.2.3)
+
+#### 3.3.3 Routing Table Messages (New v1.2)
+```cpp
+// Routing table exchange messages
+ROUTE_TABLE = 0x32,  // Distance-vector routing table exchange
+```
+
+**ROUTING_TABLE Format (New v1.2)**:
+```cpp
+struct RoutingTableHeader {
+    // Standard message header (6 bytes)
+    AddressType destination;         // Target for routing table (2 bytes)
+    AddressType source;              // Node sending table (2 bytes)
+    MessageType type = ROUTE_TABLE; // Message type 0x32 (1 byte)
+    uint8_t payload_size;            // Size of routing entries payload (1 byte)
+
+    // Routing table specific fields (5 bytes)
+    AddressType network_manager;     // Network Manager address (2 bytes)
+    uint8_t table_version;           // Version for change detection (1 byte)
+    uint8_t entry_count;             // Number of entries in message (1 byte)
+};
+
+struct RoutingTableEntry {
+    AddressType destination;         // Route destination (2 bytes)
+    uint8_t hop_count;               // Hops to destination (1 byte)
+    uint8_t link_quality;            // Link quality metric 0-255 (1 byte)
+    uint8_t allocated_data_slots;    // Data slots for this node (1 byte)
+};
+```
+
+**Routing Table Message Benefits**:
+- **Versioned Updates**: Table version enables efficient change detection
+- **Modular Architecture**: Clean separation from legacy ROUTING_UPDATE format
+- **Link Quality Support**: Built-in infrastructure for advanced routing algorithms
+- **Compact Format**: 5 bytes per route entry for efficient transmission
+
+**Usage in Distance-Vector Protocol**:
+1. Each node broadcasts routing table during CONTROL_TX slots
+2. Version increments enable delta updates and loop detection
+3. Link quality metrics prepare for future advanced routing algorithms
+4. Entry count allows variable-length route advertisements
+
+#### 3.3.4 Synchronization Messages
 ```cpp
 // Network synchronization messages
 SYNC_BEACON = 0x46,  // Multi-hop synchronization beacon
@@ -288,8 +456,8 @@ SYNC_BEACON = 0x46,  // Multi-hop synchronization beacon
 
 **SYNC_BEACON Format (Optimized)**:
 
-*Message Size*: 21 bytes total (6-byte base header + 15-byte sync fields)
-- **Optimization**: Reduced from 33 bytes (36% size reduction)  
+*Message Size*: 19 bytes total (6-byte base header + 13-byte sync fields)
+- **Optimization**: Reduced from 31 bytes (39% size reduction)  
 - **Power Impact**: Lower transmission time and energy consumption
 
 ```cpp
@@ -300,13 +468,13 @@ struct SyncBeaconHeader {
     MessageType type = SYNC_BEACON;      // Message type 0x46 (1 byte)
     uint8_t payload_size = 0;            // No payload data (1 byte)
     
-    // Core synchronization fields (11 bytes)
+    // Core synchronization fields (7 bytes)
     uint16_t network_id;                 // Network identifier (2 bytes)
     uint8_t total_slots;                 // Slots in complete superframe (1 byte)
     uint16_t slot_duration_ms;           // Individual slot duration (2 bytes) [OPTIMIZED: was 4 bytes]
     AddressType network_manager;         // Network Manager address (2 bytes)
-    
-    // Multi-hop forwarding fields (4 bytes)
+
+    // Multi-hop forwarding fields (6 bytes)
     uint8_t hop_count;                   // Hops from Network Manager (1 byte)
     uint32_t propagation_delay_ms;       // Accumulated forwarding delay (4 bytes)
     uint8_t max_hops;                    // Network diameter limit (1 byte)
@@ -316,7 +484,7 @@ struct SyncBeaconHeader {
 // - superframe_duration_ms = total_slots * slot_duration_ms
 ```
 
-#### 3.2.4 Data Messages
+#### 3.3.5 Data Messages
 ```cpp
 // Application data messages
 DATA_UNICAST   = 0x11,  // Point-to-point data
@@ -338,7 +506,7 @@ struct DataUnicast {
 };
 ```
 
-### 3.3 Message Serialization
+### 3.4 Message Serialization
 
 All messages use little-endian byte order and are serialized using the following process:
 
@@ -738,6 +906,140 @@ struct LoadBalancing {
 };
 ```
 
+### 4.5 Routing Table Architecture (Updated v1.2)
+
+**Overview**: LoRaMesher v1.2 introduces a modular routing table architecture that separates routing logic from network services and provides infrastructure for advanced routing algorithms.
+
+#### 4.5.1 Routing Table Abstraction
+
+**IRoutingTable Interface**:
+The new architecture introduces a clean abstraction layer enabling multiple routing algorithm implementations:
+
+```cpp
+class IRoutingTable {
+public:
+    // Core routing operations
+    virtual AddressType FindNextHop(AddressType destination) const = 0;
+    virtual bool UpdateRoute(AddressType source, AddressType destination,
+                           uint8_t hop_count, uint8_t link_quality,
+                           uint8_t allocated_data_slots, uint32_t current_time) = 0;
+
+    // Network node management
+    virtual bool AddNode(const NetworkNodeRoute& node) = 0;
+    virtual bool UpdateNode(AddressType node_address, uint8_t battery_level,
+                          bool is_network_manager, uint8_t allocated_data_slots,
+                          uint8_t capabilities, uint32_t current_time) = 0;
+
+    // Route table exchange
+    virtual std::vector<RoutingTableEntry> GetRoutingEntries(AddressType exclude_address) const = 0;
+    virtual bool ProcessRoutingTableMessage(AddressType source_address,
+                                          const std::vector<RoutingTableEntry>& entries,
+                                          uint32_t reception_timestamp,
+                                          uint8_t local_link_quality,
+                                          uint8_t max_hops) = 0;
+};
+```
+
+#### 4.5.2 Current Implementation: Distance-Vector Routing Table
+
+**Features**:
+- **Thread-safe operations**: Mutex protection for concurrent access
+- **Route aging and cleanup**: Configurable timeout mechanisms
+- **Link quality tracking**: Infrastructure for advanced routing metrics
+- **Statistics collection**: Performance monitoring and debugging support
+- **Versioned table updates**: Efficient change detection and propagation
+
+**Route Selection Logic** (Current):
+```cpp
+AddressType FindNextHop(AddressType destination) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    AddressType best_next_hop = 0;
+    uint8_t best_hop_count = UINT8_MAX;
+    uint8_t best_link_quality = 0;
+
+    for (const auto& node : nodes_) {
+        if (node.address == destination) {
+            // Direct route available
+            return destination;
+        }
+
+        // Find best intermediate route
+        for (const auto& route : node.routes) {
+            if (route.destination == destination &&
+                route.hop_count < best_hop_count) {
+                best_next_hop = node.address;
+                best_hop_count = route.hop_count;
+                best_link_quality = route.link_quality;
+            }
+        }
+    }
+
+    return best_next_hop;
+}
+```
+
+#### 4.5.3 Future Advanced Routing Algorithm (Planned v1.3+)
+
+**Enhanced Metrics Framework**:
+The current implementation prepares infrastructure for sophisticated routing algorithms:
+
+```cpp
+struct AdvancedRoutingMetrics {
+    uint8_t hop_count;              // Current: hop count (implemented)
+    uint8_t link_quality;           // Current: signal quality (implemented)
+    uint8_t delivery_success_rate;  // Future: message delivery statistics
+    uint16_t latency_ms;            // Future: round-trip time measurements
+    uint8_t load_factor;            // Future: route congestion metrics
+    uint32_t last_success_time;     // Future: route freshness tracking
+};
+```
+
+**Planned Advanced Features**:
+1. **Delivery Success Tracking**: Monitor successful message delivery per route
+2. **Latency-Aware Routing**: Factor in round-trip times for route selection
+3. **Load Balancing**: Distribute traffic across equal-cost paths
+4. **Adaptive Route Selection**: Dynamic routing based on network conditions
+5. **Congestion Detection**: Identify and avoid overloaded routes
+
+**Route Selection Algorithm (Future)**:
+```cpp
+AddressType FindNextHop(AddressType destination) const {
+    // Multi-metric route evaluation
+    float best_score = 0;
+    AddressType best_next_hop = 0;
+
+    for (const auto& route : available_routes) {
+        float score = CalculateRouteScore(route);
+        if (score > best_score) {
+            best_score = score;
+            best_next_hop = route.next_hop;
+        }
+    }
+
+    return best_next_hop;
+}
+
+float CalculateRouteScore(const Route& route) {
+    // Weighted multi-metric scoring
+    float hop_score = (256.0 - route.hop_count) / 256.0;
+    float quality_score = route.link_quality / 255.0;
+    float delivery_score = route.delivery_success_rate / 100.0;
+    float latency_score = 1.0 / (1.0 + route.latency_ms / 1000.0);
+
+    return (hop_score * 0.2) + (quality_score * 0.3) +
+           (delivery_score * 0.4) + (latency_score * 0.1);
+}
+```
+
+#### 4.5.4 Architecture Benefits
+
+**Modularity**: Clean separation allows easy algorithm replacement
+**Extensibility**: Framework ready for advanced routing metrics
+**Performance**: Optimized data structures and thread-safe operations
+**Testability**: Interface abstraction enables comprehensive unit testing
+**Future-Proofing**: Infrastructure prepared for sophisticated routing enhancements
+
 ---
 
 ## 5. Network Synchronization (TDMA)
@@ -748,7 +1050,7 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    POWER-OPTIMIZED SUPERFRAME STRUCTURE                     │
+│                    POWER-OPTIMIZED SUPERFRAME STRUCTURE (Updated v1.2)       │
 │                              (Example: 20 slots)                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
@@ -762,9 +1064,10 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 │  5   │ CONTROL_TX     │ Node B routing       │ TX (Node B), RX (others)      │
 │  6   │ DATA_TX        │ Node A data          │ TX (Node A), RX (neighbors)   │
 │  7   │ DATA_TX        │ Node B data          │ TX (Node B), RX (neighbors)   │
-│  8   │ DISCOVERY_RX   │ New node detection   │ RX (all nodes)                │
-│  9   │ DISCOVERY_RX   │ Network monitoring   │ RX (all nodes)                │
-│ 10-19│ SLEEP          │ Power conservation   │ SLEEP (70% of superframe)     │
+│  8-15│ SLEEP          │ Power conservation   │ SLEEP (reduced for optimization) │
+│ 16   │ DISCOVERY_RX   │ New node detection   │ RX (all nodes)                │
+│ 17   │ DISCOVERY_RX   │ Network monitoring   │ RX (all nodes)                │
+│ 18-19│ SLEEP          │ Final power saving   │ SLEEP (end of superframe)     │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ POWER CHARACTERISTICS:                                                      │
@@ -1539,6 +1842,137 @@ void ScheduleJoinRetry(uint32_t base_delay_ms) {
     LOG_INFO("Scheduled join retry %d in %dms", join_retry_count_, final_delay);
 }
 ```
+
+### 6.4 Sponsor-Based Join Protocol (New v1.2)
+
+**Overview**: Sponsor-based joining enables nodes beyond direct Network Manager range to join through intermediate sponsor nodes, significantly expanding network reach and reliability.
+
+#### 6.4.1 Sponsor Selection Algorithm
+
+**Sponsor Selection Criteria**:
+1. **First Sync Beacon Sender**: Joining node selects the first node from which it receives a sync beacon as its sponsor
+2. **Signal Quality**: Only nodes with sufficient signal quality (configurable threshold) are considered
+3. **Network Membership**: Sponsor must already be a member of the target network
+
+**Selection Process**:
+```cpp
+void SelectSponsor(AddressType beacon_sender) {
+    if (selected_sponsor_ == 0 && GetSignalQuality(beacon_sender) >= MIN_SPONSOR_QUALITY) {
+        selected_sponsor_ = beacon_sender;
+        LOG_INFO("Selected sponsor node 0x%04X from first sync beacon received",
+                 selected_sponsor_);
+    }
+}
+```
+
+#### 6.4.2 Sponsor-Based Join Sequence
+
+```mermaid
+sequenceDiagram
+    participant J as Joining Node
+    participant S as Sponsor Node
+    participant M as Network Manager
+
+    Note over J,M: Phase 1: Discovery and Sponsor Selection
+    S->>J: SYNC_BEACON (regular broadcast)
+    J->>J: Select S as sponsor (first beacon received)
+
+    Note over J,M: Phase 2: Sponsored Join Request
+    J->>S: JOIN_REQUEST (destination=S, sponsor_address=S)
+    S->>M: JOIN_REQUEST (forwarded, preserve source=J, sponsor_address=S)
+
+    Note over J,M: Phase 3: Sponsored Join Response
+    M->>S: JOIN_RESPONSE (destination=S, target_address=J)
+    S->>J: JOIN_RESPONSE (destination=J, target_address=0)
+
+    Note over J,M: Phase 4: Network Integration
+    J->>J: Join network, clear sponsor
+    S->>S: Resume normal operation
+```
+
+#### 6.4.3 Message Routing Semantics
+
+**Key Routing Distinctions (v1.2)**:
+- **destination**: Immediate next hop for message routing
+- **target_address**: Final recipient for end-to-end delivery
+- **sponsor_address**: Intermediate node facilitating join
+
+**Join Request Routing**:
+```cpp
+// Joining node creates request
+JOIN_REQUEST msg = {
+    .destination = selected_sponsor_,     // Route to sponsor first
+    .source = node_address_,              // Original requester
+    .sponsor_address = selected_sponsor_  // Sponsor identification
+};
+
+// Sponsor forwards to Network Manager
+JOIN_REQUEST forwarded = {
+    .destination = network_manager_,      // Route to NM
+    .source = msg.source,                 // Preserve original source
+    .sponsor_address = msg.sponsor_address // Preserve sponsor info
+};
+```
+
+**Join Response Routing**:
+```cpp
+// Network Manager responds via sponsor
+JOIN_RESPONSE response = {
+    .destination = sponsor_address,       // Route to sponsor
+    .source = network_manager_,           // Response from NM
+    .target_address = joining_node        // Final recipient
+};
+
+// Sponsor forwards to joining node
+JOIN_RESPONSE final = {
+    .destination = target_address,        // Route to joining node
+    .source = response.source,            // Preserve NM source
+    .target_address = 0                   // Clear sponsor info
+};
+```
+
+#### 6.4.4 Special Cases and Error Handling
+
+**Network Manager as Sponsor**:
+When the Network Manager is also the sponsor (sponsor_address == node_address_):
+```cpp
+if (sponsor_address == node_address_) {
+    // Direct routing - we ARE the sponsor
+    response_destination = joining_node;
+    target_address = 0;  // No forwarding needed
+} else {
+    // External sponsor - route via sponsor
+    response_destination = sponsor_address;
+    target_address = joining_node;
+}
+```
+
+**Sponsor Failure Recovery**:
+- If sponsor becomes unreachable, joining node returns to DISCOVERY state
+- Clear sponsor selection and restart discovery process
+- Future enhancement: Multi-hop sponsor chains for better reliability
+
+**Circular Routing Prevention**:
+- Network Manager detects when it is both sender and sponsor
+- Direct routing bypasses sponsor mechanism in this case
+- Prevents infinite routing loops
+
+#### 6.4.5 Benefits and Applications
+
+**Network Expansion**:
+- Enables nodes beyond direct Network Manager range to join
+- Creates more robust network topologies
+- Reduces dependency on central Network Manager proximity
+
+**Reliability Improvements**:
+- Multiple potential sponsors increase join success rates
+- Sponsor-based forwarding provides redundant paths
+- Graceful fallback to discovery on sponsor failure
+
+**Scalability Enhancement**:
+- Distributes join processing load across sponsor nodes
+- Enables hierarchical network formation
+- Supports larger geographic coverage areas
 
 ---
 
