@@ -541,7 +541,7 @@ class VirtualNetwork {
         // Double-check that the radio can still receive when delivery time arrives
         if (!radio->CanReceive()) {
             radio::RadioState radio_state = radio->GetRadioState();
-            LOG_ERROR(
+            LOG_WARNING(
                 "[%u ms] - Message delivery cancelled - Node 0x%04X cannot "
                 "receive "
                 "(state: %d)",

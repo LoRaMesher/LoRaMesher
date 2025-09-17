@@ -1371,4 +1371,243 @@ TEST_F(RTOSMockTest, ReceiveFromQueueTaskSuspended) {
     std::cout << "ReceiveFromQueue task deletion test completed." << std::endl;
 }
 
+/**
+ * @brief Test DeleteTask timeout warning with suspended task in WaitForNotify
+ * 
+ * This test reproduces the exact issue from the LoRaMesh integration tests:
+ * A task is suspended while waiting in WaitForNotify, and when DeleteTask is called,
+ * it should wake up the task and make it exit cleanly within the timeout.
+ * 
+ * If the task doesn't exit cleanly, we get the warning:
+ * "MOCK: Task 'TestRadioTask' did not exit cleanly within timeout"
+ * 
+ * This test helps us debug and fix the notification mechanism for suspended tasks.
+ */
+TEST_F(RTOSMockTest, DeleteTaskTimeoutWithSuspendedWaitForNotify) {
+    struct TestParams {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> waitForNotifyStarted{false};
+        std::atomic<bool> taskExited{false};
+        std::atomic<bool> suspendedInWaitForNotify{false};
+    };
+
+    TestParams params;
+    TaskHandle_t taskHandle;
+
+    auto taskFunction = [](void* param) {
+        auto* testParams = static_cast<TestParams*>(param);
+        auto& rtos = GetRTOS();
+
+        testParams->taskStarted.store(true);
+
+        // Simulate the RadioLib task loop that gets stuck
+        while (!rtos.ShouldStopOrPause()) {
+            testParams->waitForNotifyStarted.store(true);
+
+            // This is where the task gets suspended and stuck
+            QueueResult result = rtos.WaitForNotify(MAX_DELAY);
+
+            if (result == QueueResult::kTimeout) {
+                // Check if we're suspended (this is what we see in logs)
+                // In real scenario, task continues to loop and calls WaitForNotify again
+                testParams->suspendedInWaitForNotify.store(true);
+                continue;
+            } else if (result == QueueResult::kError) {
+                // This means stop was requested - task should exit
+                break;
+            }
+            // If result == kOk, process notification and continue loop
+        }
+
+        testParams->taskExited.store(true);
+    };
+
+    std::cout << "Creating task that will get suspended in WaitForNotify..."
+              << std::endl;
+
+    // Execute - create task (simulating RadioLib processing task)
+    bool result = rtosInstance->CreateTask(taskFunction, "TestRadioTask", 2048,
+                                           &params, 1, &taskHandle);
+    EXPECT_TRUE(result);
+
+    // Wait for task to start and enter WaitForNotify
+    int attempts = 0;
+    while (!params.waitForNotifyStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(params.taskStarted.load());
+    EXPECT_TRUE(params.waitForNotifyStarted.load());
+
+    // Give the task time to actually enter WaitForNotify
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Now call DeleteTask directly on the running task (without suspending first)
+    // This reproduces the scenario where a task is actively waiting in WaitForNotify
+    // and gets deleted during teardown
+    std::cout
+        << "Calling DeleteTask on task actively waiting in WaitForNotify..."
+        << std::endl;
+    std::cout << "This should NOT produce a timeout warning if the fix works!"
+              << std::endl;
+
+    // Capture start time to measure if DeleteTask completes quickly
+    auto start_time = std::chrono::steady_clock::now();
+
+    rtosInstance->DeleteTask(
+        taskHandle);  // This should wake up the task and make it exit
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           end_time - start_time)
+                           .count();
+
+    std::cout << "DeleteTask completed in " << duration_ms << " ms"
+              << std::endl;
+
+    // If the fix works, DeleteTask should complete quickly (well under 500ms)
+    // If the bug exists, DeleteTask will take 500ms+ and print a warning
+    if (duration_ms > 450) {  // Give some margin for timing variations
+        std::cout << "WARNING: DeleteTask took too long (" << duration_ms
+                  << " ms), likely timed out and detached thread!" << std::endl;
+    }
+
+    // The task should have exited cleanly
+    EXPECT_TRUE(params.taskExited.load())
+        << "Task should have exited cleanly when DeleteTask was called";
+
+    std::cout << "DeleteTask timeout test completed. Duration: " << duration_ms
+              << " ms" << std::endl;
+}
+
+/**
+ * @brief Test SuperframeService-style signal-and-delete pattern
+ * 
+ * This test reproduces the exact pattern used in SuperframeService destructor:
+ * 1. Set is_running = false
+ * 2. Send notification to queue to wake up ReceiveFromQueue
+ * 3. Call DeleteTask (should complete quickly since task sees is_running = false)
+ * 
+ * This should work perfectly, but let's verify it matches the actual SuperframeService behavior.
+ */
+TEST_F(RTOSMockTest, SuperframeServiceSignalAndDeletePattern) {
+    struct TestParams {
+        std::atomic<bool> taskStarted{false};
+        std::atomic<bool> receiveStarted{false};
+        std::atomic<bool> taskExited{false};
+        std::atomic<bool> isRunning{true};
+        QueueHandle_t queue{nullptr};
+    };
+
+    TestParams params;
+    TaskHandle_t taskHandle;
+
+    // Create queue (like SuperframeService notification_queue_)
+    params.queue = rtosInstance->CreateQueue(8, sizeof(int));
+    ASSERT_TRUE(params.queue != nullptr);
+
+    auto taskFunction = [](void* param) {
+        auto* testParams = static_cast<TestParams*>(param);
+        auto& rtos = GetRTOS();
+
+        testParams->taskStarted.store(true);
+
+        int notification = 0;
+
+        // Simulate SuperframeService UpdateTaskFunction loop
+        while (!rtos.ShouldStopOrPause() && testParams->isRunning.load()) {
+            // Check if queue is still valid (like SuperframeService does)
+            if (!testParams->queue) {
+                break;
+            }
+
+            testParams->receiveStarted.store(true);
+
+            // Wait for notification or timeout (like SuperframeService)
+            auto queue_result =
+                rtos.ReceiveFromQueue(testParams->queue, &notification, 1000);
+
+            if (queue_result == QueueResult::kOk) {
+                // Got notification - continue loop to check is_running again
+                continue;
+            } else if (queue_result == QueueResult::kError) {
+                // Queue error (likely task deletion) - should exit
+                break;
+            }
+            // On timeout, continue loop
+            rtos.YieldTask();
+        }
+
+        testParams->taskExited.store(true);
+    };
+
+    std::cout << "Creating SuperframeService-style task..." << std::endl;
+
+    // Execute - create task
+    bool result = rtosInstance->CreateTask(taskFunction, "SuperframeTest", 2048,
+                                           &params, 1, &taskHandle);
+    EXPECT_TRUE(result);
+
+    // Wait for task to start and enter ReceiveFromQueue
+    int attempts = 0;
+    while (!params.receiveStarted.load() && attempts < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        attempts++;
+    }
+    EXPECT_TRUE(params.taskStarted.load());
+    EXPECT_TRUE(params.receiveStarted.load());
+
+    // Give the task time to actually enter ReceiveFromQueue
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Now perform the SuperframeService destructor pattern:
+    std::cout << "Performing SuperframeService signal-and-delete pattern..."
+              << std::endl;
+
+    // 1. Set is_running = false
+    params.isRunning.store(false);
+
+    // 2. Send notification to wake up ReceiveFromQueue
+    int stop_notification = 999;  // Any value
+    auto sendResult =
+        rtosInstance->SendToQueue(params.queue, &stop_notification, 0);
+    EXPECT_EQ(sendResult, QueueResult::kOk);
+
+    // Give task a moment to process the notification and see is_running = false
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    // 3. Delete the task (should complete quickly)
+    std::cout << "Calling DeleteTask - should complete quickly since task "
+                 "should exit..."
+              << std::endl;
+
+    auto start_time = std::chrono::steady_clock::now();
+
+    rtosInstance->DeleteTask(taskHandle);
+
+    auto end_time = std::chrono::steady_clock::now();
+    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           end_time - start_time)
+                           .count();
+
+    std::cout << "DeleteTask completed in " << duration_ms << " ms"
+              << std::endl;
+
+    // The task should have exited cleanly and quickly
+    EXPECT_TRUE(params.taskExited.load())
+        << "Task should have exited cleanly when is_running was set to false";
+
+    if (duration_ms > 450) {
+        std::cout << "WARNING: DeleteTask took too long (" << duration_ms
+                  << " ms), signal-and-delete pattern failed!" << std::endl;
+    }
+
+    // Clean up queue
+    rtosInstance->DeleteQueue(params.queue);
+
+    std::cout
+        << "SuperframeService signal-and-delete test completed. Duration: "
+        << duration_ms << " ms" << std::endl;
+}
+
 #endif  // ARDUINO
