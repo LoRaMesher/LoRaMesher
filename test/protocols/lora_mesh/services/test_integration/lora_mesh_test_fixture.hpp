@@ -432,39 +432,6 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     /**
-     * @brief Set up message tracking for a node
-     *
-     * This sets up a callback to track messages received by the node.
-     *
-     * @param node Node to set up message tracking for
-     */
-    void SetupMessageTracking(TestNode& node) {
-        // Set up message callback to track received messages
-        node.protocol->SetMessageReceivedCallback(
-            [this, address = node.address,
-             name = node.name](const BaseMessage& message) {
-                // Find the node in our collection
-                for (auto& node_ptr : nodes_) {
-                    if (node_ptr->address == address) {
-                        // Store the message in the node's received messages
-                        node_ptr->received_messages.push_back(message);
-                        break;
-                    }
-                }
-
-                // Also store in the global message log
-                message_log_[address].push_back(message);
-
-                // Log for debugging
-                std::cout << name << " received message from " << std::hex
-                          << message.GetSource() << " to "
-                          << message.GetDestination()
-                          << " type: " << static_cast<int>(message.GetType())
-                          << std::dec << std::endl;
-            });
-    }
-
-    /**
      * @brief Send a message from one node to another
      *
      * @param from Source node

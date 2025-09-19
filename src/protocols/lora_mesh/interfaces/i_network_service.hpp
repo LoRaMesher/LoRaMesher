@@ -42,6 +42,12 @@ class INetworkService {
                            AddressType next_hop, uint8_t hop_count)>;
 
     /**
+     * @brief Callback for received data messages
+     */
+    using DataReceivedCallback = std::function<void(
+        AddressType source, const std::vector<uint8_t>& data)>;
+
+    /**
      * @brief Configuration for network service
      */
     struct NetworkConfig {
@@ -175,10 +181,17 @@ class INetworkService {
 
     /**
      * @brief Set route update callback
-     * 
+     *
      * @param callback Callback function
      */
     virtual void SetRouteUpdateCallback(RouteUpdateCallback callback) = 0;
+
+    /**
+     * @brief Set data received callback
+     *
+     * @param callback Callback function
+     */
+    virtual void SetDataReceivedCallback(DataReceivedCallback callback) = 0;
 
     // Discovery methods
 

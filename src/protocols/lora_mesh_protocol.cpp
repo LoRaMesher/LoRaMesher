@@ -410,6 +410,11 @@ void LoRaMeshProtocol::SetRouteUpdateCallback(
     network_service_->SetRouteUpdateCallback(callback);
 }
 
+void LoRaMeshProtocol::SetDataReceivedCallback(
+    lora_mesh::INetworkService::DataReceivedCallback callback) {
+    network_service_->SetDataReceivedCallback(callback);
+}
+
 const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
     return network_service_->GetNetworkNodes();
 }

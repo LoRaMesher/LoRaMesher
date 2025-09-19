@@ -198,10 +198,17 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Set callback for route update notifications
-     * 
+     *
      * @param callback Function to call when routes are updated or removed
      */
     void SetRouteUpdateCallback(RouteUpdateCallback callback) override;
+
+    /**
+     * @brief Set callback for received data messages
+     *
+     * @param callback Function to call when data is received
+     */
+    void SetDataReceivedCallback(DataReceivedCallback callback) override;
 
     // INetworkService discovery implementation
 
@@ -783,6 +790,7 @@ class NetworkService : public INetworkService {
     std::vector<types::protocols::lora_mesh::SlotAllocation> slot_table_;
     NetworkConfig config_;
     RouteUpdateCallback route_update_callback_;
+    DataReceivedCallback data_received_callback_;
     ProtocolState state_;
     AddressType network_manager_;
     bool network_found_;

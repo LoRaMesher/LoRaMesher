@@ -12,6 +12,7 @@
 #include "protocols/lora_mesh_protocol.hpp"
 #include "protocols/ping_pong_protocol.hpp"
 #include "protocols/protocol_manager.hpp"
+#include "types/application/application_types.hpp"
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/base_message.hpp"
 #include "utils/logger.hpp"
@@ -78,14 +79,6 @@ class LoraMesher {
     AddressType GetNodeAddress() const;
 
     /**
-     * @brief Set callback for received messages
-     * @warning This callback should be small or transfer the message into another task.
-     * 
-     * @param callback Function to call when a message is received
-     */
-    void SetMessageReceivedCallback(MessageReceivedCallback callback);
-
-    /**
      * @brief Get the active protocol type
      * 
      * @return protocols::ProtocolType The active protocol type
@@ -107,13 +100,63 @@ class LoraMesher {
     std::shared_ptr<protocols::LoRaMeshProtocol> GetLoRaMeshProtocol();
 
     /**
+     * @brief Get the LoRaMesh protocol instance (const version)
+     * @return std::shared_ptr<const protocols::LoRaMeshProtocol> Shared pointer to the LoRaMesh protocol,
+     *         or nullptr if not available
+     */
+    std::shared_ptr<const protocols::LoRaMeshProtocol> GetLoRaMeshProtocol()
+        const;
+
+    /**
      * @brief Get the hardware manager
-     * 
+     *
      * @return std::shared_ptr<hardware::HardwareManagerInterface> The hardware manager
      */
     std::shared_ptr<hardware::IHardwareManager> GetHardwareManager() const {
         return hardware_manager_;
     }
+
+    // Application Layer Interface
+
+    /**
+     * @brief Simple data send method for application layer
+     *
+     * @param destination Destination node address
+     * @param data Data payload to send
+     * @return Result Success if message was queued, error details otherwise
+     */
+    [[nodiscard]] Result Send(AddressType destination,
+                              const std::vector<uint8_t>& data);
+
+    /**
+     * @brief Set callback for received data messages
+     * @warning This callback should be small or transfer the message into another task for processing.
+     *
+     * @param callback Function to call when data is received
+     */
+    void SetDataCallback(DataReceivedCallback callback);
+
+    /**
+     * @brief Get current routing table with raw entry data
+     *
+     * @return std::vector<RouteEntry> Vector of routing entries
+     */
+    std::vector<RouteEntry> GetRoutingTable() const;
+
+    /**
+     * @brief Get current network status information
+     *
+     * @return NetworkStatus Current network status
+     */
+    NetworkStatus GetNetworkStatus() const;
+
+    /**
+     * @brief Get current slot allocation table
+     *
+     * @return const std::vector<types::protocols::lora_mesh::SlotAllocation>& Reference to slot table
+     */
+    const std::vector<types::protocols::lora_mesh::SlotAllocation>&
+    GetSlotTable() const;
 
    private:
     friend class Builder;  // Allow Builder to access private constructor
@@ -161,6 +204,7 @@ class LoraMesher {
 
     // Callbacks
     MessageReceivedCallback message_callback_ = nullptr;
+    DataReceivedCallback data_callback_ = nullptr;
 };
 
 /**

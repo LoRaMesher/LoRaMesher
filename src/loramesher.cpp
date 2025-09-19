@@ -173,8 +173,110 @@ AddressType LoraMesher::GetNodeAddress() const {
     return node_address_;
 }
 
-void LoraMesher::SetMessageReceivedCallback(MessageReceivedCallback callback) {
-    message_callback_ = callback;
+// Application Layer Interface Implementation
+
+Result LoraMesher::Send(AddressType destination,
+                        const std::vector<uint8_t>& data) {
+    if (!is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoraMesher not running");
+    }
+
+    LOG_DEBUG("Send called for destination 0x%04X with %zu bytes", destination,
+              data.size());
+
+    // Create BaseMessage with DATA type
+    auto message_opt = BaseMessage::Create(destination, node_address_,
+                                           MessageType::DATA, data);
+
+    if (!message_opt) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Failed to create data message");
+    }
+
+    // Send via existing SendMessage method
+    return SendMessage(*message_opt);
+}
+
+void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
+    data_callback_ = callback;
+    LOG_DEBUG("Data callback %s", callback ? "registered" : "cleared");
+
+    // Forward the callback to the LoRaMesh protocol
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        mesh_protocol->SetDataReceivedCallback(callback);
+        LOG_DEBUG("Data callback registered with LoRaMesh protocol");
+    } else {
+        LOG_WARNING("LoRaMesh protocol not available for data callback");
+    }
+}
+
+std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
+    std::vector<RouteEntry> routes;
+
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        LOG_WARNING("LoRaMesh protocol not available for routing table");
+        return routes;
+    }
+
+    const auto& network_nodes = mesh_protocol->GetNetworkNodes();
+    routes.reserve(network_nodes.size());
+
+    for (const auto& node : network_nodes) {
+        RouteEntry entry;
+        entry.destination = node.routing_entry.destination;
+        entry.next_hop = node.next_hop;
+        entry.hop_count = node.routing_entry.hop_count;
+        entry.link_quality = node.GetLinkQuality();
+        entry.last_seen_ms = node.last_seen;
+        entry.is_valid = node.is_active;
+        routes.push_back(entry);
+    }
+
+    return routes;
+}
+
+NetworkStatus LoraMesher::GetNetworkStatus() const {
+    NetworkStatus status{};
+
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        LOG_WARNING("LoRaMesh protocol not available for network status");
+        status.current_state =
+            protocols::lora_mesh::INetworkService::ProtocolState::INITIALIZING;
+        status.network_manager = 0;
+        status.current_slot = 0;
+        status.is_synchronized = false;
+        status.time_since_last_sync_ms = 0;
+        status.connected_nodes = 0;
+        return status;
+    }
+
+    status.current_state = mesh_protocol->GetState();
+    status.network_manager = mesh_protocol->GetNetworkManager();
+    status.current_slot = mesh_protocol->GetCurrentSlot();
+    status.is_synchronized = mesh_protocol->IsSynchronized();
+    status.connected_nodes = mesh_protocol->GetNetworkNodes().size();
+
+    // TODO: Add time_since_last_sync_ms when available in protocol
+    status.time_since_last_sync_ms = 0;
+
+    return status;
+}
+
+const std::vector<types::protocols::lora_mesh::SlotAllocation>&
+LoraMesher::GetSlotTable() const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        static const std::vector<types::protocols::lora_mesh::SlotAllocation>
+            empty_table;
+        LOG_WARNING("LoRaMesh protocol not available for slot table");
+        return empty_table;
+    }
+
+    return mesh_protocol->GetSlotTable();
 }
 
 protocols::ProtocolType LoraMesher::GetActiveProtocolType() const {
@@ -201,6 +303,13 @@ std::shared_ptr<protocols::LoRaMeshProtocol> LoraMesher::GetLoRaMeshProtocol() {
 
     return protocol_manager_->GetProtocolAs<protocols::LoRaMeshProtocol>(
         protocols::ProtocolType::kLoraMesh);
+}
+
+std::shared_ptr<const protocols::LoRaMeshProtocol>
+LoraMesher::GetLoRaMeshProtocol() const {
+    // Use const_cast to access the protocol manager since the method doesn't modify state
+    auto* non_const_this = const_cast<LoraMesher*>(this);
+    return non_const_this->GetLoRaMeshProtocol();
 }
 
 void LoraMesher::OnRadioEvent(std::unique_ptr<radio::RadioEvent> event) {

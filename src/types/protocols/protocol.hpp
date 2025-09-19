@@ -88,13 +88,6 @@ class Protocol {
     */
     AddressType GetNodeAddress() const { return node_address_; }
 
-    /**
-     * @brief Set received message callback
-     */
-    void SetMessageReceivedCallback(MessageReceivedCallback callback) {
-        message_received_callback_ = callback;
-    }
-
    protected:
     /**
     * @brief Protected constructor to prevent direct instantiation
@@ -118,11 +111,6 @@ class Protocol {
     * @brief The address of this node in the network
     */
     AddressType node_address_;
-
-    /**
-     * @brief Callback for received messages
-     */
-    MessageReceivedCallback message_received_callback_;
 };
 
 }  // namespace protocols

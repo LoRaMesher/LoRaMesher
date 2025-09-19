@@ -1,6 +1,11 @@
 /**
  * @file loramesher_example.cpp
  * @brief Example showing how to use LoraMesher with the LoRaMesh protocol
+ *
+ * This example demonstrates the application of the LoraMesher library
+ * to set up a LoRa mesh network using the LoRaMesh protocol. It includes
+ * configuration of hardware, radio, and protocol settings, as well as
+ * sending and receiving messages.
  */
 
 #include <iostream>
@@ -28,7 +33,17 @@ std::unique_ptr<LoraMesher> mesher = nullptr;
 #define LORA_CRC true
 #define LORA_PREAMBLE_LENGTH 8U
 
-// Example message received callback
+// Simple data received callback (recommended approach)
+void OnDataReceived(AddressType source, const std::vector<uint8_t>& data) {
+    // Recommendation: Forward to separate task for processing
+    std::cout << "Received data from: 0x" << std::hex << source << std::dec
+              << " (" << data.size() << " bytes)" << std::endl;
+
+    // Process data in your application...
+    // For example: processDataInSeparateTask(source, data);
+}
+
+// Legacy message received callback (still available for advanced users)
 void OnMessageReceived(const BaseMessage& msg) {
     // Process received message
     std::cout << "Received message from: " << msg.GetHeader().GetSource()
@@ -70,8 +85,8 @@ void ConfigureAndUseLoraMesher() {
                  .withLoRaMeshProtocol(mesh_config)  // Use LoRaMesh protocol
                  .Build();
 
-    // Step 6: Set up message callback
-    mesher->SetMessageReceivedCallback(OnMessageReceived);
+    // Step 6: Set up data callback
+    mesher->SetDataCallback(OnDataReceived);
 
     // Step 7: Start LoraMesher
     Result init_result = mesher->Start();
@@ -101,23 +116,32 @@ void ConfigureAndUseLoraMesher() {
             });
     }
 
-    // Step 10: Use LoraMesher to send messages
-    // Create a message
-    std::vector<uint8_t> payload = {0x01, 0x02, 0x03, 0x04};
-    auto message_opt = BaseMessage::Create(
-        2,                         // Destination address
-        mesher->GetNodeAddress(),  // Source address (our address)
-        MessageType::DATA_MSG,     // Message type
-        payload);
-
-    if (message_opt) {
-        // Send the message
-        Result send_result = mesher->SendMessage(*message_opt);
-        if (!send_result) {
-            std::cerr << "Failed to send message: "
-                      << send_result.GetErrorMessage() << std::endl;
-        }
+    // Step 10: Send data (simplified approach)
+    std::vector<uint8_t> data = {0x01, 0x02, 0x03, 0x04};
+    Result send_result = mesher->Send(2, data);  // Send to node address 2
+    if (!send_result) {
+        std::cerr << "Failed to send data: " << send_result.GetErrorMessage()
+                  << std::endl;
     }
+
+    // Step 11: Access network information
+    auto routes = mesher->GetRoutingTable();
+    std::cout << "Routing table has " << routes.size()
+              << " entries:" << std::endl;
+    for (const auto& route : routes) {
+        std::cout << "  Destination: 0x" << std::hex << route.destination
+                  << ", Next hop: 0x" << route.next_hop
+                  << ", Hops: " << std::dec << static_cast<int>(route.hop_count)
+                  << ", Valid: " << (route.is_valid ? "yes" : "no")
+                  << std::endl;
+    }
+
+    auto status = mesher->GetNetworkStatus();
+    std::cout << "Network status: State="
+              << static_cast<int>(status.current_state) << ", Manager=0x"
+              << std::hex << status.network_manager << ", Slot=" << std::dec
+              << status.current_slot << ", Nodes=" << status.connected_nodes
+              << std::endl;
 
     // Application main loop...
 

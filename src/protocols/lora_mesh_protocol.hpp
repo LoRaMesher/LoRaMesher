@@ -131,11 +131,19 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Set route update callback
-     * 
+     *
      * @param callback Callback function
      */
     void SetRouteUpdateCallback(
         lora_mesh::INetworkService::RouteUpdateCallback callback);
+
+    /**
+     * @brief Set data received callback
+     *
+     * @param callback Callback function
+     */
+    void SetDataReceivedCallback(
+        lora_mesh::INetworkService::DataReceivedCallback callback);
 
     /**
      * @brief Get all network nodes with their routing information

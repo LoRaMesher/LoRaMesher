@@ -270,6 +270,10 @@ void NetworkService::SetRouteUpdateCallback(RouteUpdateCallback callback) {
     route_update_callback_ = callback;
 }
 
+void NetworkService::SetDataReceivedCallback(DataReceivedCallback callback) {
+    data_received_callback_ = callback;
+}
+
 Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
     // Reset discovery state
     network_found_ = false;
@@ -371,7 +375,15 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
             // Data messages handled by upper layers
             LOG_DEBUG("Received DATA_MSG from 0x%04X at timestamp %u",
                       message.GetSource(), reception_timestamp);
-            // TODO: Forward to application layer
+
+            // Forward to application layer via callback
+            if (data_received_callback_) {
+                data_received_callback_(message.GetSource(),
+                                        message.GetPayload());
+                LOG_DEBUG("Forwarded DATA_MSG to application layer");
+            } else {
+                LOG_WARNING("No data callback registered - DATA_MSG dropped");
+            }
             break;
 
         default:

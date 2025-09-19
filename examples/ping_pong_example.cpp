@@ -40,19 +40,14 @@ void pingCompletionCallback(AddressType address, uint32_t rtt, bool success) {
     }
 }
 
-// Message received callback
-void messageCallback(const BaseMessage& message) {
-    LOG_INFO("Message received from 0x%04X, type: %d",
-             message.GetHeader().GetSource(),
-             static_cast<int>(message.GetHeader().GetType()));
+// Simple data received callback (recommended approach)
+void OnDataReceived(AddressType source, const std::vector<uint8_t>& data) {
+    // Recommendation: Forward to separate task for processing
+    std::cout << "Received data from: 0x" << std::hex << source << std::dec
+              << " (" << data.size() << " bytes)" << std::endl;
 
-    // Print payload as hex
-    LOG_INFO("Payload (%u bytes): ",
-             static_cast<unsigned>(message.GetPayload().size()));
-
-    for (const auto& byte : message.GetPayload()) {
-        LOG_INFO("%02X ", byte);
-    }
+    // Process data in your application...
+    // For example: processDataInSeparateTask(source, data);
 }
 
 // Node application task
@@ -128,8 +123,8 @@ int main() {
                     LORA_ADDRESS, 2000, 3))  // Address, 2s timeout, 3 retries
                 .Build();
 
-        // Set message received callback
-        mesher->SetMessageReceivedCallback(messageCallback);
+        //Set up data callback
+        mesher->SetDataCallback(OnDataReceived);
 
         // Start the network
         Result result = mesher->Start();
