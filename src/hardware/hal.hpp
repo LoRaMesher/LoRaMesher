@@ -40,7 +40,7 @@ class IHal {
 
     /**
      * @brief Get an instance of SPIClass for communication.
-     * 
+     *
      * This method provides platform-independent access to SPI functionality.
      * Implementations should handle the differences between hardware and
      * simulated environments.
@@ -49,6 +49,20 @@ class IHal {
      * @return Reference to an SPIClass instance.
      */
     virtual SPIClass& getSPI(uint8_t spiNum = 0) = 0;
+
+    /**
+     * @brief Get platform-specific hardware unique identifier
+     *
+     * This method provides access to hardware-based unique identifiers
+     * such as MAC addresses, chip IDs, or other platform-specific unique values.
+     * Used for automatic device address generation.
+     *
+     * @param id_buffer Buffer to store the unique ID (must be at least 6 bytes)
+     * @param buffer_size Size of the provided buffer
+     * @return bool True if unique ID was successfully retrieved
+     */
+    virtual bool GetHardwareUniqueId(uint8_t* id_buffer,
+                                     size_t buffer_size) = 0;
 };
 
 }  // namespace hal

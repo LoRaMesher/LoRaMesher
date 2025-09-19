@@ -83,7 +83,12 @@ void ConfigureAndUseLoraMesher() {
                  .withRadioConfig(radioConfig)
                  .withPinConfig(pinConfig)
                  .withLoRaMeshProtocol(mesh_config)  // Use LoRaMesh protocol
+                 .withAutoAddressFromHardware(true)  // Enable hardware-based addressing (default)
+                 // Alternatively, you can set a specific address:
+                 // .withNodeAddress(0x1234)
                  .Build();
+
+    std::cout << "Node address: 0x" << std::hex << mesher->GetNodeAddress() << std::dec << std::endl;
 
     // Step 6: Set up data callback
     mesher->SetDataCallback(OnDataReceived);

@@ -201,6 +201,8 @@ class LoraMesher {
     bool is_initialized_ = false;
     bool is_running_ = false;
     AddressType node_address_ = 0;
+    bool auto_address_from_hardware_ =
+        true;  ///< Use hardware ID for auto address generation
 
     // Callbacks
     MessageReceivedCallback message_callback_ = nullptr;
@@ -266,6 +268,21 @@ class LoraMesher::Builder {
     }
 
     /**
+     * @brief Enable/disable automatic address generation from hardware
+     *
+     * When enabled (default), automatic address generation will use hardware unique IDs
+     * (such as ESP32 eFuse MAC) to generate collision-resistant addresses.
+     * When disabled, falls back to enhanced random generation.
+     *
+     * @param enable True to use hardware ID for address generation (default: true)
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withAutoAddressFromHardware(bool enable = true) {
+        auto_address_from_hardware = enable;
+        return *this;
+    }
+
+    /**
      * @brief Configure for PingPong protocol
      * 
      * @param config The PingPong protocol configuration
@@ -304,11 +321,15 @@ class LoraMesher::Builder {
             throw std::invalid_argument("Invalid configuration: " +
                                         config_.Validate());
         }
-        return std::unique_ptr<LoraMesher>(new LoraMesher(config_));
+        auto mesher = std::unique_ptr<LoraMesher>(new LoraMesher(config_));
+        mesher->auto_address_from_hardware_ = auto_address_from_hardware;
+        return mesher;
     }
 
    private:
     Config config_;  ///< The configuration being built
+    bool auto_address_from_hardware =
+        true;  ///< Use hardware ID for auto address generation
 };
 
 }  // namespace loramesher
