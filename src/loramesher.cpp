@@ -84,11 +84,13 @@ Result LoraMesher::InitializeProtocol() {
             // Generate address from hardware ID
             node_address_ = utils::AddressGenerator::GenerateFromHardwareId(
                 hardware_id, sizeof(hardware_id), addr_config);
-            LOG_INFO("Generated node address 0x%04X from hardware HAL", node_address_);
+            LOG_INFO("Generated node address 0x%04X from hardware HAL",
+                     node_address_);
         } else {
             // Fallback generation
             LOG_WARNING("Hardware ID not available, using fallback generation");
-            node_address_ = utils::AddressGenerator::GenerateFallback(addr_config);
+            node_address_ =
+                utils::AddressGenerator::GenerateFallback(addr_config);
             LOG_INFO("Generated fallback node address 0x%04X", node_address_);
         }
 
