@@ -191,9 +191,6 @@ class LoRaMeshTestFixture : public ::testing::Test {
                       << result.GetErrorMessage() << std::endl;
         }
 
-        // Set up message reception tracking
-        SetupMessageTracking(*node);
-
         // Add the node to our collection and return a reference to it
         nodes_.push_back(node);
         return *node;
