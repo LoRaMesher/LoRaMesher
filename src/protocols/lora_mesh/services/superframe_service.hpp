@@ -25,7 +25,8 @@ enum class SuperframeNotificationType : uint8_t {
     STARTED = 1,     ///< Superframe started, begin timer calculations
     NEW_FRAME,       ///< New frame cycle started, recalculate timeout
     CONFIG_CHANGED,  ///< Configuration changed, recalculate timeout
-    SYNC_UPDATED     ///< External sync updated, immediate recalculation
+    SYNC_UPDATED,    ///< External sync updated, immediate recalculation
+    SYNC_COMPLETE  ///< Complete sync operation finished (consolidated notification)
 };
 
 /**
@@ -360,6 +361,12 @@ class SuperframeService : public ISuperframeService {
     bool auto_advance_;
     bool update_start_time_in_new_superframe =
         true;  ///< Flag to control start time updates
+    bool sync_in_progress_ =
+        false;  ///< Flag to prevent cascading sync operations
+    bool suppress_notifications_ =
+        false;  ///< Flag to temporarily suppress notifications
+    SuperframeNotificationType last_notification_ =
+        SuperframeNotificationType::STARTED;  ///< Last notification sent
     uint16_t last_slot_;
     uint32_t service_start_time_;
     SuperframeCallback superframe_callback_;
@@ -380,7 +387,7 @@ class SuperframeService : public ISuperframeService {
     static constexpr uint32_t DEFAULT_UPDATE_INTERVAL_MS = 20;
     static constexpr uint32_t TASK_STACK_SIZE = 4096;
     static constexpr uint32_t TASK_PRIORITY = 14;
-    static constexpr uint32_t NOTIFICATION_QUEUE_SIZE = 8;
+    static constexpr uint32_t NOTIFICATION_QUEUE_SIZE = 32;
 };
 
 }  // namespace lora_mesh

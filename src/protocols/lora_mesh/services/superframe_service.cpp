@@ -395,11 +395,22 @@ uint32_t SuperframeService::GetTimeInSlot() const {
 
 Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
                                           uint16_t external_slot) {
+    // Check if synchronization is already in progress to prevent cascading
+    if (sync_in_progress_) {
+        LOG_DEBUG(
+            "Synchronization already in progress, skipping redundant sync");
+        return Result::Success();
+    }
+
     // Validate external_slot parameter
     if (external_slot >= total_slots_) {
         return Result(LoraMesherErrorCode::kInvalidArgument,
                       "External slot index exceeds total slots");
     }
+
+    // Set sync in progress flag and suppress individual notifications
+    sync_in_progress_ = true;
+    suppress_notifications_ = true;
 
     // Calculate when the external superframe started
     uint32_t slot_duration = slot_duration_ms_;
@@ -432,6 +443,8 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         is_synchronized_ = true;
         last_sync_time_ = current_time;
         last_slot_ = external_slot - 1;
+        suppress_notifications_ = false;
+        sync_in_progress_ = false;
         return Result::Success();
     }
 
@@ -452,6 +465,8 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
         is_synchronized_ = true;
         last_sync_time_ = current_time;
         last_slot_ = external_slot - 1;
+        suppress_notifications_ = false;
+        sync_in_progress_ = false;
         return Result::Success();
     }
 
@@ -482,8 +497,12 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     LOG_INFO("Synchronized superframe with external timing (drift: %dms)",
              drift);
 
-    // Notify update task of synchronization update (immediate recalculation needed)
-    NotifyUpdateTask(SuperframeNotificationType::SYNC_UPDATED);
+    // Send consolidated sync complete notification
+    suppress_notifications_ = false;
+    NotifyUpdateTask(SuperframeNotificationType::SYNC_COMPLETE);
+
+    // Clear sync in progress flag
+    sync_in_progress_ = false;
 
     return Result::Success();
 }
@@ -663,6 +682,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
             switch (notification) {
                 case SuperframeNotificationType::CONFIG_CHANGED:
                 case SuperframeNotificationType::SYNC_UPDATED:
+                case SuperframeNotificationType::SYNC_COMPLETE:
                     // These notifications only require timeout recalculation, not state updates
                     // LOG_DEBUG(
                     //     "Notification requires timeout recalculation only");
@@ -785,17 +805,49 @@ void SuperframeService::NotifyUpdateTask(
         return;
     }
 
+    // Suppress notifications if requested (during batch operations)
+    if (suppress_notifications_ &&
+        notification_type != SuperframeNotificationType::SYNC_COMPLETE) {
+        LOG_DEBUG("Suppressing notification during batch operation (type: %d)",
+                  static_cast<int>(notification_type));
+        return;
+    }
+
+    // Deduplication: Skip if same notification type was just sent
+    if (last_notification_ == notification_type &&
+        (notification_type == SuperframeNotificationType::CONFIG_CHANGED ||
+         notification_type == SuperframeNotificationType::SYNC_UPDATED)) {
+        LOG_DEBUG("Skipping duplicate notification (type: %d)",
+                  static_cast<int>(notification_type));
+        return;
+    }
+
     auto& rtos = GetRTOS();
-    auto result = rtos.SendToQueue(notification_queue_, &notification_type,
-                                   0);  // Non-blocking send
+
+    // Check queue capacity before sending to avoid blocking operations
+    uint32_t messages_waiting =
+        rtos.getQueueMessagesWaiting(notification_queue_);
+    if (messages_waiting >= (NOTIFICATION_QUEUE_SIZE - 2)) {
+        LOG_WARNING(
+            "Notification queue near full (%u/%u), dropping notification "
+            "(type: %d)",
+            messages_waiting, NOTIFICATION_QUEUE_SIZE,
+            static_cast<int>(notification_type));
+        return;
+    }
+
+    // Non-blocking send with immediate timeout
+    auto result = rtos.SendToQueue(notification_queue_, &notification_type, 0);
 
     if (result != os::QueueResult::kOk) {
         LOG_WARNING(
-            "Failed to send notification to update task queue (type: %d)",
-            static_cast<int>(notification_type));
+            "Failed to send notification to update task queue (type: %d), "
+            "queue status: %d",
+            static_cast<int>(notification_type), static_cast<int>(result));
     } else {
         LOG_DEBUG("Sent notification to update task (type: %d)",
                   static_cast<int>(notification_type));
+        last_notification_ = notification_type;
     }
 }
 
