@@ -81,6 +81,11 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
         return Result::Error(LoraMesherErrorCode::kMemoryError);
     }
 
+    if (processing_task_ == nullptr) {
+        return Result(LoraMesherErrorCode::kUnknownError,
+                      "Processing task not created");
+    }
+
     // Create appropriate radio module based on type
     if (!CreateRadioModule(config.getRadioType())) {
         return Result::Error(LoraMesherErrorCode::kConfigurationError);
@@ -89,10 +94,10 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
     // Copy the configuration
     current_config_ = config;
 
-    // Wait until receive task is suspended
+    // Suspend the processing task until we are fully configured
     GetRTOS().SuspendTask(processing_task_);
 
-    LOG_DEBUG("Configurations set");
+    LOG_DEBUG("RadioLib configurations set");
 
     return Result::Success();
 }
@@ -500,7 +505,7 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
         return;
     }
 
-    LOG_DEBUG("Processing events for radio %p", static_cast<void*>(radio));
+    // LOG_DEBUG("Processing events for radio %p", static_cast<void*>(radio));
     while (!GetRTOS().ShouldStopOrPause() && radio->processing_task_) {
         os::QueueResult result = GetRTOS().WaitForNotify(MAX_DELAY);
         LOG_DEBUG("ProcessEvents: WaitForNotify result: %d, Current State %d",

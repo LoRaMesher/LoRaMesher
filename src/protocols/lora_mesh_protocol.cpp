@@ -167,6 +167,8 @@ Result LoRaMeshProtocol::Init(
     service_config_ = CreateServiceConfig(config_);
 #endif  // DEBUG
 
+    LOG_INFO("LoRaMesh protocol initialized for node 0x%04X", node_address_);
+
     return Result::Success();
 }
 
@@ -208,6 +210,8 @@ Result LoRaMeshProtocol::Start() {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Hardware not initialized");
     }
+
+    LOG_DEBUG("Starting LoRaMesh protocol...");
 
     if (!radio_event_queue_) {
         radio_event_queue_ =
@@ -494,6 +498,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
             default:
                 break;
         }
+
+        // TODO: THIS SHOULD BE A NOTIFICATION
+        rtos.delay(10);
 
         // Yield to other tasks with shorter delay for faster shutdown
         rtos.YieldTask();

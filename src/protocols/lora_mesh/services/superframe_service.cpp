@@ -79,6 +79,8 @@ Result SuperframeService::StartSuperframe() {
                       "Superframe already running");
     }
 
+    LOG_DEBUG("Starting superframe service...");
+
     // Initialize timing
     uint32_t current_time = GetRTOS().getTickCount();
     // We cannot update this superframe since after the syncronization,

@@ -97,12 +97,14 @@ Result LoraMesher::Start() {
         return Result::Success();
     }
 
-    LOG_INFO("Starting LoraMesher");
-
-    Result init_result = Initialize();
-    if (!init_result) {
-        return init_result;
+    if(!is_initialized_) {
+        Result init_result = Initialize();
+        if (!init_result) {
+            return init_result;
+        }
     }
+
+    LOG_INFO("Starting LoraMesher");
 
     Result protocol_result = Result::Success();
 
@@ -200,7 +202,6 @@ Result LoraMesher::Send(AddressType destination,
 
 void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     data_callback_ = callback;
-    LOG_DEBUG("Data callback %s", callback ? "registered" : "cleared");
 
     // Forward the callback to the LoRaMesh protocol
     auto mesh_protocol = GetLoRaMeshProtocol();
