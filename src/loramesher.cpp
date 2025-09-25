@@ -4,6 +4,7 @@
  */
 #include "loramesher.hpp"
 #include "os/os_port.hpp"
+#include "utils/address_generator.hpp"
 
 namespace loramesher {
 
@@ -63,20 +64,48 @@ Result LoraMesher::InitializeProtocol() {
     // Get or generate node address
     AddressType configured_address = protocol_config.getNodeAddress();
     if (configured_address == 0) {
-        // Auto-generate address if not specified
-        // TODO: In a real implementation, this might use a MAC address or other unique identifier
-        node_address_ = static_cast<AddressType>(
-            os::RTOS::instance().getTickCount() & 0xFFFF);
-        if (node_address_ == 0)
-            node_address_ = 1;  // Avoid address 0
+        // Auto-generate address using hardware-based generation
+        LOG_INFO("No address configured, auto-generating from hardware...");
+
+        utils::AddressGenerator::Config addr_config{};
+        addr_config.use_hardware_id = auto_address_from_hardware_;
+        addr_config.avoid_reserved_addresses = true;
+
+        // Try to get hardware unique ID from HAL
+        uint8_t hardware_id[6];
+        bool has_hardware_id = false;
+
+        if (hardware_manager_ && hardware_manager_->getHal()) {
+            has_hardware_id = hardware_manager_->getHal()->GetHardwareUniqueId(
+                hardware_id, sizeof(hardware_id));
+        }
+
+        if (has_hardware_id && auto_address_from_hardware_) {
+            // Generate address from hardware ID
+            node_address_ = utils::AddressGenerator::GenerateFromHardwareId(
+                hardware_id, sizeof(hardware_id), addr_config);
+            LOG_INFO("Generated node address 0x%04X from hardware HAL",
+                     node_address_);
+        } else {
+            // Fallback generation
+            LOG_WARNING("Hardware ID not available, using fallback generation");
+            node_address_ =
+                utils::AddressGenerator::GenerateFallback(addr_config);
+            LOG_INFO("Generated fallback node address 0x%04X", node_address_);
+        }
+
+        if (node_address_ == 0) {
+            // Final fallback - should never happen
+            LOG_ERROR("Address generation failed completely, using 0x0001");
+            node_address_ = 0x0001;
+        }
 
         // Update the protocol configuration with the generated address
         protocol_config.setNodeAddress(node_address_);
     } else {
         node_address_ = configured_address;
+        LOG_INFO("Using configured node address 0x%04X", node_address_);
     }
-
-    LOG_INFO("Node address set to 0x%04X", node_address_);
 
     // Create the active protocol using configuration
     active_protocol_ = protocol_manager_->CreateProtocolWithConfig(

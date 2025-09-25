@@ -10,6 +10,10 @@
 
 namespace loramesher {
 
+namespace hal {
+class IHal;
+}
+
 namespace hardware {
 
 /**
@@ -218,23 +222,23 @@ class IHardwareManager {
 
     /**
      * @brief Change the radio operational state
-     * 
+     *
      * Controls the radio module state for power management and operational control.
      * Common states include RX (receive), TX (transmit), IDLE, and SLEEP.
-     * 
+     *
      * Implementation Notes:
      * - State transitions should be atomic and thread-safe
      * - Validate state transition is legal for current radio state
      * - Update internal state tracking before returning success
      * - Handle timing requirements for state transitions
-     * 
+     *
      * State Transition Requirements:
      * - IDLE <-> RX: Should be immediate (<1ms)
-     * - IDLE <-> TX: Should be immediate (<1ms)  
+     * - IDLE <-> TX: Should be immediate (<1ms)
      * - RX <-> TX: May require brief idle state
      * - Any -> SLEEP: Should disable radio and save power
      * - SLEEP -> Any: May require initialization delay
-     * 
+     *
      * @param state Target radio state (RX, TX, IDLE, SLEEP)
      * @return Result::Success if state change successful
      * @return Result::InvalidParameter if state transition not supported
@@ -242,6 +246,16 @@ class IHardwareManager {
      * @return Result::InvalidState if current state doesn't allow transition
      */
     virtual Result setState(radio::RadioState state) = 0;
+
+    /**
+     * @brief Get pointer to HAL interface
+     *
+     * Provides access to the Hardware Abstraction Layer interface for
+     * platform-specific operations like hardware unique ID retrieval.
+     *
+     * @return hal::IHal* Pointer to HAL interface, nullptr if not initialized
+     */
+    virtual hal::IHal* getHal() = 0;
 };
 
 }  // namespace hardware

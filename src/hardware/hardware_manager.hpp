@@ -70,10 +70,10 @@ class HardwareManager : public IHardwareManager {
 
     /**
      * @brief Get pointer to HAL interface
-     * 
+     *
      * @return IHal* Pointer to HAL interface
      */
-    hal::IHal* getHal() { return hal_.get(); }
+    hal::IHal* getHal() override { return hal_.get(); }
 
     /**
      * @brief Get pointer to radio module interface
