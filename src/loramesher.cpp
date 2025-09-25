@@ -126,7 +126,7 @@ Result LoraMesher::Start() {
         return Result::Success();
     }
 
-    if(!is_initialized_) {
+    if (!is_initialized_) {
         Result init_result = Initialize();
         if (!init_result) {
             return init_result;

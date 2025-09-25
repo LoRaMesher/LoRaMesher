@@ -398,6 +398,7 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
             break;
 #endif  // DEBUG
         default:
+            LOG_ERROR("Unsupported radio type");
             return false;
     }
 
