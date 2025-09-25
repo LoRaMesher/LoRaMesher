@@ -20,7 +20,8 @@ namespace protocols {
 LoRaMeshProtocol::LoRaMeshProtocol()
     : Protocol(ProtocolType::kLoraMesh),
       protocol_task_handle_(nullptr),
-      radio_event_queue_(nullptr) {}
+      radio_event_queue_(nullptr),
+      protocol_notification_queue_(nullptr) {}
 
 LoRaMeshProtocol::~LoRaMeshProtocol() {
     LOG_DEBUG("LoRaMeshProtocol destructor called");
@@ -48,6 +49,12 @@ LoRaMeshProtocol::~LoRaMeshProtocol() {
         DrainRadioEventQueue();
         GetRTOS().DeleteQueue(radio_event_queue_);
         radio_event_queue_ = nullptr;
+    }
+
+    // Clean up protocol notification queue
+    if (protocol_notification_queue_) {
+        GetRTOS().DeleteQueue(protocol_notification_queue_);
+        protocol_notification_queue_ = nullptr;
     }
 
     // Clear hardware reference
@@ -95,6 +102,15 @@ Result LoRaMeshProtocol::Init(
                       "Failed to create radio event queue");
     }
 
+    // Initialize protocol notification queue for event-driven operation
+    protocol_notification_queue_ = GetRTOS().CreateQueue(
+        PROTOCOL_NOTIFICATION_QUEUE_SIZE, sizeof(ProtocolNotificationType));
+    if (!protocol_notification_queue_) {
+        GetRTOS().DeleteQueue(radio_event_queue_);
+        return Result(LoraMesherErrorCode::kConfigurationError,
+                      "Failed to create protocol notification queue");
+    }
+
     // Set up hardware radio callback to send events to NetworkService
     Result hw_result = hardware_->setActionReceive(
         [this](std::unique_ptr<radio::RadioEvent> event) {
@@ -120,6 +136,9 @@ Result LoRaMeshProtocol::Init(
                 delete raw_event;
                 return;
             }
+
+            // Notify protocol task that radio event is available
+            NotifyProtocolTask(ProtocolNotificationType::RADIO_EVENT);
         });
 
     if (!hw_result) {
@@ -447,62 +466,125 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
     Result result = Result::Success();
 
     while (!rtos.ShouldStopOrPause()) {
-        // Process any queued radio events
-        protocol->ProcessRadioEvents();
+        // Calculate timeout based on current state
+        uint32_t timeout_ms = QUEUE_WAIT_TIMEOUT_MS;
 
-        // Check current state and perform state-specific actions
         // Add safety check to prevent use-after-free
         if (!protocol->network_service_) {
             LOG_DEBUG(
                 "Network service no longer available, exiting protocol task");
             break;
         }
+
         auto state = protocol->network_service_->GetState();
 
+        // Set state-specific timeouts for discovery and joining
         switch (state) {
             case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
-                // Discovery is handled by NetworkService
-                result = protocol->network_service_->PerformDiscovery(
-                    protocol->GetDiscoveryTimeout());
-                if (!result) {
-                    LOG_ERROR("Discovery failed: %s",
-                              result.GetErrorMessage().c_str());
-                }
+                timeout_ms =
+                    std::min(timeout_ms, protocol->GetDiscoveryTimeout());
                 break;
-
             case lora_mesh::INetworkService::ProtocolState::JOINING:
-                // Joining is handled by NetworkService
-                result = protocol->network_service_->PerformJoining(
-                    protocol->GetJoinTimeout());
-                if (!result) {
-                    LOG_ERROR("Discovery failed: %s",
-                              result.GetErrorMessage().c_str());
-                }
+                timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;
-
-            case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
-            case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
-                // Normal operation - messages are sent based on slot schedule
-                break;
-
-            case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                // Fault recovery - may need to restart discovery
-                LOG_WARNING("Protocol in fault recovery state");
-                result = protocol->StartDiscovery();
-                if (!result) {
-                    LOG_ERROR("Failed to restart discovery: %s",
-                              result.GetErrorMessage().c_str());
-                }
-                break;
-
             default:
+                // Use default timeout for other states
                 break;
         }
 
-        // TODO: THIS SHOULD BE A NOTIFICATION
-        rtos.delay(10);
+        // Wait for protocol notifications with calculated timeout
+        ProtocolNotificationType notification;
+        auto queue_result = rtos.ReceiveFromQueue(
+            protocol->protocol_notification_queue_, &notification, timeout_ms);
 
-        // Yield to other tasks with shorter delay for faster shutdown
+        if (queue_result == os::QueueResult::kOk) {
+            // Process received notification
+            switch (notification) {
+                case ProtocolNotificationType::RADIO_EVENT:
+                    protocol->ProcessRadioEvents();
+                    break;
+
+                case ProtocolNotificationType::STATE_TIMEOUT:
+                    // Handle timeout-based state transitions
+                    switch (state) {
+                        case lora_mesh::INetworkService::ProtocolState::
+                            DISCOVERY:
+                            result =
+                                protocol->network_service_->PerformDiscovery(
+                                    protocol->GetDiscoveryTimeout());
+                            if (!result) {
+                                LOG_ERROR("Discovery failed: %s",
+                                          result.GetErrorMessage().c_str());
+                            }
+                            break;
+
+                        case lora_mesh::INetworkService::ProtocolState::JOINING:
+                            result = protocol->network_service_->PerformJoining(
+                                protocol->GetJoinTimeout());
+                            if (!result) {
+                                LOG_ERROR("Joining failed: %s",
+                                          result.GetErrorMessage().c_str());
+                            }
+                            break;
+
+                        case lora_mesh::INetworkService::ProtocolState::
+                            FAULT_RECOVERY:
+                            LOG_WARNING("Protocol in fault recovery state");
+                            result = protocol->StartDiscovery();
+                            if (!result) {
+                                LOG_ERROR("Failed to restart discovery: %s",
+                                          result.GetErrorMessage().c_str());
+                            }
+                            break;
+
+                        default:
+                            // No timeout action needed for other states
+                            break;
+                    }
+                    break;
+
+                case ProtocolNotificationType::STATE_CHANGE:
+                    // State changed, continue processing with new state
+                    LOG_DEBUG("Protocol state changed, continuing processing");
+                    break;
+
+                case ProtocolNotificationType::SHUTDOWN:
+                    LOG_INFO("Protocol shutdown requested");
+                    return;
+
+                default:
+                    LOG_WARNING("Unknown protocol notification type: %d",
+                                static_cast<int>(notification));
+                    break;
+            }
+        } else if (queue_result == os::QueueResult::kTimeout) {
+            // Timeout occurred - trigger state timeout processing
+            switch (state) {
+                case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
+                    result = protocol->network_service_->PerformDiscovery(
+                        protocol->GetDiscoveryTimeout());
+                    if (!result) {
+                        LOG_ERROR("Discovery failed: %s",
+                                  result.GetErrorMessage().c_str());
+                    }
+                    break;
+
+                case lora_mesh::INetworkService::ProtocolState::JOINING:
+                    result = protocol->network_service_->PerformJoining(
+                        protocol->GetJoinTimeout());
+                    if (!result) {
+                        LOG_ERROR("Joining failed: %s",
+                                  result.GetErrorMessage().c_str());
+                    }
+                    break;
+
+                default:
+                    // No timeout action needed for other states
+                    break;
+            }
+        }
+
+        // Yield to other tasks for responsive shutdown
         rtos.YieldTask();
     }
 
@@ -589,6 +671,9 @@ void LoRaMeshProtocol::OnStateChange(
         default:
             break;
     }
+
+    // Notify protocol task of state change for immediate processing
+    NotifyProtocolTask(ProtocolNotificationType::STATE_CHANGE);
 }
 
 void LoRaMeshProtocol::OnNetworkTopologyChange(bool route_updated,
@@ -964,6 +1049,27 @@ void LoRaMeshProtocol::DrainRadioEventQueue() {
         // Wrap in unique_ptr for automatic cleanup
         std::unique_ptr<radio::RadioEvent> event(raw_event_ptr);
         // Event is automatically cleaned up when it goes out of scope
+    }
+}
+
+void LoRaMeshProtocol::NotifyProtocolTask(
+    ProtocolNotificationType notification_type) {
+    if (!protocol_notification_queue_) {
+        LOG_WARNING("Protocol notification queue not initialized");
+        return;
+    }
+
+    auto& rtos = GetRTOS();
+    auto result =
+        rtos.SendToQueue(protocol_notification_queue_, &notification_type, 0);
+
+    if (result != os::QueueResult::kOk) {
+        LOG_WARNING(
+            "Failed to send protocol notification (type: %d), queue full",
+            static_cast<int>(notification_type));
+    } else {
+        LOG_DEBUG("Sent protocol notification (type: %d)",
+                  static_cast<int>(notification_type));
     }
 }
 

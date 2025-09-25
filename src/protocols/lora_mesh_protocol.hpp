@@ -38,6 +38,16 @@ class LoRaMeshProtocol : public Protocol {
     };
 
     /**
+     * @brief Protocol event notification types for event-driven operation
+     */
+    enum class ProtocolNotificationType : uint8_t {
+        RADIO_EVENT = 1,  ///< Radio event received, process radio queue
+        STATE_TIMEOUT,    ///< State timeout occurred, check state transitions
+        STATE_CHANGE,     ///< Protocol state changed, update behavior
+        SHUTDOWN          ///< Protocol shutdown requested
+    };
+
+    /**
      * @brief Constructor
      */
     LoRaMeshProtocol();
@@ -245,11 +255,18 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Drain all remaining events from the radio event queue
-     * 
+     *
      * This method is called during cleanup to ensure all events are properly
      * deleted before the queue is destroyed, preventing memory leaks.
      */
     void DrainRadioEventQueue();
+
+    /**
+     * @brief Send notification to protocol task for event-driven processing
+     *
+     * @param notification_type Type of notification to send
+     */
+    void NotifyProtocolTask(ProtocolNotificationType notification_type);
 
     /**
      * @brief Create service configuration from protocol config
@@ -293,6 +310,8 @@ class LoRaMeshProtocol : public Protocol {
     // Task management
     os::TaskHandle_t protocol_task_handle_;
     os::QueueHandle_t radio_event_queue_;
+    os::QueueHandle_t
+        protocol_notification_queue_;  ///< Queue for protocol event notifications
 
     // Configuration
     LoRaMeshProtocolConfig config_;
@@ -302,6 +321,8 @@ class LoRaMeshProtocol : public Protocol {
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 4096;
     static constexpr uint32_t TASK_PRIORITY = 3;
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
+    static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
+        16;  ///< Protocol notification queue size
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS = 100;
     static constexpr uint32_t DEFAULT_HELLO_INTERVAL_MS = 60000;
 };
