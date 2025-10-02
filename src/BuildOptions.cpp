@@ -1,7 +1,7 @@
 #include "BuildOptions.h"
 
 const char* LM_TAG = "LoRaMesher";
-const char* LM_VERSION = "0.0.9";
+const char* LM_VERSION = "0.0.10";
 
 #ifdef ARDUINO
 

@@ -1,5 +1,5 @@
 description: LoRaMesher
-version: 0.0.9
+version: 0.0.10
 dependencies:
   idf: ">=5.1"
   RadioLib:
