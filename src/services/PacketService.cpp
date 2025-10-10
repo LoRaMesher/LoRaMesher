@@ -16,6 +16,13 @@ Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
 }
 
 AppPacket<uint8_t>* PacketService::convertPacket(DataPacket* p) {
+    // Validate packet size to prevent underflow and detect corruption
+    if (p->packetSize < sizeof(DataPacket)) {
+        ESP_LOGE(LM_TAG, "Invalid packet size %d < header size %d, packet corrupted",
+            p->packetSize, sizeof(DataPacket));
+        return nullptr;
+    }
+
     uint32_t payloadSize = p->packetSize - sizeof(DataPacket);
 
     AppPacket<uint8_t>* uPacket = createAppPacket(p->dst, p->src, p->payload, payloadSize);

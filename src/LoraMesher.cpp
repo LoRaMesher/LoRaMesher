@@ -909,6 +909,13 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
         //Convert the packet into a user packet
         AppPacket<uint8_t>* appPacket = PacketService::convertPacket(p);
 
+        // Handle validation failure
+        if (appPacket == nullptr) {
+            ESP_LOGE(LM_TAG, "Failed to convert packet, discarding corrupted packet");
+            PacketQueueService::deleteQueuePacketAndPacket(pq);
+            return;
+        }
+
         //Add and notify the user of this packet
         notifyUserReceivedPacket(appPacket);
     }
