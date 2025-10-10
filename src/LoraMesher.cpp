@@ -1302,8 +1302,8 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
     }
 
     //TODO: Check for duplicate consecutive lost packets, set a timeout to resend the lost packet.
-    // Recalculate the RTT
-    actualizeRTT(listConfig->config);
+    // NOTE: Do NOT update RTT here - lost packets indicate timeout/loss, not valid RTT samples
+    // RTT should only be updated on successful ACK reception
 
     // Reset the timeout
     resetTimeout(listConfig->config);
@@ -1360,8 +1360,9 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     }
     else {
         unsigned long absRTT = (node->SRTT > actualRTT) ? (node->SRTT - actualRTT) : (actualRTT - node->SRTT);
-        node->RTTVAR = std::min((node->RTTVAR * 3 + absRTT) / 4, 100000UL);
-        node->SRTT = std::min((node->SRTT * 7 + actualRTT) / 8, 100000UL);
+        // Cap SRTT and RTTVAR at 60 seconds to prevent excessive timeouts
+        node->RTTVAR = std::min((node->RTTVAR * 3 + absRTT) / 4, 60000UL);
+        node->SRTT = std::min((node->SRTT * 7 + actualRTT) / 8, 60000UL);
     }
 
     config->calculatingRTT = millis();
@@ -1504,32 +1505,57 @@ unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) 
         return 100000;
     }
 
-    return 60000 + hops * 5000;//DEFAULT_TIMEOUT * 1000 * hops;
+    // Cap the metric at a reasonable maximum to prevent absurdly high timeouts
+    // Typical mesh networks should have 1-20 hops max
+    const uint8_t MAX_REASONABLE_HOPS = 20;
+    if (hops > MAX_REASONABLE_HOPS) {
+        ESP_LOGW(LM_TAG, "Metric value (%u) exceeds reasonable maximum (%u), capping to max",
+                 hops, MAX_REASONABLE_HOPS);
+        hops = MAX_REASONABLE_HOPS;
+    }
+
+    // Formula: 40s base + 10s per hop (gives more headroom for multi-hop scenarios)
+    // Example: 1 hop = 50s, 5 hops = 90s, 10 hops = 140s, 20 hops = 240s
+    return 40000 + hops * 10000;
 }
 
 unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
-    //TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
-    //TODO: This timeout should be a little variable depending on the duty cycle. 
-    //TODO: Account for how many hops the packet needs to do
-    //TODO: Account for how many packets are inside the Q_SP
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
         ESP_LOGE(LM_TAG, "Find next hop in add timeout");
         return MIN_TIMEOUT * 1000;
     }
 
-    if (configPacket->node->SRTT == 0)
-        // TODO: The default timeout should be enough smaller to prevent unnecessary timeouts.
-        // TODO: Testing the default value
-        return MIN_TIMEOUT * 1000 + hops * 5000;
+    // If no RTT measurements yet, use default timeout based on hops
+    if (configPacket->node->SRTT == 0) {
+        unsigned long defaultTimeout = MIN_TIMEOUT * 1000 + hops * 5000;
+        ESP_LOGV(LM_TAG, "No RTT data yet, using default timeout: %u ms (hops=%u) for addr %X",
+                 (unsigned int) defaultTimeout, hops, configPacket->source);
+        return defaultTimeout;
+    }
 
+    // RFC 6298: RTO = SRTT + K*RTTVAR (K=4)
     unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
+    unsigned long minTimeout = MIN_TIMEOUT * 1000 + hops * 3000;  // 20s + 3s per hop
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
 
-    if (calculatedTimeout > maxTimeout)
-        return maxTimeout;
+    ESP_LOGV(LM_TAG, "Calculated timeout: SRTT=%u ms, RTTVAR=%u ms, timeout=%u ms, min=%u ms, max=%u ms for addr %X",
+             (unsigned int) configPacket->node->SRTT, (unsigned int) configPacket->node->RTTVAR,
+             (unsigned int) calculatedTimeout, (unsigned int) minTimeout, (unsigned int) maxTimeout, configPacket->source);
 
-    return (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000 + hops * 5000);
+    // Cap at maximum
+    if (calculatedTimeout > maxTimeout) {
+        ESP_LOGV(LM_TAG, "Calculated timeout exceeds max, using max: %u ms for addr %X", (unsigned int) maxTimeout, configPacket->source);
+        return maxTimeout;
+    }
+
+    // Ensure minimum
+    if (calculatedTimeout < minTimeout) {
+        ESP_LOGV(LM_TAG, "Calculated timeout below min, using min: %u ms for addr %X", (unsigned int) minTimeout, configPacket->source);
+        return minTimeout;
+    }
+
+    return calculatedTimeout;
 }
 
 void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
@@ -1538,20 +1564,41 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout set to %u s", (unsigned int) (timeout / 1000));
+    ESP_LOGV(LM_TAG, "Timeout set to %u s for addr %X", (unsigned int) (timeout / 1000), configPacket->source);
 }
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
     unsigned long timeout = calculateTimeout(configPacket);
-    // TODO: The following prevTimeout function should be tested
-    unsigned long prevTimeout = log(configPacket->numberOfTimeouts + 1) * 50000 + ToSendPackets->getLength() * 3000;
 
-    if (prevTimeout > timeout)
-        timeout = prevTimeout;
+    // RFC 6298: Implement exponential backoff - double the previous timeout on each retransmission
+    // Start with the calculated timeout, but if we've had timeouts, apply backoff
+    if (configPacket->numberOfTimeouts > 0) {
+        // Apply exponential backoff: double the previous timeout
+        unsigned long backoffTimeout = configPacket->previousTimeout * 2;
+
+        // Use the larger of calculated timeout or backoff timeout
+        timeout = (backoffTimeout > timeout) ? backoffTimeout : timeout;
+
+        ESP_LOGV(LM_TAG, "Applying exponential backoff: prevTimeout=%u ms, backoffTimeout=%u ms for addr %X",
+                 (unsigned int) configPacket->previousTimeout, (unsigned int) backoffTimeout, configPacket->source);
+    }
+
+    // Add congestion factor based on queue length (2 seconds per queued packet)
+    unsigned long congestionFactor = ToSendPackets->getLength() * 2000;
+    timeout += congestionFactor;
 
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
-    if (timeout > maxTimeout)
+
+    // Log detailed information for debugging timeout issues
+    uint8_t metric = configPacket->node->networkNode.metric;
+    ESP_LOGV(LM_TAG, "Timeout calculation: metric=%u, queueLen=%d, congestion=%u ms, maxTimeout=%u ms, calculatedTimeout=%u ms for addr %X",
+             metric, ToSendPackets->getLength(), (unsigned int) congestionFactor, (unsigned int) maxTimeout, (unsigned int) timeout, configPacket->source);
+
+    // Cap at maximum timeout
+    if (timeout > maxTimeout) {
+        ESP_LOGV(LM_TAG, "Timeout %u ms exceeds max %u ms, capping to max for addr %X", (unsigned int) timeout, (unsigned int) maxTimeout, configPacket->source);
         timeout = maxTimeout;
+    }
 
     // if (timeout < configPacket->previousTimeout) {
     //     timeout = configPacket->previousTimeout * 2;
@@ -1564,7 +1611,8 @@ void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPack
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", (unsigned int) (timeout / 1000));
+    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s (after %d timeouts) for addr %X",
+             (unsigned int) (timeout / 1000), configPacket->numberOfTimeouts, configPacket->source);
 }
 
 uint8_t LoraMesher::getSequenceId() {
