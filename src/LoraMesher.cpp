@@ -1015,7 +1015,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef LM_TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 
@@ -1717,4 +1717,5 @@ void LoraMesher::removeNodeFromQSPandQWP(uint16_t address) {
             }
         } while (q_WSP->next());
     }
+    q_WSP->releaseInUse();
 }
