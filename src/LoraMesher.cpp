@@ -1711,10 +1711,8 @@ void LoraMesher::removeNodeFromQSPandQWP(uint16_t address) {
             listConfiguration* current = q_WSP->getCurrent();
             if (current != nullptr && current->config->source == address) {
                 ESP_LOGI(LM_TAG, "Clearing node info from address %X", address);
-                q_WSP->releaseInUse();
                 clearLinkedList(current);
                 q_WSP->DeleteCurrent();
-                q_WSP->setInUse();
                 continue;
             }
         } while (q_WSP->next());
