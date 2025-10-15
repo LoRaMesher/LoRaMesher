@@ -889,6 +889,8 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
 
     ESP_LOGI(LM_TAG, "Data packet from %X, destination %X, via %X", packet->src, packet->dst, packet->via);
 
+    RoutingTableService::aMessageHasBeenReceivedBy(packet->src);
+
     if (packet->dst == getLocalAddress()) {
         ESP_LOGV(LM_TAG, "Data packet from %X for me", packet->src);
         incDataPacketForMe();
@@ -1015,7 +1017,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef LM_TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 

@@ -125,6 +125,12 @@ public:
 	 */
 	static void manageTimeoutRoutingTable();
 
+	/**
+	 * @brief Notify that a message has been received by the address
+	 * @param address Address that has received a message
+	 */
+	static void aMessageHasBeenReceivedBy(uint16_t address);
+
 private:
 
 	/**
