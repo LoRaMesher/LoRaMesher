@@ -1015,7 +1015,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef LM_TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 
@@ -1690,16 +1690,14 @@ bool LoraMesher::isDuplicatePacket(Packet<uint8_t>* p) {
 }
 
 void LoraMesher::removeNodeFromQSPandQWP(uint16_t address) {
-    q_WSP->setInUse();
+    q_WRP->setInUse();
     if (q_WRP->moveToStart()) {
         do {
             listConfiguration* current = q_WRP->getCurrent();
             if (current != nullptr && current->config->source == address) {
                 ESP_LOGI(LM_TAG, "Clearing node info from address %X", address);
-                q_WRP->releaseInUse();
                 clearLinkedList(current);
                 q_WRP->DeleteCurrent();
-                q_WRP->setInUse();
                 continue;
             }
         } while (q_WRP->next());
