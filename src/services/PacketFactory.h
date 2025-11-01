@@ -28,7 +28,7 @@ public:
      * @return T* Pointer to the newly created packet, or nullptr if allocation failed
      */
     template <typename T>
-    static T* createPacket(const uint8_t* payload, uint8_t payloadSize) {
+    static T* createPacket(const uint8_t* payload, size_t payloadSize) {
         // Calculate the total packet size (header + payload)
         const size_t headerSize = sizeof(T);
         const size_t requestedPacketSize = headerSize + payloadSize;

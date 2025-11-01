@@ -188,6 +188,14 @@ void RoutingTableService::resetTimeoutRoutingNode(RouteNode* node) {
     node->timeout = millis() + DEFAULT_TIMEOUT * 1000;
 }
 
+void RoutingTableService::aMessageHasBeenReceivedBy(uint16_t address) {
+    RouteNode* rNode = findNode(address);
+    if (rNode == nullptr)
+        return;
+
+    resetTimeoutRoutingNode(rNode);
+}
+
 void RoutingTableService::printRoutingTable() {
     ESP_LOGI(LM_TAG, "Current routing table:");
 

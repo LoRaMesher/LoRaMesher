@@ -696,12 +696,30 @@ private:
      * @param priority Priority set DEFAULT_PRIORITY by default. 0 most priority
      */
     void setPackedForSend(Packet<uint8_t>* p, uint8_t priority) {
+        if (!p) {
+            ESP_LOGE(LM_TAG, "setPackedForSend: Packet is null, cannot be sent");
+            return;
+        }
+
+        // Check for duplicate packet before adding to send queue
+        if (isDuplicatePacket(p)) {
+            ESP_LOGW(LM_TAG, "setPackedForSend: Duplicate packet detected, not adding to send queue");
+            return;
+        }
+
         ESP_LOGI(LM_TAG, "Adding packet to Q_SP");
         QueuePacket<Packet<uint8_t>>* send = PacketQueueService::createQueuePacket(p, priority);
         ESP_LOGI(LM_TAG, "Created packet to Q_SP");
         addToSendOrderedAndNotify(send);
-        //TODO: Using vTaskDelay to kill the packet inside LoraMesher
     }
+
+    /**
+     * @brief Check if the packet is a duplicate
+     * @param p Packet to check
+     * @return true if the packet is a duplicate
+     * @return false if the packet is not a duplicate
+     */
+    bool isDuplicatePacket(Packet<uint8_t>* p);
 
     /**
      * @brief Add the Queue packet into the ToSendPackets and notify the SendData Task Handle
@@ -1059,6 +1077,16 @@ private:
      * @param packet Packet to be recorded
      */
     void recordState(LM_StateType type, Packet<uint8_t>* packet = nullptr);
+
+    /**
+     * @brief Remove the node from Q_WSP and Q_WRP
+     * @param address Address of the node to be removed
+     * @note This function is called when a node is removed from the routing table
+     * so all the packets waiting to be sent or received from that node are removed
+     * from the queues. But not the full information
+     *
+     */
+    void removeNodeFromQSPandQWP(uint16_t address);
 
 #ifdef LM_TESTING
     /**

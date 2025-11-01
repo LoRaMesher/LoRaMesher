@@ -131,47 +131,47 @@ void LoraMesher::initializeLoRa() {
 
 #ifdef ARDUINO
     if (config.spi == nullptr) {
-  #ifdef LORA_MISO
-    // SPI.begin which picks up SCK MISO, MOSI, CS rather than LORA_MISO etc
-    // ttgo-lora32-v21new defines LORA_SCK the same as MISO, MOSI, CS etc so it works on default
-    // lilygo_t3_s3_sx127x howwever defines LORA_MISO etc but defines SCK, MISO etc as the same as SD_SCK instead so LoraMesher fails trying to talk to the SD
+#ifdef LORA_MISO
+        // SPI.begin which picks up SCK MISO, MOSI, CS rather than LORA_MISO etc
+        // ttgo-lora32-v21new defines LORA_SCK the same as MISO, MOSI, CS etc so it works on default
+        // lilygo_t3_s3_sx127x howwever defines LORA_MISO etc but defines SCK, MISO etc as the same as SD_SCK instead so LoraMesher fails trying to talk to the SD
         SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
-  #else 
+#else 
         SPI.begin();
-  #endif
+#endif
         config.spi = &SPI;
     }
 
     if (radio == nullptr) {
         switch (config.module) {
-            case LoraModules::SX1276_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1276 module");
-                radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
-                break;
-            case LoraModules::SX1262_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1262 module");
-                radio = new LM_SX1262(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-                break;
-            case LoraModules::SX1278_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1278 module");
-                radio = new LM_SX1278(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-                break;
-            case LoraModules::SX1268_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1268 module");
-                radio = new LM_SX1268(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-                break;
-            case LoraModules::SX1280_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1280 module");
-                radio = new LM_SX1280(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
-                break;
-            case LoraModules::RFM95_MOD:
-                ESP_LOGV(LM_TAG, "Using RFM95 module");
-                radio = new LM_RFM95(config.loraCs, config.loraIrq, config.loraRst, config.spi);
-                break;
-            default:
-                ESP_LOGV(LM_TAG, "Using SX1276 module");
-                radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
-                break;
+        case LoraModules::SX1276_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
+            radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
+            break;
+        case LoraModules::SX1262_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1262 module");
+            radio = new LM_SX1262(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+            break;
+        case LoraModules::SX1278_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1278 module");
+            radio = new LM_SX1278(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+            break;
+        case LoraModules::SX1268_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1268 module");
+            radio = new LM_SX1268(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+            break;
+        case LoraModules::SX1280_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1280 module");
+            radio = new LM_SX1280(config.loraCs, config.loraIrq, config.loraRst, config.loraIo1, config.spi);
+            break;
+        case LoraModules::RFM95_MOD:
+            ESP_LOGV(LM_TAG, "Using RFM95 module");
+            radio = new LM_RFM95(config.loraCs, config.loraIrq, config.loraRst, config.spi);
+            break;
+        default:
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
+            radio = new LM_SX1276(config.loraCs, config.loraIrq, config.loraRst, config.spi);
+            break;
         }
     }
 
@@ -186,34 +186,34 @@ void LoraMesher::initializeLoRa() {
         Module* mod = new Module(config.hal, config.loraCs, config.loraIrq, config.loraRst, config.loraIo1);
 
         switch (config.module) {
-            case LoraModules::SX1276_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1276 module");
-                radio = new LM_SX1276(mod);
-                break;
-            case LoraModules::SX1262_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1262 module");
-                radio = new LM_SX1262(mod);
-                break;
-            case LoraModules::SX1278_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1278 module");
-                radio = new LM_SX1278(mod);
-                break;
-            case LoraModules::SX1268_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1268 module");
-                radio = new LM_SX1268(mod);
-                break;
-            case LoraModules::SX1280_MOD:
-                ESP_LOGV(LM_TAG, "Using SX1280 module");
-                radio = new LM_SX1280(mod);
-                break;
-            case LoraModules::RFM95_MOD:
-                ESP_LOGV(LM_TAG, "Using RFM95 module");
-                radio = new LM_RFM95(mod);
-                break;
-            default:
-                ESP_LOGV(LM_TAG, "Using SX1276 module");
-                radio = new LM_SX1276(mod);
-                break;
+        case LoraModules::SX1276_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
+            radio = new LM_SX1276(mod);
+            break;
+        case LoraModules::SX1262_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1262 module");
+            radio = new LM_SX1262(mod);
+            break;
+        case LoraModules::SX1278_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1278 module");
+            radio = new LM_SX1278(mod);
+            break;
+        case LoraModules::SX1268_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1268 module");
+            radio = new LM_SX1268(mod);
+            break;
+        case LoraModules::SX1280_MOD:
+            ESP_LOGV(LM_TAG, "Using SX1280 module");
+            radio = new LM_SX1280(mod);
+            break;
+        case LoraModules::RFM95_MOD:
+            ESP_LOGV(LM_TAG, "Using RFM95 module");
+            radio = new LM_RFM95(mod);
+            break;
+        default:
+            ESP_LOGV(LM_TAG, "Using SX1276 module");
+            radio = new LM_SX1276(mod);
+            break;
         }
     }
 
@@ -401,8 +401,8 @@ void LoraMesher::receivingRoutine() {
             else {
                 Packet<uint8_t>* rx = PacketService::createEmptyPacket(packetSize);
 
-                rssi = (int8_t) round(radio->getRSSI());
-                snr = (int8_t) round(radio->getSNR());
+                rssi = (int8_t)round(radio->getRSSI());
+                snr = (int8_t)round(radio->getSNR());
 
                 ESP_LOGI(LM_TAG, "Receiving LoRa packet: Size: %d bytes RSSI: %d SNR: %d", packetSize, rssi, snr);
 
@@ -467,7 +467,7 @@ void LoraMesher::waitBeforeSend(uint8_t repeatedDetectPreambles) {
     //Random delay, to avoid some collisions.
     uint32_t randomDelay = getPropagationTimeWithRandom(repeatedDetectPreambles);
 
-    ESP_LOGV(LM_TAG, "RandomDelay %d ms", (int) randomDelay);
+    ESP_LOGV(LM_TAG, "RandomDelay %d ms", (int)randomDelay);
 
     //Set a random delay, to avoid some collisions.
     vTaskDelay(randomDelay / portTICK_PERIOD_MS);
@@ -530,7 +530,7 @@ void LoraMesher::sendPackets() {
 
             ToSendPackets->setInUse();
 
-            ESP_LOGV(LM_TAG, "Size of Send Packets Queue: %d", ToSendPackets->getLength());
+            ESP_LOGI(LM_TAG, "Size of Send Packets Queue: %d", ToSendPackets->getLength());
 
             QueuePacket<Packet<uint8_t>>* tx = ToSendPackets->Pop();
 
@@ -587,7 +587,7 @@ void LoraMesher::sendPackets() {
 
                 TickType_t delayBetweenSend = timeOnAir * dutyCycleEvery;
 
-                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", (int) timeOnAir, (int) delayBetweenSend);
+                ESP_LOGV(LM_TAG, "TimeOnAir %d ms, next message in %d ms", (int)timeOnAir, (int)delayBetweenSend);
 
                 PacketQueueService::deleteQueuePacketAndPacket(tx);
 
@@ -636,7 +636,7 @@ void LoraMesher::sendHelloPacket() {
                 getLocalAddress(), &nodes[startIndex], nodesInThisPacket, RoleService::getRole()
             );
 
-            setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 1);
+            setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 4);
         }
 
         // Delete the nodes array
@@ -710,7 +710,28 @@ void LoraMesher::routingTableManager() {
         ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
         // TODO: If the routing table removes a node, remove the nodes from the Q_WSP and Q_WRP
-        RoutingTableService::manageTimeoutRoutingTable();
+        ESP_LOGI(LM_TAG, "Checking routes timeout");
+
+        RoutingTableService::routingTableList->setInUse();
+
+        if (RoutingTableService::routingTableList->moveToStart()) {
+            do {
+                RouteNode* node = RoutingTableService::routingTableList->getCurrent();
+
+                if (node->timeout < millis()) {
+                    ESP_LOGW(LM_TAG, "Route timeout %X via %X", node->networkNode.address, node->via);
+                    removeNodeFromQSPandQWP(node->networkNode.address);
+
+                    delete node;
+                    RoutingTableService::routingTableList->DeleteCurrent();
+                }
+
+            } while (RoutingTableService::routingTableList->next());
+        }
+
+        RoutingTableService::routingTableList->releaseInUse();
+
+        RoutingTableService::printRoutingTable();
 
         // Record the state for the simulation
         recordState(LM_StateType::STATE_TYPE_MANAGER);
@@ -757,7 +778,7 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     bool isDataPacket = PacketService::isDataPacket(p->type);
     bool isControlPacket = PacketService::isControlPacket(p->type);
 
-    ESP_LOGV(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d",
+    ESP_LOGI(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d",
         title.c_str(),
         p->packetSize,
         p->src,
@@ -786,7 +807,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
         }
         return;
     }
-    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes to %X", (int) payloadSize, dst);
+    ESP_LOGV(LM_TAG, "Sending reliable payload with %d bytes to %X", (int)payloadSize, dst);
 
     // Get the Routing Table node of the destination
     RouteNode* node = RoutingTableService::findNode(dst);
@@ -817,7 +838,7 @@ void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t pay
 
     for (uint16_t i = 1; i <= numOfPackets; i++) {
         //Get the position of the payload
-        uint8_t* payloadToSend = reinterpret_cast<uint8_t*>((unsigned long) payload + ((i - 1) * maxPayloadSize));
+        uint8_t* payloadToSend = reinterpret_cast<uint8_t*>((unsigned long)payload + ((i - 1) * maxPayloadSize));
 
         //Get the payload Size in bytes
         size_t payloadSizeToSend = maxPayloadSize;
@@ -868,6 +889,8 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
 
     ESP_LOGI(LM_TAG, "Data packet from %X, destination %X, via %X", packet->src, packet->dst, packet->via);
 
+    RoutingTableService::aMessageHasBeenReceivedBy(packet->src);
+
     if (packet->dst == getLocalAddress()) {
         ESP_LOGV(LM_TAG, "Data packet from %X for me", packet->src);
         incDataPacketForMe();
@@ -908,6 +931,13 @@ void LoraMesher::processDataPacketForMe(QueuePacket<DataPacket>* pq) {
         ESP_LOGV(LM_TAG, "Data Packet received");
         //Convert the packet into a user packet
         AppPacket<uint8_t>* appPacket = PacketService::convertPacket(p);
+
+        // Handle validation failure
+        if (appPacket == nullptr) {
+            ESP_LOGE(LM_TAG, "Failed to convert packet, discarding corrupted packet");
+            PacketQueueService::deleteQueuePacketAndPacket(pq);
+            return;
+        }
 
         //Add and notify the user of this packet
         notifyUserReceivedPacket(appPacket);
@@ -973,7 +1003,7 @@ uint32_t LoraMesher::getPropagationTimeWithRandom(uint8_t multiplayer) {
 
 void LoraMesher::recalculateMaxTimeOnAir() {
     maxTimeOnAir = radio->getTimeOnAir(PacketFactory::getMaxPacketSize()) / 1000;
-    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", (int) maxTimeOnAir);
+    ESP_LOGV(LM_TAG, "Max Time on Air changed %d ms", (int)maxTimeOnAir);
 }
 
 void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
@@ -987,7 +1017,7 @@ void LoraMesher::recordState(LM_StateType type, Packet<uint8_t>* packet) {
 
 #ifdef LM_TESTING
 bool LoraMesher::canReceivePacket(uint16_t source) {
-    return true;
+	return true;
 }
 #endif
 
@@ -1225,7 +1255,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
     AppPacket<uint8_t>* p = static_cast<AppPacket<uint8_t>*>(pvPortMalloc(packetLength));
 
-    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", (int) packetLength, payloadSize);
+    ESP_LOGV(LM_TAG, "Large Packet Packet length: %d Payload Size: %d", (int)packetLength, payloadSize);
 
     if (p) {
         //Copy the payload into the packet
@@ -1236,7 +1266,7 @@ void LoraMesher::joinPacketsAndNotifyUser(listConfiguration* listConfig) {
 
             size_t actualPayloadSizeSrc = PacketService::getPacketPayloadLength(currentP);
 
-            memcpy(reinterpret_cast<void*>((unsigned long) p + (actualPayloadSizeDst)), currentP->payload, actualPayloadSizeSrc);
+            memcpy(reinterpret_cast<void*>((unsigned long)p + (actualPayloadSizeDst)), currentP->payload, actualPayloadSizeSrc);
             actualPayloadSizeDst += actualPayloadSizeSrc;
         } while (list->next());
     }
@@ -1302,8 +1332,8 @@ void LoraMesher::processLostPacket(uint16_t destination, uint8_t seq_id, uint16_
     }
 
     //TODO: Check for duplicate consecutive lost packets, set a timeout to resend the lost packet.
-    // Recalculate the RTT
-    actualizeRTT(listConfig->config);
+    // NOTE: Do NOT update RTT here - lost packets indicate timeout/loss, not valid RTT samples
+    // RTT should only be updated on successful ACK reception
 
     // Reset the timeout
     resetTimeout(listConfig->config);
@@ -1360,14 +1390,15 @@ void LoraMesher::actualizeRTT(sequencePacketConfig* config) {
     }
     else {
         unsigned long absRTT = (node->SRTT > actualRTT) ? (node->SRTT - actualRTT) : (actualRTT - node->SRTT);
-        node->RTTVAR = std::min((node->RTTVAR * 3 + absRTT) / 4, 100000UL);
-        node->SRTT = std::min((node->SRTT * 7 + actualRTT) / 8, 100000UL);
+        // Cap SRTT and RTTVAR at 60 seconds to prevent excessive timeouts
+        node->RTTVAR = std::min((node->RTTVAR * 3 + absRTT) / 4, 60000UL);
+        node->SRTT = std::min((node->SRTT * 7 + actualRTT) / 8, 60000UL);
     }
 
     config->calculatingRTT = millis();
 
     ESP_LOGV(LM_TAG, "Updating RTT (%u ms), SRTT (%u), RTTVAR (%u) seq_Id: %d Src: %X",
-        (unsigned int) actualRTT, (unsigned int) node->SRTT, (unsigned int) node->RTTVAR, config->seq_id, config->source);
+        (unsigned int)actualRTT, (unsigned int)node->SRTT, (unsigned int)node->RTTVAR, config->seq_id, config->source);
 }
 
 void LoraMesher::clearLinkedList(listConfiguration* listConfig) {
@@ -1498,38 +1529,73 @@ void LoraMesher::managerTimeouts(LM_LinkedList<listConfiguration>* queue, QueueT
 }
 
 unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) {
+    if (configPacket->node == nullptr) {
+        ESP_LOGE(LM_TAG, "Node is null in get maximum timeout for addr %X", configPacket->source);
+        return 50000;
+    }
+
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
         ESP_LOGE(LM_TAG, "Find next hop in add timeout");
-        return 100000;
+        return 50000;
     }
 
-    return 60000 + hops * 5000;//DEFAULT_TIMEOUT * 1000 * hops;
+    // Cap the metric at a reasonable maximum to prevent absurdly high timeouts
+    // Typical mesh networks should have 1-20 hops max
+    const uint8_t MAX_REASONABLE_HOPS = 20;
+    if (hops > MAX_REASONABLE_HOPS) {
+        ESP_LOGW(LM_TAG, "Metric value (%u) exceeds reasonable maximum (%u), capping to max",
+            hops, MAX_REASONABLE_HOPS);
+        hops = MAX_REASONABLE_HOPS;
+    }
+
+    // Formula: 40s base + 10s per hop (gives more headroom for multi-hop scenarios)
+    // Example: 1 hop = 50s, 5 hops = 90s, 10 hops = 140s, 20 hops = 240s
+    return 40000 + hops * 10000;
 }
 
 unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
-    //TODO: This timeout should account for the number of send packets waiting to send + how many time between send packets?
-    //TODO: This timeout should be a little variable depending on the duty cycle. 
-    //TODO: Account for how many hops the packet needs to do
-    //TODO: Account for how many packets are inside the Q_SP
+    if (configPacket->node == nullptr) {
+        ESP_LOGE(LM_TAG, "Node is null in calculate timeout for addr %X", configPacket->source);
+        return MIN_TIMEOUT * 1000;
+    }
+
     uint8_t hops = configPacket->node->networkNode.metric;
     if (hops == 0) {
         ESP_LOGE(LM_TAG, "Find next hop in add timeout");
         return MIN_TIMEOUT * 1000;
     }
 
-    if (configPacket->node->SRTT == 0)
-        // TODO: The default timeout should be enough smaller to prevent unnecessary timeouts.
-        // TODO: Testing the default value
-        return MIN_TIMEOUT * 1000 + hops * 5000;
+    // If no RTT measurements yet, use default timeout based on hops
+    if (configPacket->node->SRTT == 0) {
+        unsigned long defaultTimeout = MIN_TIMEOUT * 1000 + hops * 5000;
+        ESP_LOGV(LM_TAG, "No RTT data yet, using default timeout: %u ms (hops=%u) for addr %X",
+            (unsigned int)defaultTimeout, hops, configPacket->source);
+        return defaultTimeout;
+    }
 
+    // RFC 6298: RTO = SRTT + K*RTTVAR (K=4)
     unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
+    unsigned long minTimeout = MIN_TIMEOUT * 1000 + hops * 3000;  // 20s + 3s per hop
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
 
-    if (calculatedTimeout > maxTimeout)
-        return maxTimeout;
+    ESP_LOGV(LM_TAG, "Calculated timeout: SRTT=%u ms, RTTVAR=%u ms, timeout=%u ms, min=%u ms, max=%u ms for addr %X",
+        (unsigned int)configPacket->node->SRTT, (unsigned int)configPacket->node->RTTVAR,
+        (unsigned int)calculatedTimeout, (unsigned int)minTimeout, (unsigned int)maxTimeout, configPacket->source);
 
-    return (unsigned long) max((int) calculatedTimeout, (int) MIN_TIMEOUT * 1000 + hops * 5000);
+    // Cap at maximum
+    if (calculatedTimeout > maxTimeout) {
+        ESP_LOGV(LM_TAG, "Calculated timeout exceeds max, using max: %u ms for addr %X", (unsigned int)maxTimeout, configPacket->source);
+        return maxTimeout;
+    }
+
+    // Ensure minimum
+    if (calculatedTimeout < minTimeout) {
+        ESP_LOGV(LM_TAG, "Calculated timeout below min, using min: %u ms for addr %X", (unsigned int)minTimeout, configPacket->source);
+        return minTimeout;
+    }
+
+    return calculatedTimeout;
 }
 
 void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
@@ -1538,33 +1604,53 @@ void LoraMesher::addTimeout(sequencePacketConfig* configPacket) {
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout set to %u s", (unsigned int) (timeout / 1000));
+    ESP_LOGV(LM_TAG, "Timeout set to %u s for addr %X", (unsigned int)(timeout / 1000), configPacket->source);
 }
 
 void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPacket) {
     unsigned long timeout = calculateTimeout(configPacket);
-    // TODO: The following prevTimeout function should be tested
-    unsigned long prevTimeout = log(configPacket->numberOfTimeouts + 1) * 50000 + ToSendPackets->getLength() * 3000;
 
-    if (prevTimeout > timeout)
-        timeout = prevTimeout;
+    // RFC 6298: Implement exponential backoff - double the previous timeout on each retransmission
+    // Start with the calculated timeout, but if we've had timeouts, apply backoff
+    if (configPacket->numberOfTimeouts > 0) {
+        // Apply exponential backoff: double the previous timeout
+        unsigned long backoffTimeout = configPacket->previousTimeout * 2;
+
+        // Use the larger of calculated timeout or backoff timeout
+        timeout = (backoffTimeout > timeout) ? backoffTimeout : timeout;
+
+        ESP_LOGV(LM_TAG, "Applying exponential backoff: prevTimeout=%u ms, backoffTimeout=%u ms for addr %X",
+            (unsigned int)configPacket->previousTimeout, (unsigned int)backoffTimeout, configPacket->source);
+    }
+
+    // Add congestion factor based on queue length (2 seconds per queued packet)
+    unsigned long congestionFactor = ToSendPackets->getLength() * 2000;
+    timeout += congestionFactor;
 
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
-    if (timeout > maxTimeout)
+
+    // Log detailed information for debugging timeout issues
+    uint8_t metric = 0;
+    if (configPacket->node != nullptr) {
+        metric = configPacket->node->networkNode.metric;
+    }
+    else {
+        ESP_LOGE(LM_TAG, "Node is null in recalculate timeout for addr %X", configPacket->source);
+    }
+    ESP_LOGV(LM_TAG, "Timeout calculation: metric=%u, queueLen=%d, congestion=%u ms, maxTimeout=%u ms, calculatedTimeout=%u ms for addr %X",
+        metric, ToSendPackets->getLength(), (unsigned int)congestionFactor, (unsigned int)maxTimeout, (unsigned int)timeout, configPacket->source);
+
+    // Cap at maximum timeout
+    if (timeout > maxTimeout) {
+        ESP_LOGV(LM_TAG, "Timeout %u ms exceeds max %u ms, capping to max for addr %X", (unsigned int)timeout, (unsigned int)maxTimeout, configPacket->source);
         timeout = maxTimeout;
-
-    // if (timeout < configPacket->previousTimeout) {
-    //     timeout = configPacket->previousTimeout * 2;
-
-    //     unsigned long maxTimeout = getMaximumTimeout(configPacket);
-    //     if (timeout > maxTimeout)
-    //         timeout = maxTimeout;
-    // }
+    }
 
     configPacket->timeout = millis() + timeout;
     configPacket->previousTimeout = timeout;
 
-    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s", (unsigned int) (timeout / 1000));
+    ESP_LOGV(LM_TAG, "Timeout recalculated to %u s (after %d timeouts) for addr %X",
+        (unsigned int)(timeout / 1000), configPacket->numberOfTimeouts, configPacket->source);
 }
 
 uint8_t LoraMesher::getSequenceId() {
@@ -1582,3 +1668,56 @@ uint8_t LoraMesher::getSequenceId() {
 /**
  * End Large and Reliable payloads
  */
+
+
+bool LoraMesher::isDuplicatePacket(Packet<uint8_t>* p) {
+    ToSendPackets->setInUse();
+
+    if (ToSendPackets->moveToStart()) {
+        do {
+            Packet<uint8_t>* current = ToSendPackets->getCurrent()->packet;
+
+            if (current->src == p->src && current->dst == p->dst && current->type == p->type &&
+                memcmp(current->payload, p->payload, p->packetSize - sizeof(Packet<uint8_t>)) == 0) {
+                ToSendPackets->releaseInUse();
+                return true;
+            }
+
+        } while (ToSendPackets->next());
+    }
+
+    ToSendPackets->releaseInUse();
+
+    return false;
+}
+
+void LoraMesher::removeNodeFromQSPandQWP(uint16_t address) {
+    q_WRP->setInUse();
+    if (q_WRP->moveToStart()) {
+        do {
+            listConfiguration* current = q_WRP->getCurrent();
+            if (current != nullptr && current->config->source == address) {
+                ESP_LOGI(LM_TAG, "Clearing node info from address %X", address);
+                clearLinkedList(current);
+                q_WRP->DeleteCurrent();
+                continue;
+            }
+        } while (q_WRP->next());
+    }
+
+    q_WRP->releaseInUse();
+
+    q_WSP->setInUse();
+    if (q_WSP->moveToStart()) {
+        do {
+            listConfiguration* current = q_WSP->getCurrent();
+            if (current != nullptr && current->config->source == address) {
+                ESP_LOGI(LM_TAG, "Clearing node info from address %X", address);
+                clearLinkedList(current);
+                q_WSP->DeleteCurrent();
+                continue;
+            }
+        } while (q_WSP->next());
+    }
+    q_WSP->releaseInUse();
+}
