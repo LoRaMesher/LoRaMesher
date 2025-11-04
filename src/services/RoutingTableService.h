@@ -131,6 +131,38 @@ public:
 	 */
 	static void aMessageHasBeenReceivedBy(uint16_t address);
 
+	/**
+	 * @brief Calculate reverse ETX (link quality from neighbor to us)
+	 * Based on hello packet reception rate
+	 *
+	 * @param address Address of the neighbor
+	 * @return uint8_t ETX value scaled by 10 (e.g., 10 = ETX 1.0, 20 = ETX 2.0)
+	 */
+	static uint8_t calculateReverseETX(uint16_t address);
+
+	/**
+	 * @brief Calculate forward ETX (link quality from us to neighbor)
+	 * Based on ACK reception rate
+	 *
+	 * @param address Address of the neighbor
+	 * @return uint8_t ETX value scaled by 10 (e.g., 10 = ETX 1.0, 20 = ETX 2.0)
+	 */
+	static uint8_t calculateForwardETX(uint16_t address);
+
+	/**
+	 * @brief Update expected hello packet counters for all direct neighbors
+	 * Should be called periodically (before sending hello packets)
+	 */
+	static void updateExpectedHelloPackets();
+
+	/**
+	 * @brief Get total ETX for a route (forward + reverse)
+	 *
+	 * @param address Destination address
+	 * @return uint8_t Total ETX value scaled by 10
+	 */
+	static uint8_t getTotalETX(uint16_t address);
+
 private:
 
 	/**

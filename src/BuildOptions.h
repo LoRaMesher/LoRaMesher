@@ -96,6 +96,25 @@ extern const char* LM_VERSION;
 #define DEFAULT_TIMEOUT HELLO_PACKETS_DELAY*5
 #define MIN_TIMEOUT 20
 
+// ETX Routing Configuration
+#define ETX_SCALE_FACTOR 10                 // Scale ETX by 10x to fit in uint8_t (e.g., ETX 1.5 = value 15)
+#define ETX_HYSTERESIS 1.1                  // Require 10% improvement before switching routes (prevents flapping)
+#define MIN_ETX_SAMPLES 3                   // Minimum hello packets before using ETX (bootstrap period)
+#define ETX_MIN_VALUE 10                    // Minimum ETX value (1.0 scaled)
+#define ETX_MAX_VALUE 255                   // Maximum ETX value (25.5 scaled)
+#define ETX_DECAY_THRESHOLD 100             // Apply decay when counters reach this value
+#define ETX_DECAY_FACTOR 0.8                // Decay multiplier (80% retention)
+
+// Triggered Update Configuration
+#define MIN_TRIGGERED_UPDATE_INTERVAL 5     // Minimum seconds between triggered updates (rate limiting)
+#define PER_ROUTE_COOLDOWN 10               // Seconds before same route can trigger update again
+#define MAX_TRIGGERED_UPDATE_INTERVAL 60    // Maximum backoff interval in seconds
+#define MAX_STORM_BACKOFF_COUNTER 4         // Maximum exponential backoff (2^4 = 16x)
+
+// Loop Prevention Configuration
+#define DUPLICATE_CACHE_SIZE 50             // Number of recent packet IDs to track
+#define DUPLICATE_CACHE_TIMEOUT 300000      // Packet ID cache timeout in ms (5 minutes)
+
 //Maximum times that a sequence of packets reach the timeout
 #define MAX_TIMEOUTS 10
 #define MAX_RESEND_PACKET 3

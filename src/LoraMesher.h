@@ -620,6 +620,8 @@ private:
 
     void sendHelloPacket();
 
+    void sendTriggeredHelloPacket(uint8_t reason);
+
     void routingTableManager();
 
     void queueManager();

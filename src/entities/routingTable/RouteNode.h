@@ -52,6 +52,30 @@ public:
     unsigned long RTTVAR = 0;
 
     /**
+     * @brief ETX Tracking: Expected hello packets from this node (for 1-hop neighbors only)
+     * Incremented periodically, used to calculate reverse link quality
+     */
+    uint16_t helloPacketsExpected = 0;
+
+    /**
+     * @brief ETX Tracking: Actually received hello packets from this node (for 1-hop neighbors only)
+     * Incremented when hello packet is received, used to calculate reverse link quality
+     */
+    uint16_t helloPacketsReceived = 0;
+
+    /**
+     * @brief ETX Tracking: Data packets sent to this node (for 1-hop neighbors only)
+     * Used to calculate forward link quality via ACK success rate
+     */
+    uint16_t dataPacketsSent = 0;
+
+    /**
+     * @brief ETX Tracking: ACK packets received from this node (for 1-hop neighbors only)
+     * Used to calculate forward link quality via ACK success rate
+     */
+    uint16_t ackPacketsReceived = 0;
+
+    /**
      * @brief Construct a new Route Node object
      *
      * @param address_ Address

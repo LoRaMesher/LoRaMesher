@@ -1,4 +1,5 @@
 #include "RoutingTableService.h"
+#include "RouteUpdateService.h"
 
 size_t RoutingTableService::routingTableSize() {
     return routingTableList->getLength();
@@ -25,6 +26,7 @@ RouteNode* RoutingTableService::findNode(uint16_t address) {
 
 RouteNode* RoutingTableService::getBestNodeByRole(uint8_t role) {
     RouteNode* bestNode = nullptr;
+    uint16_t bestETX = ETX_MAX_VALUE * 2; // Start with worst possible ETX
 
     routingTableList->setInUse();
 
@@ -32,9 +34,12 @@ RouteNode* RoutingTableService::getBestNodeByRole(uint8_t role) {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
-            if ((node->networkNode.role & role) == role &&
-                (bestNode == nullptr || node->networkNode.metric < bestNode->networkNode.metric)) {
-                bestNode = node;
+            if ((node->networkNode.role & role) == role) {
+                uint16_t totalETX = node->networkNode.reverseETX + node->networkNode.forwardETX;
+                if (bestNode == nullptr || totalETX < bestETX) {
+                    bestNode = node;
+                    bestETX = totalETX;
+                }
             }
 
         } while (routingTableList->next());
@@ -64,10 +69,20 @@ uint8_t RoutingTableService::getNumberOfHops(uint16_t address) {
     if (node == nullptr)
         return 0;
 
-    return node->networkNode.metric;
+    // Return total ETX (this function name is misleading now, but kept for compatibility)
+    return getTotalETX(address);
 }
 
 void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
+    // Duplicate detection - check if we've already processed this packet
+    if (RouteUpdateService::isDuplicatePacket(p->src, p->id)) {
+        ESP_LOGD(LM_TAG, "Duplicate route packet from %X id=%d - ignoring", p->src, p->id);
+        return;
+    }
+
+    // Record this packet to prevent future duplicates
+    RouteUpdateService::recordPacket(p->src, p->id);
+
     if ((p->packetSize - sizeof(RoutePacket)) % sizeof(NetworkNode) != 0) {
         ESP_LOGE(LM_TAG, "Invalid route packet size");
         return;
@@ -76,15 +91,49 @@ void RoutingTableService::processRoute(RoutePacket* p, int8_t receivedSNR) {
     size_t numNodes = p->getNetworkNodesSize();
     ESP_LOGI(LM_TAG, "Route packet from %X with size %d", p->src, numNodes);
 
-    NetworkNode* receivedNode = new NetworkNode(p->src, 1, p->nodeRole);
-    processRoute(p->src, receivedNode);
-    delete receivedNode;
+    // Process direct sender as 1-hop neighbor
+    RouteNode* senderNode = findNode(p->src);
+    if (senderNode != nullptr) {
+        // Increment received hello counter for ETX tracking
+        senderNode->helloPacketsReceived++;
+        ESP_LOGV(LM_TAG, "Hello from %X: received=%d/%d (%.1f%%)",
+                 p->src, senderNode->helloPacketsReceived,
+                 senderNode->helloPacketsExpected,
+                 senderNode->helloPacketsExpected > 0 ?
+                 (100.0 * senderNode->helloPacketsReceived / senderNode->helloPacketsExpected) : 0.0);
+    } else {
+        // New neighbor - create route with ETX = 1.0 (optimistic bootstrap)
+        NetworkNode* receivedNode = new NetworkNode(p->src, ETX_MIN_VALUE, ETX_MIN_VALUE, p->nodeRole);
+        processRoute(p->src, receivedNode);
+        delete receivedNode;
 
+        // Initialize ETX counters for bootstrap
+        senderNode = findNode(p->src);
+        if (senderNode != nullptr) {
+            senderNode->helloPacketsExpected = 1;
+            senderNode->helloPacketsReceived = 1;
+        }
+    }
+
+    // Update SNR
     resetReceiveSNRRoutePacket(p->src, receivedSNR);
 
+    // Calculate sender's link ETX for propagating routes
+    uint8_t senderReverseETX = calculateReverseETX(p->src);
+    uint8_t senderForwardETX = calculateForwardETX(p->src);
+
+    // Process advertised routes
     for (size_t i = 0; i < numNodes; i++) {
         NetworkNode* node = &p->networkNodes[i];
-        node->metric++;
+
+        // Add sender's link ETX to the advertised route ETX
+        uint16_t newReverseETX = node->reverseETX + senderReverseETX;
+        uint16_t newForwardETX = node->forwardETX + senderForwardETX;
+
+        // Clamp to maximum value
+        node->reverseETX = (newReverseETX > ETX_MAX_VALUE) ? ETX_MAX_VALUE : (uint8_t)newReverseETX;
+        node->forwardETX = (newForwardETX > ETX_MAX_VALUE) ? ETX_MAX_VALUE : (uint8_t)newForwardETX;
+
         processRoute(p->src, node);
     }
 
@@ -111,16 +160,38 @@ void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
             return;
         }
 
-        //Update the metric and restart timeout if needed
-        if (node->metric < rNode->networkNode.metric) {
-            rNode->networkNode.metric = node->metric;
+        // Calculate total ETX for new route and current route
+        uint16_t newTotalETX = node->reverseETX + node->forwardETX;
+        uint16_t currentTotalETX = rNode->networkNode.reverseETX + rNode->networkNode.forwardETX;
+
+        // Apply hysteresis: new route must be significantly better to switch
+        float hysteresisThreshold = currentTotalETX / ETX_HYSTERESIS;
+
+        //Update the route if new ETX is significantly better
+        if (newTotalETX < hysteresisThreshold) {
+            uint8_t oldReverseETX = rNode->networkNode.reverseETX;
+            uint8_t oldForwardETX = rNode->networkNode.forwardETX;
+
+            rNode->networkNode.reverseETX = node->reverseETX;
+            rNode->networkNode.forwardETX = node->forwardETX;
             rNode->via = via;
             resetTimeoutRoutingNode(rNode);
-            ESP_LOGI(LM_TAG, "Found better route for %X via %X metric %d", node->address, via, node->metric);
+
+            ESP_LOGI(LM_TAG, "Found better route for %X via %X: old_ETX=%.1f+%.1f=%.1f new_ETX=%.1f+%.1f=%.1f",
+                     node->address, via,
+                     oldReverseETX / 10.0, oldForwardETX / 10.0, currentTotalETX / 10.0,
+                     node->reverseETX / 10.0, node->forwardETX / 10.0, newTotalETX / 10.0);
+
+            // Trigger update hook - Route metric improved significantly
+            // Note: This will be called from LoraMesher once we add the sendTriggeredHelloPacket function
+            // For now, just log it
+            ESP_LOGD(LM_TAG, "Route improvement trigger: %X (would trigger update)", node->address);
         }
-        else if (node->metric == rNode->networkNode.metric) {
-            //Reset the timeout, only when the metric is the same as the actual route.
+        else if (newTotalETX <= currentTotalETX * 1.05) {
+            // Route is approximately the same quality - just reset timeout
             resetTimeoutRoutingNode(rNode);
+            ESP_LOGV(LM_TAG, "Route refresh for %X via %X ETX=%.1f",
+                     node->address, via, newTotalETX / 10.0);
         }
 
         // Update the Role only if the node that sent the packet is the next hop
@@ -137,12 +208,21 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
         return;
     }
 
-    if (calculateMaximumMetricOfRoutingTable() < node->metric) {
-        ESP_LOGW(LM_TAG, "Trying to add a route with a metric higher than the maximum of the routing table, not adding route and deleting it");
+    // Calculate total ETX for this route
+    uint16_t totalETX = node->reverseETX + node->forwardETX;
+
+    if (calculateMaximumMetricOfRoutingTable() < totalETX) {
+        ESP_LOGW(LM_TAG, "Trying to add a route with ETX higher than maximum, not adding (ETX=%.1f)", totalETX / 10.0);
         return;
     }
 
-    RouteNode* rNode = new RouteNode(node->address, node->metric, node->role, via);
+    // Use legacy constructor (accepts metric which gets split into reverseETX and forwardETX equally)
+    // For new routes, we have proper ETX values from the NetworkNode
+    RouteNode* rNode = new RouteNode(node->address, node->reverseETX, node->role, via);
+
+    // Set the correct ETX values
+    rNode->networkNode.reverseETX = node->reverseETX;
+    rNode->networkNode.forwardETX = node->forwardETX;
 
     //Reset the timeout of the node
     resetTimeoutRoutingNode(rNode);
@@ -153,7 +233,13 @@ void RoutingTableService::addNodeToRoutingTable(NetworkNode* node, uint16_t via)
 
     routingTableList->releaseInUse();
 
-    ESP_LOGI(LM_TAG, "New route added: %X via %X metric %d, role %d", node->address, via, node->metric, node->role);
+    ESP_LOGI(LM_TAG, "New route added: %X via %X reverse_ETX=%.1f forward_ETX=%.1f total_ETX=%.1f role=%d",
+             node->address, via,
+             node->reverseETX / 10.0, node->forwardETX / 10.0, totalETX / 10.0,
+             node->role);
+
+    // Trigger update hook - New route discovered
+    ESP_LOGD(LM_TAG, "New route trigger: %X (would trigger update)", node->address);
 }
 
 NetworkNode* RoutingTableService::getAllNetworkNodes() {
@@ -207,11 +293,26 @@ void RoutingTableService::printRoutingTable() {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
-            ESP_LOGI(LM_TAG, "%d - %X via %X metric %d Role %d", position,
+            uint16_t totalETX = node->networkNode.reverseETX + node->networkNode.forwardETX;
+            float asymmetry = (node->networkNode.forwardETX > 0) ?
+                              (float)node->networkNode.reverseETX / node->networkNode.forwardETX : 1.0;
+
+            ESP_LOGI(LM_TAG, "%d - %X via %X ETX=%.1f (R:%.1f+F:%.1f) asym:%.2f Role:%d", position,
                 node->networkNode.address,
                 node->via,
-                node->networkNode.metric,
+                totalETX / 10.0,
+                node->networkNode.reverseETX / 10.0,
+                node->networkNode.forwardETX / 10.0,
+                asymmetry,
                 node->networkNode.role);
+
+            // For direct neighbors, also show reception statistics
+            if (node->via == node->networkNode.address && node->helloPacketsExpected > 0) {
+                float receptionRate = (float)node->helloPacketsReceived / node->helloPacketsExpected * 100.0;
+                ESP_LOGI(LM_TAG, "    └─ Direct: hellos=%d/%d (%.1f%%) SNR=%d",
+                         node->helloPacketsReceived, node->helloPacketsExpected,
+                         receptionRate, node->receivedSNR);
+            }
 
             position++;
         } while (routingTableList->next());
@@ -223,6 +324,7 @@ void RoutingTableService::printRoutingTable() {
 void RoutingTableService::manageTimeoutRoutingTable() {
     ESP_LOGI(LM_TAG, "Checking routes timeout");
 
+    bool routeDeleted = false;
     routingTableList->setInUse();
 
     if (routingTableList->moveToStart()) {
@@ -230,7 +332,12 @@ void RoutingTableService::manageTimeoutRoutingTable() {
             RouteNode* node = routingTableList->getCurrent();
 
             if (node->timeout < millis()) {
-                ESP_LOGW(LM_TAG, "Route timeout %X via %X", node->networkNode.address, node->via);
+                ESP_LOGW(LM_TAG, "Route timeout %X via %X ETX=%.1f+%.1f",
+                         node->networkNode.address, node->via,
+                         node->networkNode.reverseETX / 10.0,
+                         node->networkNode.forwardETX / 10.0);
+
+                routeDeleted = true;
 
                 delete node;
                 routingTableList->DeleteCurrent();
@@ -241,27 +348,174 @@ void RoutingTableService::manageTimeoutRoutingTable() {
 
     routingTableList->releaseInUse();
 
+    // Trigger update hook if any routes were deleted
+    if (routeDeleted) {
+        ESP_LOGD(LM_TAG, "Route deletion trigger (would trigger update)");
+    }
+
     printRoutingTable();
 }
 
 uint8_t RoutingTableService::calculateMaximumMetricOfRoutingTable() {
     routingTableList->setInUse();
 
-    uint8_t maximumMetricOfRoutingTable = 0;
+    uint16_t maximumETX = 0;
 
     if (routingTableList->moveToStart()) {
         do {
             RouteNode* node = routingTableList->getCurrent();
 
-            if (node->networkNode.metric > maximumMetricOfRoutingTable)
-                maximumMetricOfRoutingTable = node->networkNode.metric;
+            uint16_t totalETX = node->networkNode.reverseETX + node->networkNode.forwardETX;
+            if (totalETX > maximumETX)
+                maximumETX = totalETX;
 
         } while (routingTableList->next());
     }
 
     routingTableList->releaseInUse();
 
-    return maximumMetricOfRoutingTable + 1;
+    // Add some headroom for new routes
+    uint16_t result = maximumETX + ETX_MIN_VALUE;
+    if (result > ETX_MAX_VALUE) {
+        return ETX_MAX_VALUE;
+    }
+
+    return (uint8_t)result;
+}
+
+uint8_t RoutingTableService::calculateReverseETX(uint16_t address) {
+    RouteNode* node = findNode(address);
+
+    if (node == nullptr || node->via != address) {
+        // Not a direct neighbor, return default perfect link
+        return ETX_MIN_VALUE; // ETX = 1.0
+    }
+
+    // Require minimum sample size for reliability
+    if (node->helloPacketsExpected < MIN_ETX_SAMPLES) {
+        return ETX_MIN_VALUE; // ETX = 1.0 (optimistic bootstrap)
+    }
+
+    // Calculate reception rate
+    float receptionRate = (float)node->helloPacketsReceived / (float)node->helloPacketsExpected;
+
+    // Prevent division by zero and cap maximum ETX
+    if (receptionRate < 0.04) {
+        receptionRate = 0.04; // Cap at ETX = 25.0
+    }
+
+    // Calculate ETX scaled by ETX_SCALE_FACTOR
+    float etx = 1.0 / receptionRate;
+    float scaledETX = etx * ETX_SCALE_FACTOR;
+
+    // Clamp to valid range BEFORE casting to uint8_t
+    if (scaledETX < ETX_MIN_VALUE) scaledETX = ETX_MIN_VALUE;
+    if (scaledETX > ETX_MAX_VALUE) scaledETX = ETX_MAX_VALUE;
+
+    uint8_t metric = (uint8_t)scaledETX;
+
+    ESP_LOGV(LM_TAG, "Reverse ETX for %X: received=%d expected=%d rate=%.2f%% ETX=%.2f metric=%d",
+             address, node->helloPacketsReceived, node->helloPacketsExpected,
+             receptionRate * 100.0, etx, metric);
+
+    return metric;
+}
+
+uint8_t RoutingTableService::calculateForwardETX(uint16_t address) {
+    RouteNode* node = findNode(address);
+
+    if (node == nullptr || node->via != address) {
+        // Not a direct neighbor, return default perfect link
+        return ETX_MIN_VALUE; // ETX = 1.0
+    }
+
+    // Require minimum sample size for reliability
+    if (node->dataPacketsSent < MIN_ETX_SAMPLES) {
+        return ETX_MIN_VALUE; // ETX = 1.0 (optimistic bootstrap)
+    }
+
+    // Calculate ACK reception rate
+    float ackRate = (float)node->ackPacketsReceived / (float)node->dataPacketsSent;
+
+    // Prevent division by zero and cap maximum ETX
+    if (ackRate < 0.04) {
+        ackRate = 0.04; // Cap at ETX = 25.0
+    }
+
+    // Calculate ETX scaled by ETX_SCALE_FACTOR
+    float etx = 1.0 / ackRate;
+    float scaledETX = etx * ETX_SCALE_FACTOR;
+
+    // Clamp to valid range BEFORE casting to uint8_t
+    if (scaledETX < ETX_MIN_VALUE) scaledETX = ETX_MIN_VALUE;
+    if (scaledETX > ETX_MAX_VALUE) scaledETX = ETX_MAX_VALUE;
+
+    uint8_t metric = (uint8_t)scaledETX;
+
+    ESP_LOGV(LM_TAG, "Forward ETX for %X: acks=%d sent=%d rate=%.2f%% ETX=%.2f metric=%d",
+             address, node->ackPacketsReceived, node->dataPacketsSent,
+             ackRate * 100.0, etx, metric);
+
+    return metric;
+}
+
+void RoutingTableService::updateExpectedHelloPackets() {
+    routingTableList->setInUse();
+
+    if (routingTableList->moveToStart()) {
+        do {
+            RouteNode* node = routingTableList->getCurrent();
+
+            // Only update for direct neighbors (1-hop)
+            if (node->via == node->networkNode.address) {
+                node->helloPacketsExpected++;
+
+                // Apply exponential decay when threshold is reached
+                // This prevents overflow and gives more weight to recent measurements
+                if (node->helloPacketsExpected >= ETX_DECAY_THRESHOLD) {
+                    node->helloPacketsExpected = (uint16_t)(node->helloPacketsExpected * ETX_DECAY_FACTOR);
+                    node->helloPacketsReceived = (uint16_t)(node->helloPacketsReceived * ETX_DECAY_FACTOR);
+
+                    ESP_LOGV(LM_TAG, "Applied ETX decay to %X: exp=%d rcv=%d",
+                             node->networkNode.address,
+                             node->helloPacketsExpected,
+                             node->helloPacketsReceived);
+                }
+            }
+        } while (routingTableList->next());
+    }
+
+    routingTableList->releaseInUse();
+}
+
+uint8_t RoutingTableService::getTotalETX(uint16_t address) {
+    RouteNode* node = findNode(address);
+
+    if (node == nullptr) {
+        return ETX_MAX_VALUE; // No route available
+    }
+
+    // For direct neighbors, calculate ETX from tracked data
+    if (node->via == address) {
+        uint8_t reverseETX = calculateReverseETX(address);
+        uint8_t forwardETX = calculateForwardETX(address);
+        uint16_t total = reverseETX + forwardETX;
+
+        // Ensure total doesn't overflow uint8_t
+        if (total > ETX_MAX_VALUE) {
+            return ETX_MAX_VALUE;
+        }
+
+        return (uint8_t)total;
+    }
+
+    // For multi-hop routes, use the advertised values in networkNode
+    uint16_t total = node->networkNode.reverseETX + node->networkNode.forwardETX;
+    if (total > ETX_MAX_VALUE) {
+        return ETX_MAX_VALUE;
+    }
+
+    return (uint8_t)total;
 }
 
 LM_LinkedList<RouteNode>* RoutingTableService::routingTableList = new LM_LinkedList<RouteNode>();

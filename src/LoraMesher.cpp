@@ -1,4 +1,5 @@
 #include "LoraMesher.h"
+#include "services/RouteUpdateService.h"
 
 #ifndef ARDUINO
 #include "EspHal.h"
@@ -18,6 +19,10 @@ void LoraMesher::begin(LoraMesherConfig config) {
 
     // Recalculate the max time on air
     recalculateMaxTimeOnAir();
+
+    // Initialize the route update service (duplicate detection and storm prevention)
+    RouteUpdateService::init();
+    ESP_LOGI(LM_TAG, "RouteUpdateService initialized");
 
     // Initialize the queues
     initializeSchedulers();
@@ -570,6 +575,18 @@ void LoraMesher::sendPackets() {
                     incSentControlBytes(PacketService::getControlLength(tx->packet));
                     if (tx->packet->src != getLocalAddress())
                         incForwardedPackets();
+
+                    // Track data packets sent to direct neighbors for forward ETX calculation
+                    if (PacketService::isDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
+                        uint16_t nextHop = RoutingTableService::getNextHop(tx->packet->dst);
+                        RouteNode* nextHopNode = RoutingTableService::findNode(nextHop);
+                        if (nextHopNode != nullptr && nextHopNode->via == nextHop) {
+                            // Direct neighbor - track sent packet for forward link quality
+                            nextHopNode->dataPacketsSent++;
+                            ESP_LOGV(LM_TAG, "Data sent to %X: sent=%d acks=%d",
+                                     nextHop, nextHopNode->dataPacketsSent, nextHopNode->ackPacketsReceived);
+                        }
+                    }
                 }
 
                 //TODO: If the packet has not been send, add it to the queue and send it again
@@ -614,6 +631,9 @@ void LoraMesher::sendHelloPacket() {
         ESP_LOGV(LM_TAG, "Stack space unused after entering the task: %d", uxTaskGetStackHighWaterMark(NULL));
         ESP_LOGV(LM_TAG, "Free heap: %d", getFreeHeap());
 
+        // Update expected hello packet counters for ETX calculation
+        RoutingTableService::updateExpectedHelloPackets();
+
         incSentHelloPackets();
 
         NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
@@ -646,6 +666,55 @@ void LoraMesher::sendHelloPacket() {
         // Wait for HELLO_PACKETS_DELAY seconds to send the next hello packet
         vTaskDelay(HELLO_PACKETS_DELAY * 1000 / portTICK_PERIOD_MS);
     }
+}
+
+void LoraMesher::sendTriggeredHelloPacket(uint8_t reason) {
+    // Check if rate limiting allows this triggered update
+    if (!RouteUpdateService::shouldSendTriggeredUpdate()) {
+        ESP_LOGD(LM_TAG, "Triggered hello packet suppressed due to rate limiting (reason=%d)", reason);
+        return;
+    }
+
+    ESP_LOGI(LM_TAG, "Sending triggered hello packet (reason=%d)", reason);
+
+    // Calculate max nodes per packet
+    size_t maxNodesPerPacket = (PacketFactory::getMaxPacketSize() - sizeof(RoutePacket)) / sizeof(NetworkNode);
+
+    // Get all network nodes from routing table
+    NetworkNode* nodes = RoutingTableService::getAllNetworkNodes();
+    size_t numOfNodes = RoutingTableService::routingTableSize();
+
+    size_t numPackets = (numOfNodes + maxNodesPerPacket - 1) / maxNodesPerPacket;
+    numPackets = (numPackets == 0) ? 1 : numPackets;
+
+    // Send all packets (split if necessary)
+    for (size_t i = 0; i < numPackets; ++i) {
+        size_t startIndex = i * maxNodesPerPacket;
+        size_t endIndex = startIndex + maxNodesPerPacket;
+        if (endIndex > numOfNodes) {
+            endIndex = numOfNodes;
+        }
+
+        size_t nodesInThisPacket = endIndex - startIndex;
+
+        // Create and send the packet with higher priority than periodic hellos
+        RoutePacket* tx = PacketService::createRoutingPacket(
+            getLocalAddress(), &nodes[startIndex], nodesInThisPacket, RoleService::getRole()
+        );
+
+        setPackedForSend(reinterpret_cast<Packet<uint8_t>*>(tx), DEFAULT_PRIORITY + 2);
+
+        ESP_LOGD(LM_TAG, "Triggered hello packet %zu/%zu queued (%zu routes)", i+1, numPackets, nodesInThisPacket);
+    }
+
+    // Delete the nodes array
+    if (numOfNodes > 0)
+        delete[] nodes;
+
+    // Record this triggered update
+    RouteUpdateService::recordTriggeredUpdate();
+
+    ESP_LOGI(LM_TAG, "Triggered hello complete: packets=%zu routes=%zu", numPackets, numOfNodes);
 }
 
 void LoraMesher::processPackets() {
@@ -1163,6 +1232,17 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
     //Add the last ack to the config packet
     config->config->lastAck = seq_num;
 
+    // Track ACK reception for forward ETX calculation
+    RouteNode* sourceNode = RoutingTableService::findNode(source);
+    if (sourceNode != nullptr && sourceNode->via == source) {
+        // Direct neighbor - track ACK for forward link quality
+        sourceNode->ackPacketsReceived++;
+        ESP_LOGV(LM_TAG, "ACK from %X: acks=%d/%d (%.1f%%)",
+                 source, sourceNode->ackPacketsReceived, sourceNode->dataPacketsSent,
+                 sourceNode->dataPacketsSent > 0 ?
+                 (100.0 * sourceNode->ackPacketsReceived / sourceNode->dataPacketsSent) : 0.0);
+    }
+
     // Recalculate the RTT
     actualizeRTT(config->config);
 
@@ -1534,24 +1614,26 @@ unsigned long LoraMesher::getMaximumTimeout(sequencePacketConfig* configPacket) 
         return 50000;
     }
 
-    uint8_t hops = configPacket->node->networkNode.metric;
-    if (hops == 0) {
-        ESP_LOGE(LM_TAG, "Find next hop in add timeout");
+    // Calculate total ETX (reverse + forward)
+    uint16_t totalETX = configPacket->node->networkNode.reverseETX + configPacket->node->networkNode.forwardETX;
+    if (totalETX == 0) {
+        ESP_LOGE(LM_TAG, "Total ETX is zero in get maximum timeout for addr %X", configPacket->source);
         return 50000;
     }
 
-    // Cap the metric at a reasonable maximum to prevent absurdly high timeouts
-    // Typical mesh networks should have 1-20 hops max
-    const uint8_t MAX_REASONABLE_HOPS = 20;
-    if (hops > MAX_REASONABLE_HOPS) {
-        ESP_LOGW(LM_TAG, "Metric value (%u) exceeds reasonable maximum (%u), capping to max",
-            hops, MAX_REASONABLE_HOPS);
-        hops = MAX_REASONABLE_HOPS;
+    // Cap the ETX at a reasonable maximum to prevent absurdly high timeouts
+    // With ETX scaled by 10, max 20.0 ETX = 200
+    const uint16_t MAX_REASONABLE_ETX = 200;
+    if (totalETX > MAX_REASONABLE_ETX) {
+        ESP_LOGW(LM_TAG, "Total ETX value (%u = %.1f) exceeds reasonable maximum (%.1f), capping to max",
+            totalETX, totalETX / 10.0, MAX_REASONABLE_ETX / 10.0);
+        totalETX = MAX_REASONABLE_ETX;
     }
 
-    // Formula: 40s base + 10s per hop (gives more headroom for multi-hop scenarios)
-    // Example: 1 hop = 50s, 5 hops = 90s, 10 hops = 140s, 20 hops = 240s
-    return 40000 + hops * 10000;
+    // Formula: 40s base + 1s per ETX unit (scaled by 10)
+    // Example: ETX=10 (1.0) = 41s, ETX=50 (5.0) = 45s, ETX=100 (10.0) = 50s, ETX=200 (20.0) = 60s
+    // This gives reasonable timeouts proportional to expected transmission count
+    return 40000 + totalETX * 1000;
 }
 
 unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
@@ -1560,23 +1642,24 @@ unsigned long LoraMesher::calculateTimeout(sequencePacketConfig* configPacket) {
         return MIN_TIMEOUT * 1000;
     }
 
-    uint8_t hops = configPacket->node->networkNode.metric;
-    if (hops == 0) {
-        ESP_LOGE(LM_TAG, "Find next hop in add timeout");
+    // Calculate total ETX (reverse + forward)
+    uint16_t totalETX = configPacket->node->networkNode.reverseETX + configPacket->node->networkNode.forwardETX;
+    if (totalETX == 0) {
+        ESP_LOGE(LM_TAG, "Total ETX is zero in calculate timeout for addr %X", configPacket->source);
         return MIN_TIMEOUT * 1000;
     }
 
-    // If no RTT measurements yet, use default timeout based on hops
+    // If no RTT measurements yet, use default timeout based on ETX
     if (configPacket->node->SRTT == 0) {
-        unsigned long defaultTimeout = MIN_TIMEOUT * 1000 + hops * 5000;
-        ESP_LOGV(LM_TAG, "No RTT data yet, using default timeout: %u ms (hops=%u) for addr %X",
-            (unsigned int)defaultTimeout, hops, configPacket->source);
+        unsigned long defaultTimeout = MIN_TIMEOUT * 1000 + totalETX * 500;  // 20s + 0.5s per ETX unit
+        ESP_LOGV(LM_TAG, "No RTT data yet, using default timeout: %u ms (ETX=%.1f) for addr %X",
+            (unsigned int)defaultTimeout, totalETX / 10.0, configPacket->source);
         return defaultTimeout;
     }
 
     // RFC 6298: RTO = SRTT + K*RTTVAR (K=4)
     unsigned long calculatedTimeout = configPacket->node->SRTT + 4 * configPacket->node->RTTVAR;
-    unsigned long minTimeout = MIN_TIMEOUT * 1000 + hops * 3000;  // 20s + 3s per hop
+    unsigned long minTimeout = MIN_TIMEOUT * 1000 + totalETX * 300;  // 20s + 0.3s per ETX unit
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
 
     ESP_LOGV(LM_TAG, "Calculated timeout: SRTT=%u ms, RTTVAR=%u ms, timeout=%u ms, min=%u ms, max=%u ms for addr %X",
@@ -1630,15 +1713,15 @@ void LoraMesher::recalculateTimeoutAfterTimeout(sequencePacketConfig* configPack
     unsigned long maxTimeout = getMaximumTimeout(configPacket);
 
     // Log detailed information for debugging timeout issues
-    uint8_t metric = 0;
+    uint16_t totalETX = 0;
     if (configPacket->node != nullptr) {
-        metric = configPacket->node->networkNode.metric;
+        totalETX = configPacket->node->networkNode.reverseETX + configPacket->node->networkNode.forwardETX;
     }
     else {
         ESP_LOGE(LM_TAG, "Node is null in recalculate timeout for addr %X", configPacket->source);
     }
-    ESP_LOGV(LM_TAG, "Timeout calculation: metric=%u, queueLen=%d, congestion=%u ms, maxTimeout=%u ms, calculatedTimeout=%u ms for addr %X",
-        metric, ToSendPackets->getLength(), (unsigned int)congestionFactor, (unsigned int)maxTimeout, (unsigned int)timeout, configPacket->source);
+    ESP_LOGV(LM_TAG, "Timeout calculation: ETX=%.1f, queueLen=%d, congestion=%u ms, maxTimeout=%u ms, calculatedTimeout=%u ms for addr %X",
+        totalETX / 10.0, ToSendPackets->getLength(), (unsigned int)congestionFactor, (unsigned int)maxTimeout, (unsigned int)timeout, configPacket->source);
 
     // Cap at maximum timeout
     if (timeout > maxTimeout) {
