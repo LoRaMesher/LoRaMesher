@@ -33,14 +33,20 @@ public:
      */
     uint8_t role = 0;
 
+    /**
+     * @brief Hop count - Number of hops to reach this node (1 for direct neighbors)
+     *
+     */
+    uint8_t hop_count = 0;
+
     NetworkNode() {};
 
-    NetworkNode(uint16_t address_, uint8_t reverseETX_, uint8_t forwardETX_, uint8_t role_):
-        address(address_), reverseETX(reverseETX_), forwardETX(forwardETX_), role(role_) {};
+    NetworkNode(uint16_t address_, uint8_t reverseETX_, uint8_t forwardETX_, uint8_t role_, uint8_t hop_count_ = 0):
+        address(address_), reverseETX(reverseETX_), forwardETX(forwardETX_), role(role_), hop_count(hop_count_) {};
 
     // Legacy constructor for backward compatibility during transition
     NetworkNode(uint16_t address_, uint8_t metric_, uint8_t role_):
-        address(address_), reverseETX(metric_), forwardETX(metric_), role(role_) {};
+        address(address_), reverseETX(metric_), forwardETX(metric_), role(role_), hop_count(0) {};
 };
 
 #pragma pack()

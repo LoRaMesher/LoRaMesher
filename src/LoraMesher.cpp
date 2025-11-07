@@ -575,18 +575,6 @@ void LoraMesher::sendPackets() {
                     incSentControlBytes(PacketService::getControlLength(tx->packet));
                     if (tx->packet->src != getLocalAddress())
                         incForwardedPackets();
-
-                    // Track data packets sent to direct neighbors for forward ETX calculation
-                    if (PacketService::isDataPacket(tx->packet->type) && tx->packet->dst != BROADCAST_ADDR) {
-                        uint16_t nextHop = RoutingTableService::getNextHop(tx->packet->dst);
-                        RouteNode* nextHopNode = RoutingTableService::findNode(nextHop);
-                        if (nextHopNode != nullptr && nextHopNode->via == nextHop) {
-                            // Direct neighbor - track sent packet for forward link quality
-                            nextHopNode->dataPacketsSent++;
-                            ESP_LOGV(LM_TAG, "Data sent to %X: sent=%d acks=%d",
-                                     nextHop, nextHopNode->dataPacketsSent, nextHopNode->ackPacketsReceived);
-                        }
-                    }
                 }
 
                 //TODO: If the packet has not been send, add it to the queue and send it again
@@ -1231,17 +1219,6 @@ void LoraMesher::addAck(uint16_t source, uint8_t seq_id, uint16_t seq_num) {
 
     //Add the last ack to the config packet
     config->config->lastAck = seq_num;
-
-    // Track ACK reception for forward ETX calculation
-    RouteNode* sourceNode = RoutingTableService::findNode(source);
-    if (sourceNode != nullptr && sourceNode->via == source) {
-        // Direct neighbor - track ACK for forward link quality
-        sourceNode->ackPacketsReceived++;
-        ESP_LOGV(LM_TAG, "ACK from %X: acks=%d/%d (%.1f%%)",
-                 source, sourceNode->ackPacketsReceived, sourceNode->dataPacketsSent,
-                 sourceNode->dataPacketsSent > 0 ?
-                 (100.0 * sourceNode->ackPacketsReceived / sourceNode->dataPacketsSent) : 0.0);
-    }
 
     // Recalculate the RTT
     actualizeRTT(config->config);

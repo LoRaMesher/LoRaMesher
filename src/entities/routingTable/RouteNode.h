@@ -64,18 +64,6 @@ public:
     uint16_t helloPacketsReceived = 0;
 
     /**
-     * @brief ETX Tracking: Data packets sent to this node (for 1-hop neighbors only)
-     * Used to calculate forward link quality via ACK success rate
-     */
-    uint16_t dataPacketsSent = 0;
-
-    /**
-     * @brief ETX Tracking: ACK packets received from this node (for 1-hop neighbors only)
-     * Used to calculate forward link quality via ACK success rate
-     */
-    uint16_t ackPacketsReceived = 0;
-
-    /**
      * @brief Construct a new Route Node object
      *
      * @param address_ Address

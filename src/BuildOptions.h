@@ -102,6 +102,9 @@ extern const char* LM_VERSION;
 #define MIN_ETX_SAMPLES 3                   // Minimum hello packets before using ETX (bootstrap period)
 #define ETX_MIN_VALUE 10                    // Minimum ETX value (1.0 scaled)
 #define ETX_MAX_VALUE 255                   // Maximum ETX value (25.5 scaled)
+#define ETX_BOOTSTRAP_VALUE 15              // Conservative bootstrap ETX for new neighbors (1.5 scaled)
+#define ETX_BOOTSTRAP_THRESHOLD 50          // Accept routes up to ETX 5.0 when routing table is empty
+#define ETX_UNUSABLE_THRESHOLD 200          // Routes above ETX 20.0 are considered unusable and allowed to timeout
 #define ETX_DECAY_THRESHOLD 100             // Apply decay when counters reach this value
 #define ETX_DECAY_FACTOR 0.8                // Decay multiplier (80% retention)
 
