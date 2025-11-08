@@ -58,6 +58,13 @@ public:
 	static RouteNode* getBestNodeByRole(uint8_t role);
 
 	/**
+	 * @brief Find the route with the worst (highest) total ETX
+	 *
+	 * @return RouteNode* pointer to the RouteNode with highest ETX or nullptr if table empty
+	 */
+	static RouteNode* findWorstRoute();
+
+	/**
 	 * @brief Returns if address is inside the routing table
 	 *
 	 * @param address Address you want to check if is inside the routing table

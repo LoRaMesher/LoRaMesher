@@ -281,9 +281,18 @@ void RoutingTableService::processRoute(uint16_t via, NetworkNode* node) {
             }
         }
 
-        // Update the Role only if the node that sent the packet is the next hop
-        if (getNextHop(node->address) == via && node->role != rNode->networkNode.role) {
-            ESP_LOGI(LM_TAG, "Updating role of %X to %d", node->address, node->role);
+        // Update the Role from:
+        // 1. Active route (current next hop) - most likely to be fresh
+        // 2. Direct neighbor (1-hop) - authoritative source
+        bool isDirectNeighbor = (node->hop_count == 1 && via == node->address);
+        bool isActiveRoute = (getNextHop(node->address) == via);
+
+        if ((isActiveRoute || isDirectNeighbor) && node->role != rNode->networkNode.role) {
+            ESP_LOGI(LM_TAG, "Updating role of %X: %d -> %d (source: %s)",
+                     node->address,
+                     rNode->networkNode.role,
+                     node->role,
+                     isDirectNeighbor ? "direct neighbor" : "active route");
             rNode->networkNode.role = node->role;
         }
     }
