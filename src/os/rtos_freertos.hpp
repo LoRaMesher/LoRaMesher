@@ -349,8 +349,7 @@ class RTOSFreeRTOS : public RTOS {
      */
     void SetCurrentTaskNodeAddress(const std::string& address) override {
         // For ESP32/FreeRTOS, use a simple static variable since we typically have one mesh node per device
-        static std::string current_node_address;
-        current_node_address = address;
+        current_node_address_ = address;
     }
 
     /**
@@ -358,9 +357,11 @@ class RTOSFreeRTOS : public RTOS {
      * @return The node address as a string, or empty string if not set
      */
     std::string GetCurrentTaskNodeAddress() const override {
-        static std::string current_node_address;
-        return current_node_address;
+        return current_node_address_;
     }
+
+   private:
+    mutable std::string current_node_address_;
 };
 
 }  // namespace os

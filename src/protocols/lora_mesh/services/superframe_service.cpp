@@ -423,7 +423,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
              external_slot_start_time);
     LOG_INFO("[TIMING_SYNC]   external_slot: %u", external_slot);
     LOG_DEBUG("[TIMING_SYNC]   slot_duration: %u ms", slot_duration);
-    LOG_DEBUG("[TIMING_SYNC]   elapsed_time: %llu ms", elapsed_time);
+    LOG_DEBUG("[TIMING_SYNC]   elapsed_time: %u ms", elapsed_time);
     LOG_DEBUG("[TIMING_SYNC]   current_time: %u ms", current_time);
     LOG_DEBUG("[TIMING_SYNC]   old_superframe_start: %u ms",
               superframe_start_time_);

@@ -239,7 +239,7 @@ uint32_t LoraMesherSX1276::getTimeOnAir(uint8_t length) {
         return 0;
     }
 
-    RadioLibTime_t time_on_air = radio_module_->getTimeOnAir(length);
+    RadioLibTime_t time_on_air = radio_module_->getTimeOnAir(length) / 1000;
     if (time_on_air == 0) {
         return 0;
     }
