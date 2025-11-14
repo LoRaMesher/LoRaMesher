@@ -647,9 +647,9 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         }
     }
 
-    LOG_DEBUG("Slot %d transition: type=%s%s", current_slot,
-              slot_utils::SlotTypeToString(slot_type).c_str(),
-              new_superframe ? " (new superframe)" : "");
+    LOG_INFO("Slot %d transition: type=%s%s", current_slot,
+             slot_utils::SlotTypeToString(slot_type).c_str(),
+             new_superframe ? " (new superframe)" : "");
 
     // Process messages based on slot type
     ProcessSlotMessages(slot_type);
