@@ -668,7 +668,11 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         // Calculate timeout until next meaningful event (slot transition or superframe end)
         uint32_t timeout_ms = service->CalculateNextEventTimeout();
 
-        LOG_DEBUG("Next event timeout: %d ms", timeout_ms);
+        // Log timeout periodically to reduce log spam (every 10th call)
+        static uint32_t timeout_log_counter = 0;
+        if (++timeout_log_counter % 10 == 0) {
+            LOG_DEBUG("Next event timeout: %d ms", timeout_ms);
+        }
 
         // Wait for notification or timeout
         auto queue_result = rtos.ReceiveFromQueue(service->notification_queue_,
@@ -699,8 +703,12 @@ void SuperframeService::UpdateTaskFunction(void* param) {
             }
         } else if (queue_result == os::QueueResult::kTimeout) {
             // Natural timeout - time for next slot/superframe transition
-            LOG_DEBUG(
-                "UpdateTask timeout - checking for slot/frame transitions");
+            // Log periodically to reduce spam (every 5th timeout)
+            static uint32_t timeout_check_counter = 0;
+            if (++timeout_check_counter % 5 == 0) {
+                LOG_DEBUG(
+                    "UpdateTask timeout - checking for slot/frame transitions");
+            }
             // Always update state on natural timeout (slot/frame boundary reached)
             service->UpdateSuperframeState();
         }
