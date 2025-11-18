@@ -859,6 +859,20 @@ void SuperframeService::NotifyUpdateTask(
     }
 }
 
+uint32_t SuperframeService::GetTimeSinceSuperframeStart() {
+    if (!is_running_) {
+        return 0;
+    }
+
+    uint32_t current_time = GetRTOS().getTickCount();
+
+    if (current_time < superframe_start_time_) {
+        return 0;  // Before superframe started
+    }
+
+    return current_time - superframe_start_time_;
+}
+
 }  // namespace lora_mesh
 }  // namespace protocols
 }  // namespace loramesher

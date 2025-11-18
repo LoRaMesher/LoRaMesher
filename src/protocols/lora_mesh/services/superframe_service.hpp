@@ -130,6 +130,13 @@ class SuperframeService : public ISuperframeService {
     uint32_t GetSuperframeDuration() const;
 
     /**
+     * @brief Get time since superframe started
+     * 
+     * @return uint32_t Time since superframe start in milliseconds
+     */
+    uint32_t GetTimeSinceSuperframeStart() override;
+
+    /**
      * @brief Get Superframe Discovery timeout
      * 
      * @return uint32_t Discovery timeout in milliseconds
