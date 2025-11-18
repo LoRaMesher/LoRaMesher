@@ -8,6 +8,7 @@
 #include <string>
 
 #include "config/system_config.hpp"
+#include "os/rtos.hpp"
 
 #ifndef LORAMESHER_BUILD_ARDUINO
 #include <ctime>
@@ -15,9 +16,6 @@
 #endif
 
 namespace loramesher {
-namespace os {
-using SemaphoreHandle_t = void*;
-}
 
 #ifndef LOGGER_DISABLE_COLORS
 
