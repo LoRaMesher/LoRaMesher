@@ -4,7 +4,6 @@
 #include <cstdarg>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -16,6 +15,9 @@
 #endif
 
 namespace loramesher {
+namespace os {
+using SemaphoreHandle_t = void*;
+}
 
 #ifndef LOGGER_DISABLE_COLORS
 
@@ -181,25 +183,19 @@ class ConsoleLogHandler : public LogHandler {
 class Logger {
    public:
     Logger();
-    ~Logger() = default;
+    ~Logger();
 
     /**
      * @brief Set the minimum log level to be processed.
      * @param level The minimum log level.
      */
-    void SetLogLevel(LogLevel level) {
-        std::lock_guard<std::timed_mutex> lock(logger_mutex_);
-        min_log_level_ = level;
-    }
+    void SetLogLevel(LogLevel level);
 
     /**
      * @brief Set a custom log handler.
      * @param handler Unique pointer to the log handler implementation.
      */
-    void SetHandler(std::unique_ptr<LogHandler> handler) {
-        std::lock_guard<std::timed_mutex> lock(logger_mutex_);
-        handler_ = std::move(handler);
-    }
+    void SetHandler(std::unique_ptr<LogHandler> handler);
 
     /**
      * @brief Log a message with the specified level.
@@ -231,14 +227,6 @@ class Logger {
     }
 
     /**
-     * @brief Reset the logger state.
-     * 
-     * This method is used to reset the logger state, including the log level
-     * and any other internal state. It is useful for testing and cleanup.
-     */
-    void Reset();
-
-    /**
      * @brief Flushes all pending log messages.
      * 
      * This method ensures that all buffered log messages are written to 
@@ -247,12 +235,7 @@ class Logger {
      * 
      * @thread_safety Thread-safe
      */
-    void Flush() {
-        std::lock_guard<std::timed_mutex> lock(logger_mutex_);
-        if (handler_) {
-            handler_->Flush();
-        }
-    }
+    void Flush();
 
     // Convenience methods for different log levels with formatting
     template <typename... Args>
@@ -281,11 +264,12 @@ class Logger {
    private:
     LogLevel min_log_level_{LogLevel::kDebug};
     std::unique_ptr<LogHandler> handler_;
-    // Timed mutex for thread safety with timeout capability
-    std::timed_mutex logger_mutex_;
+    // Binary semaphore for thread safety using RTOS abstraction
+    os::SemaphoreHandle_t logger_semaphore_;
 
     void LogMessage(LogLevel level, const std::string& message);
     std::string FormatMessageWithAddress(const std::string& message) const;
+    void EnsureSemaphoreInitialized();
 };
 
 /**
@@ -294,7 +278,11 @@ class Logger {
 extern Logger LOG;
 
 // Convenience macros for logging with format strings
-// Then modify your logging macros
+// NOTE: Using ##__VA_ARGS__ (GNU extension) instead of C++20 __VA_OPT__(,)
+// for compatibility with cppcheck < 2.14. The ##__VA_ARGS__ extension removes
+// the trailing comma when no arguments are provided, which is functionally
+// identical to __VA_OPT__(,). This is supported by GCC, Clang, and MSVC.
+// See: https://github.com/danmar/simplecpp/issues/191
 #if LORAMESHER_LOG_LEVEL <= 0
 #define LOG_DEBUG(fmt, ...) loramesher::LOG.Debug(fmt, ##__VA_ARGS__)
 #else

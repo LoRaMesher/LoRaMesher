@@ -3,7 +3,7 @@
 
 namespace loramesher {
 
-Logger::Logger() : logger_mutex_() {
+Logger::Logger() : logger_semaphore_(nullptr) {
 #ifdef LORAMESHER_BUILD_ARDUINO
     handler_ = std::make_unique<SerialLogHandler>();
 #else
@@ -11,31 +11,68 @@ Logger::Logger() : logger_mutex_() {
 #endif
 }
 
-void Logger::LogMessage(LogLevel level, const std::string& message) {
-    // Try to acquire the mutex with a timeout to prevent deadlock
-    std::unique_lock<std::timed_mutex> lock(logger_mutex_, std::try_to_lock);
-
-    if (!lock.owns_lock()) {
-        // If we can't get the lock immediately, try with a short timeout
-        if (!lock.try_lock_for(std::chrono::milliseconds(100))) {
-            // If still can't get the lock, skip this log to prevent blocking
-            return;
+void Logger::EnsureSemaphoreInitialized() {
+    if (!logger_semaphore_) {
+        logger_semaphore_ = GetRTOS().CreateBinarySemaphore();
+        if (logger_semaphore_) {
+            // Initialize semaphore as "given" so it can be taken for first use
+            GetRTOS().GiveSemaphore(logger_semaphore_);
         }
+    }
+}
+
+void Logger::LogMessage(LogLevel level, const std::string& message) {
+    // Lazy initialization of semaphore to avoid static initialization order issues
+    EnsureSemaphoreInitialized();
+
+    // Use RTOS semaphore with timeout to prevent blocking
+    if (!logger_semaphore_ ||
+        !GetRTOS().TakeSemaphore(logger_semaphore_, 100)) {
+        // If semaphore is unavailable or timeout, skip logging to prevent blocking
+        return;
     }
 
     if (level >= min_log_level_ && handler_) {
         std::string formatted_message = FormatMessageWithAddress(message);
         handler_->Write(level, formatted_message);
     }
+
+    GetRTOS().GiveSemaphore(logger_semaphore_);
 }
 
-void Logger::Reset() {
-    std::unique_lock<std::timed_mutex> lock(logger_mutex_, std::try_to_lock);
-    if (!lock.owns_lock()) {
-        // The mutex is already locked, which is problematic
-        // Create a new mutex to replace the locked one
-        logger_mutex_.~timed_mutex();
-        new (&logger_mutex_) std::timed_mutex();
+void Logger::SetLogLevel(LogLevel level) {
+    EnsureSemaphoreInitialized();
+
+    if (logger_semaphore_ && GetRTOS().TakeSemaphore(logger_semaphore_, 10)) {
+        min_log_level_ = level;
+        GetRTOS().GiveSemaphore(logger_semaphore_);
+    }
+}
+
+void Logger::SetHandler(std::unique_ptr<LogHandler> handler) {
+    EnsureSemaphoreInitialized();
+
+    if (logger_semaphore_ && GetRTOS().TakeSemaphore(logger_semaphore_, 10)) {
+        handler_ = std::move(handler);
+        GetRTOS().GiveSemaphore(logger_semaphore_);
+    }
+}
+
+void Logger::Flush() {
+    EnsureSemaphoreInitialized();
+
+    if (logger_semaphore_ && GetRTOS().TakeSemaphore(logger_semaphore_, 10)) {
+        if (handler_) {
+            handler_->Flush();
+        }
+        GetRTOS().GiveSemaphore(logger_semaphore_);
+    }
+}
+
+Logger::~Logger() {
+    if (logger_semaphore_) {
+        GetRTOS().DeleteSemaphore(logger_semaphore_);
+        logger_semaphore_ = nullptr;
     }
 }
 
