@@ -1964,6 +1964,9 @@ Result NetworkService::SendSyncBeacon() {
                     total_slots);
     }
 
+    auto superframe_start_time_diff =
+        superframe_service_->GetTimeSinceSuperframeStart();
+
     // Create original sync beacon with actual parameters
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
         0xFFFF,         // Broadcast destination
@@ -1971,9 +1974,10 @@ Result NetworkService::SendSyncBeacon() {
         node_address_,  // TODO: At this moment NetworkId is network Manager
         total_slots,    // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
-        node_address_,          // Network manager address
-        config_.guard_time_ms,  // Guard time added to propagation delay
-        network_max_hops_);     // Use actual max hops from network
+        node_address_,  // Network manager address
+        config_.guard_time_ms +
+            superframe_start_time_diff,  // Guard time added to propagation delay
+        network_max_hops_);              // Use actual max hops from network
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");
