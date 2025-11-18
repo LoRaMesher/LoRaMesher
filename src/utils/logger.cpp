@@ -17,7 +17,7 @@ void Logger::LogMessage(LogLevel level, const std::string& message) {
 
     if (!lock.owns_lock()) {
         // If we can't get the lock immediately, try with a short timeout
-        if (!lock.try_lock_for(std::chrono::milliseconds(10))) {
+        if (!lock.try_lock_for(std::chrono::milliseconds(100))) {
             // If still can't get the lock, skip this log to prevent blocking
             return;
         }
