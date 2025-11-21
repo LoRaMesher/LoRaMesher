@@ -390,6 +390,116 @@
         .toggle-icon.rotated {
             transform: rotate(180deg);
         }
+        .file-management {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .file-list {
+            margin: 15px 0;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            background: #f8f9fa;
+        }
+        .file-item.disabled {
+            opacity: 0.5;
+            background: #e9ecef;
+        }
+        .file-checkbox {
+            margin-right: 10px;
+        }
+        .file-info {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .file-name {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .file-size {
+            color: #7f8c8d;
+            font-size: 12px;
+        }
+        .file-stats {
+            color: #7f8c8d;
+            font-size: 12px;
+        }
+        .file-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid rgba(0,0,0,0.2);
+        }
+        .file-remove {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .file-remove:hover {
+            background: #c0392b;
+        }
+        .file-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .timestamp-controls {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .timestamp-controls h4 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }
+        .timestamp-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .timestamp-toggle input[type="radio"] {
+            margin-right: 5px;
+        }
+        .refresh-drop-zone {
+            display: none;
+            background: #fff3cd;
+            border: 2px dashed #ffc107;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            margin: 15px 0;
+        }
+        .refresh-drop-zone.show {
+            display: block;
+        }
+        .refresh-drop-zone.dragover {
+            background: #ffe8a1;
+            border-color: #ff9800;
+        }
+        .refresh-drop-zone h4 {
+            margin: 0 0 10px 0;
+            color: #856404;
+        }
+        .refresh-drop-zone p {
+            margin: 5px 0;
+            color: #856404;
+        }
     </style>
 </head>
 <body>
@@ -397,15 +507,39 @@
         <h1>LoRaMesh Log Analyzer</h1>
         
         <div class="upload-section" id="uploadSection">
-            <h3>Upload Log File</h3>
-            <p>Drag and drop a log file here or click to select</p>
-            <input type="file" id="fileInput" accept=".txt,.log" style="display: none;">
-            <button class="btn" onclick="document.getElementById('fileInput').click()">Select File</button>
+            <h3>Upload Log Files</h3>
+            <p id="uploadHint">Drag and drop log files here or click to select multiple files</p>
+            <input type="file" id="fileInput" accept=".txt,.log,.ans" multiple style="display: none;">
+            <button class="btn" onclick="selectFiles()">Select Files</button>
+        </div>
+
+        <div class="file-management" id="fileManagement" style="display: none;">
+            <h3>Loaded Files</h3>
+            <div class="file-list" id="fileList"></div>
+            <div class="file-controls">
+                <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
+                <button class="btn" onclick="clearAllFiles()">Clear All</button>
+                <button class="btn" onclick="toggleAllFiles()">Toggle All</button>
+            </div>
         </div>
 
         <div class="visualization-container" id="visualizationContainer">
+            <div class="timestamp-controls" id="timestampControls">
+                <h4>⏰ Timestamp Format</h4>
+                <div class="timestamp-toggle">
+                    <label><input type="radio" name="timestampFormat" value="readable" checked onchange="toggleTimestampFormat()"> Readable (HH:MM:SS.mmm)</label>
+                    <label><input type="radio" name="timestampFormat" value="milliseconds" onchange="toggleTimestampFormat()"> Raw Milliseconds</label>
+                </div>
+            </div>
             <div class="log-info" id="logInfo"></div>
-            
+
+            <div class="refresh-drop-zone" id="refreshDropZone">
+                <h4>🔄 File Access Needed</h4>
+                <p>The browser needs fresh permission to read your files.</p>
+                <p><strong>Drag and drop your log files here to refresh the data.</strong></p>
+                <p><small>Tip: Click here to select files, or drag them from your file explorer</small></p>
+            </div>
+
             <div class="legend-container">
                 <div class="legend-header" onclick="toggleLegend()">
                     <span>📊 Message Type Color Legend</span>
@@ -487,12 +621,13 @@
                         <input type="range" id="zoomSlider" min="1" max="100" value="10" oninput="updateZoom()">
                         <button onclick="zoomIn()">+</button>
                         <span id="zoomLevel">10x</span>
-                        
+
                         <label style="margin-left: 20px;">Time Range:</label>
                         <input type="range" id="timeRangeSlider" min="0" max="100" value="0" oninput="updateTimeRange()">
                         <span id="timeRangeLabel">0ms - 1000ms</span>
-                        
+
                         <button onclick="resetView()" style="margin-left: 20px;">Reset View</button>
+                        <button onclick="refreshFiles()" style="margin-left: 10px;">🔄 Refresh</button>
                     </div>
                     <div class="timeline" id="slotTimeline">
                         <div class="timeline-content" id="timelineContent"></div>
@@ -615,6 +750,7 @@
 
         class LogAnalyzer {
             constructor() {
+                this.files = new Map(); // Map of file ID to file data
                 this.nodes = new Map();
                 this.messages = [];
                 this.events = [];
@@ -623,12 +759,33 @@
                 this.timeWindowStart = 0;
                 this.timeWindowEnd = 0;
                 this.pendingTransmission = null;
+                this.timestampFormat = 'readable'; // 'readable' or 'milliseconds'
+                this.baseTimestamp = 0; // First timestamp for relative calculations
+                this.originalTimeMap = new Map(); // Maps timestamp to original time format
+                this.fileColors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#34495e', '#e67e22'];
+                this.isRefreshMode = false; // Track if we're in refresh mode
+
+                // Check for File System Access API support
+                this.supportsFileSystemAccess = 'showOpenFilePicker' in window;
+                console.log(`🔍 File System Access API supported: ${this.supportsFileSystemAccess}`);
+                if (this.supportsFileSystemAccess) {
+                    console.log('✨ True file refresh available! Use "Select Files" button for best experience.');
+                    // Update UI hint
+                    const uploadHint = document.getElementById('uploadHint');
+                    if (uploadHint) {
+                        uploadHint.innerHTML = `Drag and drop log files here or <strong>click "Select Files" for auto-refresh support</strong>`;
+                    }
+                } else {
+                    console.log('ℹ️ Using fallback mode. Refresh will require re-selecting files.');
+                }
+
                 this.setupEventListeners();
             }
 
             setupEventListeners() {
                 const uploadSection = document.getElementById('uploadSection');
                 const fileInput = document.getElementById('fileInput');
+                const refreshDropZone = document.getElementById('refreshDropZone');
 
                 uploadSection.addEventListener('dragover', (e) => {
                     e.preventDefault();
@@ -644,28 +801,617 @@
                     uploadSection.classList.remove('dragover');
                     const files = e.dataTransfer.files;
                     if (files.length > 0) {
-                        this.processFile(files[0]);
+                        this.processFiles(Array.from(files));
                     }
                 });
 
                 fileInput.addEventListener('change', (e) => {
                     if (e.target.files.length > 0) {
-                        this.processFile(e.target.files[0]);
+                        if (this.isRefreshMode) {
+                            this.processFilesForRefresh(Array.from(e.target.files));
+                            this.isRefreshMode = false; // Reset flag
+                        } else {
+                            this.processFiles(Array.from(e.target.files));
+                        }
+                        // Clear the input so the same file can be selected again
+                        e.target.value = '';
                     }
+                });
+
+                // Refresh drop zone event listeners
+                refreshDropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    refreshDropZone.classList.add('dragover');
+                });
+
+                refreshDropZone.addEventListener('dragleave', () => {
+                    refreshDropZone.classList.remove('dragover');
+                });
+
+                refreshDropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    refreshDropZone.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.processFilesForRefresh(Array.from(files));
+                    }
+                });
+
+                refreshDropZone.addEventListener('click', () => {
+                    this.isRefreshMode = true; // Set refresh mode flag
+                    fileInput.click();
                 });
             }
 
-            processFile(file) {
+            formatTimestamp(timestamp) {
+                if (this.timestampFormat === 'milliseconds') {
+                    return `${timestamp}ms`;
+                }
+
+                // Check if we have original time format stored
+                if (this.originalTimeMap.has(timestamp)) {
+                    return this.originalTimeMap.get(timestamp);
+                }
+
+                // For files with original time format, try to find closest timestamp
+                if (this.originalTimeMap.size > 0) {
+                    // Find the closest timestamp that has original time format
+                    let closestTimestamp = null;
+                    let closestDiff = Infinity;
+
+                    for (let [storedTimestamp] of this.originalTimeMap) {
+                        const diff = Math.abs(timestamp - storedTimestamp);
+                        if (diff < closestDiff) {
+                            closestDiff = diff;
+                            closestTimestamp = storedTimestamp;
+                        }
+                    }
+
+                    if (closestTimestamp !== null && closestDiff < 1000) { // Within 1 second
+                        const originalTime = this.originalTimeMap.get(closestTimestamp);
+                        const timeDiff = timestamp - closestTimestamp;
+
+                        // Parse original time
+                        const [timePart, msPart] = originalTime.split('.');
+                        const [hours, minutes, seconds] = timePart.split(':').map(Number);
+
+                        // Calculate new time with offset
+                        const totalMs = (hours * 3600 + minutes * 60 + seconds) * 1000 + parseInt(msPart) + timeDiff;
+                        const newHours = Math.floor(totalMs / (1000 * 60 * 60)) % 24;
+                        const newMinutes = Math.floor((totalMs % (1000 * 60 * 60)) / (1000 * 60));
+                        const newSeconds = Math.floor((totalMs % (1000 * 60)) / 1000);
+                        const newMs = totalMs % 1000;
+
+                        return `${newHours.toString().padStart(2, '0')}:${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}.${Math.floor(newMs).toString().padStart(3, '0')}`;
+                    }
+                }
+
+                // Fallback to relative time format for millisecond-based logs
+                const relativeMs = timestamp - this.baseTimestamp;
+                const hours = Math.floor(relativeMs / (1000 * 60 * 60));
+                const minutes = Math.floor((relativeMs % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((relativeMs % (1000 * 60)) / 1000);
+                const milliseconds = relativeMs % 1000;
+
+                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${Math.floor(milliseconds).toString().padStart(3, '0')}`;
+            }
+
+            async selectFilesWithPicker() {
+                try {
+                    const fileHandles = await window.showOpenFilePicker({
+                        multiple: true,
+                        types: [{
+                            description: 'Log Files',
+                            accept: {
+                                'text/plain': ['.txt', '.log', '.ans']
+                            }
+                        }]
+                    });
+
+                    console.log(`📂 Selected ${fileHandles.length} file(s) with File System Access API`);
+
+                    for (const fileHandle of fileHandles) {
+                        const file = await fileHandle.getFile();
+                        await this.processFileWithHandle(file, fileHandle);
+                    }
+                } catch (error) {
+                    if (error.name !== 'AbortError') {
+                        console.error('Error selecting files:', error);
+                    }
+                    // User cancelled or error occurred
+                }
+            }
+
+            processFiles(files) {
+                files.forEach(file => {
+                    this.processFile(file);
+                });
+            }
+
+            async processFileWithHandle(file, fileHandle) {
+                const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const colorIndex = this.files.size % this.fileColors.length;
+
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     try {
-                        this.parseLog(e.target.result);
+                        const fileData = {
+                            id: fileId,
+                            name: file.name,
+                            size: file.size,
+                            content: e.target.result,
+                            color: this.fileColors[colorIndex],
+                            enabled: true,
+                            nodes: new Map(),
+                            messages: [],
+                            events: [],
+                            timeRange: { start: 0, end: 0 },
+                            file: file,  // Store File object
+                            fileHandle: fileHandle  // Store FileSystemFileHandle for true refresh!
+                        };
+
+                        console.log(`✅ Loaded ${file.name} with file handle (true refresh enabled)`);
+
+                        this.parseLogFile(fileData);
+                        this.files.set(fileId, fileData);
+                        this.updateFileList();
+                        this.aggregateData();
                         this.showVisualization();
                     } catch (error) {
                         this.showError('Error parsing log file: ' + error.message);
                     }
                 };
                 reader.readAsText(file);
+            }
+
+            processFilesForRefresh(files) {
+                console.log(`🔄 Processing ${files.length} file(s) for refresh...`);
+
+                // Hide the refresh drop zone
+                const refreshDropZone = document.getElementById('refreshDropZone');
+                refreshDropZone.classList.remove('show');
+
+                // Show loading indicator
+                const logInfo = document.getElementById('logInfo');
+                logInfo.innerHTML = '<strong>🔄 Updating files...</strong>';
+                logInfo.style.background = '#fff3cd';
+
+                let filesProcessed = 0;
+                const updateResults = {
+                    updated: [],
+                    added: [],
+                    failed: []
+                };
+
+                files.forEach(file => {
+                    // Try to find existing file by name
+                    let existingFileData = null;
+                    for (const [fileId, fileData] of this.files.entries()) {
+                        if (fileData.name === file.name) {
+                            existingFileData = { id: fileId, data: fileData };
+                            break;
+                        }
+                    }
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            if (existingFileData) {
+                                // Update existing file
+                                console.log(`✅ Updating existing file: ${file.name}`);
+                                existingFileData.data.content = e.target.result;
+                                existingFileData.data.size = file.size;
+                                existingFileData.data.file = file; // Update file reference
+                                this.parseLogFile(existingFileData.data);
+                                updateResults.updated.push(file.name);
+                            } else {
+                                // Add as new file
+                                console.log(`➕ Adding new file: ${file.name}`);
+                                const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                                const colorIndex = this.files.size % this.fileColors.length;
+
+                                const fileData = {
+                                    id: fileId,
+                                    name: file.name,
+                                    size: file.size,
+                                    content: e.target.result,
+                                    color: this.fileColors[colorIndex],
+                                    enabled: true,
+                                    nodes: new Map(),
+                                    messages: [],
+                                    events: [],
+                                    timeRange: { start: 0, end: 0 },
+                                    file: file
+                                };
+
+                                this.parseLogFile(fileData);
+                                this.files.set(fileId, fileData);
+                                updateResults.added.push(file.name);
+                            }
+
+                            filesProcessed++;
+                            if (filesProcessed === files.length) {
+                                this.finishFileUpdate(logInfo, updateResults);
+                            }
+                        } catch (error) {
+                            console.error(`❌ Error processing ${file.name}:`, error);
+                            updateResults.failed.push({ name: file.name, error: error.message });
+                            filesProcessed++;
+                            if (filesProcessed === files.length) {
+                                this.finishFileUpdate(logInfo, updateResults);
+                            }
+                        }
+                    };
+
+                    reader.onerror = () => {
+                        const errorDetails = reader.error ? reader.error.message : 'Unknown error';
+                        console.error(`❌ Error reading ${file.name}:`, errorDetails);
+                        updateResults.failed.push({ name: file.name, error: errorDetails });
+                        filesProcessed++;
+                        if (filesProcessed === files.length) {
+                            this.finishFileUpdate(logInfo, updateResults);
+                        }
+                    };
+
+                    reader.readAsText(file);
+                });
+            }
+
+            finishFileUpdate(logInfo, results) {
+                // Re-aggregate and re-render
+                this.aggregateData();
+                this.updateFileList();
+                this.updateLogInfo();
+                this.renderTimeline();
+                this.renderMessages();
+                this.renderStats();
+
+                // Show success message
+                logInfo.style.background = '#d4edda';
+                let message = '<strong>✅ Files updated successfully!</strong><br>';
+                if (results.updated.length > 0) {
+                    message += `<small>Updated: ${results.updated.join(', ')}</small>`;
+                }
+                if (results.added.length > 0) {
+                    message += `<small>Added: ${results.added.join(', ')}</small>`;
+                }
+                if (results.failed.length > 0) {
+                    message += `<small>Failed: ${results.failed.map(f => f.name).join(', ')}</small>`;
+                }
+
+                logInfo.innerHTML = message;
+
+                setTimeout(() => {
+                    logInfo.style.background = '#e8f4f8';
+                    this.updateLogInfo();
+                }, 3000);
+
+                console.log('📊 File Update Summary:', results);
+            }
+
+            processFile(file) {
+                const fileId = `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const colorIndex = this.files.size % this.fileColors.length;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const fileData = {
+                            id: fileId,
+                            name: file.name,
+                            size: file.size,
+                            content: e.target.result,
+                            color: this.fileColors[colorIndex],
+                            enabled: true,
+                            nodes: new Map(),
+                            messages: [],
+                            events: [],
+                            timeRange: { start: 0, end: 0 },
+                            file: file  // Store original File object for refreshing
+                        };
+
+                        this.parseLogFile(fileData);
+                        this.files.set(fileId, fileData);
+                        this.updateFileList();
+                        this.aggregateData();
+                        this.showVisualization();
+                    } catch (error) {
+                        this.showError('Error parsing log file: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            parseLogFile(fileData) {
+                const logContent = fileData.content;
+                fileData.events = [];
+                fileData.messages = [];
+                fileData.nodes.clear();
+                fileData.originalTimeMap = new Map();
+                let pendingTransmission = null;
+
+                const lines = logContent.split('\n');
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim().replace(/\x1b\[[0-9;]*m/g, '');
+                    if (!line) continue;
+
+                    // Parse both timestamp formats
+                    let timestamp, nodeId;
+
+                    // Format 1: [520420022 ms] [INFO] [0x1001] message
+                    const msTimestampMatch = line.match(/\[(\d+) ms\]/);
+                    // Format 2: 11:10:33.936 > [INFO] [0x8681] message
+                    const timeTimestampMatch = line.match(/^(\d{1,2}):(\d{2}):(\d{2})\.(\d{3})\s*>/);
+
+                    if (msTimestampMatch) {
+                        timestamp = parseInt(msTimestampMatch[1]);
+                        const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
+                        nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                    } else if (timeTimestampMatch) {
+                        // Store original time format and convert to milliseconds
+                        const hours = parseInt(timeTimestampMatch[1]);
+                        const minutes = parseInt(timeTimestampMatch[2]);
+                        const seconds = parseInt(timeTimestampMatch[3]);
+                        const ms = parseInt(timeTimestampMatch[4]);
+                        timestamp = (hours * 3600 + minutes * 60 + seconds) * 1000 + ms;
+
+                        // Store original time format for display
+                        const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
+                        fileData.originalTimeMap.set(timestamp, originalTime);
+
+                        const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
+                        nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                    } else {
+                        continue; // Skip lines without timestamp
+                    }
+
+                    // Use existing parsing logic
+                    pendingTransmission = this.parseLineForFile(line, timestamp, nodeId, fileData, pendingTransmission);
+                }
+
+                // Calculate time range for this file
+                const allTimestamps = fileData.events.map(e => e.timestamp).concat(
+                    fileData.messages.map(m => m.timestamp)
+                );
+                if (allTimestamps.length > 0) {
+                    fileData.timeRange.start = Math.min(...allTimestamps);
+                    fileData.timeRange.end = Math.max(...allTimestamps);
+                }
+            }
+
+            parseLineForFile(line, timestamp, nodeId, fileData, pendingTransmission) {
+                // Parse slot transitions
+                const slotMatch = line.match(/Slot (\d+) transition: type=(\w+)/);
+                if (slotMatch) {
+                    const slotNum = parseInt(slotMatch[1]);
+                    const slotType = slotMatch[2];
+
+                    fileData.events.push({
+                        timestamp,
+                        nodeId,
+                        type: 'slot_transition',
+                        slotNum,
+                        slotType,
+                        fileId: fileData.id
+                    });
+                }
+
+                // Parse message transmissions - handle "Sending message" pattern first
+                const sendingMatch = line.match(/Sending message to 0x([0-9A-Fa-f]+), type: (\d+)/);
+                if (sendingMatch) {
+                    const messageTypeInfo = getMessageTypeInfo(sendingMatch[2], 'transmitted');
+
+                    // Add message directly for ESP32 logs (which don't have "Transmitting" line)
+                    fileData.messages.push({
+                        timestamp,
+                        from: nodeId,
+                        to: sendingMatch[1],
+                        type: messageTypeInfo.cssClass,
+                        typeName: messageTypeInfo.name,
+                        category: messageTypeInfo.category,
+                        nodeId: nodeId,
+                        direction: 'transmitted',
+                        fileId: fileData.id
+                    });
+
+                    // Still return pendingTransmission for backward compatibility with desktop logs
+                    return {
+                        timestamp,
+                        nodeId,
+                        to: sendingMatch[1],
+                        messageTypeInfo
+                    };
+                }
+
+                // Parse "Transmitting message from X to Y" pattern
+                let transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                if (!transmitMatch) {
+                    transmitMatch = line.match(/Transmitting message from 0x([0-9A-Fa-f]+)/);
+                    if (transmitMatch) {
+                        transmitMatch[2] = 'FFFF';
+                    }
+                }
+
+                if (transmitMatch) {
+                    let messageTypeInfo = { name: 'UNKNOWN', category: 'unknown', cssClass: 'tx' };
+
+                    if (pendingTransmission &&
+                        pendingTransmission.nodeId === nodeId &&
+                        Math.abs(pendingTransmission.timestamp - timestamp) < 100) {
+                        messageTypeInfo = pendingTransmission.messageTypeInfo;
+                        pendingTransmission = null;
+                    }
+
+                    fileData.messages.push({
+                        timestamp,
+                        from: transmitMatch[1],
+                        to: transmitMatch[2],
+                        type: messageTypeInfo.cssClass,
+                        typeName: messageTypeInfo.name,
+                        category: messageTypeInfo.category,
+                        nodeId: transmitMatch[1],
+                        direction: 'transmitted',
+                        fileId: fileData.id
+                    });
+                }
+
+                // Parse message reception - "*** RECEIVED MESSAGE:" pattern
+                const receiveMatch = line.match(/\*\*\* RECEIVED MESSAGE: type 0x([0-9A-Fa-f]+) from 0x([0-9A-Fa-f]+) to 0x([0-9A-Fa-f]+)/);
+                if (receiveMatch) {
+                    const messageTypeInfo = getMessageTypeInfo('0x' + receiveMatch[1], 'received');
+
+                    fileData.messages.push({
+                        timestamp,
+                        from: receiveMatch[2],
+                        to: receiveMatch[3],
+                        type: messageTypeInfo.cssClass,
+                        typeName: messageTypeInfo.name,
+                        category: messageTypeInfo.category,
+                        nodeId: nodeId,
+                        direction: 'received',
+                        fileId: fileData.id
+                    });
+                }
+
+                // Parse message reception - "*** PROCESSING [TYPE] from 0xXXXX" pattern (ESP32 logs)
+                const processingMatch = line.match(/\*\*\* PROCESSING ([A-Z_]+) from 0x([0-9A-Fa-f]+)/);
+                if (processingMatch) {
+                    // Map message type name to numeric value
+                    const messageTypeName = processingMatch[1];
+                    const messageTypeMap = {
+                        'JOIN_REQUEST': MessageType.JOIN_REQUEST,
+                        'JOIN_RESPONSE': MessageType.JOIN_RESPONSE,
+                        'SLOT_REQUEST': MessageType.SLOT_REQUEST,
+                        'SLOT_ALLOCATION': MessageType.SLOT_ALLOCATION,
+                        'SYNC_BEACON': MessageType.SYNC_BEACON,
+                        'ROUTE_TABLE': MessageType.ROUTE_TABLE
+                    };
+
+                    const typeNum = messageTypeMap[messageTypeName];
+                    if (typeNum) {
+                        const messageTypeInfo = getMessageTypeInfo(typeNum, 'received');
+
+                        fileData.messages.push({
+                            timestamp,
+                            from: processingMatch[2],
+                            to: nodeId,
+                            type: messageTypeInfo.cssClass,
+                            typeName: messageTypeInfo.name,
+                            category: messageTypeInfo.category,
+                            nodeId: nodeId,
+                            direction: 'received',
+                            fileId: fileData.id
+                        });
+                    }
+                }
+
+                // Track nodes
+                if (nodeId !== 'unknown') {
+                    if (!fileData.nodes.has(nodeId)) {
+                        fileData.nodes.set(nodeId, {
+                            id: nodeId,
+                            firstSeen: timestamp,
+                            lastSeen: timestamp,
+                            slots: [],
+                            states: []
+                        });
+                    }
+                    fileData.nodes.get(nodeId).lastSeen = timestamp;
+                }
+
+                return pendingTransmission;
+            }
+
+            updateFileList() {
+                const fileList = document.getElementById('fileList');
+                const fileManagement = document.getElementById('fileManagement');
+
+                if (this.files.size === 0) {
+                    fileManagement.style.display = 'none';
+                    return;
+                }
+
+                fileManagement.style.display = 'block';
+                fileList.innerHTML = '';
+
+                this.files.forEach((fileData) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = `file-item ${!fileData.enabled ? 'disabled' : ''}`;
+
+                    fileItem.innerHTML = `
+                        <input type=\"checkbox\" class=\"file-checkbox\" ${fileData.enabled ? 'checked' : ''} onchange=\"analyzer.toggleFile('${fileData.id}')\">
+                        <div class=\"file-color\" style=\"background-color: ${fileData.color}\"></div>
+                        <div class=\"file-info\">
+                            <div class=\"file-name\">${fileData.name}</div>
+                            <div class=\"file-size\">${(fileData.size / 1024).toFixed(1)} KB</div>
+                            <div class=\"file-stats\">${fileData.events.length} events, ${fileData.messages.length} messages</div>
+                        </div>
+                        <button class=\"file-remove\" onclick=\"analyzer.removeFile('${fileData.id}')\">Remove</button>
+                    `;
+
+                    fileList.appendChild(fileItem);
+                });
+            }
+
+            aggregateData() {
+                this.nodes.clear();
+                this.messages = [];
+                this.events = [];
+                this.originalTimeMap.clear();
+
+                let allTimestamps = [];
+
+                this.files.forEach((fileData) => {
+                    if (!fileData.enabled) return;
+
+                    // Merge nodes
+                    fileData.nodes.forEach((node, nodeId) => {
+                        if (!this.nodes.has(nodeId)) {
+                            this.nodes.set(nodeId, {
+                                id: nodeId,
+                                firstSeen: node.firstSeen,
+                                lastSeen: node.lastSeen,
+                                slots: [],
+                                states: []
+                            });
+                        } else {
+                            const existingNode = this.nodes.get(nodeId);
+                            existingNode.firstSeen = Math.min(existingNode.firstSeen, node.firstSeen);
+                            existingNode.lastSeen = Math.max(existingNode.lastSeen, node.lastSeen);
+                        }
+                    });
+
+                    // Merge messages and events
+                    this.messages = this.messages.concat(fileData.messages);
+                    this.events = this.events.concat(fileData.events);
+
+                    // Merge originalTimeMap if it exists
+                    if (fileData.originalTimeMap) {
+                        fileData.originalTimeMap.forEach((originalTime, timestamp) => {
+                            this.originalTimeMap.set(timestamp, originalTime);
+                        });
+                    }
+
+                    allTimestamps = allTimestamps.concat(
+                        fileData.events.map(e => e.timestamp),
+                        fileData.messages.map(m => m.timestamp)
+                    );
+                });
+
+                // Calculate global time range
+                if (allTimestamps.length > 0) {
+                    this.timeRange.start = Math.min(...allTimestamps);
+                    this.timeRange.end = Math.max(...allTimestamps);
+
+                    // Set base timestamp for readable format
+                    if (this.baseTimestamp === 0) {
+                        this.baseTimestamp = this.timeRange.start;
+                    }
+                }
+
+                // Sort by timestamp
+                this.messages.sort((a, b) => a.timestamp - b.timestamp);
+                this.events.sort((a, b) => a.timestamp - b.timestamp);
             }
 
             parseLog(logContent) {
@@ -837,8 +1583,314 @@
                 });
             }
 
+            toggleFile(fileId) {
+                const fileData = this.files.get(fileId);
+                if (fileData) {
+                    fileData.enabled = !fileData.enabled;
+                    this.updateFileList();
+                    this.aggregateData();
+                    this.renderTimeline();
+                    this.renderMessages();
+                    this.renderStats();
+                }
+            }
+
+            removeFile(fileId) {
+                this.files.delete(fileId);
+                this.updateFileList();
+                this.aggregateData();
+                if (this.files.size === 0) {
+                    document.getElementById('visualizationContainer').style.display = 'none';
+                } else {
+                    this.renderTimeline();
+                    this.renderMessages();
+                    this.renderStats();
+                }
+            }
+
+            async refreshFiles() {
+                if (this.files.size === 0) {
+                    console.log('❌ No files loaded');
+                    return;
+                }
+
+                console.log('🔄 Starting refresh process...');
+                console.log(`📁 Total files to refresh: ${this.files.size}`);
+
+                // Debug: Check what files we have
+                this.files.forEach((fileData, fileId) => {
+                    console.log(`📄 File: ${fileData.name}`);
+                    console.log(`   - Has file object: ${!!fileData.file}`);
+                    console.log(`   - Has file handle: ${!!fileData.fileHandle}`);
+                    if (fileData.file) {
+                        console.log(`   - Type: ${fileData.file.type || 'unknown'}`);
+                        console.log(`   - Size: ${fileData.file.size} bytes`);
+                        console.log(`   - Last modified: ${new Date(fileData.file.lastModified).toISOString()}`);
+                    }
+                });
+
+                // Show loading indicator
+                const logInfo = document.getElementById('logInfo');
+                logInfo.innerHTML = '<strong>🔄 Refreshing files...</strong>';
+                logInfo.style.background = '#fff3cd';
+
+                // Track refresh results
+                const refreshResults = {
+                    succeeded: [],
+                    failed: [],
+                    noFileObject: []
+                };
+
+                // Re-read all files
+                let filesProcessed = 0;
+                const totalFiles = this.files.size;
+                const fileEntries = Array.from(this.files.entries());
+
+                for (const [fileId, fileData] of fileEntries) {
+                    // Try file handle first (true refresh!)
+                    if (fileData.fileHandle) {
+                        console.log(`🔑 Using file handle to refresh ${fileData.name}...`);
+                        try {
+                            const file = await fileData.fileHandle.getFile();
+                            console.log(`✅ Got fresh file from handle: ${file.name} (${file.size} bytes, modified: ${new Date(file.lastModified).toISOString()})`);
+
+                            // Read the fresh file
+                            const text = await file.text();
+                            fileData.content = text;
+                            fileData.size = file.size;
+                            fileData.file = file; // Update file object too
+
+                            // Re-parse
+                            this.parseLogFile(fileData);
+
+                            refreshResults.succeeded.push(fileData.name);
+                            filesProcessed++;
+                            if (filesProcessed === totalFiles) {
+                                this.finishRefresh(logInfo, refreshResults);
+                            }
+                        } catch (error) {
+                            console.error(`❌ Error using file handle for ${fileData.name}:`, error);
+                            refreshResults.failed.push({
+                                name: fileData.name,
+                                error: `Handle error: ${error.message}`
+                            });
+                            filesProcessed++;
+                            if (filesProcessed === totalFiles) {
+                                this.finishRefresh(logInfo, refreshResults);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Fallback to old File object method
+                    const file = fileData.file;
+                    if (!file) {
+                        console.warn(`⚠️ No file object stored for ${fileData.name}`);
+                        refreshResults.noFileObject.push(fileData.name);
+                        filesProcessed++;
+                        if (filesProcessed === totalFiles) {
+                            this.finishRefresh(logInfo, refreshResults);
+                        }
+                        continue;
+                    }
+
+                    const reader = new FileReader();
+
+                    reader.onloadstart = () => {
+                        console.log(`⏳ Started reading ${fileData.name}...`);
+                    };
+
+                    reader.onprogress = (e) => {
+                        if (e.lengthComputable) {
+                            console.log(`📊 Reading ${fileData.name}: ${e.loaded} / ${e.total} bytes`);
+                        }
+                    };
+
+                    reader.onload = (e) => {
+                        try {
+                            console.log(`✅ Successfully re-read ${fileData.name} (${file.size} bytes)`);
+
+                            // Update the content
+                            fileData.content = e.target.result;
+                            fileData.size = file.size;
+
+                            // Re-parse the file
+                            this.parseLogFile(fileData);
+
+                            refreshResults.succeeded.push(fileData.name);
+                            filesProcessed++;
+                            if (filesProcessed === totalFiles) {
+                                this.finishRefresh(logInfo, refreshResults);
+                            }
+                        } catch (error) {
+                            console.error(`❌ Error parsing ${fileData.name}:`, error);
+                            console.error('Error stack:', error.stack);
+                            refreshResults.failed.push({ name: fileData.name, error: error.message });
+                            filesProcessed++;
+                            if (filesProcessed === totalFiles) {
+                                this.finishRefresh(logInfo, refreshResults);
+                            }
+                        }
+                    };
+
+                    reader.onerror = (event) => {
+                        const errorDetails = reader.error ? reader.error.message : 'Unknown error';
+                        const errorName = reader.error ? reader.error.name : 'Error';
+                        console.error(`❌ FileReader error for ${fileData.name}:`, {
+                            name: errorName,
+                            message: errorDetails,
+                            file: file.name,
+                            fileSize: file.size,
+                            fileType: file.type || 'unknown',
+                            lastModified: new Date(file.lastModified).toISOString(),
+                            readerReadyState: reader.readyState,
+                            event: event
+                        });
+                        refreshResults.failed.push({
+                            name: fileData.name,
+                            error: `${errorName}: ${errorDetails}`
+                        });
+                        filesProcessed++;
+                        if (filesProcessed === totalFiles) {
+                            this.finishRefresh(logInfo, refreshResults);
+                        }
+                    };
+
+                    reader.onabort = () => {
+                        console.error(`❌ FileReader aborted for ${fileData.name}`);
+                        refreshResults.failed.push({
+                            name: fileData.name,
+                            error: 'Read operation aborted'
+                        });
+                        filesProcessed++;
+                        if (filesProcessed === totalFiles) {
+                            this.finishRefresh(logInfo, refreshResults);
+                        }
+                    };
+
+                    console.log(`📂 Attempting to refresh ${fileData.name}...`);
+                    console.log(`   File object type: ${typeof file}`);
+                    console.log(`   File is File instance: ${file instanceof File}`);
+                    console.log(`   File is Blob instance: ${file instanceof Blob}`);
+
+                    try {
+                        reader.readAsText(file);
+                        console.log(`   ✓ readAsText() called successfully`);
+                    } catch (error) {
+                        console.error(`   ❌ Error calling readAsText():`, error);
+                        refreshResults.failed.push({
+                            name: fileData.name,
+                            error: `readAsText failed: ${error.message}`
+                        });
+                        filesProcessed++;
+                        if (filesProcessed === totalFiles) {
+                            this.finishRefresh(logInfo, refreshResults);
+                        }
+                    }
+                }
+            }
+
+            finishRefresh(logInfo, results) {
+                // Re-aggregate and re-render everything (even with partial success)
+                this.aggregateData();
+                this.updateFileList();
+                this.updateLogInfo();
+                this.renderTimeline();
+                this.renderMessages();
+                this.renderStats();
+
+                // Check if any failures are due to NotReadableError (locked files)
+                const hasLockedFiles = results.failed.some(f => f.error.includes('NotReadableError'));
+
+                // Determine success level and message
+                const totalFiles = results.succeeded.length + results.failed.length + results.noFileObject.length;
+                const hasFailures = results.failed.length > 0 || results.noFileObject.length > 0;
+
+                if (!hasFailures) {
+                    // Complete success
+                    logInfo.style.background = '#d4edda';
+                    logInfo.innerHTML = `<strong>✅ Refresh complete!</strong> Successfully refreshed ${results.succeeded.length} file(s).`;
+
+                    setTimeout(() => {
+                        logInfo.style.background = '#e8f4f8';
+                        this.updateLogInfo();
+                    }, 2000);
+                } else if (results.succeeded.length > 0) {
+                    // Partial success
+                    logInfo.style.background = '#fff3cd';
+                    let message = `<strong>⚠️ Partial refresh:</strong> ${results.succeeded.length} succeeded, ${results.failed.length + results.noFileObject.length} failed.<br>`;
+
+                    if (results.failed.length > 0) {
+                        message += `<small>Failed files: ${results.failed.map(f => `${f.name} (${f.error})`).join(', ')}</small>`;
+                    }
+                    if (results.noFileObject.length > 0) {
+                        message += `<small>No file reference: ${results.noFileObject.join(', ')}</small>`;
+                    }
+
+                    logInfo.innerHTML = message;
+
+                    // Show refresh drop zone if locked files detected
+                    if (hasLockedFiles) {
+                        document.getElementById('refreshDropZone').classList.add('show');
+                    }
+
+                    setTimeout(() => {
+                        logInfo.style.background = '#e8f4f8';
+                        this.updateLogInfo();
+                    }, 5000);
+                } else {
+                    // Complete failure
+                    if (hasLockedFiles) {
+                        // Locked files - this is expected, use friendlier message
+                        logInfo.style.background = '#fff3cd';
+                        let message = `<strong>🔄 Refresh Requires File Access</strong><br>`;
+                        message += `<small>For security, browsers require you to re-select files to refresh them.</small><br>`;
+                        message += `<small>👇 Please drag your log files to the drop zone below to refresh.</small>`;
+                        logInfo.innerHTML = message;
+
+                        // Show the refresh drop zone
+                        document.getElementById('refreshDropZone').classList.add('show');
+
+                        // Keep message visible longer but not as an error
+                        setTimeout(() => {
+                            logInfo.style.background = '#e8f4f8';
+                            this.updateLogInfo();
+                        }, 15000);
+                    } else {
+                        // Other errors
+                        logInfo.style.background = '#f8d7da';
+                        let message = `<strong>❌ Refresh failed!</strong> All ${totalFiles} file(s) failed to refresh.<br>`;
+
+                        if (results.failed.length > 0) {
+                            message += `<small>Errors: ${results.failed.map(f => `${f.name} - ${f.error}`).join('; ')}</small><br>`;
+                        }
+
+                        message += `<small>💡 Tip: Try re-loading the files, or check if they're accessible.</small>`;
+
+                        logInfo.innerHTML = message;
+
+                        // Keep error visible longer
+                        setTimeout(() => {
+                            logInfo.style.background = '#e8f4f8';
+                            this.updateLogInfo();
+                        }, 10000);
+                    }
+                }
+
+                // Log summary to console
+                console.log('📊 Refresh Summary:', {
+                    total: totalFiles,
+                    succeeded: results.succeeded.length,
+                    failed: results.failed.length,
+                    noFileObject: results.noFileObject.length,
+                    hasLockedFiles: hasLockedFiles,
+                    details: results
+                });
+            }
+
             showVisualization() {
                 document.getElementById('visualizationContainer').style.display = 'block';
+                document.getElementById('timestampControls').style.display = 'block';
                 this.updateLogInfo();
                 this.renderTimeline();
                 this.renderMessages();
@@ -852,7 +1904,7 @@
                     ${this.nodes.size} nodes detected, 
                     ${this.events.length} events parsed, 
                     ${this.messages.length} messages tracked,
-                    Time range: ${this.timeRange.start}ms - ${this.timeRange.end}ms
+                    Time range: ${this.formatTimestamp(this.timeRange.start)} - ${this.formatTimestamp(this.timeRange.end)}
                 `;
             }
 
@@ -939,8 +1991,8 @@
                 const relativeTime = (slot.start - this.timeRange.start).toFixed(1);
                 
                 bar.title = `🔸 Slot ${slot.slotNum}: ${slot.slotType}
-📅 Start: ${slot.start}ms
-⏱️ End: ${slot.end}ms  
+📅 Start: ${this.formatTimestamp(slot.start)}
+⏱️ End: ${this.formatTimestamp(slot.end)}
 ⏳ Duration: ${duration}ms
 📊 Relative: ${relativeTime}ms from start`;
                 
@@ -1004,7 +2056,7 @@
                 const category = message.category || 'unknown';
                 
                 const messageInfo = `🔸 Message: ${typeName} (${category})
-📅 Time: ${message.timestamp}ms
+📅 Time: ${this.formatTimestamp(message.timestamp)}
 📤 From: 0x${message.from}
 📥 To: 0x${message.to}
 ${directionIcon} Direction: ${direction}
@@ -1026,7 +2078,7 @@ ${directionIcon} Direction: ${direction}
                 }
                 
                 if (timeRangeLabel) {
-                    timeRangeLabel.textContent = `${this.timeWindowStart}ms - ${this.timeWindowEnd}ms`;
+                    timeRangeLabel.textContent = `${this.formatTimestamp(this.timeWindowStart)} - ${this.formatTimestamp(this.timeWindowEnd)}`;
                 }
                 
                 if (timeRangeSlider) {
@@ -1063,7 +2115,7 @@ ${directionIcon} Direction: ${direction}
                     }[category] || '❓';
                     
                     msgDiv.innerHTML = `
-                        <div class="message-time">${msg.timestamp}ms</div>
+                        <div class="message-time">${this.formatTimestamp(msg.timestamp)}</div>
                         <div class="message-content">
                             <span class="message-from">0x${msg.from}</span> 
                             → 
@@ -1129,6 +2181,17 @@ ${directionIcon} Direction: ${direction}
         // Initialize the analyzer
         const analyzer = new LogAnalyzer();
 
+        // File selection function
+        async function selectFiles() {
+            if (analyzer.supportsFileSystemAccess) {
+                // Use File System Access API for true refresh support
+                await analyzer.selectFilesWithPicker();
+            } else {
+                // Fall back to traditional file input
+                document.getElementById('fileInput').click();
+            }
+        }
+
         // Zoom control functions
         function zoomIn() {
             const zoomSlider = document.getElementById('zoomSlider');
@@ -1174,6 +2237,39 @@ ${directionIcon} Direction: ${direction}
             analyzer.timeWindowEnd = analyzer.timeRange.end;
             
             analyzer.renderTimeline();
+        }
+
+        async function refreshFiles() {
+            await analyzer.refreshFiles();
+        }
+
+        function clearAllFiles() {
+            analyzer.files.clear();
+            analyzer.updateFileList();
+            document.getElementById('visualizationContainer').style.display = 'none';
+        }
+
+        function toggleAllFiles() {
+            const allEnabled = Array.from(analyzer.files.values()).every(file => file.enabled);
+            analyzer.files.forEach(file => {
+                file.enabled = !allEnabled;
+            });
+            analyzer.updateFileList();
+            analyzer.aggregateData();
+            analyzer.renderTimeline();
+            analyzer.renderMessages();
+            analyzer.renderStats();
+        }
+
+        function toggleTimestampFormat() {
+            const selectedFormat = document.querySelector('input[name="timestampFormat"]:checked').value;
+            analyzer.timestampFormat = selectedFormat;
+
+            // Re-render everything with new timestamp format
+            analyzer.updateLogInfo();
+            analyzer.renderTimeline();
+            analyzer.renderMessages();
+            analyzer.updateControlLabels();
         }
 
         function toggleLegend() {
