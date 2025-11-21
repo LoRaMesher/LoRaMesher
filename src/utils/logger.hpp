@@ -1,6 +1,7 @@
 // utils/logger.hpp
 #pragma once
 
+#include <atomic>
 #include <cstdarg>
 #include <functional>
 #include <memory>
@@ -264,6 +265,10 @@ class Logger {
     std::unique_ptr<LogHandler> handler_;
     // Binary semaphore for thread safety using RTOS abstraction
     os::SemaphoreHandle_t logger_semaphore_;
+
+    // Thread-safe initialization support
+    std::atomic<bool> semaphore_initialized_{false};
+    std::atomic<bool> initialization_in_progress_{false};
 
     void LogMessage(LogLevel level, const std::string& message);
     std::string FormatMessageWithAddress(const std::string& message) const;
