@@ -80,6 +80,8 @@ class MockSuperframeService : public protocols::lora_mesh::ISuperframeService {
 
     uint32_t GetSlotDuration() const override { return 100; }
 
+    uint32_t GetTimeSinceSuperframeStart() override { return 0; }
+
     Result SynchronizeWith(uint32_t external_slot_start_time,
                            uint16_t external_slot) override {
         return Result::Success();
