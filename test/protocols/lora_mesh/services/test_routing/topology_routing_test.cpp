@@ -49,6 +49,13 @@ TEST_F(TopologyRoutingTests, FourNodeLineTopology) {
     ASSERT_TRUE(WaitForRoutingStabilization(nodes))
         << "Routing stabilization failed";
 
+    // Distance-vector needs additional rounds to converge to shortest paths.
+    // With min_sleep_fraction each superframe is longer, so allow 2 extra.
+    auto superframe_ms_conv = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms_conv = 15u;
+    AdvanceTime(superframe_ms_conv * 2, superframe_ms_conv * 2, step_ms_conv, 0,
+                [&]() { return false; });
+
     // Print routing tables for debugging
     for (auto* node : nodes) {
         PrintRoutingTable(*node);
@@ -77,6 +84,14 @@ TEST_F(TopologyRoutingTests, FourNodeLineTopology) {
         << "N2 should route to N4 via N3";
     EXPECT_EQ(GetNextHop(*nodes[2], nodes[3]->address), nodes[3]->address)
         << "N3 should route to N4 directly";
+
+    // Verify next hop chain from N4 to N1 (reverse direction)
+    EXPECT_EQ(GetNextHop(*nodes[3], nodes[0]->address), nodes[2]->address)
+        << "N4 should route to N1 via N3";
+    EXPECT_EQ(GetNextHop(*nodes[2], nodes[0]->address), nodes[1]->address)
+        << "N3 should route to N1 via N2";
+    EXPECT_EQ(GetNextHop(*nodes[1], nodes[0]->address), nodes[0]->address)
+        << "N2 should route to N1 directly";
 
     // Send message from N1 to N4 (requires 3-hop routing)
     std::vector<uint8_t> payload = {0xAA, 0xBB, 0xCC, 0xDD};

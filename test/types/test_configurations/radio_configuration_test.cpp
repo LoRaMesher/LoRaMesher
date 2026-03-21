@@ -165,5 +165,28 @@ TEST_F(RadioConfigCoverageTest, SetRadioTypeChangesType) {
     EXPECT_EQ(c.getRadioType(), RadioType::kSx1262);
 }
 
+TEST_F(RadioConfigCoverageTest, TcxoVoltageDefaultIsZero) {
+    RadioConfig c;
+    EXPECT_FLOAT_EQ(c.getTcxoVoltage(), 0.0F);
+}
+
+TEST_F(RadioConfigCoverageTest, SetTcxoVoltageValidRange) {
+    RadioConfig c;
+    c.setTcxoVoltage(1.8F);
+    EXPECT_FLOAT_EQ(c.getTcxoVoltage(), 1.8F);
+
+    c.setTcxoVoltage(0.0F);
+    EXPECT_FLOAT_EQ(c.getTcxoVoltage(), 0.0F);
+
+    c.setTcxoVoltage(3.3F);
+    EXPECT_FLOAT_EQ(c.getTcxoVoltage(), 3.3F);
+}
+
+TEST_F(RadioConfigCoverageTest, SetTcxoVoltageRejectsInvalid) {
+    RadioConfig c;
+    EXPECT_THROW(c.setTcxoVoltage(-0.1F), std::invalid_argument);
+    EXPECT_THROW(c.setTcxoVoltage(3.4F), std::invalid_argument);
+}
+
 }  // namespace test
 }  // namespace loramesher

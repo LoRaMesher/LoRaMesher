@@ -26,11 +26,13 @@ using namespace loramesher;
 // Hardware Pin Configuration
 // =============================================================================
 // Configure these pins for your board. Common configurations:
-//   TTGO T-Beam v1.x:    CS=18, RST=23, IRQ=26, IO1=33 RadioType::kSx1276
-//   TTGO LoRa32 v1:      CS=18, RST=14, IRQ=26, IO1=33 RadioType::kSx1278
-//   LILYGO T3 S3 V1.x:   CS=7, RST=8, IRQ=9, IO1=33 RadioType::kSx1278
-//   Heltec WiFi LoRa:    CS=18, RST=14, IRQ=26, IO1=35 RadioType::kSx1276 or 1278 depends on region and probably need to define SPI pins
-//   Heltec WiFi LoRa V3: CS=8, RST=12, IRQ=14, IO1=13 RadioType::kSx1262 and need to define SPI pins
+//   TTGO T-Beam v1.x:    CS=18, RST=23, IRQ=26, IO1=33  (SX1276)
+//   TTGO LoRa32 v1:      CS=18, RST=14, IRQ=26, IO1=33  (SX1278)
+//   LILYGO T3 S3 v1.x:   CS=7,  RST=8,  IRQ=9,  IO1=33  (SX1278)
+//   Heltec WiFi LoRa:    CS=18, RST=14, IRQ=26, IO1=35  (SX1276)
+//   Heltec WiFi LoRa V3: CS=8,  RST=12, IRQ=14, IO1=13  (SX1262)
+//     SPI pins: SCK=9, MISO=11, MOSI=10
+//     Requires: radioConfig.setTcxoVoltage(1.8F)
 
 #define LORA_CS 18   // SPI Chip Select (NSS)
 #define LORA_RST 23  // Radio Reset pin
@@ -119,6 +121,11 @@ void ConfigureAndStart() {
                             LORA_SPREADING_FACTOR, LORA_BANDWIDTH,
                             LORA_CODING_RATE, LORA_POWER, LORA_SYNC_WORD,
                             LORA_CRC, LORA_PREAMBLE_LENGTH);
+
+    // --- Heltec WiFi LoRa V3 configuration ---
+    // PinConfig pinConfig(8, 12, 14, 13, 9, 11, 10);  // CS, RST, IRQ, IO1, SCK, MISO, MOSI
+    // RadioConfig radioConfig(RadioType::kSx1262, 868.0F, 7U, 125.0, 7U, 14, 20U, true, 8U);
+    // radioConfig.setTcxoVoltage(1.8F);
     LoRaMeshProtocolConfig mesh_config;
 
     mesher = LoraMesher::Builder()

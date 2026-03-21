@@ -70,6 +70,7 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
     auto superframe_time = GetSuperframeDuration(*nodes.front());
     uint32_t step_ms = 15u;
 
+    uint32_t end_superframe_time = 0;
     // Wait for routing tables to update
     // The route from N1 to N3 should now go through N2 or N4
     bool updated = AdvanceTime(
@@ -80,7 +81,17 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
             }
             uint8_t hop_count = GetHopCount(*nodes[0], nodes[2]->address);
             // Route should now be via N2 or N4 (2 hops)
-            return hop_count == 2;
+            if (hop_count == 2 && end_superframe_time == 0) {
+                end_superframe_time = GetRTOS().getTickCount() +
+                                      GetSuperframeDuration(*nodes.front()) * 2;
+            }
+
+            if (end_superframe_time > 0 &&
+                GetRTOS().getTickCount() >= end_superframe_time) {
+                return true;  // Route updated and stabilized
+            }
+
+            return false;  // Keep waiting
         });
 
     std::cout << "=== After link break ===" << std::endl;

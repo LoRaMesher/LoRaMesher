@@ -419,57 +419,53 @@ TEST_F(RoutingTableUnitTest, DirectNeighborShouldOverrideIndirectRoute) {
 // =============================================================================
 
 TEST_F(RoutingTableUnitTest, RouteCostCalculation) {
-    // Verify the cost formula: cost = hop_count * 35 + (255 - link_quality)
+    // ETX-inspired: cost = hop_count * 65536 / quality
 
-    // 1 hop, quality 255 -> cost = 1*35 + (255-255) = 35
-    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(1, 255), 35);
+    // 1 hop, quality 255 -> cost = 65536/255 = 257
+    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(1, 255), 257);
 
-    // 1 hop, quality 200 -> cost = 1*35 + (255-200) = 35 + 55 = 90
-    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(1, 200), 90);
+    // 1 hop, quality 200 -> cost = 65536/200 = 327
+    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(1, 200), 327);
 
-    // 2 hops, quality 255 -> cost = 2*35 + 0 = 70
-    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(2, 255), 70);
+    // 2 hops, quality 255 -> cost = 2*65536/255 = 514
+    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(2, 255), 514);
 
-    // 2 hops, quality 200 -> cost = 70 + 55 = 125
-    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(2, 200), 125);
+    // 2 hops, quality 200 -> cost = 2*65536/200 = 655
+    EXPECT_EQ(NetworkNodeRoute::CalculateRouteCost(2, 200), 655);
 
-    // 1 hop quality 200 (cost 90) is better than 2 hops quality 255 (cost 70)?
-    // No - 2 hops with 255 quality (cost 70) is actually better than 1 hop with
-    // 200 quality (cost 90)
-
-    // Key insight: The cost formula allows trading hop count for quality
-    // Each hop costs 35 points, so a quality difference of 35 justifies one
-    // extra hop
+    // With ETX, 1-hop routes are strongly favored: even a mediocre 1-hop link
+    // (quality 200, cost 327) beats a perfect 2-hop path (quality 255, cost 514).
+    // A 2-hop route only wins when 1-hop quality drops below ~128.
 }
 
 TEST_F(RoutingTableUnitTest, IsBetterRouteLogic) {
     // Test that IsBetterRouteThan() correctly compares routes
 
-    // Route A: 1 hop, quality 200
+    // Route A: 1 hop, quality 200 (cost: 327)
     NetworkNodeRoute routeA(kRemoteNode, kNeighbor1, 1, 200, kCurrentTime);
     routeA.is_active = true;
 
-    // Route B: 2 hops, quality 255 (cost: 70 vs 90 - B is cheaper!)
+    // Route B: 2 hops, quality 255 (cost: 514 — A is cheaper with ETX)
     NetworkNodeRoute routeB(kRemoteNode, kNeighbor2, 2, 255, kCurrentTime);
     routeB.is_active = true;
 
-    // According to cost formula, B (cost 70) is better than A (cost 90)
-    EXPECT_TRUE(routeB.IsBetterRouteThan(routeA))
-        << "2 hops with perfect quality should beat 1 hop with 200 quality";
+    // With ETX, 1-hop quality 200 (cost 327) beats 2-hop quality 255 (cost 514)
+    EXPECT_TRUE(routeA.IsBetterRouteThan(routeB))
+        << "1 hop with quality 200 should beat 2 hops with perfect quality";
 
-    // Route C: 1 hop, quality 255 (cost: 35 - best)
+    // Route C: 1 hop, quality 255 (cost: 257 - best)
     NetworkNodeRoute routeC(kRemoteNode, kNeighbor3, 1, 255, kCurrentTime);
     routeC.is_active = true;
 
     EXPECT_TRUE(routeC.IsBetterRouteThan(routeA));
     EXPECT_TRUE(routeC.IsBetterRouteThan(routeB));
 
-    // Route D: 3 hops, quality 255 (cost: 105)
-    NetworkNodeRoute routeD(kRemoteNode, kNeighbor1, 3, 255, kCurrentTime);
+    // Route D: 1 hop, quality 100 (cost: 655) vs 2-hop quality 255 (cost: 514)
+    NetworkNodeRoute routeD(kRemoteNode, kNeighbor1, 1, 100, kCurrentTime);
     routeD.is_active = true;
 
-    EXPECT_FALSE(routeD.IsBetterRouteThan(routeA))
-        << "3 hops should not beat 1 hop with 200 quality";
+    EXPECT_TRUE(routeB.IsBetterRouteThan(routeD))
+        << "2 hops with perfect quality should beat 1 hop with quality 100";
 }
 
 // =============================================================================
@@ -1260,22 +1256,19 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageSkipsZeroAddressEntry) {
 }
 
 // =============================================================================
-// UpdateLinkStatistics: fast invalidation after consecutive missed messages
+// UpdateLinkStatistics: two-phase degradation then invalidation
 // =============================================================================
 
-TEST_F(RoutingTableUnitTest,
-       UpdateLinkStatisticsInvalidatesAfterConsecutiveMisses) {
-    // kMaxConsecutiveMissed = 3, kMinMessagesBeforeInvalidation = 1
-    // To trigger fast invalidation we need:
-    //   consecutive_missed >= 3  AND  messages_received >= 1
-    // Calling ProcessRoutingTableMessage registers a received message and seeds
-    // the node as a direct neighbor (hop_count=1, is_active=true).
+TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsDegradesThenInvalidates) {
+    // Two-phase behavior:
+    //   consecutive_missed >= 3 → quality halved each superframe (degradation)
+    //   consecutive_missed >= 6 → is_active = false (hard invalidation)
 
     std::vector<RoutingTableEntry> empty;
     routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
                                                kGoodQuality, kMaxHops);
 
-    // Verify node is active before the test loop
+    // Verify node is active with initial quality
     {
         const auto& nodes = routing_table_->GetNodes();
         auto it = std::find_if(
@@ -1286,12 +1279,26 @@ TEST_F(RoutingTableUnitTest,
         ASSERT_TRUE(it->is_active);
     }
 
-    // Call UpdateLinkStatistics repeatedly without any new ReceivedRoutingMessage.
-    // Each call increments consecutive_missed (via ExpectRoutingMessage inside
-    // UpdateLinkStatistics).  After kMaxConsecutiveMissed (3) misses the node
-    // should be marked inactive.
+    // Phase 1: After 5 calls, node should still be active but quality degrades
+    for (int i = 0; i < 5; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_TRUE(it->is_active)
+            << "Node should still be active during degradation phase";
+        EXPECT_LT(it->routing_entry.link_quality, kGoodQuality)
+            << "Quality should be degraded after consecutive misses";
+    }
+
+    // Phase 2: After 6+ calls total, node becomes inactive
     bool became_inactive = false;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 5; ++i) {
         routing_table_->UpdateLinkStatistics();
         const auto& nodes = routing_table_->GetNodes();
         auto it = std::find_if(
@@ -1305,7 +1312,7 @@ TEST_F(RoutingTableUnitTest,
     }
 
     EXPECT_TRUE(became_inactive) << "Node should become inactive after "
-                                    "consecutive missed routing messages";
+                                    "kConsecutiveMissedForInactivation misses";
 }
 
 // =============================================================================

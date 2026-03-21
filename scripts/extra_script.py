@@ -16,7 +16,7 @@ current_env = env.get("PIOENV", "")
 if current_platform in ["native", "test_native"]:
     env.Replace(CC="clang", CXX="clang++", LINK="clang++")
 
-if current_platform == "native" and current_env != "test_native_profile":
+if current_platform == "native" and current_env not in ("test_native_profile", "test_native_xray"):
     project_dir = env.subst("$PROJECT_DIR")
     lsan_supp = os.path.join(project_dir, "lsan.supp")
     env.Append(ENV={
@@ -107,3 +107,7 @@ if current_env == "test_native_profile":
         if _profile_rt_lib:
             e.Append(LINKFLAGS=[_profile_rt_lib])
         e.Append(ENV={"LLVM_PROFILE_FILE": profile_file})
+
+if current_env == "test_native_xray":
+    for e in [env, projenv, global_env]:
+        e.Append(LINKFLAGS=["-fxray-instrument"])

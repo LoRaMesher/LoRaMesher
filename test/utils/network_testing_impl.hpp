@@ -5,6 +5,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -427,6 +428,12 @@ class VirtualNetwork {
      */
     uint32_t GetCurrentTime() const { return current_time_; }
 
+    uint32_t GetDroppedMessageCount() const {
+        return dropped_message_count_.load();
+    }
+
+    void ResetDroppedMessageCount() { dropped_message_count_ = 0; }
+
    private:
     /**
      * @brief Information about a node in the network
@@ -481,6 +488,7 @@ class VirtualNetwork {
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
+    std::atomic<uint32_t> dropped_message_count_{0};
 
     /**
      * @brief Get delay between two nodes
@@ -641,10 +649,9 @@ class VirtualNetwork {
      * @brief Deliver a message to its destination
      *
      * @return true if the message was accepted by the radio, false if the
-     *         radio was busy (message has been re-queued for retry)
+     *         radio was busy (message dropped)
      */
     bool DeliverMessage(const PendingMessage& msg) {
-        // Check if destination node exists
         auto it = nodes_.find(msg.destination);
         if (it == nodes_.end()) {
             LOG_ERROR(
@@ -653,7 +660,6 @@ class VirtualNetwork {
             return false;
         }
 
-        // Get the destination radio
         auto* radio = it->second.radio;
         if (!radio) {
             LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
@@ -661,18 +667,18 @@ class VirtualNetwork {
             return false;
         }
 
-        // If the radio is busy (e.g., processing a previous message), re-queue
-        // for retry 1ms later rather than dropping — mirrors real LoRa behaviour
-        // where a sender retransmits if no ACK is received.
+        // Drop message if receiver can't accept it — matches real LoRa PHY
+        // where packets arriving while the radio is off/busy are lost
         if (!radio->CanReceive()) {
-            PendingMessage retry = msg;
-            retry.delivery_time = current_time_ + 1;
-            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
-            pending_messages_.push_back(retry);
+            LOG_DEBUG(
+                "[%u ms] Message from 0x%04X dropped at 0x%04X - receiver "
+                "unavailable (state=%d)",
+                current_time_, msg.source, msg.destination,
+                static_cast<int>(radio->GetRadioState()));
+            ++dropped_message_count_;
             return false;
         }
 
-        // Deliver the message to the radio
         radio->ReceiveMessage(msg.data, msg.rssi, msg.snr);
         return true;
     }

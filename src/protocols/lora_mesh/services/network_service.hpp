@@ -1041,7 +1041,7 @@ class NetworkService : public INetworkService {
     RouteUpdateCallback route_update_callback_;
     DataReceivedCallback data_received_callback_;
     ProtocolState state_;
-    AddressType network_manager_;
+    AddressType network_manager_ = 0;
     bool network_found_;
     bool network_creator_;
     bool is_synchronized_;

@@ -166,7 +166,9 @@ class NetworkNodeRoute {
     /**
      * @brief Calculate route cost from hop count and link quality
      *
-     * Formula: cost = hop_count × COST_PER_HOP + (255 - link_quality)
+     * ETX-inspired metric: cost = hop_count × 65536 / max(quality, 1).
+     * Approximates Expected Transmission Count (RFC 6551). Each hop adds
+     * at least 256 to the cost, naturally penalizing longer paths.
      * Lower cost indicates a better route.
      *
      * @param hop_count Number of hops to destination

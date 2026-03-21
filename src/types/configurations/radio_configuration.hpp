@@ -121,10 +121,16 @@ class RadioConfig {
     uint16_t getPreambleLength() const { return preamble_length_; }
 
     /**
-     * @brief Get the configurec CRC
+     * @brief Get the configured CRC
      * @return bool CRC
      */
     bool getCRC() const { return crc_; }
+
+    /**
+     * @brief Get the configured TCXO reference voltage
+     * @return float TCXO voltage (0.0 = no TCXO / external crystal)
+     */
+    float getTcxoVoltage() const { return tcxo_voltage_; }
 
     /**
      * @brief Set the radio hardware type
@@ -190,12 +196,24 @@ class RadioConfig {
 
     /**
      * @brief Set preamble length
-     * 
-     * @param preamble_length Length of LoRa transmission preamble in symbols. 
+     *
+     * @param preamble_length Length of LoRa transmission preamble in symbols.
      * The actual preamble length is 4.25 symbols longer than the set number.
      * @return Result Success if correctly setted
      */
     Result setPreambleLength(uint16_t preamble_length);
+
+    /**
+     * @brief Set TCXO reference voltage for SX1262 modules
+     *
+     * Boards using an SX1262 with a TCXO instead of an external crystal
+     * (e.g. Heltec WiFi LoRa V3) require a non-zero voltage, typically 1.8V.
+     * Set to 0.0 for boards with an external crystal.
+     *
+     * @param voltage TCXO voltage in volts (0.0–3.3)
+     * @throw std::invalid_argument if voltage is outside valid range
+     */
+    void setTcxoVoltage(float voltage);
 
     /**
      * @brief Check if the configuration is valid
@@ -227,6 +245,7 @@ class RadioConfig {
     uint8_t sync_word_;         ///< Syncronyzation word
     bool crc_;                  ///< CRC enabled
     uint16_t preamble_length_;  ///< Preamble length
+    float tcxo_voltage_;        ///< TCXO reference voltage (0 = no TCXO)
 };
 
 }  // namespace loramesher

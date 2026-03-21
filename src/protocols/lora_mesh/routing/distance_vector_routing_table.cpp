@@ -467,17 +467,38 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                 LogRouteEntry(node);
             }
 
-            // Step 2: Check fast invalidation BEFORE incrementing
-            //         (consecutive_missed reflects previous superframe state)
-            if (node.link_stats.consecutive_missed >= kMaxConsecutiveMissed &&
+            // Step 2a: Quality degradation — halve quality each superframe
+            //          once consecutive_missed reaches threshold. ETX cost
+            //          rises, IsBetterRoute naturally picks multi-hop routes.
+            if (node.link_stats.consecutive_missed >=
+                    kConsecutiveMissedForDegradation &&
+                node.link_stats.messages_received >=
+                    kMinMessagesBeforeInvalidation) {
+                node.routing_entry.link_quality =
+                    node.routing_entry.link_quality / 2;
+                LogRouteEntry(node);
+
+                // Cascade: degrade multi-hop routes via this neighbor
+                AddressType degraded_hop = node.routing_entry.destination;
+                for (auto& other : nodes_) {
+                    if (other.next_hop == degraded_hop && other.is_active &&
+                        other.routing_entry.hop_count > 1) {
+                        other.routing_entry.link_quality /= 2;
+                        LogRouteEntry(other);
+                    }
+                }
+            }
+
+            // Step 2b: Hard invalidation after extended unresponsiveness.
+            //          Mark inactive for slot table cleanup + cascade.
+            if (node.link_stats.consecutive_missed >=
+                    kConsecutiveMissedForInactivation &&
                 node.link_stats.messages_received >=
                     kMinMessagesBeforeInvalidation) {
                 node.is_active = false;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
                 LogRouteEntry(node);
 
-                // Cascade invalidation: mark all multi-hop routes via this
-                // failed neighbor as inactive immediately.
                 AddressType lost_hop = node.routing_entry.destination;
                 for (auto& other : nodes_) {
                     if (other.next_hop == lost_hop && other.is_active &&

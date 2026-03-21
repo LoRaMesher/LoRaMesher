@@ -754,14 +754,14 @@ if (combinedQuality < MIN_QUALITY_THRESHOLD) {
 
 **Route Comparison** (Weighted Cost Metric):
 
-The route selection uses a composite cost that balances hop count and link quality:
+The route selection uses an ETX-inspired cost metric based on Expected Transmission Count (RFC 6551):
 
 ```cpp
-// cost = hop_count × 35 + (255 - link_quality)
+// cost = hop_count × 65536 / max(quality, 1)
 // Lower cost = better route
 uint16_t CalculateRouteCost(uint8_t hop_count, uint8_t link_quality) {
-    constexpr uint16_t COST_PER_HOP = 35;
-    return (hop_count * COST_PER_HOP) + (255 - link_quality);
+    if (link_quality == 0) return 65535;
+    return std::min(hop_count * 65536u / link_quality, 65535u);
 }
 
 bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
@@ -778,16 +778,18 @@ bool IsBetterRouteThan(const NetworkNodeRoute& other) const {
 }
 ```
 
-**Cost Formula Rationale**:
-- COST_PER_HOP = 35: Each additional hop acceptable if quality improves by ~35 points
-- Balances LoRa's per-hop latency/energy cost against link reliability
+**ETX Cost Formula Rationale**:
+- Based on Expected Transmission Count (RFC 6551/6719), the industry standard for mesh routing
+- Each hop adds at least 256 to the cost (for a perfect link with quality 255), naturally penalizing longer paths without a tunable weight
+- quality (0-255) maps to delivery ratio: `ETX_per_hop ≈ 255 / quality`
+- A 2-hop route only beats a 1-hop route if the 1-hop link quality is below ~128 (50% loss)
 - Example rankings (lower cost wins):
   | Route | Hops | Quality | Cost |
   |-------|------|---------|------|
-  | C     | 4    | 250     | 145  |
-  | B     | 3    | 200     | 160  |
-  | A     | 2    | 150     | 175  |
-  | D     | 2    | 100     | 225  |
+  | A     | 1    | 255     | 257  |
+  | B     | 1    | 200     | 327  |
+  | C     | 2    | 255     | 514  |
+  | D     | 2    | 200     | 655  |
 
 ### 4.2 Loop Prevention
 
@@ -887,11 +889,13 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 - `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
 - `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
 
-**Link Quality-Based Fast Invalidation**:
+**Two-Phase Link Quality Degradation**:
 
-In addition to the time-based route aging above, direct neighbor routes are also invalidated via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0. After `kMaxConsecutiveMissed` (3) consecutive misses, the route is marked inactive immediately, without waiting for the full `route_timeout_ms`.
+In addition to the time-based route aging above, direct neighbor routes are monitored via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0.
 
-This provides fast detection of link failures (typically 3 superframes, ~6-15s) while the time-based timeout handles multi-hop route expiration.
+After `kConsecutiveMissedForDegradation` (3) consecutive misses, link quality is halved each superframe. The route stays active but its ETX cost increases, naturally causing `IsBetterRoute` to prefer multi-hop alternatives when quality drops below the crossover point. Multi-hop routes via the degraded neighbor also have their quality halved (cascade degradation). After `kConsecutiveMissedForInactivation` (6) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
+
+This two-phase approach allows ETX-based route selection to naturally transition traffic to alternative paths before hard invalidation occurs.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 

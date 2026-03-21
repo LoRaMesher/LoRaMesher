@@ -408,17 +408,19 @@ TEST_F(NetworkNodeRouteTest, IsDirectNeighbor) {
 // ---- CalculateRouteCost ----
 
 TEST_F(NetworkNodeRouteTest, CalculateRouteCost) {
-    // 1 hop, quality 255 (max) → cost = 35 + 0 = 35
+    // ETX-inspired: cost = hop_count * 65536 / quality
+
+    // 1 hop, quality 255 (max) → cost = 65536/255 = 257
     uint16_t cost = NetworkNodeRoute::CalculateRouteCost(1, 255);
-    EXPECT_EQ(cost, 35u);
+    EXPECT_EQ(cost, 257u);
 
-    // 2 hops, quality 128 → cost = 70 + 127 = 197
+    // 2 hops, quality 128 → cost = 2*65536/128 = 1024
     cost = NetworkNodeRoute::CalculateRouteCost(2, 128);
-    EXPECT_EQ(cost, 70u + 127u);
+    EXPECT_EQ(cost, 1024u);
 
-    // 0 hops, quality 0 → cost = 0 + 255 = 255
+    // 0 hops, quality 0 → cost = 65535 (clamped max)
     cost = NetworkNodeRoute::CalculateRouteCost(0, 0);
-    EXPECT_EQ(cost, 255u);
+    EXPECT_EQ(cost, 65535u);
 }
 
 // ---- IsBetterRouteThan ----
@@ -438,25 +440,26 @@ TEST_F(NetworkNodeRouteTest, IsBetterRouteActive) {
 }
 
 TEST_F(NetworkNodeRouteTest, IsBetterRouteByCost) {
-    // Both active, compare by cost
+    // Both active, compare by cost (ETX: hop*65536/quality)
     NetworkNodeRoute good((AddressType)0x1000, (AddressType)0x1000, (uint8_t)1,
-                          (uint8_t)255, (uint32_t)1000);  // cost = 35
+                          (uint8_t)255, (uint32_t)1000);  // cost = 257
     NetworkNodeRoute bad((AddressType)0x1000, (AddressType)0x1000, (uint8_t)3,
                          (uint8_t)100,
-                         (uint32_t)1000);  // cost = 105 + 155 = 260
+                         (uint32_t)1000);  // cost = 3*65536/100 = 1966
 
     EXPECT_TRUE(good.IsBetterRouteThan(bad));
     EXPECT_FALSE(bad.IsBetterRouteThan(good));
 }
 
 TEST_F(NetworkNodeRouteTest, IsBetterRouteByHopsTiebreaker) {
-    // Same cost but different hops — fewer hops wins
-    // cost = hop*35 + (255-quality); equalize cost: 1*35+220=255, 3*35+150=255
+    // ETX cost tie: h1*65536/q1 == h2*65536/q2 when h1/q1 == h2/q2
+    // 1 hop, quality 85 → cost = 65536/85 = 771
+    // 3 hops, quality 255 → cost = 3*65536/255 = 771
     NetworkNodeRoute fewer((AddressType)0x1000, (AddressType)0x1000, (uint8_t)1,
-                           (uint8_t)35, (uint32_t)1000);  // cost=35+220=255
+                           (uint8_t)85, (uint32_t)1000);  // cost=771
     NetworkNodeRoute more((AddressType)0x1000, (AddressType)0x1000, (uint8_t)3,
-                          (uint8_t)150,
-                          (uint32_t)1000);  // cost=105+105=210, not same
+                          (uint8_t)255,
+                          (uint32_t)1000);  // cost=771
 
     // Just verify the method doesn't crash and returns a bool
     bool result = fewer.IsBetterRouteThan(more);

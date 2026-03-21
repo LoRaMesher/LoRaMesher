@@ -46,18 +46,12 @@ Result LoraMesherSX1262::Begin(const RadioConfig& config) {
     }
 
     // Begin radio module with SX1262-specific parameters
-    float tcxoVoltage = 0; // (no TCXO by default), useRegulatorLDO = false (use DC-DC)
-    // On Heltec LoRa WiFi Lora 32 V3 it needs to be 1.8, on boards with an extern Xtal it needs to be 0
-    // there is currently no way I can see to configure this. 
-    #ifdef ARDUINO_heltec_wifi_lora_32_V3
-        tcxoVoltage = 1.8;
-    #endif
-    
+    // useRegulatorLDO = false (use DC-DC)
     int16_t status = radio_module_->begin(
         config.getFrequency(), config.getBandwidth(),
         config.getSpreadingFactor(), config.getCodingRate(),
-        config.getSyncWord(), config.getPower(), config.getPreambleLength(), tcxoVoltage,
-        false);
+        config.getSyncWord(), config.getPower(), config.getPreambleLength(),
+        config.getTcxoVoltage(), false);
     if (status != RADIOLIB_ERR_NONE) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }

@@ -176,10 +176,12 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     // Constants
 
-    /// Maximum consecutive missed routing messages before marking route inactive
-    static constexpr uint8_t kMaxConsecutiveMissed = 3;
-    /// Minimum received messages before fast invalidation applies (avoids
-    /// killing links during network formation when routing is still stabilizing)
+    /// Consecutive misses before quality halving begins
+    static constexpr uint8_t kConsecutiveMissedForDegradation = 3;
+    /// Consecutive misses before hard invalidation (is_active = false)
+    static constexpr uint8_t kConsecutiveMissedForInactivation = 6;
+    /// Minimum received messages before degradation/invalidation applies
+    /// (avoids killing links during network formation)
     static constexpr uint8_t kMinMessagesBeforeInvalidation = 1;
 
     // Member variables

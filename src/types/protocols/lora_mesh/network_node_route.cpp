@@ -111,9 +111,15 @@ bool NetworkNodeRoute::IsDirectNeighbor() const {
 
 uint16_t NetworkNodeRoute::CalculateRouteCost(uint8_t hop_count,
                                               uint8_t link_quality) {
-    constexpr uint16_t COST_PER_HOP = 35;
-    return (static_cast<uint16_t>(hop_count) * COST_PER_HOP) +
-           (255 - link_quality);
+    // ETX-inspired metric: cost = hop_count * (256 / quality), scaled by 256.
+    // Approximates Expected Transmission Count path cost (RFC 6551).
+    // Each hop adds at least 256 to the cost (for a perfect link),
+    // naturally penalizing longer paths without a tunable weight.
+    if (link_quality == 0)
+        return 65535;
+    return static_cast<uint16_t>(
+        std::min(static_cast<uint32_t>(hop_count) * 65536u / link_quality,
+                 static_cast<uint32_t>(65535)));
 }
 
 bool NetworkNodeRoute::IsBetterRouteThan(const NetworkNodeRoute& other) const {

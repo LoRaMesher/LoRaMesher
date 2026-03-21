@@ -744,6 +744,10 @@
                                 <span class="legend-text">DATA</span>
                             </div>
                             <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #e67e22, #cf6d17);"></div>
+                                <span class="legend-text">NM_CLAIM</span>
+                            </div>
+                            <div class="legend-item">
                                 <div class="legend-color" style="background: linear-gradient(135deg, #95a5a6, #7f8c8d);"></div>
                                 <span class="legend-text">SYSTEM</span>
                             </div>
@@ -769,6 +773,10 @@
                             <div class="legend-item">
                                 <div class="legend-color" style="background: linear-gradient(135deg, #27ae60, #229954);"></div>
                                 <span class="legend-text">DATA</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: linear-gradient(135deg, #f5b041, #f0a030);"></div>
+                                <span class="legend-text">NM_CLAIM</span>
                             </div>
                             <div class="legend-item">
                                 <div class="legend-color" style="background: linear-gradient(135deg, #b2babb, #a6acaf);"></div>
@@ -900,7 +908,8 @@
             JOIN_RESPONSE: 0x43,
             SLOT_REQUEST: 0x44,
             SLOT_ALLOCATION: 0x45,
-            SYNC_BEACON: 0x46
+            SYNC_BEACON: 0x46,
+            NM_CLAIM: 0x47
         };
 
         // Message type name mapping
@@ -917,7 +926,8 @@
             [MessageType.JOIN_RESPONSE]: 'JOIN_RESPONSE',
             [MessageType.SLOT_REQUEST]: 'SLOT_REQUEST',
             [MessageType.SLOT_ALLOCATION]: 'SLOT_ALLOCATION',
-            [MessageType.SYNC_BEACON]: 'SYNC_BEACON'
+            [MessageType.SYNC_BEACON]: 'SYNC_BEACON',
+            [MessageType.NM_CLAIM]: 'NM_CLAIM'
         };
 
         // Helper functions for message type categorization
@@ -956,6 +966,8 @@
                     category = 'system';
                     if (numType === MessageType.SYNC_BEACON) {
                         cssClass = direction === 'received' ? 'beacon-rx' : 'beacon';
+                    } else if (numType === MessageType.NM_CLAIM) {
+                        cssClass = direction === 'received' ? 'nm-claim-rx' : 'nm-claim';
                     } else if (numType === MessageType.JOIN_REQUEST || numType === MessageType.JOIN_RESPONSE) {
                         cssClass = direction === 'received' ? 'join-rx' : 'join';
                     } else {
@@ -992,6 +1004,7 @@
             control:'#2c3e50', 'control-rx':'#7d8693',
             routing:'#d35400', 'routing-rx':'#f0b27a',
             system:'#7f8c8d', 'system-rx':'#a6acaf',
+            'nm-claim':'#e67e22', 'nm-claim-rx':'#f5b041',
             collision:'#c0392b', unknown:'#95a5a6', 'unknown-rx':'#cacfd2',
         };
         function msgColor(t){ return MSG_COLORS_MAP[t] || '#95a5a6'; }
@@ -1656,7 +1669,8 @@
                         'SLOT_REQUEST': MessageType.SLOT_REQUEST,
                         'SLOT_ALLOCATION': MessageType.SLOT_ALLOCATION,
                         'SYNC_BEACON': MessageType.SYNC_BEACON,
-                        'ROUTE_TABLE': MessageType.ROUTE_TABLE
+                        'ROUTE_TABLE': MessageType.ROUTE_TABLE,
+                        'NM_CLAIM': MessageType.NM_CLAIM
                     };
 
                     const typeNum = messageTypeMap[messageTypeName];
@@ -2373,6 +2387,7 @@
                     case 'ACK':                           return 'A';
                     case 'PING': case 'PONG':             return 'P';
                     case 'HELLO': case 'SYNC':            return 'H';
+                    case 'NM_CLAIM':                          return 'N';
                     case 'SLOT_REQUEST':
                     case 'SLOT_ALLOCATION':               return 'S';
                     default: {

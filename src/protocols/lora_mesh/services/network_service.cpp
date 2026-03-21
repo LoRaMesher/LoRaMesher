@@ -1788,7 +1788,7 @@ Result NetworkService::UpdateSlotTable() {
     // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
     for (size_t i = 0; i < allocated_control_slots_ && slot_index < slot_count_;
          i++) {
-        if (i == my_control_slot_index_) {
+        if (i == my_control_slot_index_ && network_manager_ != 0) {
             LOG_DEBUG(
                 "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
                 "%d)",
@@ -2271,8 +2271,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     if (current_time < last_sync_beacon_received_ +
                            superframe_service_->GetSuperframeDuration() / 2 &&
         last_sync_beacon_received_ != 0) {
-        LOG_WARNING(
-            "Received sync beacon too soon after previous one, ignoring");
+        LOG_DEBUG("Received sync beacon too soon after previous one, ignoring");
         return Result::Success();
     }
 
@@ -2644,6 +2643,15 @@ Result NetworkService::HandleSuperframeStart() {
             return result;
         }
 
+        // Update current_network_depth_ from routing table
+        uint8_t routing_max_hops = GetMaxHopsFromRoutingTable();
+        if (routing_max_hops != current_network_depth_) {
+            SetMaxHopCount(routing_max_hops);
+            LOG_INFO("Updated network max_hops to %d from routing table",
+                     current_network_depth_);
+            pending_slot_table_rebuild_ = true;
+        }
+
         // Flush any deferred slot table rebuild (e.g., from mid-superframe slot requests).
         // This runs independently of ApplyPendingJoin; if both were pending simultaneously,
         // ApplyPendingJoin already cleared the flag and called UpdateSlotTable().
@@ -2651,27 +2659,9 @@ Result NetworkService::HandleSuperframeStart() {
             pending_slot_table_rebuild_ = false;
             Result rebuild_result = UpdateSlotTable();
             if (!rebuild_result) {
-                return rebuild_result;
-            }
-        }
-
-        // TODO: This should be used like the applypendingjoin but with a routing table
-        // When a change has happened in the routing table, change the slot table when
-        // starting a new superframe
-
-        // Update current_network_depth_ from routing table
-        uint8_t routing_max_hops = GetMaxHopsFromRoutingTable();
-        if (routing_max_hops != current_network_depth_) {
-            SetMaxHopCount(routing_max_hops);
-            LOG_INFO("Updated network max_hops to %d from routing table",
-                     current_network_depth_);
-
-            Result result = UpdateSlotTable();
-            if (!result) {
                 LOG_ERROR("Failed to update slot table for pending join: %s",
-                          result.GetErrorMessage().c_str());
-                pending_join_request_ = false;
-                return result;
+                          rebuild_result.GetErrorMessage().c_str());
+                return rebuild_result;
             }
         }
 
@@ -2699,7 +2689,11 @@ Result NetworkService::HandleSuperframeStart() {
                 static_cast<uint8_t>(
                     1 << std::min(join_retry_count_, static_cast<uint8_t>(2))),
                 static_cast<uint8_t>(4));
-            join_backoff_remaining_ = GetRTOS().GetRandom() % (max_backoff + 1);
+
+            // Always wait at least 1 superframe so the sponsor has time to deliver
+            // the JOIN_RESPONSE before the joining node retransmits
+            join_backoff_remaining_ =
+                1 + GetRTOS().GetRandom() % (max_backoff + 1);
             LOG_DEBUG("Join retry #%d, next backoff: %d superframes",
                       join_retry_count_, join_backoff_remaining_);
         }

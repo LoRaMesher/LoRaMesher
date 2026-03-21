@@ -29,6 +29,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [ASAN / UBSAN](#addresssanitizer--undefinedbehaviorsanitizer)
   - [TSAN](#threadsanitizer)
   - [Coverage](#profiling--code-coverage-llvm)
+  - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
@@ -305,6 +306,39 @@ llvm-cov-18 show .pio/build/test_native_profile/program \
 ```
 
 > Coverage % is also visible in the **GitHub Actions run summary** for every CI push.
+
+---
+
+### Function Profiling (LLVM XRay)
+
+The `test_native_xray` environment compiles with LLVM XRay instrumentation to produce per-function timing reports (call counts, median/min/max latency).
+
+#### 1. Run instrumented tests
+
+```bash
+XRAY_OPTIONS="patch_premain=true xray_mode=xray-basic verbosity=1" \
+    pio test -e test_native_xray -v -f "protocols/lora_mesh/services/test_routing_unit"
+```
+
+#### 2. Analyze results
+
+```bash
+# Top 20 slowest functions by median time
+llvm-xray-18 account xray-log.* -sort=med -sortorder=dsc -top=20 \
+    -instr_map=.pio/build/test_native_xray/program
+
+# Top 20 by total cumulative time
+llvm-xray-18 account xray-log.* -sort=sum -sortorder=dsc -top=20 \
+    -instr_map=.pio/build/test_native_xray/program
+
+# Library functions only (exclude tests, STL, googletest)
+llvm-xray-18 account xray-log.* -sort=med -sortorder=dsc --format=csv \
+    -instr_map=.pio/build/test_native_xray/program \
+    | sed -n '1p; /"loramesher::/p' | grep -v 'loramesher::test::' | head -20
+```
+
+> XRay log files (`xray-log.*`) are written to the project root by default.
+> If too many arguments is shown, multiple `xray-log.*` are in the project root.
 
 ---
 

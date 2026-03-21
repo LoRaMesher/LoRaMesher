@@ -17,7 +17,8 @@ RadioConfig::RadioConfig(RadioType type, float frequency,
       power_(power),
       sync_word_(sync_word),
       crc_(crc),
-      preamble_length_(preamble_length) {
+      preamble_length_(preamble_length),
+      tcxo_voltage_(0.0F) {
     if (!IsValid()) {
         throw std::invalid_argument("Invalid radio configuration:" +
                                     Validate());
@@ -101,6 +102,13 @@ Result RadioConfig::setPreambleLength(uint16_t preamble_length) {
     // TODO: Validation
     preamble_length_ = preamble_length;
     return Result::Success();
+}
+
+void RadioConfig::setTcxoVoltage(float voltage) {
+    if (voltage < 0.0F || voltage > 3.3F) {
+        throw std::invalid_argument("TCXO voltage must be between 0.0 and 3.3");
+    }
+    tcxo_voltage_ = voltage;
 }
 
 bool RadioConfig::IsValid() const {
