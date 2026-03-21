@@ -56,7 +56,7 @@ Result LoraMesherSX1262::Begin(const RadioConfig& config) {
     int16_t status = radio_module_->begin(
         config.getFrequency(), config.getBandwidth(),
         config.getSpreadingFactor(), config.getCodingRate(),
-        config.getSyncWord(), config.getPower(), config.getPreambleLength(), txcoVoltage,
+        config.getSyncWord(), config.getPower(), config.getPreambleLength(), tcxoVoltage,
         false);
     if (status != RADIOLIB_ERR_NONE) {
         return RadioLibCodeErrors::ConvertStatus(status);
