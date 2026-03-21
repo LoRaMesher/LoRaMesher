@@ -1285,8 +1285,10 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                           result.GetErrorMessage().c_str());
             }
 
-            // Sleep the MCU until the next slot (radio is already sleeping)
-            GetRTOS().LightSleep(ctx.sleep_duration_ms);
+            // Sleep the MCU until the next slot when power management is active
+            if (prepare_sleep_callback_ && ctx.sleep_duration_ms > 0) {
+                GetRTOS().LightSleep(ctx.sleep_duration_ms);
+            }
 
             // Update power state to track for wake callback
             // This ensures WakeUpCallback fires on next active slot

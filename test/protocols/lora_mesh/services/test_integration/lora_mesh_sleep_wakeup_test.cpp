@@ -156,17 +156,21 @@ TEST_F(LoRaMeshSleepWakeUpTests, SingleNodeSleepWakeUpCallbacks) {
         CreateNodeWithSleepCallbacks("Node1", 0x1001, NodeRole::AUTO);
 
     StartNodeUntilNetworkManager(node);
+    WaitForTasksToExecute();
 
     auto& tracker = GetTracker(node.address);
 
-    // Advance through several superframes to accumulate sleep/wake cycles
-    auto superframe_duration = GetSuperframeDuration(node);
-    ASSERT_GT(superframe_duration, 0u);
+    // Use a generous timeout and condition-based advance so the superframe
+    // timer and protocol task have enough virtual-time steps to process slots
+    auto slot_duration = GetSlotDuration(node);
+    uint32_t timeout = std::max(GetSuperframeDuration(node) * 10, slot_duration * 50);
 
-    AdvanceTime(superframe_duration * 5);
-    WaitForTasksToExecute();
+    bool sleep_fired = AdvanceTime(timeout, timeout, slot_duration / 2, 0,
+                                   [&]() {
+                                       return tracker.sleep_count.load() > 0;
+                                   });
 
-    EXPECT_GT(tracker.sleep_count.load(), 0)
+    EXPECT_TRUE(sleep_fired)
         << "Sleep callback should have been invoked";
     EXPECT_GT(tracker.wake_count.load(), 0)
         << "Wake-up callback should have been invoked";
@@ -185,23 +189,25 @@ TEST_F(LoRaMeshSleepWakeUpTests, TwoNodeSleepWakeUpCallbacks) {
 
     StartNodeUntilNetworkManager(manager);
     StartNodeUntilNormalOperation(joiner);
+    WaitForTasksToExecute();
 
     auto& manager_tracker = GetTracker(manager.address);
     auto& joiner_tracker = GetTracker(joiner.address);
 
-    // Advance through superframes
-    auto superframe_duration = GetSuperframeDuration(manager);
-    ASSERT_GT(superframe_duration, 0u);
+    auto slot_duration = GetSlotDuration(manager);
+    uint32_t timeout =
+        std::max(GetSuperframeDuration(manager) * 10, slot_duration * 50);
 
-    AdvanceTime(superframe_duration * 5);
-    WaitForTasksToExecute();
+    bool both_slept = AdvanceTime(
+        timeout, timeout, slot_duration / 2, 0, [&]() {
+            return manager_tracker.sleep_count.load() > 0 &&
+                   joiner_tracker.sleep_count.load() > 0;
+        });
 
-    EXPECT_GT(manager_tracker.sleep_count.load(), 0)
-        << "Manager sleep callback should have been invoked";
+    EXPECT_TRUE(both_slept)
+        << "Both nodes' sleep callbacks should have been invoked";
     EXPECT_GT(manager_tracker.wake_count.load(), 0)
         << "Manager wake-up callback should have been invoked";
-    EXPECT_GT(joiner_tracker.sleep_count.load(), 0)
-        << "Joiner sleep callback should have been invoked";
     EXPECT_GT(joiner_tracker.wake_count.load(), 0)
         << "Joiner wake-up callback should have been invoked";
 }
@@ -218,14 +224,18 @@ TEST_F(LoRaMeshSleepWakeUpTests, SleepVetoPreventsWakeCallback) {
     tracker.veto_sleep = true;
 
     StartNodeUntilNetworkManager(node);
-
-    auto superframe_duration = GetSuperframeDuration(node);
-    ASSERT_GT(superframe_duration, 0u);
-
-    AdvanceTime(superframe_duration * 5);
     WaitForTasksToExecute();
 
-    EXPECT_GT(tracker.sleep_count.load(), 0)
+    auto slot_duration = GetSlotDuration(node);
+    uint32_t timeout =
+        std::max(GetSuperframeDuration(node) * 10, slot_duration * 50);
+
+    bool sleep_fired = AdvanceTime(timeout, timeout, slot_duration / 2, 0,
+                                   [&]() {
+                                       return tracker.sleep_count.load() > 0;
+                                   });
+
+    EXPECT_TRUE(sleep_fired)
         << "Sleep callback should have been invoked even when vetoing";
     EXPECT_EQ(tracker.wake_count.load(), 0)
         << "Wake-up callback should NOT fire when sleep is vetoed";
@@ -239,18 +249,20 @@ TEST_F(LoRaMeshSleepWakeUpTests, SleepContextHasValidData) {
         CreateNodeWithSleepCallbacks("Node1", 0x1001, NodeRole::AUTO);
 
     StartNodeUntilNetworkManager(node);
+    WaitForTasksToExecute();
 
     auto& tracker = GetTracker(node.address);
 
-    auto superframe_duration = GetSuperframeDuration(node);
-    ASSERT_GT(superframe_duration, 0u);
+    auto slot_duration = GetSlotDuration(node);
+    uint32_t timeout =
+        std::max(GetSuperframeDuration(node) * 10, slot_duration * 50);
 
-    AdvanceTime(superframe_duration * 3);
-    WaitForTasksToExecute();
+    bool sleep_fired = AdvanceTime(timeout, timeout, slot_duration / 2, 0,
+                                   [&]() {
+                                       return tracker.sleep_count.load() > 0;
+                                   });
 
-    // Verify the callback was called at least once
-    ASSERT_GT(tracker.sleep_count.load(), 0)
-        << "Sleep callback must have been invoked";
+    ASSERT_TRUE(sleep_fired) << "Sleep callback must have been invoked";
 
     // Check the last context received
     std::lock_guard<std::mutex> lock(tracker.context_mutex);
@@ -262,7 +274,6 @@ TEST_F(LoRaMeshSleepWakeUpTests, SleepContextHasValidData) {
         << "Sleep duration should be greater than zero";
 
     // Sleep duration should be slot_duration minus wake_up_guard
-    auto slot_duration = GetSlotDuration(node);
     EXPECT_LE(ctx.sleep_duration_ms, slot_duration)
         << "Sleep duration should not exceed slot duration";
 }
@@ -280,17 +291,19 @@ TEST_F(LoRaMeshSleepWakeUpTests, NetworkFunctionsAfterSleepWakeCycles) {
 
     StartNodeUntilNetworkManager(manager);
     StartNodeUntilNormalOperation(joiner);
-
-    // Let the network run through several sleep/wake cycles
-    auto superframe_duration = GetSuperframeDuration(manager);
-    ASSERT_GT(superframe_duration, 0u);
-
-    AdvanceTime(superframe_duration * 5);
     WaitForTasksToExecute();
 
-    // Confirm sleep cycles occurred
     auto& manager_tracker = GetTracker(manager.address);
-    ASSERT_GT(manager_tracker.sleep_count.load(), 0);
+
+    auto slot_duration = GetSlotDuration(manager);
+    uint32_t timeout =
+        std::max(GetSuperframeDuration(manager) * 10, slot_duration * 50);
+
+    // Wait for at least one sleep cycle
+    bool sleep_fired = AdvanceTime(
+        timeout, timeout, slot_duration / 2, 0,
+        [&]() { return manager_tracker.sleep_count.load() > 0; });
+    ASSERT_TRUE(sleep_fired) << "Sleep cycles should have occurred";
 
     // Send a data message from joiner to manager
     std::vector<uint8_t> payload = {0xDE, 0xAD, 0xBE, 0xEF};
@@ -298,12 +311,10 @@ TEST_F(LoRaMeshSleepWakeUpTests, NetworkFunctionsAfterSleepWakeCycles) {
     EXPECT_TRUE(send_result) << "SendData should succeed: "
                              << send_result.GetErrorMessage();
 
-    // Advance time to allow message delivery
-    AdvanceTime(superframe_duration * 3);
-    WaitForTasksToExecute();
-
-    // Check that the manager received the message
-    bool received = HasReceivedMessageFrom(manager, joiner.address);
+    // Wait for message delivery with condition
+    bool received = AdvanceTime(
+        timeout, timeout, slot_duration / 2, 0,
+        [&]() { return HasReceivedMessageFrom(manager, joiner.address); });
     EXPECT_TRUE(received)
         << "Manager should have received data from joiner after sleep cycles";
 }
