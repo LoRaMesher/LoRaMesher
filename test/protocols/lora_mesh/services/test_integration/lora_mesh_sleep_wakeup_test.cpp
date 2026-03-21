@@ -150,7 +150,8 @@ class LoRaMeshSleepWakeUpTests : public LoRaMeshTestFixture {
  * @brief Verify sleep and wake-up callbacks fire for a single network manager
  */
 TEST_F(LoRaMeshSleepWakeUpTests, SingleNodeSleepWakeUpCallbacks) {
-    auto& node = CreateNodeWithSleepCallbacks("Node1", 0x1001, NodeRole::AUTO);
+    auto& node = CreateNodeWithSleepCallbacks("Node1", 0x1001,
+                                              NodeRole::NETWORK_MANAGER);
 
     StartNodeUntilNetworkManager(node);
     WaitForTasksToExecute();
@@ -163,9 +164,9 @@ TEST_F(LoRaMeshSleepWakeUpTests, SingleNodeSleepWakeUpCallbacks) {
     uint32_t timeout =
         std::max(GetSuperframeDuration(node) * 10, slot_duration * 50);
 
-    bool sleep_fired =
-        AdvanceTime(timeout, timeout, slot_duration / 2, 0,
-                    [&]() { return tracker.sleep_count.load() > 0; });
+    bool sleep_fired = AdvanceTime(timeout, timeout, 15, 0, [&]() {
+        return tracker.sleep_count.load() > 0 && tracker.wake_count.load() > 0;
+    });
 
     EXPECT_TRUE(sleep_fired) << "Sleep callback should have been invoked";
     EXPECT_GT(tracker.wake_count.load(), 0)
@@ -194,11 +195,10 @@ TEST_F(LoRaMeshSleepWakeUpTests, TwoNodeSleepWakeUpCallbacks) {
     uint32_t timeout =
         std::max(GetSuperframeDuration(manager) * 10, slot_duration * 50);
 
-    bool both_slept =
-        AdvanceTime(timeout, timeout, slot_duration / 2, 0, [&]() {
-            return manager_tracker.sleep_count.load() > 0 &&
-                   joiner_tracker.sleep_count.load() > 0;
-        });
+    bool both_slept = AdvanceTime(timeout, timeout, 15, 0, [&]() {
+        return manager_tracker.sleep_count.load() > 0 &&
+               joiner_tracker.sleep_count.load() > 0;
+    });
 
     EXPECT_TRUE(both_slept)
         << "Both nodes' sleep callbacks should have been invoked";
@@ -225,9 +225,9 @@ TEST_F(LoRaMeshSleepWakeUpTests, SleepVetoPreventsWakeCallback) {
     uint32_t timeout =
         std::max(GetSuperframeDuration(node) * 10, slot_duration * 50);
 
-    bool sleep_fired =
-        AdvanceTime(timeout, timeout, slot_duration / 2, 0,
-                    [&]() { return tracker.sleep_count.load() > 0; });
+    bool sleep_fired = AdvanceTime(timeout, timeout, 15, 0, [&]() {
+        return tracker.sleep_count.load() > 0;
+    });
 
     EXPECT_TRUE(sleep_fired)
         << "Sleep callback should have been invoked even when vetoing";
@@ -247,12 +247,11 @@ TEST_F(LoRaMeshSleepWakeUpTests, SleepContextHasValidData) {
     auto& tracker = GetTracker(node.address);
 
     auto slot_duration = GetSlotDuration(node);
-    uint32_t timeout =
-        std::max(GetSuperframeDuration(node) * 10, slot_duration * 50);
+    uint32_t timeout = GetSuperframeDuration(node) * 4;
 
-    bool sleep_fired =
-        AdvanceTime(timeout, timeout, slot_duration / 2, 0,
-                    [&]() { return tracker.sleep_count.load() > 0; });
+    bool sleep_fired = AdvanceTime(timeout, timeout, 15, 0, [&]() {
+        return tracker.sleep_count.load() > 0;
+    });
 
     ASSERT_TRUE(sleep_fired) << "Sleep callback must have been invoked";
 
@@ -288,13 +287,13 @@ TEST_F(LoRaMeshSleepWakeUpTests, NetworkFunctionsAfterSleepWakeCycles) {
     auto& manager_tracker = GetTracker(manager.address);
 
     auto slot_duration = GetSlotDuration(manager);
-    uint32_t timeout =
-        std::max(GetSuperframeDuration(manager) * 10, slot_duration * 50);
+    uint32_t timeout = GetSuperframeDuration(manager) * 4;
 
     // Wait for at least one sleep cycle
-    bool sleep_fired =
-        AdvanceTime(timeout, timeout, slot_duration / 2, 0,
-                    [&]() { return manager_tracker.sleep_count.load() > 0; });
+    bool sleep_fired = AdvanceTime(timeout, timeout, 15, 0, [&]() {
+        return manager_tracker.sleep_count.load() > 0 &&
+               manager_tracker.wake_count.load() > 0;
+    });
     ASSERT_TRUE(sleep_fired) << "Sleep cycles should have occurred";
 
     // Send a data message from joiner to manager
@@ -304,7 +303,7 @@ TEST_F(LoRaMeshSleepWakeUpTests, NetworkFunctionsAfterSleepWakeCycles) {
         << "SendData should succeed: " << send_result.GetErrorMessage();
 
     // Wait for message delivery with condition
-    bool received = AdvanceTime(timeout, timeout, slot_duration / 2, 0, [&]() {
+    bool received = AdvanceTime(timeout, timeout, 15, 0, [&]() {
         return HasReceivedMessageFrom(manager, joiner.address);
     });
     EXPECT_TRUE(received)
