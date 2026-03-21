@@ -495,11 +495,11 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
                hello_interval_ <= 3600000 &&  // Maximum 1 hour
                route_timeout_ >
                    hello_interval_ &&  // Route timeout must be greater than hello interval
-               max_hops_ > 0 &&         // At least 1 hop
-               max_hops_ <= 16 &&       // Maximum 16 hops
-               guard_time_ms_ >= 10 &&      // At least 10ms guard time
-               guard_time_ms_ <= 500 &&     // Maximum 500ms guard time
-               wake_up_guard_ms_ <= 500;    // Maximum 500ms wake-up guard
+               max_hops_ > 0 &&           // At least 1 hop
+               max_hops_ <= 16 &&         // Maximum 16 hops
+               guard_time_ms_ >= 10 &&    // At least 10ms guard time
+               guard_time_ms_ <= 500 &&   // Maximum 500ms guard time
+               wake_up_guard_ms_ <= 500;  // Maximum 500ms wake-up guard
     }
 
     /**
@@ -548,8 +548,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         hello_interval_ * 3;  ///< Joining timeout in ms
     uint8_t max_network_nodes_ =
         50;                        ///< Maximum number of nodes in the network
-    uint32_t guard_time_ms_ = 50;      ///< TX guard time for RX readiness in ms
-    uint32_t wake_up_guard_ms_ = 100;  ///< Guard time before slot boundary for MCU wake-up
+    uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
+    uint32_t wake_up_guard_ms_ =
+        100;  ///< Guard time before slot boundary for MCU wake-up
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
