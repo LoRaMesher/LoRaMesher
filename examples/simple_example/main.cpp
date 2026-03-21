@@ -23,6 +23,7 @@ using namespace loramesher;
 //   TTGO T-Beam v1.x:  CS=18, RST=23, IRQ=26, IO1=33
 //   TTGO LoRa32 v1:    CS=18, RST=14, IRQ=26, IO1=33
 //   Heltec WiFi LoRa:  CS=18, RST=14, IRQ=26, IO1=35
+//   Heltec WiFi LoRa V3:  CS=8, RST=12, IRQ=14, IO1=13
 
 #define LORA_CS 18   // SPI Chip Select (NSS)
 #define LORA_RST 23  // Radio Reset pin
