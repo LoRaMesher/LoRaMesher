@@ -1249,10 +1249,13 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             ctx.current_slot = superframe_service_->GetCurrentSlot();
             ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
 
-            // Calculate sleep duration (time until next slot)
-            // Users can use this to decide if sleep is worthwhile for short durations
+            // Calculate sleep duration (time until next slot minus wake-up guard)
+            // The guard ensures the MCU wakes before the slot boundary for
+            // callback execution, radio transition, and peripheral init
             uint32_t slot_duration = superframe_service_->GetSlotDuration();
-            ctx.sleep_duration_ms = slot_duration;
+            uint32_t wake_guard = config_.getWakeUpGuardTime();
+            ctx.sleep_duration_ms =
+                (slot_duration > wake_guard) ? (slot_duration - wake_guard) : 0;
 
             // Call user callback if registered
             // This allows application-level power management (disable GPS, sensors, etc.)

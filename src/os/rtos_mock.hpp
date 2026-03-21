@@ -1154,8 +1154,8 @@ class RTOSMock : public RTOS {
         }
     }
 
-    void LightSleep(uint32_t /*ms*/) override {
-        // No MCU sleep on desktop — virtual time handles slot timing
+    void LightSleep(uint32_t ms) override {
+        delay(ms);
     }
 
     /**
