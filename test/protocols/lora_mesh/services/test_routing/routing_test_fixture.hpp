@@ -42,7 +42,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
         return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             // Check if all nodes have discovered all other nodes
             for (auto* node : nodes) {
-                auto& network_nodes = node->protocol->GetNetworkNodes();
+                auto network_nodes = node->protocol->GetNetworkNodesCopy();
                 // Each node should know about all other nodes
                 if (network_nodes.size() < nodes.size() - 1) {
                     return false;
@@ -84,7 +84,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
         uint32_t end_superframe_time = 0;
         return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             for (auto* node : nodes) {
-                auto& network_nodes = node->protocol->GetNetworkNodes();
+                auto network_nodes = node->protocol->GetNetworkNodesCopy();
                 // Each node should know about all other nodes
                 if (network_nodes.size() < nodes.size() - 1) {
                     return false;
@@ -133,7 +133,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
         uint32_t end_superframe_time = 0;
         return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
             for (size_t i = 0; i < nodes.size(); i++) {
-                auto& network_nodes = nodes[i]->protocol->GetNetworkNodes();
+                auto network_nodes = nodes[i]->protocol->GetNetworkNodesCopy();
                 if (network_nodes.size() < nodes.size() - 1) {
                     return false;
                 }
@@ -179,7 +179,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
      * @return bool True if active route exists
      */
     bool HasRouteTo(TestNode& node, AddressType destination) {
-        const auto& network_nodes = node.protocol->GetNetworkNodes();
+        auto network_nodes = node.protocol->GetNetworkNodesCopy();
         for (const auto& route : network_nodes) {
             if (route.routing_entry.destination == destination &&
                 route.is_active) {
@@ -197,7 +197,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
      * @return AddressType Next hop address (0 if no route)
      */
     AddressType GetNextHop(TestNode& node, AddressType destination) {
-        const auto& network_nodes = node.protocol->GetNetworkNodes();
+        auto network_nodes = node.protocol->GetNetworkNodesCopy();
         for (const auto& route : network_nodes) {
             if (route.routing_entry.destination == destination &&
                 route.is_active) {
@@ -215,7 +215,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
      * @return uint8_t Hop count (UINT8_MAX if no route)
      */
     uint8_t GetHopCount(TestNode& node, AddressType destination) {
-        const auto& network_nodes = node.protocol->GetNetworkNodes();
+        auto network_nodes = node.protocol->GetNetworkNodesCopy();
         for (const auto& route : network_nodes) {
             if (route.routing_entry.destination == destination &&
                 route.is_active) {
@@ -304,7 +304,7 @@ class RoutingTestFixture : public LoRaMeshTestFixture {
         std::cout << "Routing table for " << node.name << " (0x" << std::hex
                   << node.address << std::dec << "):" << std::endl;
 
-        const auto& network_nodes = node.protocol->GetNetworkNodes();
+        auto network_nodes = node.protocol->GetNetworkNodesCopy();
         for (const auto& route : network_nodes) {
             std::cout << "  -> 0x" << std::hex
                       << route.routing_entry.destination << std::dec

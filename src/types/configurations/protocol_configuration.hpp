@@ -341,6 +341,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      */
     void setGuardTime(uint32_t guard_time_ms) {
         guard_time_ms_ = guard_time_ms;
+        sync_beacon_subslot_config_.guard_time_ms = guard_time_ms;
+        discovery_subslot_config_.guard_time_ms = guard_time_ms;
     }
 
     /** @brief Get the target TX duty cycle (0.0–1.0, default 0.01 = 1%) */

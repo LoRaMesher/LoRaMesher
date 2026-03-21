@@ -35,7 +35,7 @@ class NMClaimMessage : public IConvertibleToBaseMessage {
                                                 uint8_t battery_level,
                                                 uint8_t network_node_count,
                                                 uint16_t network_id) {
-        NMClaimHeader header(0xFFFF,  // broadcast
+        NMClaimHeader header(kBroadcastAddress,  // broadcast
                              src, priority, battery_level, network_node_count,
                              network_id);
         return NMClaimMessage(header);

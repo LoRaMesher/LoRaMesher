@@ -179,7 +179,7 @@ TEST_F(RoutingLimitsTests, RoutingTableCapacity) {
 
     // Check routing table sizes
     for (auto* node : nodes) {
-        auto& network_nodes = node->protocol->GetNetworkNodes();
+        auto network_nodes = node->protocol->GetNetworkNodesCopy();
         size_t table_size = network_nodes.size();
 
         std::cout << node->name << " routing table size: " << table_size
@@ -278,7 +278,7 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
         << "N1->N3 should be 2 hops";
 
     // Check if route is active
-    const auto& initial_routes = nodes[0]->protocol->GetNetworkNodes();
+    auto initial_routes = nodes[0]->protocol->GetNetworkNodesCopy();
     bool initial_route_active = false;
     for (const auto& route : initial_routes) {
         if (route.routing_entry.destination == nodes[2]->address) {
@@ -311,7 +311,7 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
               << std::endl;
 
     bool route_expired = AdvanceTime(wait_time, wait_time, step_ms, 0, [&]() {
-        const auto& routes = nodes[0]->protocol->GetNetworkNodes();
+        auto routes = nodes[0]->protocol->GetNetworkNodesCopy();
         for (const auto& route : routes) {
             if (route.routing_entry.destination == nodes[2]->address) {
                 // Route should be marked inactive
@@ -326,7 +326,7 @@ TEST_F(RoutingLimitsTests, RouteTimeoutAfterNodeFailure) {
     PrintRoutingTable(*nodes[0]);
 
     // Check the final state of the route
-    const auto& final_routes = nodes[0]->protocol->GetNetworkNodes();
+    auto final_routes = nodes[0]->protocol->GetNetworkNodesCopy();
     bool route_found = false;
     bool route_is_active = false;
 

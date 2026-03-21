@@ -8,6 +8,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include "os/rtos.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
@@ -406,18 +407,19 @@ class SuperframeService : public ISuperframeService {
 
     std::atomic<bool> is_running_;
     bool is_synchronized_;
-    bool auto_advance_ = true;
+    std::atomic<bool> auto_advance_ = true;
     bool update_start_time_in_new_superframe =
         true;  ///< Flag to control start time updates
-    bool sync_in_progress_ =
-        false;  ///< Flag to prevent cascading sync operations
-    bool suppress_notifications_ =
-        false;  ///< Flag to temporarily suppress notifications
-    SuperframeNotificationType last_notification_ =
-        SuperframeNotificationType::STARTED;  ///< Last notification sent
-    uint16_t last_slot_;
+    std::atomic<bool> sync_in_progress_{
+        false};  ///< Flag to prevent cascading sync operations
+    std::atomic<bool> suppress_notifications_{
+        false};  ///< Flag to temporarily suppress notifications
+    std::atomic<SuperframeNotificationType> last_notification_{
+        SuperframeNotificationType::STARTED};  ///< Last notification sent
+    std::atomic<uint16_t> last_slot_;
     uint32_t service_start_time_;
     SuperframeCallback superframe_callback_;
+    mutable std::mutex callback_mutex_;
 
     // Task management
     uint32_t update_interval_ms_;
@@ -425,11 +427,11 @@ class SuperframeService : public ISuperframeService {
     os::QueueHandle_t notification_queue_;
 
     // Statistics
-    mutable uint32_t superframes_completed_;
-    mutable uint32_t total_timing_error_ms_;
-    mutable uint32_t timing_samples_;
+    std::atomic<uint32_t> superframes_completed_;
+    std::atomic<uint32_t> total_timing_error_ms_;
+    std::atomic<uint32_t> timing_samples_;
     uint32_t last_sync_time_;
-    uint32_t sync_drift_accumulator_;
+    std::atomic<uint32_t> sync_drift_accumulator_;
 
     // Constants
     static constexpr uint32_t DEFAULT_UPDATE_INTERVAL_MS = 20;

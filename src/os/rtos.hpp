@@ -180,6 +180,15 @@ class RTOS {
     virtual void delay(uint32_t ms) = 0;
 
     /**
+     * @brief Put the MCU into light sleep for a given duration
+     *
+     * On embedded targets (ESP32) reduces power beyond task blocking.
+     * On native/desktop this is a no-op — virtual time handles slot timing.
+     * @param ms Sleep duration in milliseconds
+     */
+    virtual void LightSleep(uint32_t ms) = 0;
+
+    /**
      * @brief Get current tick count
      * @return Current tick count
      */

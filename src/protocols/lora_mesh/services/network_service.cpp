@@ -138,6 +138,10 @@ const std::vector<NetworkNodeRoute>& NetworkService::GetNetworkNodes() const {
     return routing_table_->GetNodes();
 }
 
+std::vector<NetworkNodeRoute> NetworkService::GetNetworkNodesCopy() const {
+    return routing_table_->GetNodesCopy();
+}
+
 size_t NetworkService::GetNetworkSize() const {
     std::lock_guard<std::mutex> lock(network_mutex_);
     return routing_table_->GetSize();
@@ -370,6 +374,7 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
 
     // Record discovery start time
     discovery_start_time_ = GetRTOS().getTickCount();
+    nm_election_start_time_ = 0;
 
     LOG_INFO("Starting network discovery, timeout: %d ms, current time: %d ms",
              discovery_timeout_ms, discovery_start_time_);
@@ -1777,7 +1782,7 @@ Result NetworkService::UpdateSlotTable() {
         }
         LOG_DEBUG("Allocated slot %zu as %d for sync hop_layer %zu", slot_index,
                   static_cast<int>(sync_type), hop_layer);
-        AllocateSlot(sync_type, 0xFFFF);
+        AllocateSlot(sync_type, kBroadcastAddress);
     }
 
     // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
@@ -1792,7 +1797,8 @@ Result NetworkService::UpdateSlotTable() {
         } else {
             LOG_DEBUG("Allocated CONTROL_RX slot %zu (index %zu)", slot_index,
                       i);
-            AllocateSlot(SlotAllocation::SlotType::CONTROL_RX, 0xFFFF);
+            AllocateSlot(SlotAllocation::SlotType::CONTROL_RX,
+                         kBroadcastAddress);
         }
     }
 
@@ -1872,15 +1878,14 @@ Result NetworkService::UpdateSlotTable() {
 Result NetworkService::SetDiscoverySlots() {
     // Clear existing discovery slots
     allocated_discovery_slots_ =
-        ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
+        std::max(ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT,
+                 static_cast<uint32_t>(slot_count_));
 
-    slot_count_ = 0;
     slot_count_ = static_cast<uint16_t>(allocated_discovery_slots_);
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
         SlotAllocation slot;
         slot.slot_number = i;
-        slot.target_address =
-            INetworkService::kBroadcastAddress;  // Discovery to broadcast
+        slot.target_address = kBroadcastAddress;  // Discovery to broadcast
         slot.type = SlotAllocation::SlotType::DISCOVERY_RX;
 
         slot_table_[i] = slot;
@@ -2061,6 +2066,28 @@ Result NetworkService::PerformJoining(uint32_t timeout_ms) {
     }
 
     // Still waiting for join response - do nothing, let the protocol continue
+    return Result::Success();
+}
+
+uint32_t NetworkService::GetNMElectionTimeout() const {
+    uint32_t window_ms =
+        superframe_service_ ? 2 * superframe_service_->GetSlotDuration() : 2000;
+    if (nm_election_start_time_ == 0) {
+        return window_ms;
+    }
+    uint32_t end_time = nm_election_start_time_ + window_ms;
+    uint32_t now = GetRTOS().getTickCount();
+    return (now < end_time) ? (end_time - now) : 0;
+}
+
+Result NetworkService::PerformNMElection() {
+    if (state_ != ProtocolState::NM_ELECTION) {
+        return Result::Success();
+    }
+    if (GetNMElectionTimeout() == 0) {
+        LOG_INFO("NM_ELECTION deadline reached, creating network");
+        return CreateNetwork();
+    }
     return Result::Success();
 }
 
@@ -2445,41 +2472,20 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
 
 void NetworkService::SetSyncBeaconPreSendCallback(BaseMessage& base_msg) {
     base_msg.SetPreSendCallback([this](BaseMessage& msg) {
-        const uint32_t SERIALIZATION_OVERHEAD_MS = 1;
+        constexpr uint32_t kSerializationOverheadMs = 1;
         uint32_t actual_time =
             superframe_service_->GetTimeSinceSuperframeStart() +
-            SERIALIZATION_OVERHEAD_MS;
+            kSerializationOverheadMs;
 
-        auto serialized_opt = msg.Serialize();
-        if (!serialized_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to serialize base message");
-            return;
-        }
-
-        auto beacon_opt =
-            SyncBeaconMessage::CreateFromSerialized(*serialized_opt);
-        if (!beacon_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to deserialize sync beacon");
-            return;
-        }
-
-        beacon_opt->UpdatePropagationDelay(actual_time);
-
-        auto updated_serialized_opt = beacon_opt->Serialize();
-        if (!updated_serialized_opt.has_value()) {
-            LOG_ERROR("Pre-send callback: Failed to re-serialize sync beacon");
-            return;
-        }
-
-        auto updated_msg_opt =
-            BaseMessage::CreateFromSerialized(*updated_serialized_opt);
-        if (!updated_msg_opt.has_value()) {
+        auto payload = msg.MutablePayload();
+        constexpr size_t kOffset =
+            SyncBeaconHeader::kPropagationDelayPayloadOffset;
+        if (payload.size() < kOffset + sizeof(uint32_t)) {
             LOG_ERROR(
-                "Pre-send callback: Failed to create updated base message");
+                "Pre-send callback: payload too small for propagation delay");
             return;
         }
-
-        msg = *updated_msg_opt;
+        std::memcpy(payload.data() + kOffset, &actual_time, sizeof(uint32_t));
 
         LOG_DEBUG("Pre-send callback: updated propagation_delay to %u ms",
                   actual_time);
@@ -2510,10 +2516,10 @@ Result NetworkService::SendSyncBeacon() {
     // Create original sync beacon with placeholder propagation_delay (0)
     // The actual timing will be captured by the pre-send callback right before transmission
     auto sync_beacon_opt = SyncBeaconMessage::CreateOriginal(
-        0xFFFF,         // Broadcast destination
-        node_address_,  // Network manager as source
-        network_id_,    // Stable network identifier (survives NM elections)
-        total_slots,    // Actual total slots from slot table
+        kBroadcastAddress,  // Broadcast destination
+        node_address_,      // Network manager as source
+        network_id_,        // Stable network identifier (survives NM elections)
+        total_slots,        // Actual total slots from slot table
         static_cast<uint16_t>(superframe_service_->GetSlotDuration()),
         node_address_,  // Network manager address
         0,              // Placeholder - will be updated by callback
@@ -2722,6 +2728,7 @@ Result NetworkService::HandleSuperframeStart() {
                 // the DISCOVERY_RX fallback TX path in this same slot
                 SetDiscoverySlots();
                 SendNMClaim();  // queue claim for next DISCOVERY_TX slot
+                nm_election_start_time_ = GetRTOS().getTickCount();
                 SetState(ProtocolState::NM_ELECTION);
             }
         }
@@ -3243,9 +3250,14 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             network_id_ = claim.GetNetworkId();
         }
 
-        // Restart discovery: the claimant will become NM, we'll join them
-        StartDiscovery(
-            60000 /* discovery_timeout_ms — long, claim sets up network */);
+        // Enter DISCOVERY directly — cannot call StartDiscovery() because
+        // NETWORK_MANAGER-role nodes skip discovery and re-create a network.
+        network_found_ = false;
+        network_creator_ = false;
+        selected_sponsor_ = 0;
+        discovery_start_time_ = GetRTOS().getTickCount();
+        SetDiscoverySlots();
+        SetState(ProtocolState::DISCOVERY);
     }
     // If our priority is lower or equal, we win — ignore their claim
 

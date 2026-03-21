@@ -6,12 +6,16 @@
 
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
+
+static_assert(std::endian::native == std::endian::little,
+              "Direct payload memcpy assumes little-endian platform");
 
 #include "utils/compat/span.hpp"
 #include "types/error_codes/result.hpp"

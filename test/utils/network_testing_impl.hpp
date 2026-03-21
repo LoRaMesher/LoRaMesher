@@ -171,6 +171,7 @@ class VirtualNetwork {
      */
     void UnregisterNode(uint32_t address) {
         nodes_.erase(address);
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         sent_messages_.erase(address);
     }
 
@@ -185,7 +186,10 @@ class VirtualNetwork {
     void TransmitMessage(uint32_t source, const std::vector<uint8_t>& data,
                          int8_t rssi = -65, int8_t snr = 8) {
         // Store the sent message for testing purposes
-        sent_messages_[source].push_back(data);
+        {
+            std::lock_guard<std::mutex> lock(sent_messages_mutex_);
+            sent_messages_[source].push_back(data);
+        }
 
         // Check if source exists
         if (nodes_.find(source) == nodes_.end()) {
@@ -246,6 +250,7 @@ class VirtualNetwork {
      */
     std::vector<std::vector<uint8_t>> GetSentMessages(
         uint32_t node_address) const {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             return it->second;
@@ -262,6 +267,7 @@ class VirtualNetwork {
      */
     std::vector<std::vector<uint8_t>> GetLastSentMessages(uint32_t node_address,
                                                           size_t count) const {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it == sent_messages_.end() || it->second.empty()) {
             return std::vector<std::vector<uint8_t>>();
@@ -285,7 +291,7 @@ class VirtualNetwork {
     std::vector<std::vector<uint8_t>> GetFilteredSentMessages(
         uint32_t node_address,
         std::function<bool(const std::vector<uint8_t>&)> filter) const {
-
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it == sent_messages_.end()) {
             return std::vector<std::vector<uint8_t>>();
@@ -307,6 +313,7 @@ class VirtualNetwork {
      * @param node_address Address of the node
      */
     void ClearSentMessages(uint32_t node_address) {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             it->second.clear();
@@ -316,15 +323,19 @@ class VirtualNetwork {
     /**
      * @brief Clear all sent messages for all nodes
      */
-    void ClearAllSentMessages() { sent_messages_.clear(); }
+    void ClearAllSentMessages() {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
+        sent_messages_.clear();
+    }
 
     /**
      * @brief Get the number of messages sent by a specific node
-     * 
+     *
      * @param node_address Address of the node
      * @return Number of messages sent by the node
      */
     size_t GetSentMessageCount(uint32_t node_address) const {
+        std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         auto it = sent_messages_.find(node_address);
         if (it != sent_messages_.end()) {
             return it->second.size();
@@ -465,6 +476,8 @@ class VirtualNetwork {
         pending_messages_mutex_;  ///< Mutex for thread-safe access to pending_messages_
     std::map<uint32_t, std::vector<std::vector<uint8_t>>>
         sent_messages_;  ///< Store sent messages per node
+    mutable std::mutex
+        sent_messages_mutex_;  ///< Mutex for thread-safe access to sent_messages_
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
@@ -696,9 +709,14 @@ class VirtualTimeController {
      * @brief Destructor
      */
     ~VirtualTimeController() {
-        if (instance_ == this) {
+        if (instance_ == this)
             instance_ = nullptr;
+#ifdef LORAMESHER_BUILD_NATIVE
+        os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+        if (rtos_mock) {
+            rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
         }
+#endif
     }
 
     /**
@@ -820,10 +838,9 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         // Set the RadioLibRadio instance on the MockRadio for instance-aware notifications
         radio_->SetRadioLibInstance(radio_lib_instance);
         LOG_DEBUG(
-            "[0x%04X] RadioToNetworkAdapter: Set RadioLibRadio instance %p on "
+            "RadioToNetworkAdapter: Set RadioLibRadio instance %p on "
             "MockRadio %p",
-            address_, static_cast<void*>(radio_lib_instance),
-            static_cast<void*>(radio_));
+            static_cast<void*>(radio_lib_instance), static_cast<void*>(radio_));
 
         // Set up original callback saving
         EXPECT_CALL(*radio_, setActionReceive(A<void (*)(void)>()))
@@ -838,15 +855,14 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                 if (message_queue_.empty()) {
                     LOG_ERROR(
                         "MockRadio: getPacketLength() - No messages "
-                        "in queue (queue empty)",
-                        address_);
+                        "in queue (queue empty)");
                     return 0;
                 }
                 size_t packet_size = message_queue_.front().data.size();
                 LOG_DEBUG(
                     "MockRadio: getPacketLength() - Queue size: %zu, "
                     "packet size: %zu",
-                    address_, message_queue_.size(), packet_size);
+                    message_queue_.size(), packet_size);
                 return packet_size;
             }));
 
@@ -873,8 +889,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                 testing::Invoke([this](uint8_t* data, size_t len) -> Result {
                     std::lock_guard<std::mutex> lock(queue_mutex_);
                     if (message_queue_.empty()) {
-                        LOG_ERROR("MockRadio: readData() - No data received",
-                                  address_);
+                        LOG_ERROR("MockRadio: readData() - No data received");
                         return Result(LoraMesherErrorCode::kHardwareError,
                                       "No data received");
                     }
@@ -884,14 +899,14 @@ class RadioToNetworkAdapter : public IRadioReceiver {
                     LOG_DEBUG(
                         "MockRadio: readData() - Consumed message, "
                         "queue size after pop: %zu",
-                        address_, message_queue_.size());
+                        message_queue_.size());
 
                     if (len < current_message.data.size()) {
                         LOG_ERROR(
                             "MockRadio: readData() - Buffer too small "
                             "for received message: "
                             "expected %zu, got %zu",
-                            address_, current_message.data.size(), len);
+                            current_message.data.size(), len);
                         return Result(LoraMesherErrorCode::kBufferOverflow,
                                       "Buffer too small");
                     }
@@ -992,13 +1007,10 @@ class RadioToNetworkAdapter : public IRadioReceiver {
             message_queue_.push(msg);
         }
 
-        LOG_DEBUG("RadioToNetworkAdapter: Received message", address_);
-
         // Use instance-aware notification instead of static ISR callback
         LOG_DEBUG(
             "RadioToNetworkAdapter: Notifying processing task via "
-            "MockRadio",
-            address_);
+            "MockRadio");
         radio_->NotifyProcessingTask();
     }
 
@@ -1043,7 +1055,7 @@ class RadioToNetworkAdapter : public IRadioReceiver {
     std::queue<QueuedMessage> message_queue_;
     mutable std::mutex queue_mutex_;
     std::function<void()> original_callback_ = nullptr;  ///< Original callback
-    loramesher::radio::RadioState current_radio_state_{
+    std::atomic<loramesher::radio::RadioState> current_radio_state_{
         loramesher::radio::RadioState::kIdle};  ///< Track current radio state
     RadioConfig radio_config_;  ///< Radio configuration for ToA calculations
 };

@@ -165,7 +165,7 @@ Result SuperframeService::StopSuperframe() {
     // }
 
     LOG_INFO("Superframe service stopped after %d completed superframes",
-             superframes_completed_);
+             superframes_completed_.load());
 
     return Result::Success();
 }
@@ -201,11 +201,14 @@ Result SuperframeService::HandleNewSuperframe() {
     // Update timing statistics
     UpdateTimingStats();
 
-    LOG_DEBUG("Started superframe #%d", superframes_completed_);
+    LOG_DEBUG("Started superframe #%d", superframes_completed_.load());
 
     // Notify callback if set
-    if (superframe_callback_) {
-        superframe_callback_(0, true);  // Slot 0, new superframe
+    {
+        std::lock_guard<std::mutex> lock(callback_mutex_);
+        if (superframe_callback_) {
+            superframe_callback_(0, true);  // Slot 0, new superframe
+        }
     }
 
     // Notify update task that a new frame has started
@@ -517,7 +520,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     // After a full superframe has compleated.
     // Calculate drift
     int32_t drift = static_cast<int32_t>(external_slot_start_time - old_start);
-    sync_drift_accumulator_ += std::abs(drift);
+    sync_drift_accumulator_ += static_cast<uint32_t>(std::abs(drift));
 
     last_slot_ = (external_slot > 0) ? (external_slot - 1) : 0;
 
@@ -538,7 +541,8 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
 }
 
 void SuperframeService::SetSuperframeCallback(SuperframeCallback callback) {
-    superframe_callback_ = callback;
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    superframe_callback_ = std::move(callback);
 }
 
 SuperframeService::SuperframeStats SuperframeService::GetSuperframeStats()
@@ -552,8 +556,9 @@ SuperframeService::SuperframeStats SuperframeService::GetSuperframeStats()
     if (is_running_) {
         uint32_t current_time = GetRTOS().getTickCount();
         stats.total_runtime_ms = current_time - service_start_time_;
-        stats.sync_drift_ms = sync_drift_accumulator_ /
-                              std::max((uint32_t)1u, superframes_completed_);
+        stats.sync_drift_ms =
+            sync_drift_accumulator_ /
+            std::max((uint32_t)1u, superframes_completed_.load());
     }
 
     if (timing_samples_ > 0) {
@@ -614,8 +619,11 @@ Result SuperframeService::UpdateSuperframeState() {
         }
 
         // Call callback for slot transition
-        if (superframe_callback_ && !new_superframe) {
-            superframe_callback_(current_slot, new_superframe);
+        {
+            std::lock_guard<std::mutex> lock(callback_mutex_);
+            if (superframe_callback_ && !new_superframe) {
+                superframe_callback_(current_slot, new_superframe);
+            }
         }
 
         last_slot_ = current_slot;

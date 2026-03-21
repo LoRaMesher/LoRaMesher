@@ -13,7 +13,7 @@ This example extends the simple example with **power management** for TTGO T-Bea
 Compared to `simple_example`, this example includes:
 
 - **Automatic PMU detection** - Supports both AXP192 (T-Beam v1.0/v1.1) and AXP2101 (T-Beam v1.2+)
-- **Sleep callbacks** - Disable peripherals before deep sleep
+- **Sleep callbacks** - Disable peripherals before sleep
 - **Wake callbacks** - Re-initialize hardware after wake
 - **Battery monitoring** - Enable voltage measurement via PMU
 
@@ -52,7 +52,12 @@ LoraMesher calls your callbacks when entering and exiting sleep:
 
 ```cpp
 SleepResult OnSleep(const SleepContext& ctx) {
-    InitDevices::prepareSleep();  // Disable LoRa, GPS power
+    if (!InitDevices::prepareSleep()) {
+        Serial.println("Error: Failed to prepare sleep");
+        return power::SleepResult{false};  // veto: peripheral state unknown
+    }
+    // After returning true, the protocol puts the radio and MCU to sleep.
+    // OnWakeUp will be called before the next active slot.
     return power::SleepResult{true};
 }
 
@@ -120,4 +125,4 @@ Sent to 0x1A2B
 1. **Reduce TX power** - Use minimum power needed for your range
 2. **Increase hello interval** - Longer intervals reduce radio activity
 3. **Disable GPS** - If not needed, call `PMU->disablePowerOutput(XPOWERS_LDO3)` or `ALDO3`
-4. **Use deep sleep** - Between transmissions when latency allows
+4. **MCU light sleep** - The protocol automatically puts the MCU into light sleep during SLEEP slots (ESP32 only). Use `OnSleep` to power down peripherals before sleep.

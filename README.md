@@ -128,7 +128,7 @@ mesh.setReceiveAppDataTaskHandle(rxTask);
 | Field | Type | Description |
 |---|---|---|
 | `src` | `uint16_t` | Source node address |
-| `dst` | `uint16_t` | Destination address (local or `BROADCAST_ADDR`) |
+| `dst` | `uint16_t` | Destination address (local or `kBroadcastAddress`) |
 | `payloadSize` | `uint32_t` | Payload size in bytes |
 | `payload` | `T[]` | Typed payload array |
 
@@ -143,7 +143,7 @@ SensorData reading { .counter = 42 };
 mesh.createPacketAndSend(destinationAddress, &reading, /*count=*/1);
 
 // Broadcast
-mesh.createPacketAndSend(BROADCAST_ADDR, &reading, 1);
+mesh.createPacketAndSend(kBroadcastAddress, &reading, 1);
 
 // Reliable (acknowledged, larger payloads)
 mesh.sendReliable(destinationAddress, &reading, 1);

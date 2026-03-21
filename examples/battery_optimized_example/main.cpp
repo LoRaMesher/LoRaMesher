@@ -61,7 +61,10 @@ using namespace loramesher::power;
 SleepResult OnSleep(const SleepContext& ctx) {
     if (!InitDevices::prepareSleep()) {
         Serial.println("Error: Failed to prepare sleep");
+        return power::SleepResult{false};  // veto: peripheral state unknown
     }
+    // After returning true, the protocol puts the radio and MCU to sleep.
+    // OnWakeUp will be called before the next active slot.
     return power::SleepResult{true};
 }
 

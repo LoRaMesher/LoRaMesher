@@ -133,12 +133,14 @@ struct SleepResult {
  *                current slot, and pending message status
  * @return SleepResult indicating whether to allow sleep and max duration
  *
- * @note This callback should be fast - avoid blocking operations
- * @note The callback runs in the protocol task context
- * @note Returning allow_sleep=false still sets the radio to sleep, but
- *       prevents the library from tracking the device as "sleeping"
- *       (wake callback won't be invoked on next slot)
- *
+ * @note  This callback should be fast — avoid blocking operations.
+ *        The callback runs in the protocol task context.
+ * @note  Returning SleepResult{true} causes the protocol to:
+ *        1. Put the radio to sleep.
+ *        2. Put the MCU to light sleep until the next slot (ESP32 only).
+ *        Use this callback to power down user peripherals (GPS, sensors) before sleep.
+ * @note  Returning SleepResult{false} vetoes MCU sleep. The radio still sleeps for
+ *        power savings, but the MCU stays running and OnWakeUp will not fire.
  * @warning Do not perform lengthy operations in this callback as it
  *          will delay slot processing and may cause timing issues
  */

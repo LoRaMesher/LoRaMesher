@@ -145,6 +145,15 @@ class RTOSFreeRTOS : public RTOS {
 
     void delay(uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
+    void LightSleep(uint32_t ms) override {
+#ifdef LORAMESHER_BUILD_ARDUINO
+        esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
+        esp_light_sleep_start();
+#else
+        delay(ms);
+#endif
+    }
+
     uint32_t getTickCount() override { return xTaskGetTickCount(); }
 
     void StartScheduler() override { vTaskStartScheduler(); }

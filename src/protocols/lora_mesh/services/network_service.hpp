@@ -128,6 +128,9 @@ class NetworkService : public INetworkService {
     const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
     GetNetworkNodes() const override;
 
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+    GetNetworkNodesCopy() const override;
+
     /**
      * @brief Get the number of nodes in the network
      * 
@@ -685,9 +688,9 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Perform discovery logic
-     * 
+     *
      * Checks for existing networks and creates new network if timeout expires.
-     * 
+     *
      * @param timeout_ms Discovery timeout in milliseconds
      * @return Result Success or error
      */
@@ -695,13 +698,27 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Perform joining logic
-     * 
+     *
      * Checks if network manager has responded to join request.
-     * 
+     *
      * @param manager_address Network manager address to join
      * @return Result Success or error
      */
     Result PerformJoining(uint32_t timeout_ms);
+
+    /**
+     * @brief Check election deadline and create network if window has closed.
+     *
+     * @return Result Success or error
+     */
+    Result PerformNMElection() override;
+
+    /**
+     * @brief Remaining ms until NM_ELECTION deadline (0 if expired or not in election).
+     *
+     * @return uint32_t Remaining milliseconds
+     */
+    uint32_t GetNMElectionTimeout() const override;
 
     /**
      * @brief Set the number of slots per superframe
@@ -1091,6 +1108,8 @@ class NetworkService : public INetworkService {
         0;  ///< Tick count when election backoff expires (0 = none)
     uint8_t election_priority_ =
         0xFF;  ///< Our election priority (lower = higher priority)
+    uint32_t nm_election_start_time_ =
+        0;  ///< Tick count when NM_ELECTION began
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
     uint16_t network_id_ = 0;

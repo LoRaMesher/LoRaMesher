@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <memory>
 
 #include "types/messages/loramesher/sync_beacon_message.hpp"
@@ -431,6 +432,89 @@ TEST_F(SyncBeaconMessageTest,
     EXPECT_EQ(h.GetHopCount(), 2u);
     EXPECT_EQ(h.GetPropagationDelay(), 150u);  // 100 + 50 guard
     EXPECT_EQ(h.GetMaxHops(), max_hops);
+}
+
+// =============================================================================
+// MutablePayload direct-write tests
+// =============================================================================
+
+/**
+ * @brief Round-trip validation that the offset constant is correct
+ */
+TEST_F(SyncBeaconMessageTest, MutablePayloadDirectWrite) {
+    ASSERT_TRUE(original_msg.has_value());
+    auto base_msg = original_msg->ToBaseMessage();
+
+    uint32_t new_delay = 12345;
+    auto payload = base_msg.MutablePayload();
+    constexpr size_t kOffset = SyncBeaconHeader::kPropagationDelayPayloadOffset;
+    ASSERT_GE(payload.size(), kOffset + sizeof(uint32_t));
+    std::memcpy(payload.data() + kOffset, &new_delay, sizeof(uint32_t));
+
+    auto serialized = base_msg.Serialize();
+    ASSERT_TRUE(serialized.has_value());
+    auto beacon = SyncBeaconMessage::CreateFromSerialized(*serialized);
+    ASSERT_TRUE(beacon.has_value());
+    EXPECT_EQ(beacon->GetPropagationDelay(), new_delay);
+}
+
+/**
+ * @brief Ensures writing propagation delay doesn't corrupt adjacent fields
+ */
+TEST_F(SyncBeaconMessageTest, MutablePayloadPreservesOtherFields) {
+    ASSERT_TRUE(forwarded_msg.has_value());
+    auto base_msg = forwarded_msg->ToBaseMessage();
+
+    auto orig_serialized = base_msg.Serialize();
+    ASSERT_TRUE(orig_serialized.has_value());
+    auto orig_beacon =
+        SyncBeaconMessage::CreateFromSerialized(*orig_serialized);
+    ASSERT_TRUE(orig_beacon.has_value());
+    auto orig_network_id = orig_beacon->GetNetworkId();
+    auto orig_hop_count = orig_beacon->GetHopCount();
+    auto orig_max_hops = orig_beacon->GetMaxHops();
+    auto orig_total_slots = orig_beacon->GetTotalSlots();
+
+    uint32_t new_delay = 99999;
+    auto payload = base_msg.MutablePayload();
+    constexpr size_t kOffset = SyncBeaconHeader::kPropagationDelayPayloadOffset;
+    std::memcpy(payload.data() + kOffset, &new_delay, sizeof(uint32_t));
+
+    auto updated_serialized = base_msg.Serialize();
+    ASSERT_TRUE(updated_serialized.has_value());
+    auto updated_beacon =
+        SyncBeaconMessage::CreateFromSerialized(*updated_serialized);
+    ASSERT_TRUE(updated_beacon.has_value());
+    EXPECT_EQ(updated_beacon->GetPropagationDelay(), new_delay);
+    EXPECT_EQ(updated_beacon->GetNetworkId(), orig_network_id);
+    EXPECT_EQ(updated_beacon->GetHopCount(), orig_hop_count);
+    EXPECT_EQ(updated_beacon->GetMaxHops(), orig_max_hops);
+    EXPECT_EQ(updated_beacon->GetTotalSlots(), orig_total_slots);
+}
+
+/**
+ * @brief Tests the pre-send callback mechanism end-to-end
+ */
+TEST_F(SyncBeaconMessageTest, PreSendCallbackUpdatesMessage) {
+    ASSERT_TRUE(original_msg.has_value());
+    auto base_msg = original_msg->ToBaseMessage();
+
+    uint32_t injected_delay = 42;
+    base_msg.SetPreSendCallback([&](BaseMessage& msg) {
+        auto payload = msg.MutablePayload();
+        constexpr size_t kOffset =
+            SyncBeaconHeader::kPropagationDelayPayloadOffset;
+        std::memcpy(payload.data() + kOffset, &injected_delay,
+                    sizeof(uint32_t));
+    });
+
+    EXPECT_TRUE(base_msg.InvokePreSendCallback());
+
+    auto serialized = base_msg.Serialize();
+    ASSERT_TRUE(serialized.has_value());
+    auto beacon = SyncBeaconMessage::CreateFromSerialized(*serialized);
+    ASSERT_TRUE(beacon.has_value());
+    EXPECT_EQ(beacon->GetPropagationDelay(), injected_delay);
 }
 
 }  // namespace test

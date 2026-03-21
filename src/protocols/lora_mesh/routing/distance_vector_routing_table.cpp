@@ -339,6 +339,12 @@ DistanceVectorRoutingTable::GetNodes() const {
     return nodes_;
 }
 
+std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+DistanceVectorRoutingTable::GetNodesCopy() const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    return nodes_;
+}
+
 size_t DistanceVectorRoutingTable::GetSize() const {
     std::lock_guard<std::mutex> lock(table_mutex_);
     return nodes_.size();

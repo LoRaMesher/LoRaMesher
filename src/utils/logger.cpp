@@ -29,8 +29,13 @@ void Logger::Log(LogLevel level, const char* format, ...) {
     vsnprintf(buffer, sizeof(buffer), format, args);
     va_end(args);
 
-    // Log the formatted message
-    LogMessage(level, std::string(buffer));
+    // Log the formatted message; release semaphore even if an exception is thrown
+    try {
+        LogMessage(level, std::string(buffer));
+    } catch (...) {
+        GetRTOS().GiveSystemSemaphore(logger_semaphore_);
+        return;
+    }
 
     GetRTOS().GiveSystemSemaphore(logger_semaphore_);
 }
@@ -59,7 +64,7 @@ void Logger::SetLogLevel(LogLevel level) {
     EnsureSemaphoreInitialized();
 
     if (logger_semaphore_ &&
-        GetRTOS().TakeSystemSemaphore(logger_semaphore_, 10)) {
+        GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
         min_log_level_ = level;
         GetRTOS().GiveSystemSemaphore(logger_semaphore_);
     }
@@ -68,18 +73,20 @@ void Logger::SetLogLevel(LogLevel level) {
 void Logger::SetHandler(std::unique_ptr<LogHandler> handler) {
     EnsureSemaphoreInitialized();
 
-    if (logger_semaphore_ &&
-        GetRTOS().TakeSystemSemaphore(logger_semaphore_, 10)) {
-        handler_ = std::move(handler);
-        GetRTOS().GiveSystemSemaphore(logger_semaphore_);
+    if (!logger_semaphore_ ||
+        !GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
+        fprintf(stderr, "Logger::SetHandler: timeout acquiring semaphore\n");
+        return;
     }
+    handler_ = std::move(handler);
+    GetRTOS().GiveSystemSemaphore(logger_semaphore_);
 }
 
 void Logger::Flush() {
     EnsureSemaphoreInitialized();
 
     if (logger_semaphore_ &&
-        GetRTOS().TakeSystemSemaphore(logger_semaphore_, 10)) {
+        GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
         if (handler_) {
             handler_->Flush();
         }

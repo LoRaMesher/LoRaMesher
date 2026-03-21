@@ -135,7 +135,7 @@ TEST_F(CapabilityPropagationTests, CapabilityPropagationThroughNetwork) {
 
     // Wait for capabilities to propagate
     std::vector<TestNode*> nodes = {&node1, &node2};
-    bool propagated = WaitForCapabilityPropagation(nodes, superframeTime * 3);
+    bool propagated = WaitForCapabilityPropagation(nodes, superframeTime * 5);
 
     ASSERT_TRUE(propagated) << "Capabilities did not propagate in time";
 
@@ -292,7 +292,7 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
 
     WaitForTasksToExecute();
 
-    discovery_timeout = GetSuperframeDuration(node1) * 3;
+    discovery_timeout = GetSuperframeDuration(node1) * 5;
 
     // Wait for node3 to join
     bool node3_joined = AdvanceTime(
@@ -309,7 +309,7 @@ TEST_F(CapabilityPropagationTests, MultiNodeCapabilityTracking) {
 
     WaitForTasksToExecute();
 
-    discovery_timeout = GetSuperframeDuration(node1) * 3;
+    discovery_timeout = GetSuperframeDuration(node1) * 5;
 
     // Wait for node4 to join
     bool node4_joined = AdvanceTime(

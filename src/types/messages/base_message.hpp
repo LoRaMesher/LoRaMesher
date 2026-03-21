@@ -146,6 +146,15 @@ class BaseMessage {
     }
 
     /**
+     * @brief Gets a mutable view of the message payload
+     *
+     * @return Mutable span over the payload data
+     */
+    std::span<uint8_t> MutablePayload() {
+        return {payload_data_, payload_size_};
+    }
+
+    /**
      * @brief Gets the total size of the message
      *
      * @return Size in bytes including header and payload

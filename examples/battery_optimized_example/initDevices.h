@@ -20,10 +20,10 @@ class InitDevices {
     static void init();
 
     /**
-     * @brief Prepare the device for deep sleep
+     * @brief Prepare the device for light sleep
      *
      * Disables measurements and peripheral power to minimize
-     * current draw during sleep. Call before entering deep sleep.
+     * current draw during sleep. Call before entering light sleep.
      *
      * @return true if sleep preparation succeeded, false if no PMU
      */

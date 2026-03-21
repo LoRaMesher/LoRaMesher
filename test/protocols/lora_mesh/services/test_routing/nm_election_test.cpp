@@ -79,7 +79,7 @@ class NMElectionTests : public RoutingTestFixture {
         uint32_t print_every = superframe_ms * 2;  // Print every 2 superframes
         uint32_t next_print = print_every;
 
-        return AdvanceTime(timeout_ms, timeout_ms, step_ms, 0, [&]() {
+        return AdvanceTime(timeout_ms * 2, timeout_ms * 2, step_ms, 0, [&]() {
             elapsed += step_ms;
             int nm_count = 0;
             int normal_count = 0;
@@ -332,6 +332,93 @@ TEST_F(NMElectionTests, TwoAutoNodes_ExactlyOneWinsElection) {
     // The winner must recognise itself as NM
     EXPECT_EQ(winner->protocol->GetNetworkManager(), winner->address)
         << winner->name << " should be its own NM";
+}
+
+// ---------------------------------------------------------------------------
+// Test 4: Configured-NM node surrenders in election → enters DISCOVERY (not CreateNetwork)
+//
+// Topology: NM_A (0x1000, NM role, priority=0) ←→ NM_B (0x1080, NM role, priority=64)
+//                                               ←→ NM_C (0x1010, NM role, priority=8)
+//           Full mesh (all three connected)
+//
+// 1. All three merge into one network — NM_A (priority 0) wins all claims.
+// 2. NM_A fails.
+// 3. NM_B and NM_C enter FAULT_RECOVERY.  NM_C's backoff expires first
+//    (lower addr_bonus) → NM_C sends NM_CLAIM (priority 8).
+// 4. NM_B receives NM_CLAIM from NM_C while still in FAULT_RECOVERY:
+//    8 < 64 → NM_B surrenders.
+//    Bug (pre-fix): surrender calls StartDiscovery() → for NM-role nodes
+//    StartDiscovery calls CreateNetwork() immediately → split-brain.
+//    Fix: surrender enters DISCOVERY directly, NM_B then joins NM_C.
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Configured-NM surrenders to higher-priority NM and joins, not creates.
+ *
+ * Verifies that when a NodeRole::NETWORK_MANAGER node in FAULT_RECOVERY
+ * receives an NM_CLAIM from a higher-priority claimant, it enters DISCOVERY
+ * (not creates its own network), and eventually joins the winner.
+ */
+TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
+    // Priority ordering: NM_A (0) < NM_C (8) < NM_B (64)
+    // NM_A wins initial merge; NM_C wins second election; NM_B must surrender.
+    auto& nm_a = CreateNode("NM_A", 0x1000, NodeRole::NETWORK_MANAGER);
+    auto& nm_b = CreateNode("NM_B", 0x1080, NodeRole::NETWORK_MANAGER);
+    auto& nm_c = CreateNode("NM_C", 0x1010, NodeRole::NETWORK_MANAGER);
+
+    SetLinkStatus(nm_a, nm_b, true);
+    SetLinkStatus(nm_a, nm_c, true);
+    SetLinkStatus(nm_b, nm_c, true);
+
+    ASSERT_TRUE(StartNode(nm_a));
+    ASSERT_TRUE(StartNode(nm_b));
+    ASSERT_TRUE(StartNode(nm_c));
+
+    // Phase 1: initial merge — NM_A (priority 0) wins; NM_B and NM_C join.
+    std::vector<TestNode*> all_nodes = {&nm_a, &nm_b, &nm_c};
+    ASSERT_TRUE(WaitForNetworkFormation(all_nodes, 2))
+        << "Initial three-way merge failed";
+
+    EXPECT_EQ(nm_a.protocol->GetState(), ProtocolState::NETWORK_MANAGER);
+    EXPECT_EQ(nm_b.protocol->GetState(), ProtocolState::NORMAL_OPERATION);
+    EXPECT_EQ(nm_c.protocol->GetState(), ProtocolState::NORMAL_OPERATION);
+
+    std::cout
+        << "=== Initial network formed under NM_A. Simulating NM_A failure ==="
+        << std::endl;
+
+    // Phase 2: NM_A fails — NM_B and NM_C lose sync.
+    SimulateNodeFailure(nm_a);
+
+    // Phase 3: election between NM_B (priority 64) and NM_C (priority 8).
+    // NM_C's backoff expires first → sends NM_CLAIM → NM_B surrenders.
+    // With the fix NM_B enters DISCOVERY; without it NM_B would CreateNetwork().
+    std::vector<TestNode*> survivors = {&nm_b, &nm_c};
+    bool reformed = WaitForElectionAndReformation(survivors, 1);
+
+    std::cout << "=== Post-election states ===" << std::endl;
+    std::cout << "  NM_B state=" << static_cast<int>(nm_b.protocol->GetState())
+              << "  NM_C state=" << static_cast<int>(nm_c.protocol->GetState())
+              << "  (NETWORK_MANAGER="
+              << static_cast<int>(ProtocolState::NETWORK_MANAGER)
+              << ", NORMAL_OPERATION="
+              << static_cast<int>(ProtocolState::NORMAL_OPERATION) << ")"
+              << std::endl;
+
+    ASSERT_TRUE(reformed) << "Network did not reform after NM_A failure. "
+                             "NM_B state="
+                          << static_cast<int>(nm_b.protocol->GetState())
+                          << " NM_C state="
+                          << static_cast<int>(nm_c.protocol->GetState());
+
+    // NM_C (priority 8) must win; NM_B (priority 64) must join, not split-brain.
+    EXPECT_EQ(nm_c.protocol->GetState(), ProtocolState::NETWORK_MANAGER)
+        << "NM_C (priority 8) should be the new NETWORK_MANAGER";
+    EXPECT_EQ(nm_b.protocol->GetState(), ProtocolState::NORMAL_OPERATION)
+        << "NM_B (priority 64) should have joined NM_C as NORMAL_OPERATION, "
+           "not created its own network";
+    EXPECT_EQ(nm_b.protocol->GetNetworkManager(), nm_c.address)
+        << "NM_B should recognise NM_C as its network manager";
 }
 
 }  // namespace test

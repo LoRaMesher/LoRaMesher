@@ -44,7 +44,7 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
             if (address == 0x0000) {
                 address = 0x0001;
                 LOG_DEBUG("Avoided reserved address 0x0000, using 0x0001");
-            } else if (address == 0xFFFF) {
+            } else if (address == kBroadcastAddress) {
                 address = 0xFFFE;
                 LOG_DEBUG("Avoided reserved address 0xFFFF, using 0xFFFE");
             }
@@ -83,7 +83,7 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
         if (address == 0x0000) {
             address = 0x0001;  // Use first valid address
             LOG_DEBUG("Avoided reserved address 0x0000, using 0x0001");
-        } else if (address == 0xFFFF) {
+        } else if (address == kBroadcastAddress) {
             address = 0xFFFE;  // Use last valid address
             LOG_DEBUG("Avoided reserved address 0xFFFF, using 0xFFFE");
         }

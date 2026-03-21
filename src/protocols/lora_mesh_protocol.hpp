@@ -224,6 +224,9 @@ class LoRaMeshProtocol : public Protocol {
     const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
     GetNetworkNodes() const;
 
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+    GetNetworkNodesCopy() const;
+
 #ifdef DEBUG
     lora_mesh::NetworkService* GetNetworkServiceForTest() {
         return network_service_.get();

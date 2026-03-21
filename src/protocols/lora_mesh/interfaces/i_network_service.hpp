@@ -84,9 +84,6 @@ class INetworkService {
             NodeRole::AUTO;  ///< Node role for network formation
     };
 
-    static constexpr AddressType kBroadcastAddress =
-        0xFFFF;  ///< Broadcast address for routing
-
     // Node management methods
 
     /**
@@ -133,6 +130,14 @@ class INetworkService {
      */
     virtual const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
     GetNetworkNodes() const = 0;
+
+    /**
+     * @brief Get a thread-safe copy of all network nodes
+     *
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes
+     */
+    virtual std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+    GetNetworkNodesCopy() const = 0;
 
     /**
      * @brief Get total node count
@@ -332,6 +337,20 @@ class INetworkService {
      * @return uint8_t Hop distance to network manager (0 if NM, 1 if unknown)
      */
     virtual uint8_t GetHopDistanceToNM() const = 0;
+
+    /**
+     * @brief Check election deadline and create network if window has closed.
+     *
+     * @return Result Success or error
+     */
+    virtual Result PerformNMElection() = 0;
+
+    /**
+     * @brief Remaining ms until NM_ELECTION deadline (0 if expired or not in election).
+     *
+     * @return uint32_t Remaining milliseconds
+     */
+    virtual uint32_t GetNMElectionTimeout() const = 0;
 };
 
 }  // namespace lora_mesh

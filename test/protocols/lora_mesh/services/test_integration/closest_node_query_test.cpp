@@ -40,7 +40,7 @@ class ClosestNodeQueryTests : public LoRaMeshTestFixture {
      */
     std::vector<RouteEntry> GetRouteEntriesFromNode(TestNode& node) {
         std::vector<RouteEntry> routes;
-        const auto& network_nodes = node.protocol->GetNetworkNodes();
+        auto network_nodes = node.protocol->GetNetworkNodesCopy();
         routes.reserve(network_nodes.size());
         for (const auto& n : network_nodes) {
             RouteEntry entry;
@@ -65,7 +65,7 @@ class ClosestNodeQueryTests : public LoRaMeshTestFixture {
      */
     std::optional<RouteEntry> FindClosestNodeByCapability(TestNode& node,
                                                           uint8_t capability) {
-        const auto& network_nodes = node.protocol->GetNetworkNodes();
+        auto network_nodes = node.protocol->GetNetworkNodesCopy();
 
         std::optional<RouteEntry> best;
         uint16_t best_cost = UINT16_MAX;

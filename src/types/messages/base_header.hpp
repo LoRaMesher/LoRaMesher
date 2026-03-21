@@ -19,6 +19,9 @@ namespace loramesher {
 /** Type alias for address representations */
 using AddressType = uint16_t;
 
+/** Broadcast destination address — delivered to all nodes in range */
+static constexpr AddressType kBroadcastAddress = 0xFFFF;
+
 /**
  * @brief Base header class for all message types
  * 

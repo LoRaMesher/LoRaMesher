@@ -73,6 +73,9 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>& GetNodes()
         const override;
 
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNodesCopy()
+        const override;
+
     size_t GetSize() const override;
 
     std::vector<RoutingTableEntry> GetRoutingEntries(

@@ -184,6 +184,18 @@ class SyncBeaconHeader : public BaseHeader {
                sizeof(uint8_t);       // node_count
     }
 
+    /// Byte offset of propagation_delay_ms within the serialized payload
+    static constexpr size_t kPropagationDelayPayloadOffset =
+        sizeof(uint16_t) +     // network_id
+        sizeof(uint8_t) +      // total_slots
+        sizeof(uint16_t) +     // slot_duration_ms
+        sizeof(AddressType) +  // network_manager
+        sizeof(uint8_t);       // hop_count
+    // = 8
+
+    static_assert(kPropagationDelayPayloadOffset == 8,
+                  "Offset must match serialization order in Serialize()");
+
     /**
      * @brief Gets the total size of this header type
      * 

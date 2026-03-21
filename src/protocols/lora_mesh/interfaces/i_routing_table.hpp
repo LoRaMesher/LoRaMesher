@@ -146,6 +146,14 @@ class IRoutingTable {
     GetNodes() const = 0;
 
     /**
+     * @brief Get a thread-safe copy of all network nodes
+     *
+     * @return std::vector<NetworkNodeRoute> Copy of nodes vector
+     */
+    virtual std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
+    GetNodesCopy() const = 0;
+
+    /**
      * @brief Get the number of nodes in the routing table
      * 
      * @return size_t Number of nodes

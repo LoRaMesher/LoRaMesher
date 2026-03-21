@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -180,7 +181,8 @@ class PingPongProtocol : public Protocol {
     os::TaskHandle_t
         process_task_handle_;  ///< Handle for message processing task
 
-    bool stop_tasks_;  ///< Flag to control the timeout checking task
+    std::atomic<bool>
+        stop_tasks_;  ///< Flag to control the timeout checking task
 
     // Constants
     static constexpr uint32_t TIMEOUT_CHECK_INTERVAL_MS =
