@@ -371,7 +371,12 @@ TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
     SetLinkStatus(nm_b, nm_c, true);
 
     ASSERT_TRUE(StartNode(nm_a));
+    // Stagger startup so superframes are out of phase — otherwise all NMs
+    // transmit SYNC_BEACON in the same slot and no beacon is ever received.
+    auto slot_duration = GetSlotDuration(nm_a);
+    AdvanceTime(slot_duration);
     ASSERT_TRUE(StartNode(nm_b));
+    AdvanceTime(slot_duration);
     ASSERT_TRUE(StartNode(nm_c));
 
     // Phase 1: initial merge — NM_A (priority 0) wins; NM_B and NM_C join.

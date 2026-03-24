@@ -18,34 +18,31 @@ This document provides the complete technical specification for the LoRaMesher p
    - 2.3 [State Transition Triggers](#23-state-transition-triggers)
 3. [Message Format Specification](#3-message-format-specification)
    - 3.1 [Message Type Organization](#31-message-type-organization)
-   - 3.2 [Message Type Organization System (v1.2)](#32-message-type-organization-system-v12)
-   - 3.3 [Core Message Types](#33-core-message-types)
-     - 3.3.1 [Join Messages (Updated v1.2)](#331-join-messages-updated-v12)
-     - 3.3.2 [Routing Messages](#332-routing-messages)
-     - 3.3.3 [Routing Table Messages (New v1.2)](#333-routing-table-messages-new-v12)
-     - 3.3.4 [Synchronization Messages](#334-synchronization-messages)
-     - 3.3.5 [Data Messages](#335-data-messages)
-   - 3.4 [Message Serialization](#34-message-serialization)
+   - 3.2 [Core Message Types](#32-core-message-types)
+   - 3.3 [Message Serialization](#33-message-serialization)
 4. [Routing Algorithm](#4-routing-algorithm)
    - 4.1 [Distance-Vector Algorithm](#41-distance-vector-algorithm)
    - 4.2 [Loop Prevention](#42-loop-prevention)
    - 4.3 [Route Aging](#43-route-aging)
-   - 4.5 [Routing Table Architecture (Updated v1.2)](#45-routing-table-architecture-updated-v12)
+   - 4.4 [Network Topology Examples](#44-network-topology-examples-and-routing-behavior)
+   - 4.5 [Routing Table Architecture](#45-routing-table-architecture)
 5. [Network Synchronization (TDMA)](#5-network-synchronization-tdma)
    - 5.1 [Superframe Structure](#51-superframe-structure)
    - 5.2 [Timing Parameters](#52-timing-parameters)
    - 5.3 [Synchronization Protocol](#53-synchronization-protocol)
    - 5.4 [Slot Allocation](#54-slot-allocation)
    - 5.5 [Multi-Hop Synchronization Strategy](#55-multi-hop-synchronization-strategy)
-   - 5.6 [TX Guard Time Mechanism](#56-tx-guard-time-mechanism)
-   - 5.7 [Power-Aware Slot Allocation](#57-power-aware-slot-allocation)
-   - 5.8 [Network Manager Election Sequence](#58-network-manager-election-sequence)
-   - 5.9 [Application Data Slot Timing API](#59-application-data-slot-timing-api)
+   - 5.6 [Control Slot Allocation Strategy](#56-control-slot-allocation-strategy)
+   - 5.7 [TX Guard Time Mechanism](#57-tx-guard-time-mechanism)
+   - 5.8 [Power-Aware Slot Allocation](#58-power-aware-slot-allocation)
+   - 5.9 [Network Manager Election Sequence](#59-network-manager-election-sequence)
+   - 5.10 [Application Data Slot Timing API](#510-application-data-slot-timing-api)
 6. [Network Discovery & Joining](#6-network-discovery--joining)
    - 6.1 [Network Discovery Process](#61-network-discovery-process)
    - 6.2 [Discovery Messages](#62-discovery-messages)
    - 6.3 [Join Process](#63-join-process)
-   - 6.4 [Sponsor-Based Join Protocol (New v1.2)](#64-sponsor-based-join-protocol-new-v12)
+   - 6.4 [Sponsor-Based Join Protocol](#64-sponsor-based-join-protocol)
+   - 6.5 [Network Merging](#65-network-merging)
 7. [Packet Structure](#7-packet-structure)
    - 7.1 [Physical Layer Frame](#71-physical-layer-frame)
    - 7.2 [LoRaMesher Frame Structure](#72-loramesher-frame-structure)
@@ -258,21 +255,9 @@ stateDiagram-v2
 
 ### 3.1 Message Type Organization
 
-Messages are organized in a hierarchical 16×16 structure:
+Messages use a bit-field organization for systematic categorization and efficient parsing:
 
-```cpp
-// Message categories (upper 4 bits)
-DATA_MESSAGE    = 0x10,  // Application data transmission
-CONTROL_MESSAGE = 0x20,  // Protocol control and management
-ROUTING_MESSAGE = 0x30,  // Routing table updates
-SYSTEM_MESSAGE  = 0x40,  // System management and diagnostics
-```
-
-### 3.2 Message Type Organization System (v1.2)
-
-LoRaMesher v1.2 uses a sophisticated bit-field organization for message types that enables systematic categorization and efficient parsing:
-
-#### 3.2.1 Bit-Field Structure
+#### 3.1.1 Bit-Field Structure
 
 ```cpp
 /**
@@ -313,7 +298,7 @@ enum class MessageType : uint8_t {
 };
 ```
 
-#### 3.2.2 Category Benefits
+#### 3.1.2 Category Benefits
 
 **Efficient Parsing**: Nodes can quickly determine message category using bit masking:
 ```cpp
@@ -327,16 +312,16 @@ if (main_type == MessageType::SYSTEM_MSG) {
 
 **Protocol Evolution**: The 4+4 bit structure provides room for 240+ additional message types while maintaining backward compatibility.
 
-### 3.3 Core Message Types
+### 3.2 Core Message Types
 
-#### 3.3.1 Join Messages (Updated v1.2)
+#### 3.2.1 Join Messages
 ```cpp
 // Join process messages with sponsor support
 JOIN_REQUEST  = 0x42,  // Request to join network (with sponsor support)
 JOIN_RESPONSE = 0x43,  // Response to join request (with routing semantics)
 ```
 
-**JOIN_REQUEST Format (Updated v1.3)**:
+**JOIN_REQUEST Format**:
 ```cpp
 struct JoinRequestHeader {
     // Standard message header (6 bytes)
@@ -345,7 +330,7 @@ struct JoinRequestHeader {
     MessageType type = JOIN_REQUEST; // Message type 0x42 (1 byte)
     uint8_t payload_size;           // Size of join request payload (1 byte)
 
-    // Join request specific fields (9 bytes)
+    // Join request specific fields (7 bytes)
     uint8_t battery_level;          // Battery level 0-100% (1 byte)
     uint8_t requested_slots;        // Number of data slots requested (1 byte)
     AddressType next_hop;           // Next hop for message forwarding (2 bytes)
@@ -354,7 +339,7 @@ struct JoinRequestHeader {
 };
 ```
 
-**JOIN_RESPONSE Format (Updated v1.3)**:
+**JOIN_RESPONSE Format**:
 ```cpp
 struct JoinResponseHeader {
     // Standard message header (6 bytes)
@@ -363,7 +348,7 @@ struct JoinResponseHeader {
     MessageType type = JOIN_RESPONSE; // Message type 0x43 (1 byte)
     uint8_t payload_size;            // Size of response payload (1 byte)
 
-    // Join response specific fields (12 bytes)
+    // Join response specific fields (9 bytes)
     uint16_t network_id;             // Network identifier (2 bytes)
     uint8_t allocated_slots;         // Number of allocated data slots (1 byte)
     ResponseStatus status;           // Response status code (1 byte)
@@ -375,7 +360,7 @@ struct JoinResponseHeader {
 };
 ```
 
-**Control Slot Index (v1.4)**:
+**Control Slot Index**:
 The Network Manager assigns each joining node a unique `control_slot_index` tracked in-memory in the NM's routing table:
 - NM itself has `control_slot_index = 0`
 - New joining nodes get the **lowest available** index not currently assigned
@@ -404,9 +389,9 @@ This ensures collision-free CONTROL slot allocation, prevents index inflation on
 3. Network Manager sends JOIN_RESPONSE to sponsor with target_address=joining_node
 4. Sponsor forwards response to final target (joining node)
 
-#### 3.3.2 Routing Messages
+#### 3.2.2 Routing Messages
 ```cpp
-// Routing protocol messages (v1.2)
+// Routing protocol messages
 HELLO = 0x31,        // Hello packet (reserved, not currently implemented)
 ROUTE_TABLE = 0x32,  // Routing table exchange (implemented)
 ```
@@ -418,13 +403,13 @@ The HELLO message type (0x31) is reserved for future neighbor discovery and link
 **Usage**:
 - **ROUTE_TABLE messages**: Used for distance-vector routing table exchange (see section 3.3.3)
 
-#### 3.3.3 Routing Table Messages (New v1.2)
+#### 3.2.3 Routing Table Messages
 ```cpp
 // Routing table exchange messages
 ROUTE_TABLE = 0x32,  // Distance-vector routing table exchange
 ```
 
-**ROUTING_TABLE Format (New v1.2)**:
+**ROUTING_TABLE Format**:
 ```cpp
 struct RoutingTableHeader {
     // Standard message header (6 bytes)
@@ -433,10 +418,12 @@ struct RoutingTableHeader {
     MessageType type = ROUTE_TABLE; // Message type 0x32 (1 byte)
     uint8_t payload_size;            // Size of routing entries payload (1 byte)
 
-    // Routing table specific fields (5 bytes)
+    // Routing table specific fields (6 bytes)
     AddressType network_manager;     // Network Manager address (2 bytes)
     uint8_t table_version;           // Version for change detection (1 byte)
     uint8_t entry_count;             // Number of entries in message (1 byte)
+    uint8_t source_capabilities;     // Source node capability flags (1 byte)
+    uint8_t source_allocated_slots;  // Source node's allocated data slots (1 byte)
 };
 
 struct RoutingTableEntry {
@@ -460,7 +447,7 @@ struct RoutingTableEntry {
 3. Link quality metrics prepare for future advanced routing algorithms
 4. Entry count allows variable-length route advertisements
 
-**Capability Propagation (v1.2)**:
+**Capability Propagation**:
 
 Node capabilities (e.g., GATEWAY, custom flags) are propagated through the network using a **next-hop-based trust model**:
 
@@ -504,7 +491,7 @@ Node1 capabilities = GATEWAY (0x01)
    - Reject: Node2 keeps caps=0x01
 ```
 
-#### 3.3.4 Synchronization Messages
+#### 3.2.4 Synchronization Messages
 ```cpp
 // Network synchronization messages
 SYNC_BEACON = 0x46,  // Multi-hop synchronization beacon
@@ -543,9 +530,9 @@ struct SyncBeaconHeader {
 // - superframe_duration_ms = total_slots * slot_duration_ms
 ```
 
-**Node Count (v1.4)**: The `node_count` field carries the Network Manager's authoritative count of control slots needed. All nodes use this value to determine `allocated_control_slots` in their slot frame, replacing the previous independent computation `max(routing_table.size(), my_control_slot_index + 1)`. This ensures all nodes agree on the slot frame structure regardless of their routing table view. The NM computes this as `max_assigned_control_slot_index + 1`.
+**Node Count**: The `node_count` field carries the Network Manager's authoritative count of control slots needed. All nodes use this value to determine `allocated_control_slots` in their slot frame, replacing the previous independent computation `max(routing_table.size(), my_control_slot_index + 1)`. This ensures all nodes agree on the slot frame structure regardless of their routing table view. The NM computes this as `max_assigned_control_slot_index + 1`.
 
-#### 3.3.5 NM Election Messages
+#### 3.2.5 NM Election Messages
 ```cpp
 // Network Manager election messages
 NM_CLAIM = 0x47,  // Broadcast during NM election to claim the Network Manager role
@@ -561,33 +548,62 @@ struct NMClaimPayload {
 };
 ```
 
-See Section 5.8 for the full election algorithm.
+See Section 5.9 for the full election algorithm.
 
-#### 3.3.6 Data Messages
+#### 3.2.6 Data Messages
 ```cpp
-// Application data messages (currently implemented)
-DATA = 0x11,  // Regular data message (point-to-point)
+// Implemented data messages
+DATA = 0x11,            // Regular data message (point-to-point)
+DATA_BROADCAST = 0x12,  // Network-wide broadcast (TTL-based flooding)
 
 // Reserved for future implementation (see Section 10):
-// DATA_BROADCAST = 0x12,  // Network-wide broadcast
 // DATA_MULTICAST = 0x13,  // Group communication
 ```
 
-**DATA Message Format**:
-```cpp
-struct DataUnicast {
-    uint8_t messageType;     // 0x11
-    uint16_t sourceNode;     // Originating node
-    uint16_t destinationNode;// Target node
-    uint8_t ttl;            // Time-to-live (hop limit)
-    uint16_t sequenceNumber; // Message sequence number
-    uint8_t payloadLength;   // Length of application data
-    uint8_t payload[MAX_PAYLOAD_SIZE]; // Application data
-    uint8_t checksum;        // Message integrity check
-};
+**DATA Message Wire Format** (10 bytes header + payload):
+```
+BaseHeader (6 bytes):
+  destination     (2 bytes) - Final destination address
+  source          (2 bytes) - Original sender address
+  type            (1 byte)  - 0x11
+  payload_size    (1 byte)  - Size of extension + user data
+
+DataHeader Extension (4 bytes):
+  next_hop        (2 bytes) - Immediate next hop for routing
+  ttl             (1 byte)  - Time-to-live (decremented at each hop, default = max_hops)
+  seq_num         (1 byte)  - Per-source sequence number for de-duplication
+
+User payload: up to 251 bytes (255 max payload - 4 extension bytes)
 ```
 
-### 3.4 Message Serialization
+**DATA_BROADCAST Message Wire Format** (same structure as DATA):
+```
+BaseHeader (6 bytes):
+  destination     = 0xFFFF (broadcast address)
+  source          (2 bytes) - Original sender address
+  type            = 0x12
+  payload_size    (1 byte)  - Size of extension + user data
+
+Extension (4 bytes):
+  next_hop        = 0xFFFF (broadcast, received by all neighbors)
+  ttl             (1 byte)  - Time-to-live (default 10)
+  seq_num         (1 byte)  - Per-source sequence number for de-duplication
+
+User payload: up to 251 bytes
+```
+
+**Broadcast Behavior**:
+- Each receiving node delivers to the application layer AND re-broadcasts with TTL-1
+- De-duplication: 32-entry circular cache keyed on `(source, seq_num)` prevents duplicate delivery
+- A single per-node sequence counter is shared by `SendData()` and `SendBroadcast()`
+- Messages with TTL ≤ 1 are delivered but not forwarded
+
+**Loop Prevention** (applies to both DATA and DATA_BROADCAST):
+- TTL prevents infinite forwarding loops during routing convergence
+- Sequence number + de-duplication cache detects messages already seen
+- Own messages heard back are silently dropped (source == self check)
+
+### 3.3 Message Serialization
 
 All messages use little-endian byte order and are serialized using the following process:
 
@@ -633,7 +649,7 @@ sequenceDiagram
     Note over A,D: Network converged with optimal routes to E
 ```
 
-### 4.1 Data Message Multi-Hop Forwarding
+### 4.0.1 Data Message Multi-Hop Forwarding
 
 This diagram illustrates how data messages are forwarded through multiple hops:
 
@@ -673,10 +689,6 @@ sequenceDiagram
     B->>A: Forward ACK
     A->>App: Data delivered confirmation
 ```
-
----
-
-## 4. Routing Algorithm
 
 ### 4.1 Distance-Vector Algorithm
 
@@ -815,7 +827,7 @@ routing_table_->GetRoutingEntries(node_address_);
 
 > **Note**: The current implementation excludes routes by destination address rather than by next_hop. This prevents advertising self-routes but doesn't implement traditional split horizon (filtering by next_hop).
 
-**Capability Update Loop Prevention (v1.2)**:
+**Capability Update Loop Prevention**:
 
 In addition to route loop prevention, capability updates are protected against stale information loops:
 
@@ -856,8 +868,6 @@ Topology: Node1 ← → Node2 (bidirectional)
 
 **Route Poisoning**:
 
-> **Note**: Explicit route poisoning (broadcasting infinite metric) is not currently implemented. Routes are implicitly invalidated through timeout-based aging. See Section 10 for planned route poisoning enhancements.
-
 ### 4.3 Route Aging
 
 Routes are aged out using a dual-timeout mechanism (Actual Implementation):
@@ -889,29 +899,37 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 - `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
 - `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
 
-**Two-Phase Link Quality Degradation**:
+**EWMA Link Quality Tracking**:
 
-In addition to the time-based route aging above, direct neighbor routes are monitored via link quality tracking. Each superframe, `UpdateLinkStatistics()` increments a `consecutive_missed` counter for direct neighbors that have not sent a routing message. When a routing message is received, the counter resets to 0.
+Direct neighbor routes are monitored via Exponentially Weighted Moving Average (EWMA) quality tracking. Each superframe, `UpdateLinkStatistics()` calls `ExpectMessage()` for each active direct neighbor. EWMA decay is deferred: it only applies when the previous superframe's expected message was not received (`consecutive_missed > 0`). When a routing message is received, `ReceivedMessage()` boosts the EWMA quality. This ensures perfect reception converges to ~255 while missed messages still cause proportional quality degradation.
 
-After `kConsecutiveMissedForDegradation` (3) consecutive misses, link quality is halved each superframe. The route stays active but its ETX cost increases, naturally causing `IsBetterRoute` to prefer multi-hop alternatives when quality drops below the crossover point. Multi-hop routes via the degraded neighbor also have their quality halved (cascade degradation). After `kConsecutiveMissedForInactivation` (6) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
+The EWMA formula uses fixed-point arithmetic:
+- On received message: `ewma = α × 255 + (1 − α) × ewma`
+- On missed message (deferred to next `ExpectMessage`): `ewma = (1 − α) × ewma`
 
-This two-phase approach allows ETX-based route selection to naturally transition traffic to alternative paths before hard invalidation occurs.
+Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
+
+Multi-hop routes via a degraded neighbor have their quality capped to the direct link quality (`min()` cascade), ensuring that indirect routes cannot appear better than the bottleneck link.
+
+After `consecutive_missed_for_inactivation` (default 10, configurable) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 
-**Route Re-activation on Stale Entry (v1.5)**
+**Route Re-activation with Hysteresis**
 
-When `UpdateRoute()` is called for an inactive (`is_active=false`) node:
-- If the new advertisement is **genuinely better** (lower weighted cost), the route is updated normally.
-- If the new advertisement is **not better** (equal or worse hop count / quality), the node is **re-activated using the existing (better) route** — hop_count and next_hop are preserved. Only `is_active` and `last_seen` are refreshed.
+When `UpdateRoute()` or `ProcessRoutingTableMessage()` is called for an inactive (`is_active=false`) node:
+- If the new advertisement is **genuinely better** (lower weighted cost), the route is updated normally and activated immediately.
+- If the new advertisement is **not better** (equal or worse hop count / quality), a `recovery_counter` is incremented. The node is only re-activated when the counter reaches `min_consecutive_for_reactivation` (default 2, configurable). The existing (better) route's hop_count and next_hop are preserved.
 
-**Rationale**: without this guard, an expired direct-neighbor route (hop_count=1) could be overwritten with a stale 2-hop advertisement received from another node's routing table, causing false `max_hops` inflation that shifts the entire superframe structure.
+The hysteresis prevents oscillation on marginal links where a single lucky message would immediately re-activate a just-invalidated route, causing repeated slot table churn. The `recovery_counter` resets to 0 when a node is marked inactive.
 
-### 4.5 Network Topology Examples and Routing Behavior
+**Rationale**: without the route-preservation guard, an expired direct-neighbor route (hop_count=1) could be overwritten with a stale 2-hop advertisement, causing false `max_hops` inflation that shifts the entire superframe structure.
+
+### 4.4 Network Topology Examples and Routing Behavior
 
 This section demonstrates how the routing algorithm performs in different network topologies.
 
-#### 4.5.1 Linear Network Topology
+#### 4.4.1 Linear Network Topology
 
 ```mermaid
 graph LR
@@ -934,7 +952,7 @@ graph LR
 
 **Data Flow A → E:** A → B → C → D → E (4 hops)
 
-#### 4.5.2 Mesh Network Topology
+#### 4.4.2 Mesh Network Topology
 
 ```mermaid
 graph TB
@@ -969,7 +987,7 @@ graph TB
 - A → E: A → B → E (2 hops, preferred due to higher link quality)
 - A → F: A → C → F (2 hops, preferred due to higher link quality)
 
-#### 4.5.3 Star Network Topology
+#### 4.4.3 Star Network Topology
 
 ```mermaid
 graph TB
@@ -1002,7 +1020,7 @@ graph TB
 - Optimal for centralized control scenarios
 - Manager handles all routing decisions
 
-#### 4.5.4 Partitioned Network Recovery
+#### 4.4.4 Partitioned Network Recovery
 
 This example shows how the network handles and recovers from partitions:
 
@@ -1057,7 +1075,7 @@ graph TB
 | Partition | No route | ∞ | Failed |
 | Healing | A→G→F→E→D | 4 | Restored |
 
-#### 4.5.5 Load Balancing Example
+#### 4.4.5 Load Balancing Example
 
 In networks with multiple equal-cost paths, the protocol can distribute traffic:
 
@@ -1101,7 +1119,7 @@ struct LoadBalancing {
 };
 ```
 
-### 4.5 Routing Table Architecture (Updated v1.2)
+### 4.5 Routing Table Architecture
 
 **Overview**: LoRaMesher v1.2 introduces a modular routing table architecture that separates routing logic from network services and provides infrastructure for advanced routing algorithms.
 
@@ -1174,7 +1192,7 @@ AddressType FindNextHop(AddressType destination) const {
 }
 ```
 
-#### 4.5.3 Future Advanced Routing Algorithm (Planned v1.3+)
+#### 4.5.3 Future Advanced Routing Algorithm (Planned)
 
 **Enhanced Metrics Framework**:
 The current implementation prepares infrastructure for sophisticated routing algorithms:
@@ -1592,7 +1610,7 @@ The `SubslotScheduler::ValidateConfig()` method checks feasibility:
 2. Each subslot TX window must accommodate the estimated time-on-air (ToA)
 3. At higher spreading factors (SF12), packets may exceed subslot windows — increase `slot_duration_ms` accordingly
 
-### 5.6 Control Slot Allocation Strategy (v1.4)
+### 5.6 Control Slot Allocation Strategy
 
 Control slots are allocated using NM-assigned indices tracked in the routing table. The NM is the single authority for slot assignments:
 
@@ -1611,9 +1629,9 @@ Control slots are allocated using NM-assigned indices tracked in the routing tab
 - **Gap Recycling**: Departed nodes' indices are recycled for future joiners
 - **Consistent**: All nodes agree on `allocated_control_slots_` via `node_count` in sync beacon
 
-### 5.6 TX Guard Time Mechanism
+### 5.7 TX Guard Time Mechanism
 
-#### 5.6.1 Purpose and Motivation
+#### 5.7.1 Purpose and Motivation
 
 The TX guard time mechanism addresses the fundamental challenge of RX readiness in TDMA-based mesh networks. When a node begins transmitting at the precise start of its allocated slot, other nodes may not have sufficient time to transition from sleep/idle state to active reception, resulting in lost synchronization and data packets.
 
@@ -1623,7 +1641,7 @@ The TX guard time mechanism addresses the fundamental challenge of RX readiness 
 - **Synchronization Preservation**: Lost sync beacons can cause network fragmentation
 - **LoRa Radio Constraints**: SX126x/SX127x radios need setup time for frequency, spreading factor, and RX configuration
 
-#### 5.6.2 Guard Time Implementation
+#### 5.7.2 Guard Time Implementation
 
 **Core Concept**: TX nodes delay their transmission by a configurable guard time to ensure RX nodes are ready to receive.
 
@@ -1661,7 +1679,7 @@ void ProcessSlotMessages(uint16_t current_slot, SlotAllocation::SlotType slot_ty
 }
 ```
 
-#### 5.6.3 Timing Compensation for Synchronization
+#### 5.7.3 Timing Compensation for Synchronization
 
 **Challenge**: Guard time delays can cause timing drift in sync beacon reception, leading to network desynchronization.
 
@@ -1685,7 +1703,7 @@ void ProcessSyncBeacon(const SyncBeaconHeader& sync_beacon) {
 }
 ```
 
-#### 5.6.4 Multi-Hop Synchronization with Guard Time
+#### 5.7.4 Multi-Hop Synchronization with Guard Time
 
 **Forward Sync Beacon with Accumulated Timing**:
 ```cpp
@@ -1709,7 +1727,7 @@ void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_ty
 }
 ```
 
-#### 5.6.5 Configuration Guidelines
+#### 5.7.5 Configuration Guidelines
 
 **Guard Time Selection**:
 - **Minimum**: 20ms (basic radio setup time)
@@ -1722,7 +1740,7 @@ void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_ty
 - **Power Constraints**: Longer guard times reduce effective slot utilization
 - **Latency Requirements**: Applications requiring low latency should minimize guard time
 
-#### 5.6.6 Benefits and Trade-offs
+#### 5.7.6 Benefits and Trade-offs
 
 **Benefits**:
 - **Improved Synchronization**: Higher sync beacon reception success rate
@@ -1736,9 +1754,9 @@ void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_ty
 - **Power Consumption**: Longer active periods during guard time
 - **Complexity**: Additional timing calculations and compensation logic
 
-### 5.7 Power-Aware Slot Allocation
+### 5.8 Power-Aware Slot Allocation
 
-#### 5.7.1 Slot Types and Power States
+#### 5.8.1 Slot Types and Power States
 
 | Slot Type | Purpose | Power State |
 |-----------|---------|-------------|
@@ -1752,7 +1770,7 @@ void ForwardSyncBeacon(const SyncBeaconHeader& received_beacon, uint32_t slot_ty
 | DISCOVERY_RX | Listen for discovery; fallback TX if queued | Active (Medium Power) |
 | SLEEP | Radio power down | Sleep (Minimal Power) |
 
-#### 5.7.2 Power-Optimized Slot Allocation Formula
+#### 5.8.2 Power-Optimized Slot Allocation Formula
 
 For N-node network (1 manager + N-1 regular nodes):
 
@@ -1789,7 +1807,7 @@ config.setMinSleepFraction(0.30f);  // ≥30% of superframe as sleep (default)
 // Valid range: 0.0f (no minimum) to 0.9f (90% sleep)
 ```
 
-#### 5.7.3 Application Power Management Callbacks
+#### 5.8.3 Application Power Management Callbacks
 
 The protocol provides callback hooks allowing applications to implement device-specific power management during SLEEP slots. This enables optimal power consumption without adding hardware dependencies to the core library.
 
@@ -1860,7 +1878,7 @@ auto mesher = LoraMesher::Builder()
 - Long operations may cause slot timing issues
 - Sleep veto still allows radio sleep for power saving
 
-### 5.8 Network Manager Election Sequence
+### 5.9 Network Manager Election Sequence
 
 Implemented. When a node misses `kMaxNoReceivedSyncBeacons` (5) consecutive sync beacons it enters FAULT_RECOVERY and starts a weighted staggered-backoff timer:
 
@@ -1898,58 +1916,9 @@ Stable `network_id_` (set at `CreateNetwork()`, preserved from received beacons)
 - **Implicit designation**: With `NodeRole::AUTO` (default), nodes use election priority base 64–191
 - **Join-only nodes**: Configure with `NodeRole::NODE_ONLY` to prevent network creation entirely
 
-### 5.6 Fault Recovery and Network Healing
+### 5.10 Application Data Slot Timing API
 
-This sequence shows how the network recovers from partitions:
-
-```mermaid
-sequenceDiagram
-    participant A as Node A
-    participant B as Node B  
-    participant C as Node C (Partition 1)
-    participant D as Node D (Partition 2)
-    participant E as Node E
-    
-    Note over A,E: Normal mesh operation
-    Note over C,D: Link failure creates partition
-    
-    C->>C: Detect lost connection to D
-    C->>C: Remove routes via D from table
-    C->>*: Broadcast ROUTE_POISON (destinations via D)
-    
-    D->>D: Detect lost connection to C
-    D->>D: Remove routes via C from table  
-    D->>*: Broadcast ROUTE_POISON (destinations via C)
-    
-    Note over A,C: Partition 1 continues operating
-    A->>B: Normal data flow
-    B->>C: Normal data flow
-    
-    Note over D,E: Partition 2 continues operating
-    D->>E: Normal data flow
-    
-    Note over A,E: Healing process begins
-    Note over C,D: Alternative path discovered (via A-B-E-D)
-    
-    A->>A: Periodic network discovery
-    A->>*: Broadcast NETWORK_HEALING_BEACON
-    
-    E->>E: Received healing beacon from A
-    E->>*: Broadcast NETWORK_MERGE_REQUEST
-    
-    C->>C: Process merge request
-    C->>C: Calculate new routes via A-B-E path
-    C->>*: Broadcast ROUTING_UPDATE (restored routes)
-    
-    D->>D: Process routing update
-    D->>D: Network connectivity restored
-    
-    Note over A,E: Network healed - full connectivity restored
-```
-
-### 5.9 Application Data Slot Timing API
-
-#### 5.9.1 Motivation
+#### 5.10.1 Motivation
 
 Application code that calls `Send()` must have its message queued **before** the TX
 data slot begins. Since LoRaMesher is TDMA-scheduled, there is a fixed window within
@@ -1959,7 +1928,7 @@ superframe before it can be sent.
 
 To help applications schedule sends reliably, LoRaMesher provides two query functions.
 
-#### 5.9.2 `GetTimeUntilNextDataSlot(guard_time_ms)`
+#### 5.10.2 `GetTimeUntilNextDataSlot(guard_time_ms)`
 
 Returns the number of milliseconds an application should sleep before calling
 `Send()`, so that the queued message is guaranteed to be processed in the **next** TX
@@ -1996,7 +1965,7 @@ while (true) {
 }
 ```
 
-#### 5.9.3 `GetDataSlotsPerSuperframe()`
+#### 5.10.3 `GetDataSlotsPerSuperframe()`
 
 Returns how many TX data slots are allocated to this node per superframe. This allows
 applications to know the maximum number of independent messages they can send per
@@ -2015,7 +1984,7 @@ while (true) {
 }
 ```
 
-#### 5.9.4 Interaction with the TX Guard Time (Section 5.6)
+#### 5.10.4 Interaction with the TX Guard Time (Section 5.7)
 
 The **protocol-level** TX guard time (section 5.6) is a separate delay applied
 *inside* the TX slot to ensure RX nodes are ready. The **application guard time**
@@ -2097,7 +2066,7 @@ config.setNodeRole(NodeRole::NETWORK_MANAGER);  // or NODE_ONLY, or AUTO
 
 **NODE_ONLY Behavior**: Nodes with NODE_ONLY role will remain in DISCOVERY state indefinitely until a SYNC_BEACON is received. They will never call `CreateNetwork()` regardless of discovery timeout.
 
-**NETWORK_MANAGER Behavior**: Nodes with NETWORK_MANAGER role will skip the discovery phase entirely and immediately create a new network, entering the NETWORK_MANAGER protocol state.
+**NETWORK_MANAGER Behavior**: Nodes with NETWORK_MANAGER role will skip the discovery phase entirely and immediately create a new network, entering the NETWORK_MANAGER protocol state. If a NETWORK_MANAGER-role node later re-enters DISCOVERY after yielding in an NM election, it does not re-create a network on discovery timeout — it remains in DISCOVERY until a SYNC_BEACON is received, similar to NODE_ONLY behavior.
 
 ### 6.2 Discovery Messages
 
@@ -2283,7 +2252,7 @@ This ensures that multiple nodes competing to join will naturally desynchronize 
 
 When a node receives `RETRY_LATER` (its message was delivered but NM is busy), the retry counter resets to 0 and backoff is set to 1 superframe. This prevents over-backing-off when the collision was at the NM scheduling level rather than the radio level.
 
-### 6.4 Sponsor-Based Join Protocol (New v1.2)
+### 6.4 Sponsor-Based Join Protocol
 
 **Overview**: Sponsor-based joining enables nodes beyond direct Network Manager range to join through intermediate sponsor nodes, significantly expanding network reach and reliability.
 
@@ -2332,7 +2301,7 @@ sequenceDiagram
 
 #### 6.4.3 Message Routing Semantics
 
-**Key Routing Distinctions (v1.2)**:
+**Key Routing Distinctions**:
 - **destination**: Immediate next hop for message routing
 - **target_address**: Final recipient for end-to-end delivery
 - **sponsor_address**: Intermediate node facilitating join
@@ -2416,12 +2385,12 @@ if (sponsor_address == node_address_) {
 
 ---
 
-## 6.9 Network Merging (Path A — Lite Merge via NM_ELECTION Extension)
+### 6.5 Network Merging
 
 When two independently formed networks come within radio range of each other, the "lite merge"
 mechanism automatically merges them into a single network governed by the lower-priority NM.
 
-### 6.9.1 Mechanism
+#### 6.5.1 Mechanism
 
 The merge reuses the existing NM_ELECTION / NM_CLAIM machinery:
 
@@ -2439,7 +2408,7 @@ The merge reuses the existing NM_ELECTION / NM_CLAIM machinery:
 - `AUTO` role: base 64–191
 - Within the same role, lower address → lower priority value → wins
 
-### 6.9.2 Implementation
+#### 6.5.2 Implementation
 
 Three changes in `network_service.cpp`:
 
@@ -2458,7 +2427,7 @@ Three changes in `network_service.cpp`:
 nodes configured with `NETWORK_MANAGER` role participate correctly in priority comparisons
 even if they never went through `StartElectionBackoff()`.
 
-### 6.9.3 Known Limitations
+#### 6.5.3 Known Limitations
 
 **Path A is a best-effort merge suitable for static networks with overlapping edge nodes.**
 The following scenarios require Path B (full merge protocol with `FOREIGN_DISCOVERY_RX` slots):
@@ -2521,13 +2490,17 @@ The base header structure used by all messages:
 
 | Message Type | Additional Fields | Total Size |
 |--------------|-------------------|------------|
-| SYNC_BEACON | network_id, total_slots, slot_duration_ms, network_manager, hop_count, propagation_delay_ms, max_hops | 19 bytes |
-| JOIN_REQUEST | battery_level, requested_slots, next_hop, sponsor_address, hop_count | 15 bytes |
-| JOIN_RESPONSE | network_id, allocated_slots, status, next_hop, target_address, control_slot_index | 17 bytes |
-| ROUTE_TABLE | network_manager, table_version, entry_count, source_capabilities + entries | 11+ bytes |
-| DATA | payload only | 6+ bytes |
+| SYNC_BEACON | network_id(2), total_slots(1), slot_duration_ms(2), network_manager(2), hop_count(1), propagation_delay_ms(4), max_hops(1), node_count(1) | 20 bytes |
+| JOIN_REQUEST | battery_level(1), requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 13 bytes |
+| JOIN_RESPONSE | network_id(2), allocated_slots(1), status(1), next_hop(2), target_address(2), control_slot_index(1) | 15 bytes |
+| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries | 12+ bytes |
+| DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
+| DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
+| NM_CLAIM | election_priority(1), battery_level(1), network_node_count(1), network_id(2) | 11 bytes |
+| SLOT_REQUEST | requested_slots(1) | 7 bytes |
+| SLOT_ALLOCATION | network_id(2), allocated_slots(1), total_nodes(1) | 10 bytes |
 
-> **Note**: The current implementation does not include Flags, TTL, Sequence Number, or Checksum fields in the base header. These are planned for future versions (see Section 10).
+> **Note**: The BaseHeader is 6 bytes (dest, src, type, payload_size). TTL and Sequence Number are implemented in the DataHeader extension (for DATA and DATA_BROADCAST messages) for loop prevention and de-duplication. Flags and Checksum fields are not implemented.
 
 ### 7.4 Maximum Frame Sizes
 
@@ -2540,7 +2513,7 @@ The base header structure used by all messages:
 | SF11, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
 | SF12, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
 
-*Note: BaseHeader overhead is 6 bytes. Sync beacons are 19 bytes total (6 base + 13 sync-specific). Maximum data payload is 249 bytes (255 - 6 base header).*
+*Note: BaseHeader overhead is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific). Maximum data payload is 251 bytes (255 max payload - 4 data header extension).*
 
 ---
 
@@ -2629,8 +2602,6 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 }
 ```
 
-> **Note**: Explicit `broadcastRoutePoison()` and `handleRouteError()` functions are not implemented. Route failures are handled implicitly through timeout-based inactive marking. See Section 10 for planned explicit route poisoning.
-
 #### 8.2.3 Network Recovery (Actual Implementation)
 
 Network recovery uses state machine transitions:
@@ -2654,7 +2625,6 @@ Recovery flow when sync is lost:
 4. Resets synchronization state
 5. Returns to `DISCOVERY` state to rejoin network
 
-> **Note**: Explicit `handleNetworkPartition()` and `broadcastNetworkHealingBeacon()` functions are not implemented. Network recovery relies on state machine transitions. See Section 10 for planned enhancements.
 
 ---
 
@@ -2674,17 +2644,17 @@ Recovery flow when sync is lost:
 
 | Parameter | Current Limit | Design Limit | Notes |
 |-----------|---------------|--------------|-------|
-| Network Size | 16 nodes | 65535 nodes | Limited by 16-bit node IDs |
-| Slots per Superframe | 8 | 255 | Configurable via SuperframeConfig |
-| Routes per Node | 50 | 255 | Memory-dependent |
+| Network Size | 50 nodes | 65535 nodes | Limited by 16-bit node IDs |
+| Slots per Superframe | configurable | 255 | Configurable via SuperframeConfig |
+| Routes per Node | 40 | 255 | Memory-dependent (std::array size) |
 | Message Queue Depth | 10 | 255 | Per-slot queue |
-| Hop Count Limit | 15 | 255 | Prevents routing loops |
+| Hop Count Limit | 10 | 255 | Prevents routing loops |
 
 ### 9.3 LoRa Air Time Calculations
 
 | Frame Size | SF7 | SF8 | SF9 | SF10 | SF11 | SF12 |
 |------------|-----|-----|-----|------|------|------|
-| 21 bytes (Sync Beacon) | 25ms | 46ms | 82ms | 164ms | 329ms | 658ms |
+| 20 bytes (Sync Beacon) | 25ms | 46ms | 82ms | 164ms | 329ms | 658ms |
 | 50 bytes | 51ms | 103ms | 185ms | 371ms | 741ms | 1.4s |
 | 100 bytes | 82ms | 144ms | 267ms | 535ms | 1.0s | 2.1s |
 | 200 bytes | 144ms | 267ms | 493ms | 989ms | 1.9s | 3.9s |
@@ -2731,10 +2701,6 @@ Recovery flow when sync is lost:
 - Analyze timing accuracy requirements for superframe alignment
 - Develop adaptive timing correction algorithms
 - Study impact of propagation delay on superframe synchronization
-
-#### 10.1.3 Collision Mitigation for Same-Hop Forwarders
-
-**Status**: Implemented. See Section 5.5.3 for the full specification of the deterministic subslot scheduling mechanism.
 
 ### 10.2 Implementation and Testing Requirements
 
@@ -2798,21 +2764,16 @@ Recovery flow when sync is lost:
 This section documents message types and protocols that are specified but not yet implemented.
 
 #### 10.6.1 Data Message Extensions
-```cpp
-// Planned data message subtypes
-DATA_BROADCAST = 0x12,  // Network-wide broadcast (planned)
-DATA_MULTICAST = 0x13,  // Group communication (planned)
-```
 
-**DATA_BROADCAST**: Will enable network-wide broadcast capability for messages that need to reach all nodes.
-
-Implementation considerations:
+**DATA_BROADCAST (0x12)** — **Implemented**: Network-wide broadcast using TTL-based controlled flooding.
 - Broadcast addressing uses destination `0xFFFF`
-- `ProcessDataMessage()` needs broadcast detection: deliver locally AND forward to neighbors
-- Loop prevention required: TTL-based forwarding with sequence-number de-duplication
-- Current gap: `ProcessDataMessage()` checks `next_hop != node_address_` and drops broadcast messages since no node has `0xFFFF` as its address
+- Each node delivers to application layer AND forwards with TTL-1
+- Loop prevention via TTL field (default 10) and per-source sequence number
+- De-duplication: unified 32-entry circular cache shared with unicast DATA messages
+- API: `LoraMesher::SendBroadcast(std::span<const uint8_t>)`
+- See Section 3.2.6 for wire format details
 
-**DATA_MULTICAST**: Will support group-based messaging where messages are delivered to a subset of nodes subscribed to a multicast group.
+**DATA_MULTICAST (0x13)** — **Planned**: Group-based messaging where messages are delivered to a subset of nodes subscribed to a multicast group. Requires a group membership protocol (join/leave groups) not yet designed.
 
 #### 10.6.2 HELLO Message Protocol
 ```cpp
@@ -2864,43 +2825,38 @@ struct DiscoveryResponse {
 
 **Purpose**: Explicit discovery messages will allow nodes to actively query for available networks instead of passively waiting for sync beacons.
 
-**Note**: Original type code 0x24 was reassigned because it conflicts with PONG (0x24).
+**Note**: Original type code 0x24 was reassigned because it conflicts with PONG (0x24). The proposed code 0x47 for DISCOVERY_REQUEST also conflicts with NM_CLAIM (0x47, now implemented). New type codes must be allocated if this protocol is implemented.
 
 #### 10.6.4 Network Manager Election Protocol
 
-`NM_CLAIM = 0x47` is now implemented (see Section 5.8 and Section 3.3.5). No further election messages are planned.
+`NM_CLAIM = 0x47` is now implemented (see Section 5.9 and Section 3.2.5). No further election messages are planned.
 
-#### 10.6.5 Configuration Parameters (Planned)
+#### 10.6.5 Configuration Parameters
+
+`min_sleep_fraction` (default 30%) is **implemented**. It ensures a minimum percentage of superframe slots are reserved for sleep. Configured via `config.setMinSleepFraction(0.30f)` (range 0.0–0.9).
+
+`link_quality_ewma_alpha` (default 0.30) is **implemented**. EWMA smoothing factor for link quality tracking. Higher values make quality respond faster to changes. Configured via `config.setLinkQualityEwmaAlpha(0.30f)` (range 0.05–0.95).
+
+`consecutive_missed_for_inactivation` (default 10) is **implemented**. Number of consecutive superframes without a routing message before a direct neighbor is marked inactive. Configured via `config.setConsecutiveMissedForInactivation(10)` (range 4–30).
+
+`min_consecutive_for_reactivation` (default 2) is **implemented**. Number of consecutive routing message receptions required before an inactive route is re-activated (hysteresis). Configured via `config.setMinConsecutiveForReactivation(2)` (range 1–10).
+
 ```cpp
-// Planned additions to protocol configuration
-uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms)
-float target_duty_cycle;       // Target power efficiency (0.3 = 30%)
+// Remaining planned additions
+uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms) — not yet implemented
 ```
 
 **Purpose**: These parameters will enable fine-grained control over synchronization accuracy and power management.
 
-#### 10.6.6 Frame Header Extensions (Planned)
+#### 10.6.6 Frame Header Extensions
 
-The following fields are planned additions to the BaseHeader:
+TTL and sequence number are now implemented in the DataHeader extension (see Section 3.2.6) for DATA and DATA_BROADCAST messages. Remaining planned additions to the BaseHeader:
 
 ```cpp
-// Planned BaseHeader extensions
-struct ExtendedHeader {
-    // Current fields (6 bytes)
-    AddressType destination;
-    AddressType source;
-    MessageType type;
-    uint8_t payload_size;
-
-    // Planned additions
-    uint8_t flags;           // Protocol flags (ACK required, priority, etc.)
-    uint8_t ttl;             // Time-to-live (hop limit)
-    uint16_t sequence_number;// Message sequence number
-    uint8_t checksum;        // XOR checksum of entire frame
-};
+// Remaining planned fields
+uint8_t flags;           // Protocol flags (ACK required, priority, etc.)
+uint8_t checksum;        // XOR checksum of entire frame
 ```
-
-**Purpose**: Enable message acknowledgments, hop limiting, duplicate detection, and integrity verification.
 
 #### 10.6.7 Routing Algorithm Enhancements
 
@@ -2908,6 +2864,11 @@ struct ExtendedHeader {
 
 A composite cost formula combining hop count and link quality has been implemented.
 See Section 4.1 for details on the `CalculateRouteCost()` function and `IsBetterRouteThan()` method.
+
+**EWMA Link Quality and Re-activation Hysteresis** (Implemented):
+
+EWMA-based link quality tracking and hysteresis-based re-activation are implemented.
+See Section 4.3 for details on EWMA quality calculation, multi-hop quality capping, and the `recovery_counter` mechanism.
 
 **Explicit Route Poisoning**:
 ```cpp
@@ -2936,6 +2897,10 @@ std::vector<RoutingTableEntry> GetRoutingEntriesWithSplitHorizon(
 }
 ```
 
+#### 10.6.8 Fault Recovery Protocol (Planned)
+
+Network partition recovery using explicit route poisoning (ROUTE_POISON messages with infinite metric) and healing beacons (NETWORK_HEALING_BEACON). Currently, partition recovery relies on timeout-based route aging and state machine transitions to FAULT_RECOVERY → DISCOVERY.
+
 ---
 
 ## 11. Conclusion
@@ -2947,26 +2912,34 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 - **TDMA Coordination**: Superframe-based slot allocation with deterministic control slot ordering
 - **Multi-Hop Synchronization**: Hop-layered sync beacon forwarding with propagation delay compensation
 - **Sponsor-Based Joining**: Nodes beyond Network Manager range can join via intermediate sponsor nodes
+- **Broadcast Messaging**: TTL-based flooding with de-duplication for network-wide data delivery
+- **Loop Prevention**: TTL and sequence numbers in data messages prevent routing loops
 
 ### Technical Specifications
 - **BaseHeader Size**: 6 bytes (destination, source, type, payload_size)
-- **Sync Beacon Size**: 19 bytes total (6 base + 13 sync-specific)
-- **Maximum Data Payload**: 249 bytes (255 - 6 header)
+- **Sync Beacon Size**: 20 bytes total (6 base + 14 sync-specific)
+- **Maximum Data Payload**: 251 bytes (255 max payload - 4 data header extension)
 - **Route Timeout**: Default 180,000 ms (3 minutes)
 - **Memory Footprint**: ~4.4KB RAM usage suitable for ESP32 deployment
 
 ### Implementation Notes
-This specification has been synchronized with the actual codebase as of version 1.6. Several features documented in earlier versions are marked as planned in Section 10:
+This specification has been synchronized with the actual codebase as of version 1.7. Several features documented in earlier versions are marked as planned in Section 10:
+
+**v1.7 Changelog**:
+- **EWMA link quality** (Section 4.3): Uses deferred decay — quality only degrades when a message is actually missed, ensuring perfect reception converges to ~255. Configurable via `setLinkQualityEwmaAlpha()`.
+- **Re-activation hysteresis** (Section 4.3): Routes must receive `min_consecutive_for_reactivation` (default 2) consecutive messages before re-activation, preventing oscillation on marginal links.
+- **Multi-hop quality capping** (Section 4.3): Multi-hop cascade uses `min()` cap instead of quality halving; EWMA provides smooth degradation.
+- **Link quality configuration** (Section 10.6.5): New parameters `link_quality_ewma_alpha`, `consecutive_missed_for_inactivation`, `min_consecutive_for_reactivation`.
 
 **v1.6 Changelog**:
 - **NM_ELECTION state** (Section 2.2): New state added; node broadcasts NM_CLAIM and waits for counter-claims before calling `CreateNetwork()`.
-- **NM_CLAIM message** (Section 3.3.5, 3.2.1): `NM_CLAIM = 0x47` implemented with 5-byte payload carrying `election_priority`, `battery_level`, `network_node_count`, and `network_id`.
-- **Network Manager election algorithm** (Section 5.8): Full staggered-backoff election with weighted priority (role + address component). Replaces the "planned but not implemented" placeholder.
+- **NM_CLAIM message** (Section 3.2.5): `NM_CLAIM = 0x47` implemented with 5-byte payload carrying `election_priority`, `battery_level`, `network_node_count`, and `network_id`.
+- **Network Manager election algorithm** (Section 5.9): Full staggered-backoff election with weighted priority (role + address component). Replaces the "planned but not implemented" placeholder.
 
 **v1.5 Changelog**:
 - **Route re-activation fix** (Section 4.3): `UpdateRoute()` no longer overwrites an inactive route with a worse advertisement; the existing (better) route is preserved and the node is simply re-activated. Prevents false `max_hops` inflation that shifted the superframe structure.
 - **`GetMaxHopsFromRoutingTable()` fix**: Inactive nodes are now skipped so stale hop counts cannot inflate the NM's `current_network_depth_`.
-- **`min_sleep_fraction` configuration** (Section 5.7.2): New parameter (default 30%) guarantees a minimum sleep budget in large dense networks where the TX-duty-cycle formula alone would produce zero sleep slots.
+- **`min_sleep_fraction` configuration** (Section 5.8.2): New parameter (default 30%) guarantees a minimum sleep budget in large dense networks where the TX-duty-cycle formula alone would produce zero sleep slots.
 - Frame header fields (Flags, TTL, Sequence Number, Checksum)
 - Explicit route poisoning and network healing beacons
 - Hop count as primary routing metric

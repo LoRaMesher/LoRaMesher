@@ -8,10 +8,12 @@
 namespace loramesher {
 
 DataHeader::DataHeader(AddressType dest, AddressType src, AddressType next_hop,
-                       uint8_t payload_size)
+                       uint8_t payload_size, uint8_t ttl, uint8_t seq_num)
     : BaseHeader(dest, src, MessageType::DATA,
                  DataHeader::DataFieldsSize() + payload_size),
-      next_hop_(next_hop) {}
+      next_hop_(next_hop),
+      ttl_(ttl),
+      seq_num_(seq_num) {}
 
 Result DataHeader::SetNextHop(AddressType next_hop) {
     next_hop_ = next_hop;
@@ -27,6 +29,8 @@ Result DataHeader::Serialize(utils::ByteSerializer& serializer) const {
 
     // Then serialize data header specific fields
     serializer.WriteUint16(next_hop_);
+    serializer.WriteUint8(ttl_);
+    serializer.WriteUint8(seq_num_);
 
     return Result::Success();
 }
@@ -50,9 +54,20 @@ std::optional<DataHeader> DataHeader::Deserialize(
 
     // Deserialize data header specific fields
     auto next_hop = deserializer.ReadUint16();
-
     if (!next_hop) {
-        LOG_ERROR("Failed to deserialize data header fields");
+        LOG_ERROR("Failed to deserialize data header next_hop");
+        return std::nullopt;
+    }
+
+    auto ttl = deserializer.ReadUint8();
+    if (!ttl) {
+        LOG_ERROR("Failed to deserialize data header TTL");
+        return std::nullopt;
+    }
+
+    auto seq_num = deserializer.ReadUint8();
+    if (!seq_num) {
+        LOG_ERROR("Failed to deserialize data header seq_num");
         return std::nullopt;
     }
 
@@ -64,7 +79,7 @@ std::optional<DataHeader> DataHeader::Deserialize(
 
     // Create and return the data header
     DataHeader header(base_header->GetDestination(), base_header->GetSource(),
-                      *next_hop, actual_payload_size);
+                      *next_hop, actual_payload_size, *ttl, *seq_num);
 
     return header;
 }

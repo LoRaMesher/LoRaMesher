@@ -1012,13 +1012,12 @@ TEST_F(SuperframeServiceSynchronizeWithTest,
        GetTimeSinceSuperframeStartFutureStartReturnsZero) {
     ASSERT_TRUE(service_->StartSuperframe().IsSuccess());
 
-    // Synchronize with a very large future start time so superframe_start_time_ > current_time
-    // We use a large slot_start_time with slot_number = 0 to set start = slot_start_time
-    uint32_t far_future = 0xFFFFFFF0u;
-    service_->SynchronizeWith(far_future, 0u);
+    // Set superframe start to far future directly (SynchronizeWith rejects
+    // timestamps beyond current_time + superframe_duration)
+    uint32_t far_future = GetRTOS().getTickCount() + 60000;
+    service_->TestSetSuperframeStartTime(far_future);
 
-    // Now superframe_start_time_ == far_future which is > getTickCount()
-    // GetTimeSinceSuperframeStart() should return 0 (covers lines 894-896)
+    // GetTimeSinceSuperframeStart should return 0 when start > current_time
     uint32_t time = service_->GetTimeSinceSuperframeStart();
     EXPECT_EQ(time, 0u);
 }

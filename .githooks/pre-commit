@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use clang-format-19 to match CI; fall back to unversioned if not installed
+if command -v clang-format-19 &>/dev/null; then
+    CLANG_FORMAT=clang-format-19
+elif command -v clang-format &>/dev/null; then
+    CLANG_FORMAT=clang-format
+else
+    echo "pre-commit: clang-format not found, skipping format check"
+    exit 0
+fi
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|hpp|h|c)$' || true)
+[ -z "$STAGED" ] && exit 0
+
+FAILED=()
+for f in $STAGED; do
+    [ -f "$f" ] || continue
+    if ! $CLANG_FORMAT --dry-run --Werror "$f" 2>/dev/null; then
+        FAILED+=("$f")
+    fi
+done
+
+if [ ${#FAILED[@]} -gt 0 ]; then
+    echo "clang-format: the following staged files need formatting:"
+    printf '  %s\n' "${FAILED[@]}"
+    echo ""
+    echo "Run:  $CLANG_FORMAT -i ${FAILED[*]}"
+    echo "Then: git add <files> && git commit"
+    exit 1
+fi

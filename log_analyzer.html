@@ -1158,8 +1158,11 @@
                         const originalTime = this.originalTimeMap.get(closestTimestamp);
                         const timeDiff = timestamp - closestTimestamp;
 
-                        // Parse original time
-                        const [timePart, msPart] = originalTime.split('.');
+                        // Strip day prefix (e.g. "+1d ") if present, parse time
+                        const dayPrefixMatch = originalTime.match(/^(\+\d+d\s+)/);
+                        const dayPrefix = dayPrefixMatch ? dayPrefixMatch[1] : '';
+                        const cleanTime = dayPrefixMatch ? originalTime.slice(dayPrefix.length) : originalTime;
+                        const [timePart, msPart] = cleanTime.split('.');
                         const [hours, minutes, seconds] = timePart.split(':').map(Number);
 
                         // Calculate new time with offset
@@ -1169,7 +1172,7 @@
                         const newSeconds = Math.floor((totalMs % (1000 * 60)) / 1000);
                         const newMs = totalMs % 1000;
 
-                        return `${newHours.toString().padStart(2, '0')}:${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}.${Math.floor(newMs).toString().padStart(3, '0')}`;
+                        return `${dayPrefix}${newHours.toString().padStart(2, '0')}:${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}.${Math.floor(newMs).toString().padStart(3, '0')}`;
                     }
                 }
 
@@ -1446,6 +1449,9 @@
                 let pendingTransmission = null;
                 let lineNumber = 0;
                 let hasValidTimestamps = false;  // Track if any valid timestamps found
+                let prevTimeOfDayMs = -1;
+                let dayOffset = 0;
+                const MS_PER_DAY = 86400000;
 
                 const lines = logContent.split('\n');
                 for (let i = 0; i < lines.length; i++) {
@@ -1461,6 +1467,8 @@
                     const timeTimestampMatch = line.match(/^(\d{1,2}):(\d{2}):(\d{2})\.(\d{3})\s*>/);
                     // Format 3: 2026-03-13 05-14-25.659266 [INFO] [0x1001] message
                     const dateTimeTimestampMatch = line.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2})-(\d{2})-(\d{2})\.(\d+)/);
+                    // Format 4: [2026-03-23 14:30:05.123] [DEBUG] [0x14A4] message
+                    const bracketDateTimeMatch = line.match(/^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\]/);
 
                     if (msTimestampMatch) {
                         timestamp = parseInt(msTimestampMatch[1]);
@@ -1473,10 +1481,18 @@
                         const minutes = parseInt(timeTimestampMatch[2]);
                         const seconds = parseInt(timeTimestampMatch[3]);
                         const ms = parseInt(timeTimestampMatch[4]);
-                        timestamp = (hours * 3600 + minutes * 60 + seconds) * 1000 + ms;
+                        const rawMs = (hours * 3600 + minutes * 60 + seconds) * 1000 + ms;
+
+                        // Detect midnight wrap: backward jump > 12h means a new day
+                        if (prevTimeOfDayMs >= 0 && rawMs < prevTimeOfDayMs - 43200000) {
+                            dayOffset += MS_PER_DAY;
+                        }
+                        prevTimeOfDayMs = rawMs;
+                        timestamp = rawMs + dayOffset;
 
                         // Store original time format for display
-                        const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
+                        const dayLabel = dayOffset > 0 ? `+${dayOffset / MS_PER_DAY}d ` : '';
+                        const originalTime = `${dayLabel}${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
                         fileData.originalTimeMap.set(timestamp, originalTime);
 
                         const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
@@ -1494,6 +1510,23 @@
                         const ms = parseInt(subseconds.substring(0, 3).padEnd(3, '0'));
 
                         // Use epoch-based timestamp for accurate cross-day support
+                        timestamp = new Date(year, month, day, hours, minutes, seconds, ms).getTime();
+
+                        const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
+                        fileData.originalTimeMap.set(timestamp, originalTime);
+
+                        const nodeMatch = line.match(/\[0x([0-9A-Fa-f]+)\]/);
+                        nodeId = nodeMatch ? nodeMatch[1] : 'unknown';
+                        hasValidTimestamps = true;
+                    } else if (bracketDateTimeMatch) {
+                        const year    = parseInt(bracketDateTimeMatch[1]);
+                        const month   = parseInt(bracketDateTimeMatch[2]) - 1; // 0-indexed
+                        const day     = parseInt(bracketDateTimeMatch[3]);
+                        const hours   = parseInt(bracketDateTimeMatch[4]);
+                        const minutes = parseInt(bracketDateTimeMatch[5]);
+                        const seconds = parseInt(bracketDateTimeMatch[6]);
+                        const ms = bracketDateTimeMatch[7] ? parseInt(bracketDateTimeMatch[7].padEnd(3, '0')) : 0;
+
                         timestamp = new Date(year, month, day, hours, minutes, seconds, ms).getTime();
 
                         const originalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;

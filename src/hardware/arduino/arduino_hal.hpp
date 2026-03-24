@@ -69,12 +69,29 @@ class LoraMesherArduinoHal : public IHal {
     SPIClass& getSPI(uint8_t spiNum = 0) override {
         if (!spi_initialized_) {
 #ifdef ARDUINO_ARCH_ESP32
+            // Resolve SPI pin defaults: prefer LORA_SCK (Lilygo) > SCK (Heltec/most boards)
+#if defined(LORA_SCK)
+            constexpr int8_t kDefaultSck = LORA_SCK;
+            constexpr int8_t kDefaultMiso = LORA_MISO;
+            constexpr int8_t kDefaultMosi = LORA_MOSI;
+#elif defined(SCK)
+            constexpr int8_t kDefaultSck = SCK;
+            constexpr int8_t kDefaultMiso = MISO;
+            constexpr int8_t kDefaultMosi = MOSI;
+#else
+            constexpr int8_t kDefaultSck = -1;
+            constexpr int8_t kDefaultMiso = -1;
+            constexpr int8_t kDefaultMosi = -1;
+#endif
+            int8_t sck =
+                pin_config_.getSck() != -1 ? pin_config_.getSck() : kDefaultSck;
+            int8_t miso = pin_config_.getMiso() != -1 ? pin_config_.getMiso()
+                                                      : kDefaultMiso;
+            int8_t mosi = pin_config_.getMosi() != -1 ? pin_config_.getMosi()
+                                                      : kDefaultMosi;
             LOG_INFO("Initializing SPI on ESP32 with SCK=%d, MISO=%d, MOSI=%d",
-                     pin_config_.getSck(), pin_config_.getMiso(),
-                     pin_config_.getMosi());
-            // On ESP32, always call begin; -1 means "use the hardware default"
-            LM_SPI.begin(pin_config_.getSck(), pin_config_.getMiso(),
-                         pin_config_.getMosi(), /*ss=*/-1);
+                     sck, miso, mosi);
+            LM_SPI.begin(sck, miso, mosi, /*ss=*/-1);
 #elif defined(ESP8266)
             // On ESP8266 custom pins must be set via SPI.pins() before begin()
             if (pin_config_.HasCustomSpiPins()) {

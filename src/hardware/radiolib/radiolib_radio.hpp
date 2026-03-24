@@ -228,6 +228,13 @@ class RadioLibRadio : public IRadio {
     Result setPreambleLength(uint16_t length) override;
 
     /**
+     * @brief Set the OCP current limit
+     * @param current_limit_ma Current limit in mA
+     * @return Result Success if current limit was set successfully
+     */
+    Result setCurrentLimit(float current_limit_ma) override;
+
+    /**
      * @brief Set callback for received messages
      * 
      * The callback will be invoked for each received message. Messages are

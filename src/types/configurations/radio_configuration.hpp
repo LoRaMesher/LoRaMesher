@@ -133,6 +133,20 @@ class RadioConfig {
     float getTcxoVoltage() const { return tcxo_voltage_; }
 
     /**
+     * @brief Get the configured OCP current limit
+     * @return float Current limit in mA (0.0 = auto mode)
+     */
+    float getCurrentLimit() const { return current_limit_ma_; }
+
+    /**
+     * @brief Check if the current limit is in auto mode
+     * @return bool True if OCP will be auto-set based on TX power
+     */
+    bool IsCurrentLimitAuto() const {
+        return current_limit_ma_ == kAutoCurrentLimit;
+    }
+
+    /**
      * @brief Set the radio hardware type
      * @param type New radio type to use
      */
@@ -204,6 +218,26 @@ class RadioConfig {
     Result setPreambleLength(uint16_t preamble_length);
 
     /**
+     * @brief Set the OCP current limit manually
+     *
+     * Set to 0.0 for auto mode (recommended). In auto mode, the library
+     * sets the appropriate OCP limit based on the TX power and radio type.
+     *
+     * @param current_limit_ma Current limit in mA (0.0 for auto, or 45-240)
+     * @throw std::invalid_argument if value is outside valid range
+     */
+    void setCurrentLimit(float current_limit_ma);
+
+    /**
+     * @brief Get the recommended OCP current limit for a given radio and power
+     *
+     * @param type Radio hardware type
+     * @param power TX power in dBm
+     * @return float Recommended current limit in mA
+     */
+    static float RecommendedCurrentLimit(RadioType type, int8_t power);
+
+    /**
      * @brief Set TCXO reference voltage for SX1262 modules
      *
      * Boards using an SX1262 with a TCXO instead of an external crystal
@@ -227,6 +261,9 @@ class RadioConfig {
      */
     std::string Validate() const;
 
+    /// Sentinel value: auto-set OCP based on TX power
+    static constexpr float kAutoCurrentLimit = 0.0F;
+
    private:
     static constexpr float kMinFrequency = 137.0F;  ///< Minimum valid frequency
     static constexpr float kMaxFrequency =
@@ -246,6 +283,7 @@ class RadioConfig {
     bool crc_;                  ///< CRC enabled
     uint16_t preamble_length_;  ///< Preamble length
     float tcxo_voltage_;        ///< TCXO reference voltage (0 = no TCXO)
+    float current_limit_ma_{kAutoCurrentLimit};  ///< OCP limit (0 = auto)
 };
 
 }  // namespace loramesher

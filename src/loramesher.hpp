@@ -75,6 +75,18 @@ class LoraMesher {
     [[nodiscard]] Result SendMessage(const BaseMessage& msg);
 
     /**
+     * @brief Send a broadcast message to all nodes in the mesh network
+     *
+     * The message propagates through the mesh using TTL-based flooding.
+     * Each node receives the message once (de-duplicated) and re-broadcasts
+     * it to its neighbors until TTL expires.
+     *
+     * @param data User data payload
+     * @return Result Success if message was queued, error details otherwise
+     */
+    [[nodiscard]] Result SendBroadcast(std::span<const uint8_t> data);
+
+    /**
      * @brief Generate address from hardware ID without full initialization
      *
      * This static method allows users to determine the auto-generated hardware

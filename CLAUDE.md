@@ -102,3 +102,12 @@ Uses GoogleTest with comprehensive coverage:
 Update these files when protocol or library behavior changes:
 - **PROTOCOL_SPEC.md**: Protocol specifications and message formats
 - **README.md**: User-facing documentation and API usage
+
+### PROTOCOL_SPEC.md Guidelines
+- Do not add version labels like `(v1.2)` or `(New v1.3)` to section titles — all content is the current version
+- Keep descriptions concise: state *what* the protocol does, not *why* a change was made
+- Implemented features belong in Sections 1–9; planned/unimplemented features belong in Section 10
+- Message wire formats must match the actual `*FieldsSize()` values in the corresponding header `.hpp` files
+- When a planned feature (Section 10) is implemented, move it to the appropriate main section
+- Section 7.2 table must list ALL message types with correct total sizes
+- Do not describe unimplemented mechanisms (e.g., ROUTE_POISON) in main sections — use Section 10

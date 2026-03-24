@@ -539,27 +539,43 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityNoTracking) {
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityPerfect) {
     NetworkNodeRoute::LinkQualityStats stats;
-    stats.messages_expected = 10;
-    stats.messages_received = 10;
-    EXPECT_EQ(stats.CalculateQuality(), 255);
+    // Simulate 10 superframes with perfect reception
+    for (int i = 0; i < 10; i++) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+    }
+    // With deferred decay, perfect reception only boosts EWMA
+    EXPECT_GE(stats.CalculateQuality(), 250);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityHalf) {
     NetworkNodeRoute::LinkQualityStats stats;
-    stats.messages_expected = 10;
-    stats.messages_received = 5;
+    // Simulate 10 superframes, receive only on even ones
+    for (int i = 0; i < 10; i++) {
+        stats.ExpectMessage();
+        if (i % 2 == 0) {
+            stats.ReceivedMessage(i * 1000);
+        }
+    }
     uint8_t q = stats.CalculateQuality();
-    // 5*255/10 = 127
-    EXPECT_NEAR(static_cast<int>(q), 127, 1);
+    uint8_t perfect_q = 252;
+    EXPECT_LT(q, perfect_q);
+    EXPECT_GT(q, 50);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
     NetworkNodeRoute::LinkQualityStats stats;
-    stats.messages_expected = 10;
-    stats.messages_received = 10;
-    stats.remote_link_quality = 100;
-    // (255 + 100) / 2 = 177
-    EXPECT_EQ(stats.CalculateQuality(), 177);
+    // Simulate 10 superframes with perfect reception
+    for (int i = 0; i < 10; i++) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+    }
+    uint8_t local_q = stats.CalculateQuality();
+    stats.UpdateRemoteQuality(100);
+    uint8_t q = stats.CalculateQuality();
+    // quality = (ewma + remote) / 2
+    EXPECT_EQ(q,
+              static_cast<uint8_t>((static_cast<uint16_t>(local_q) + 100) / 2));
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityReset) {

@@ -33,7 +33,8 @@ class DataMessage : public IConvertibleToBaseMessage {
      */
     static std::optional<DataMessage> Create(
         AddressType dest, AddressType src, AddressType next_hop,
-        const std::vector<uint8_t>& payload);
+        const std::vector<uint8_t>& payload, uint8_t ttl = 0,
+        uint8_t seq_num = 0);
 
     /**
      * @brief Creates a data message from serialized data
@@ -60,11 +61,24 @@ class DataMessage : public IConvertibleToBaseMessage {
     AddressType GetSource() const;
 
     /**
+     * @brief Creates a forwarded copy with decremented TTL
+     *
+     * @param original The original data message to forward
+     * @param new_next_hop Next hop address for the forwarded message
+     * @return std::optional<DataMessage> Forwarded message, or nullopt if TTL expired
+     */
+    static std::optional<DataMessage> CreateForwarded(
+        const DataMessage& original, AddressType new_next_hop);
+
+    /**
      * @brief Gets the next hop address for routing
      *
      * @return AddressType Next hop address
      */
     AddressType GetNextHop() const;
+
+    uint8_t GetTTL() const;
+    uint8_t GetSeqNum() const;
 
     /**
      * @brief Gets the user data payload

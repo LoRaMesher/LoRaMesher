@@ -60,6 +60,13 @@ TEST_F(RadioLibCodeErrorsTest, InvalidSyncWordReturnsSyncWordError) {
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kSyncWordError);
 }
 
+TEST_F(RadioLibCodeErrorsTest, CrcMismatchReturnsCrcError) {
+    Result result =
+        RadioLibCodeErrors::ConvertStatus(RADIOLIB_ERR_CRC_MISMATCH);
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kCrcError);
+}
+
 TEST_F(RadioLibCodeErrorsTest, ChipNotFoundReturnsHardwareError) {
     Result result =
         RadioLibCodeErrors::ConvertStatus(RADIOLIB_ERR_CHIP_NOT_FOUND);

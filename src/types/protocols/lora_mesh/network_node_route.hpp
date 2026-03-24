@@ -35,10 +35,16 @@ class NetworkNodeRoute {
         uint32_t last_message_time = 0;   ///< Last message received time
         uint8_t remote_link_quality = 0;  ///< Link quality as reported by peer
         uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
+        uint8_t ewma_quality = 200;    ///< EWMA-smoothed link quality (0-255)
+        uint8_t recovery_counter = 0;  ///< Messages received since inactivation
+        uint8_t ewma_alpha = 77;       ///< EWMA alpha fixed-point (0.30 * 256)
 
         /**
          * @brief Calculate link quality (0-255)
-         * 
+         *
+         * Returns the EWMA-smoothed quality, optionally averaged with
+         * remote link quality if available.
+         *
          * @return uint8_t Calculated link quality
          */
         uint8_t CalculateQuality() const;
@@ -49,20 +55,20 @@ class NetworkNodeRoute {
         void Reset();
 
         /**
-         * @brief Register expected message
+         * @brief Register expected message and decay EWMA quality
          */
         void ExpectMessage();
 
         /**
-         * @brief Register received message
-         * 
+         * @brief Register received message and boost EWMA quality
+         *
          * @param current_time Current timestamp
          */
         void ReceivedMessage(uint32_t current_time);
 
         /**
          * @brief Update remote link quality
-         * 
+         *
          * @param quality Link quality as reported by peer
          */
         void UpdateRemoteQuality(uint8_t quality);
@@ -282,7 +288,7 @@ class NetworkNodeRoute {
 
     /**
      * @brief Register received routing message
-     * 
+     *
      * @param remote_quality Link quality reported by remote
      * @param current_time Current timestamp
      */

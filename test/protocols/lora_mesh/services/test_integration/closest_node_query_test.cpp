@@ -413,7 +413,7 @@ TEST_F(ClosestNodeQueryTests, GetClosestNodeByCapabilityIgnoresInactiveRoutes) {
     SimulateNodeFailure(gw_node);
 
     // Advance enough time for the route to expire
-    auto route_timeout = discovery_timeout * 5;
+    auto route_timeout = discovery_timeout * 15;
     AdvanceTime(route_timeout, route_timeout, 100, 0, [&]() {
         // During this time, the route may still be present but should eventually be marked inactive
         auto intermediate_result =

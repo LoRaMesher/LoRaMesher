@@ -62,6 +62,17 @@ Result LoraMesherSX1276::Begin(const RadioConfig& config) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
 
+    // Set OCP current limit (begin() resets it to 60 mA default)
+    auto_current_limit_ = config.IsCurrentLimitAuto();
+    float limit = auto_current_limit_
+                      ? RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276,
+                                                             config.getPower())
+                      : config.getCurrentLimit();
+    status = radio_module_->setCurrentLimit(static_cast<uint8_t>(limit));
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
     // Enable/Disable CRC based on configuration
     status = radio_module_->setCRC(config.getCRC());
     if (status != RADIOLIB_ERR_NONE) {
@@ -156,7 +167,29 @@ Result LoraMesherSX1276::setPower(int8_t power) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
 
+    // Raise OCP ceiling before PA ramps up to new power level
+    if (auto_current_limit_) {
+        float limit =
+            RadioConfig::RecommendedCurrentLimit(RadioType::kSx1276, power);
+        int status =
+            radio_module_->setCurrentLimit(static_cast<uint8_t>(limit));
+        if (status != RADIOLIB_ERR_NONE) {
+            return RadioLibCodeErrors::ConvertStatus(status);
+        }
+    }
+
     int status = radio_module_->setOutputPower(power);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1276::setCurrentLimit(float current_limit_ma) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    auto_current_limit_ = false;
+    int status =
+        radio_module_->setCurrentLimit(static_cast<uint8_t>(current_limit_ma));
     return RadioLibCodeErrors::ConvertStatus(status);
 }
 

@@ -684,11 +684,16 @@ TEST_F(RoutingTableUnitTest, FindNextHopForSelfReturnsLocalAddress) {
 
 TEST_F(RoutingTableUnitTest,
        UpdateRouteInactiveWorseHopsReActivatesPreservingRoute) {
+    // Add kNeighbor1 as active direct neighbor with recent last_seen
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor1, empty, kCurrentTime + 4500, kGoodQuality, kMaxHops);
+
     // Add a 2-hop route via Neighbor1
     routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kGoodQuality, 0, 0,
                                 kCurrentTime);
 
-    // Mark as inactive: time_diff=5000 > route_timeout=1000, < node_timeout=100000
+    // Mark kRemoteNode inactive (kNeighbor1 stays active — last_seen=4500)
     size_t removed =
         routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
     EXPECT_EQ(removed, 0);  // Not removed, just marked inactive
@@ -702,10 +707,15 @@ TEST_F(RoutingTableUnitTest,
     EXPECT_FALSE(it->is_active);
     EXPECT_EQ(it->routing_entry.hop_count, 2);
 
-    // UpdateRoute with WORSE hops (4 > 2) → re-activate preserving hop_count=2
-    bool changed = routing_table_->UpdateRoute(
+    // UpdateRoute with WORSE hops (4 > 2) — first message: recovery_counter=1
+    bool changed1 = routing_table_->UpdateRoute(
         kNeighbor2, kRemoteNode, 4, kGoodQuality, 0, 0, kCurrentTime + 5001);
-    EXPECT_TRUE(changed);  // routing changed (re-activated)
+    EXPECT_FALSE(changed1);  // not yet re-activated (hysteresis)
+
+    // Second message: recovery_counter=2 → re-activate preserving hop_count=2
+    bool changed2 = routing_table_->UpdateRoute(
+        kNeighbor2, kRemoteNode, 4, kGoodQuality, 0, 0, kCurrentTime + 5002);
+    EXPECT_TRUE(changed2);  // routing changed (re-activated)
 
     const auto& nodes2 = routing_table_->GetNodes();
     auto it2 = std::find_if(
@@ -778,7 +788,12 @@ TEST_F(RoutingTableUnitTest,
 
     EXPECT_TRUE(routing_table_->IsNodePresent(kRemoteNode));
 
-    // Mark kRemoteNode inactive
+    // Refresh kNeighbor1 so it stays active (only kRemoteNode goes inactive)
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor1, empty, kCurrentTime + 4500, kGoodQuality, kMaxHops);
+
+    // Mark kRemoteNode inactive (kNeighbor1 stays active)
     routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
 
     const auto& nodes_before = routing_table_->GetNodes();
@@ -791,11 +806,25 @@ TEST_F(RoutingTableUnitTest,
     EXPECT_FALSE(it_before->is_active);
     EXPECT_EQ(it_before->routing_entry.hop_count, 2);
 
-    // Process with WORSE hops (3+1=4 > 2) → re-activate preserving hop_count=2
+    // Process with WORSE hops (3+1=4 > 2) — first message: recovery_counter=1
     std::vector<RoutingTableEntry> entries2;
     entries2.push_back(CreateEntry(kRemoteNode, 3, kGoodQuality));
     routing_table_->ProcessRoutingTableMessage(
         kNeighbor2, entries2, kCurrentTime + 5001, kGoodQuality, kMaxHops);
+
+    {
+        const auto& nodes_mid = routing_table_->GetNodes();
+        auto it_mid = std::find_if(
+            nodes_mid.begin(), nodes_mid.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kRemoteNode;
+            });
+        ASSERT_NE(it_mid, nodes_mid.end());
+        EXPECT_FALSE(it_mid->is_active);  // not yet (hysteresis)
+    }
+
+    // Second message: recovery_counter=2 → re-activate preserving hop_count=2
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor2, entries2, kCurrentTime + 5002, kGoodQuality, kMaxHops);
 
     const auto& nodes_after = routing_table_->GetNodes();
     auto it_after = std::find_if(
@@ -851,7 +880,8 @@ TEST_F(RoutingTableUnitTest,
     ASSERT_NE(it_before, nodes_before.end());
     EXPECT_FALSE(it_before->is_active);
 
-    // Receive new routing message from the inactive source → should re-activate
+    // Source node sends routing message → immediate re-activation (no hysteresis
+    // for direct source since the message itself proves liveness)
     routing_table_->ProcessRoutingTableMessage(
         kNeighbor1, empty, kCurrentTime + 5001, kGoodQuality, kMaxHops);
 
@@ -861,7 +891,7 @@ TEST_F(RoutingTableUnitTest,
             return n.routing_entry.destination == kNeighbor1;
         });
     ASSERT_NE(it_after, nodes_after.end());
-    EXPECT_TRUE(it_after->is_active);  // re-activated
+    EXPECT_TRUE(it_after->is_active);  // immediately re-activated
 }
 
 // =============================================================================
@@ -1260,9 +1290,8 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageSkipsZeroAddressEntry) {
 // =============================================================================
 
 TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsDegradesThenInvalidates) {
-    // Two-phase behavior:
-    //   consecutive_missed >= 3 → quality halved each superframe (degradation)
-    //   consecutive_missed >= 6 → is_active = false (hard invalidation)
+    // EWMA quality decays on each missed message (ExpectRoutingMessage).
+    // After consecutive_missed >= inactivation_threshold (10), is_active = false.
 
     std::vector<RoutingTableEntry> empty;
     routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
@@ -1279,8 +1308,9 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsDegradesThenInvalidates) {
         ASSERT_TRUE(it->is_active);
     }
 
-    // Phase 1: After 5 calls, node should still be active but quality degrades
-    for (int i = 0; i < 5; ++i) {
+    // Phase 1: After 7 calls, quality should degrade via EWMA
+    // (Step 1 fires from call 6 onward when messages_expected >= 5)
+    for (int i = 0; i < 7; ++i) {
         routing_table_->UpdateLinkStatistics();
     }
     {
@@ -1291,14 +1321,14 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsDegradesThenInvalidates) {
             });
         ASSERT_NE(it, nodes.end());
         EXPECT_TRUE(it->is_active)
-            << "Node should still be active during degradation phase";
+            << "Node should still be active during EWMA degradation";
         EXPECT_LT(it->routing_entry.link_quality, kGoodQuality)
-            << "Quality should be degraded after consecutive misses";
+            << "Quality should be degraded after EWMA decay";
     }
 
-    // Phase 2: After 6+ calls total, node becomes inactive
+    // Phase 2: After 10+ calls total, node becomes inactive
     bool became_inactive = false;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 10; ++i) {
         routing_table_->UpdateLinkStatistics();
         const auto& nodes = routing_table_->GetNodes();
         auto it = std::find_if(
@@ -1312,7 +1342,185 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsDegradesThenInvalidates) {
     }
 
     EXPECT_TRUE(became_inactive) << "Node should become inactive after "
-                                    "kConsecutiveMissedForInactivation misses";
+                                    "inactivation_threshold misses";
+}
+
+// =============================================================================
+// EWMA Quality Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, EWMAQualityDecaysOnMissedMessages) {
+    // Verify EWMA decays following (1-alpha)^N curve on consecutive misses
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
+                                               kGoodQuality, kMaxHops);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto find_node = [&]() {
+        return std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+    };
+
+    // Initial EWMA after one received message with alpha=77/256:
+    // ewma = (77*255 + 179*200)/256 = 216
+    auto it = find_node();
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->link_stats.ewma_quality, 216);
+
+    // After 10 consecutive misses, EWMA should decay significantly
+    // Each miss: ewma = ewma * 179/256
+    for (int i = 0; i < 10; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    it = find_node();
+    ASSERT_NE(it, nodes.end());
+    EXPECT_LT(it->link_stats.ewma_quality, 20)
+        << "EWMA should be very low after 10 consecutive misses";
+    EXPECT_TRUE(it->is_active)
+        << "Node should still be active (threshold is 10, but check fires "
+           "before increment)";
+}
+
+TEST_F(RoutingTableUnitTest, EWMAQualityRecoversOnReceivedMessages) {
+    // Start with a degraded link, then receive messages to recover
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
+                                               kGoodQuality, kMaxHops);
+
+    // Degrade with 5 missed messages
+    for (int i = 0; i < 5; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto find_node = [&]() {
+        return std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+    };
+
+    auto it = find_node();
+    uint8_t degraded_ewma = it->link_stats.ewma_quality;
+    EXPECT_LT(degraded_ewma, 100) << "EWMA should be degraded after 5 misses";
+
+    // Receive 3 messages → EWMA should recover significantly
+    for (int i = 0; i < 3; ++i) {
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, kCurrentTime + 6000 + i, kGoodQuality, kMaxHops);
+    }
+    it = find_node();
+    EXPECT_GT(it->link_stats.ewma_quality, degraded_ewma)
+        << "EWMA should recover after receiving messages";
+}
+
+TEST_F(RoutingTableUnitTest, EWMAQualityStabilizesAtMarginalPDR) {
+    // Simulate ~70% PDR: receive 7 out of every 10 superframes
+    // EWMA should converge to approximately 0.7 * 255 ≈ 178 without oscillation
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, kCurrentTime,
+                                               kGoodQuality, kMaxHops);
+
+    // Run 50 superframes with 70% PDR (bursty: 7 receive, 3 miss)
+    uint32_t time = kCurrentTime + 1000;
+    for (int round = 0; round < 5; ++round) {
+        for (int i = 0; i < 10; ++i) {
+            routing_table_->UpdateLinkStatistics();
+            if (i < 7) {
+                routing_table_->ProcessRoutingTableMessage(
+                    kNeighbor1, empty, time++, kGoodQuality, kMaxHops);
+            }
+        }
+    }
+
+    // Receive one more message to check post-receive quality (not post-miss)
+    routing_table_->UpdateLinkStatistics();
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, time++,
+                                               kGoodQuality, kMaxHops);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_TRUE(it->is_active) << "70% PDR link should remain active";
+    // After a receive, EWMA recovers to ~100+. The key property is
+    // that the link stays active and quality doesn't collapse to zero.
+    EXPECT_GT(it->link_stats.ewma_quality, 50)
+        << "EWMA should not collapse for 70% PDR";
+    EXPECT_LT(it->link_stats.ewma_quality, 230)
+        << "EWMA should not exceed expected range";
+}
+
+TEST_F(RoutingTableUnitTest,
+       HysteresisRequiresMultipleMessagesForReactivation) {
+    // Test hysteresis on indirect route re-activation via UpdateRoute.
+    // Source node re-activation (ProcessRoutingTableMessage) is immediate
+    // since the message itself proves liveness.
+
+    // Add a 2-hop route to kRemoteNode via kNeighbor1
+    AddDirectNeighbor(kNeighbor1);
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    // Keep kNeighbor1 alive, but inactivate kRemoteNode
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor1, empty, kCurrentTime + 4500, kGoodQuality, kMaxHops);
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto find_remote = [&]() {
+        return std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kRemoteNode;
+            });
+    };
+
+    EXPECT_FALSE(find_remote()->is_active);
+
+    // First UpdateRoute with worse hops: recovery_counter=1, still inactive
+    routing_table_->UpdateRoute(kNeighbor2, kRemoteNode, 4, kGoodQuality, 0, 0,
+                                kCurrentTime + 5001);
+    EXPECT_FALSE(find_remote()->is_active);
+
+    // Second UpdateRoute: recovery_counter=2, re-activated
+    routing_table_->UpdateRoute(kNeighbor2, kRemoteNode, 4, kGoodQuality, 0, 0,
+                                kCurrentTime + 5002);
+    EXPECT_TRUE(find_remote()->is_active);
+}
+
+TEST_F(RoutingTableUnitTest, MultiHopQualityCappedByDirectLink) {
+    // Direct neighbor quality should cap multi-hop route quality
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kRemoteNode, 1, 250));  // 2-hop route, q=250
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor1, entries, kCurrentTime, kGoodQuality, kMaxHops);
+
+    // Degrade kNeighbor1 link quality via EWMA decay (enough for Step 1 to fire)
+    for (int i = 0; i < 7; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto neighbor_it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    auto remote_it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(neighbor_it, nodes.end());
+    ASSERT_NE(remote_it, nodes.end());
+
+    // Multi-hop quality should not exceed direct link quality
+    EXPECT_LE(remote_it->routing_entry.link_quality,
+              neighbor_it->routing_entry.link_quality)
+        << "Multi-hop quality should be capped by direct link quality";
 }
 
 // =============================================================================

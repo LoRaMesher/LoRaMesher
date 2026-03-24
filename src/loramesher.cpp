@@ -186,6 +186,21 @@ Result LoraMesher::Send(AddressType destination,
     return SendMessage(*message_opt);
 }
 
+Result LoraMesher::SendBroadcast(std::span<const uint8_t> data) {
+    if (!is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoraMesher not running");
+    }
+
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoRaMesh protocol not active");
+    }
+
+    return mesh_protocol->SendBroadcast(data);
+}
+
 void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     data_callback_ = callback;
 
@@ -229,7 +244,7 @@ std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
         return std::nullopt;
     }
 
-    const auto& network_nodes = mesh_protocol->GetNetworkNodes();
+    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
 
     std::optional<RouteEntry> best;
     uint16_t best_cost = UINT16_MAX;
@@ -305,7 +320,7 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         return routes;
     }
 
-    const auto& network_nodes = mesh_protocol->GetNetworkNodes();
+    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
     routes.reserve(network_nodes.size());
 
     for (const auto& node : network_nodes) {

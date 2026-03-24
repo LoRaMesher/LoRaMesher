@@ -17,6 +17,7 @@
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
+#include "types/messages/loramesher/broadcast_message.hpp"
 #include "types/messages/loramesher/data_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
@@ -535,6 +536,31 @@ class NetworkService : public INetworkService {
      */
     Result SendData(AddressType destination, const std::vector<uint8_t>& data);
 
+    // Broadcast message methods
+
+    /**
+     * @brief Process a received broadcast message
+     *
+     * Handles de-duplication, application delivery, and TTL-based re-broadcast.
+     *
+     * @param message Broadcast message to process
+     * @param reception_timestamp When the message was received
+     * @return Result Success or error
+     */
+    Result ProcessBroadcastMessage(const BaseMessage& message,
+                                   uint32_t reception_timestamp);
+
+    /**
+     * @brief Send a broadcast message to all nodes in the mesh
+     *
+     * Creates a broadcast message with default TTL and queues it for
+     * transmission. The message propagates via controlled flooding.
+     *
+     * @param data User data payload
+     * @return Result Success or error
+     */
+    Result SendBroadcast(std::span<const uint8_t> data);
+
     // Multi-hop synchronization beacon processing
 
     /**
@@ -739,6 +765,15 @@ class NetworkService : public INetworkService {
      */
     void SetBeaconNodeCount(uint8_t node_count) {
         beacon_node_count_ = node_count;
+    }
+
+    /**
+     * @brief Set this node's control slot index (for testing)
+     *
+     * @param index Control slot index (0xFF = unassigned)
+     */
+    void SetMyControlSlotIndex(uint8_t index) {
+        my_control_slot_index_ = index;
     }
 
     /**
@@ -1020,6 +1055,23 @@ class NetworkService : public INetworkService {
      */
     uint8_t FindLowestAvailableControlSlot();
 
+    // Message de-duplication helpers
+
+    /**
+     * @brief Check if a message has already been seen (broadcast or unicast)
+     */
+    bool IsMessageDuplicate(AddressType source, uint8_t seq_num) const;
+
+    /**
+     * @brief Record a message in the de-duplication cache
+     */
+    void AddToMessageCache(AddressType source, uint8_t seq_num);
+
+    /**
+     * @brief Forward a broadcast message with decremented TTL
+     */
+    Result ForwardBroadcastMessage(const BroadcastMessage& original);
+
     // Member variables
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
@@ -1076,7 +1128,7 @@ class NetworkService : public INetworkService {
 
     // Control slot assignment
     uint8_t my_control_slot_index_ =
-        0;  ///< This node's assigned control slot index (NM=0, others assigned at join)
+        0xFF;  ///< This node's assigned control slot index (0xFF=unassigned, NM=0, others assigned at join)
     uint8_t beacon_node_count_ =
         1;  ///< Authoritative node count from NM's sync beacon
 
@@ -1094,6 +1146,11 @@ class NetworkService : public INetworkService {
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
+    uint8_t ewma_alpha_fixed_ = 77;  ///< EWMA alpha in fixed-point (0.30 * 256)
+    uint8_t consecutive_missed_for_inactivation_ =
+        10;  ///< Consecutive misses before hard inactivation
+    uint8_t min_consecutive_for_reactivation_ =
+        2;  ///< Consecutive receptions to re-activate
 
     // Join retry backoff (Slotted ALOHA)
     uint8_t join_retry_count_ = 0;  ///< Number of join retries so far
@@ -1116,6 +1173,20 @@ class NetworkService : public INetworkService {
 
     // State-change notification callback
     StateChangeCallback state_change_callback_;
+
+    // Unified message de-duplication cache (shared by DATA and DATA_BROADCAST)
+    struct MessageCacheEntry {
+        AddressType source = 0;
+        uint8_t seq_num = 0;
+        bool valid = false;
+    };
+
+    static constexpr size_t kMessageCacheSize = 32;
+    static constexpr uint8_t kDefaultTTL = 10;
+    std::array<MessageCacheEntry, kMessageCacheSize> message_cache_{};
+    uint8_t message_cache_head_ = 0;
+    uint8_t message_seq_ =
+        0;  ///< Per-node sequence counter (shared by unicast + broadcast)
 
     // Thread safety
     mutable std::mutex network_mutex_;

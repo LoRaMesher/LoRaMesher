@@ -462,6 +462,9 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
         case MessageType::DATA:
             return ProcessDataMessage(message, reception_timestamp);
 
+        case MessageType::DATA_BROADCAST:
+            return ProcessBroadcastMessage(message, reception_timestamp);
+
         default:
             LOG_WARNING("Unknown message type: %d",
                         static_cast<int>(message.GetType()));
@@ -537,6 +540,15 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     node_role_ = config.node_role;
     target_duty_cycle_ = config.target_duty_cycle;
     min_sleep_fraction_ = config.min_sleep_fraction;
+    ewma_alpha_fixed_ = static_cast<uint8_t>(
+        std::clamp(config.link_quality_ewma_alpha, 0.05f, 0.95f) * 256.0f);
+    consecutive_missed_for_inactivation_ =
+        config.consecutive_missed_for_inactivation;
+    min_consecutive_for_reactivation_ = config.min_consecutive_for_reactivation;
+
+    routing_table_->SetLinkQualityParams(ewma_alpha_fixed_,
+                                         consecutive_missed_for_inactivation_,
+                                         min_consecutive_for_reactivation_);
 
     LOG_INFO("Network service configured with node address 0x%04X, role: %d",
              node_address_, static_cast<int>(node_role_));
@@ -1107,6 +1119,23 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             }
         }
 
+        // Verify no other node already holds this index (stale propagation
+        // can cause a previously-removed node to re-appear with an index
+        // that was already reassigned to another node)
+        if (control_slot_index != 0xFF) {
+            for (const auto& node : nodes) {
+                if (node.GetAddress() != source &&
+                    node.control_slot_index == control_slot_index) {
+                    LOG_WARNING(
+                        "Control slot index %d conflict: already assigned to "
+                        "0x%04X, reassigning for 0x%04X",
+                        control_slot_index, node.GetAddress(), source);
+                    control_slot_index = 0xFF;
+                    break;
+                }
+            }
+        }
+
         if (control_slot_index == 0xFF) {
             // New node: find lowest available control slot index
             control_slot_index = FindLowestAvailableControlSlot();
@@ -1381,12 +1410,29 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     AddressType next_hop = data_msg.GetNextHop();
     AddressType final_dest = data_msg.GetDestination();
     AddressType original_src = data_msg.GetSource();
+    uint8_t seq_num = data_msg.GetSeqNum();
+    uint8_t ttl = data_msg.GetTTL();
 
     LOG_DEBUG(
         "DATA message: src=0x%04X, dest=0x%04X, next_hop=0x%04X, "
-        "my_addr=0x%04X, payload_size=%zu",
-        original_src, final_dest, next_hop, node_address_,
+        "my_addr=0x%04X, ttl=%u, seq=%u, payload_size=%zu",
+        original_src, final_dest, next_hop, node_address_, ttl, seq_num,
         data_msg.GetPayload().size());
+
+    // Ignore our own messages heard back
+    if (original_src == node_address_) {
+        LOG_DEBUG("Ignoring own data message (seq=%u)", seq_num);
+        return Result::Success();
+    }
+
+    // De-duplication check (prevents loops)
+    if (IsMessageDuplicate(original_src, seq_num)) {
+        LOG_DEBUG("Dropping duplicate DATA from 0x%04X seq=%u", original_src,
+                  seq_num);
+        return Result::Success();
+    }
+
+    AddToMessageCache(original_src, seq_num);
 
     // Check if we are the intended next hop
     if (next_hop != node_address_) {
@@ -1409,9 +1455,15 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
             LOG_WARNING("No data callback registered - DATA dropped");
         }
     } else {
+        // TTL check before forwarding
+        if (ttl <= 1) {
+            LOG_WARNING("DATA TTL expired (src=0x%04X, dest=0x%04X), dropping",
+                        original_src, final_dest);
+            return Result::Success();
+        }
         // Forward to next hop toward final destination
-        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X", original_src,
-                 final_dest);
+        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X (ttl=%u)", original_src,
+                 final_dest, ttl);
         return ForwardDataMessage(data_msg);
     }
 
@@ -1429,22 +1481,17 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
                       "No route to destination for forwarding");
     }
 
-    // Create forwarded message with updated next_hop
-    auto forwarded_msg = DataMessage::Create(
-        original_msg.GetDestination(),  // Keep final destination
-        original_msg.GetSource(),       // Keep original source
-        new_next_hop,                   // Update next hop
-        original_msg.GetPayload());     // Keep original payload
-
+    auto forwarded_msg =
+        DataMessage::CreateForwarded(original_msg, new_next_hop);
     if (!forwarded_msg) {
-        LOG_ERROR("Failed to create forwarded DATA message");
-        return Result(LoraMesherErrorCode::kMemoryError,
-                      "Failed to create forwarded data message");
+        LOG_WARNING("DATA TTL expired during forwarding, dropping");
+        return Result::Success();
     }
 
-    LOG_DEBUG("Forwarding DATA: dest=0x%04X, src=0x%04X, new_next_hop=0x%04X",
-              original_msg.GetDestination(), original_msg.GetSource(),
-              new_next_hop);
+    LOG_DEBUG(
+        "Forwarding DATA: dest=0x%04X, src=0x%04X, next_hop=0x%04X, ttl=%u",
+        original_msg.GetDestination(), original_msg.GetSource(), new_next_hop,
+        forwarded_msg->GetTTL());
 
     // Queue for TX slot
     auto base_msg =
@@ -1475,20 +1522,135 @@ Result NetworkService::SendData(AddressType destination,
         next_hop = destination;
     }
 
-    // Create the data message
-    auto data_msg =
-        DataMessage::Create(destination, node_address_, next_hop, data);
+    // Assign TTL and sequence number
+    message_seq_++;
+    uint8_t ttl = (config_.max_hops > 0) ? config_.max_hops : kDefaultTTL;
+
+    auto data_msg = DataMessage::Create(destination, node_address_, next_hop,
+                                        data, ttl, message_seq_);
     if (!data_msg) {
         LOG_ERROR("Failed to create DATA message for 0x%04X", destination);
         return Result(LoraMesherErrorCode::kMemoryError,
                       "Failed to create data message");
     }
 
-    LOG_INFO("Sending DATA to 0x%04X via next_hop 0x%04X, payload_size=%zu",
-             destination, next_hop, data.size());
+    // Prevent self-receive if we hear our own message
+    AddToMessageCache(node_address_, message_seq_);
+
+    LOG_INFO(
+        "Sending DATA to 0x%04X via 0x%04X (ttl=%u, seq=%u), payload_size=%zu",
+        destination, next_hop, ttl, message_seq_, data.size());
 
     // Queue for TX slot
     auto base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
+                                              std::move(base_msg));
+
+    return Result::Success();
+}
+
+// Broadcast message implementations
+
+Result NetworkService::ProcessBroadcastMessage(
+    const BaseMessage& message, uint32_t /* reception_timestamp */) {
+    auto bcast_opt =
+        BroadcastMessage::CreateFromSerialized(*message.Serialize());
+    if (!bcast_opt) {
+        LOG_ERROR("Failed to deserialize broadcast message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize broadcast message");
+    }
+
+    const BroadcastMessage& bcast = *bcast_opt;
+    AddressType source = bcast.GetSource();
+    uint8_t seq_num = bcast.GetSeqNum();
+    uint8_t ttl = bcast.GetTTL();
+
+    // Ignore our own broadcasts heard back
+    if (source == node_address_) {
+        LOG_DEBUG("Ignoring own broadcast (seq=%u)", seq_num);
+        return Result::Success();
+    }
+
+    // De-duplication check
+    if (IsMessageDuplicate(source, seq_num)) {
+        LOG_DEBUG("Dropping duplicate broadcast from 0x%04X seq=%u", source,
+                  seq_num);
+        return Result::Success();
+    }
+
+    AddToMessageCache(source, seq_num);
+
+    // Deliver to application layer
+    LOG_INFO("BROADCAST from 0x%04X (ttl=%u, seq=%u), payload_size=%zu", source,
+             ttl, seq_num, bcast.GetPayload().size());
+
+    if (data_received_callback_) {
+        data_received_callback_(source, bcast.GetPayload());
+    } else {
+        LOG_WARNING("No data callback registered - broadcast dropped");
+    }
+
+    // Forward if TTL allows
+    if (ttl > 1) {
+        return ForwardBroadcastMessage(bcast);
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
+    message_seq_++;
+
+    auto bcast = BroadcastMessage::Create(node_address_, kDefaultTTL,
+                                          message_seq_, data);
+    if (!bcast) {
+        LOG_ERROR("Failed to create broadcast message");
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create broadcast message");
+    }
+
+    // Prevent self-receive if we hear our own broadcast
+    AddToMessageCache(node_address_, message_seq_);
+
+    LOG_INFO("Sending BROADCAST (ttl=%u, seq=%u), payload_size=%zu",
+             kDefaultTTL, message_seq_, data.size());
+
+    auto base_msg = std::make_unique<BaseMessage>(bcast->ToBaseMessage());
+    message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
+                                              std::move(base_msg));
+
+    return Result::Success();
+}
+
+bool NetworkService::IsMessageDuplicate(AddressType source,
+                                        uint8_t seq_num) const {
+    for (const auto& entry : message_cache_) {
+        if (entry.valid && entry.source == source && entry.seq_num == seq_num) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void NetworkService::AddToMessageCache(AddressType source, uint8_t seq_num) {
+    message_cache_[message_cache_head_] = {source, seq_num, true};
+    message_cache_head_ = (message_cache_head_ + 1) % kMessageCacheSize;
+}
+
+Result NetworkService::ForwardBroadcastMessage(
+    const BroadcastMessage& original) {
+    auto forwarded = BroadcastMessage::CreateForwarded(original);
+    if (!forwarded) {
+        LOG_DEBUG("Broadcast TTL expired, not forwarding");
+        return Result::Success();
+    }
+
+    LOG_DEBUG("Forwarding broadcast from 0x%04X (ttl=%u->%u, seq=%u)",
+              original.GetSource(), original.GetTTL(), forwarded->GetTTL(),
+              original.GetSeqNum());
+
+    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
     message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
                                               std::move(base_msg));
 
@@ -1650,7 +1812,8 @@ Result NetworkService::UpdateSlotTable() {
 
     if (network_manager_ == node_address_) {
         // NM: compute from actual assignments
-        uint8_t max_index = my_control_slot_index_;
+        uint8_t max_index =
+            (my_control_slot_index_ != 0xFF) ? my_control_slot_index_ : 0;
         for (const auto& node : ordered_nodes) {
             if (node.control_slot_index != 0xFF &&
                 node.control_slot_index > max_index) {
@@ -1788,7 +1951,8 @@ Result NetworkService::UpdateSlotTable() {
     // ── Phase 2: Control slots (join-order indexed TX/RX) ────────────────────
     for (size_t i = 0; i < allocated_control_slots_ && slot_index < slot_count_;
          i++) {
-        if (i == my_control_slot_index_ && network_manager_ != 0) {
+        if (my_control_slot_index_ != 0xFF && i == my_control_slot_index_ &&
+            network_manager_ != 0) {
             LOG_DEBUG(
                 "Allocated CONTROL_TX slot %zu for local node 0x%04X (index "
                 "%d)",
@@ -2032,9 +2196,12 @@ Result NetworkService::BroadcastSlotAllocation() {
 // Discovery implementation
 
 Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
-    // NODE_ONLY nodes never create a network - keep discovering indefinitely
-    if (node_role_ == NodeRole::NODE_ONLY) {
-        // Still discovering, will wait for sync beacon from existing network
+    // NODE_ONLY and NETWORK_MANAGER nodes never create a network on timeout.
+    // NODE_ONLY always waits for an existing network.
+    // NETWORK_MANAGER-role nodes that reach DISCOVERY surrendered via
+    // ProcessNMClaim; re-creating on timeout causes a yield-recreate cycle.
+    if (node_role_ == NodeRole::NODE_ONLY ||
+        node_role_ == NodeRole::NETWORK_MANAGER) {
         return Result::Success();
     }
 
@@ -3061,6 +3228,11 @@ void NetworkService::ResetNetworkState() {
     // Clear join data
     pending_join_data_.reset();
 
+    // Reset message de-duplication state
+    message_cache_.fill({});
+    message_cache_head_ = 0;
+    message_seq_ = 0;
+
     // Reset to initial state
     SetState(ProtocolState::INITIALIZING);
 
@@ -3085,7 +3257,9 @@ uint8_t NetworkService::GetMaxHopsFromRoutingTable() const {
 
 uint8_t NetworkService::FindLowestAvailableControlSlot() {
     std::set<uint8_t> used_indices;
-    used_indices.insert(my_control_slot_index_);  // NM's own slot (0)
+    if (my_control_slot_index_ != 0xFF) {
+        used_indices.insert(my_control_slot_index_);  // NM's own slot (0)
+    }
     for (const auto& node : routing_table_->GetNodes()) {
         if (node.control_slot_index != 0xFF) {
             used_indices.insert(node.control_slot_index);

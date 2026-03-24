@@ -172,6 +172,12 @@ class ComprehensiveSlotAllocationTest : public ::testing::Test {
             routing_table->SetControlSlotIndex(addr, slot_idx++);
         }
 
+        // Set local node's control slot index for operational states
+        if (state == ProtocolState::NORMAL_OPERATION ||
+            state == ProtocolState::NETWORK_MANAGER) {
+            network_service_->SetMyControlSlotIndex(0);
+        }
+
         // For non-NM nodes, simulate having received a sync beacon with node_count
         if (state != ProtocolState::NETWORK_MANAGER) {
             network_service_->SetBeaconNodeCount(

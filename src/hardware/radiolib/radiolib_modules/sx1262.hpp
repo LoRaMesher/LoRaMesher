@@ -73,6 +73,7 @@ class LoraMesherSX1262 : public IRadio {
     uint8_t getPacketLength() override;
     uint32_t getTimeOnAir(uint8_t length) override;
     Result readData(uint8_t* data, size_t len) override;
+    Result setCurrentLimit(float current_limit_ma) override;
 
     // Not supported functions
 
@@ -149,6 +150,7 @@ class LoraMesherSX1262 : public IRadio {
     std::unique_ptr<SX1262> radio_module_;
 
     bool initialized_ = false;
+    bool auto_current_limit_ = true;
 };
 
 }  // namespace radio

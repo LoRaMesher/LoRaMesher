@@ -68,6 +68,12 @@ class INetworkService {
         float target_duty_cycle = 0.01f;  ///< Target TX duty cycle (default 1%)
         float min_sleep_fraction =
             0.30f;  ///< Minimum sleep fraction (0.0–1.0, default 30%)
+        float link_quality_ewma_alpha =
+            0.30f;  ///< EWMA smoothing factor for link quality
+        uint8_t consecutive_missed_for_inactivation =
+            10;  ///< Consecutive misses before hard inactivation
+        uint8_t min_consecutive_for_reactivation =
+            2;  ///< Consecutive receptions to re-activate
 
         // Join request retry configuration
         uint8_t retry_delay_superframes =

@@ -31,6 +31,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Coverage](#profiling--code-coverage-llvm)
   - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
+- [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
 - [License](#license)
@@ -45,6 +46,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **Network manager election** — distributed NM election with configurable priority
 - **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
 - **Desktop simulation** — full native test environment with hardware mocks, no hardware required
+- **Broadcast messaging** — TTL-based flooding with per-node de-duplication
 - **Memory-safe** — tested under ASAN, UBSAN, and TSAN; no heap allocations per packet on ESP32
 - **LLVM coverage** — instrumented test environment with `llvm-cov` HTML/text reports
 
@@ -143,8 +145,9 @@ SensorData reading { .counter = 42 };
 // Unicast
 mesh.createPacketAndSend(destinationAddress, &reading, /*count=*/1);
 
-// Broadcast
-mesh.createPacketAndSend(kBroadcastAddress, &reading, 1);
+// Broadcast (reaches all nodes via TTL-based flooding)
+std::vector<uint8_t> data = {0x01, 0x02, 0x03};
+mesh.SendBroadcast(data);
 
 // Reliable (acknowledged, larger payloads)
 mesh.sendReliable(destinationAddress, &reading, 1);
@@ -357,6 +360,58 @@ Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memo
 
 ---
 
+## Contributing
+
+### One-Time Setup
+
+Enable the shared pre-commit hook (runs `clang-format-19` on staged files):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This catches formatting issues locally before they reach CI. Install `clang-format-19` to match the CI version:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install clang-format-19
+```
+
+### Code Style
+
+The project uses the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html) with customizations defined in `.clang-format`.
+
+Format all modified files:
+
+```bash
+# Format specific files
+clang-format-19 -i src/path/to/file.cpp
+
+# Format all source files
+find src -name '*.cpp' -o -name '*.hpp' | xargs clang-format-19 -i
+```
+
+For deeper static analysis, run `clang-tidy` (see [Static Analysis](#static-analysis-clang-tidy) above).
+
+### Testing Before Pushing
+
+Run the full tests before pushing, they take several minutes but should pass before opening a PR:
+
+```bash
+pio test -e test_native -v"
+```
+
+### Conventions
+
+- **C++20** standard required
+- **4 spaces** indentation, no tabs
+- **PascalCase** for classes and functions, **UPPER_CASE** for constants and enums
+- **Trailing underscore** for private members (`config_`)
+- **Doxygen comments** for public APIs
+- Keep comments generic — describe *what* the code does, not *why* a specific change was made
+
+---
+
 ## Protocol Design
 
 ### State Machine
@@ -378,7 +433,7 @@ Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memo
 
 ### Packet Types
 
-`SYNC_BEACON` · `ROUTING_TABLE` · `NM_CLAIM` · `JOIN_REQUEST` · `JOIN_RESPONSE` · `SLOT_ALLOCATION` · `DATA` · `KEEP_ALIVE` · `FAULT_RECOVERY`
+`SYNC_BEACON` · `ROUTING_TABLE` · `NM_CLAIM` · `JOIN_REQUEST` · `JOIN_RESPONSE` · `SLOT_ALLOCATION` · `DATA` · `DATA_BROADCAST` · `KEEP_ALIVE` · `FAULT_RECOVERY`
 
 ---
 

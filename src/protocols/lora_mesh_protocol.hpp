@@ -124,6 +124,14 @@ class LoRaMeshProtocol : public Protocol {
     Result SendData(AddressType destination, const std::vector<uint8_t>& data);
 
     /**
+     * @brief Send a broadcast message to all nodes in the mesh
+     *
+     * @param data User data payload
+     * @return Result Success or error
+     */
+    Result SendBroadcast(std::span<const uint8_t> data);
+
+    /**
      * @brief Pause all protocol services
      * 
      * @return Result Success or error details

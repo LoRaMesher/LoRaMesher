@@ -314,5 +314,57 @@ TEST_F(DataMessageTest, GetMutableHeaderTest) {
     EXPECT_EQ(msg_ptr->GetHeader().GetNextHop(), new_next_hop);
 }
 
+TEST_F(DataMessageTest, CreateWithTTLAndSeqNum) {
+    auto opt_msg = DataMessage::Create(dest, src, next_hop, payload, 10, 42);
+    ASSERT_TRUE(opt_msg.has_value());
+    EXPECT_EQ(opt_msg->GetTTL(), 10);
+    EXPECT_EQ(opt_msg->GetSeqNum(), 42);
+    EXPECT_EQ(opt_msg->GetPayload(), payload);
+}
+
+TEST_F(DataMessageTest, TTLAndSeqNumPreservedInSerialization) {
+    auto opt_msg = DataMessage::Create(dest, src, next_hop, payload, 5, 77);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    auto opt_serialized = opt_msg->Serialize();
+    ASSERT_TRUE(opt_serialized.has_value());
+
+    auto opt_deserialized = DataMessage::CreateFromSerialized(*opt_serialized);
+    ASSERT_TRUE(opt_deserialized.has_value());
+    EXPECT_EQ(opt_deserialized->GetTTL(), 5);
+    EXPECT_EQ(opt_deserialized->GetSeqNum(), 77);
+    EXPECT_EQ(opt_deserialized->GetPayload(), payload);
+}
+
+TEST_F(DataMessageTest, CreateForwardedDecrementsTTL) {
+    auto opt_msg = DataMessage::Create(dest, src, next_hop, payload, 5, 10);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    const AddressType new_hop = 0x9999;
+    auto forwarded = DataMessage::CreateForwarded(*opt_msg, new_hop);
+    ASSERT_TRUE(forwarded.has_value());
+    EXPECT_EQ(forwarded->GetTTL(), 4);
+    EXPECT_EQ(forwarded->GetSeqNum(), 10);
+    EXPECT_EQ(forwarded->GetNextHop(), new_hop);
+    EXPECT_EQ(forwarded->GetSource(), src);
+    EXPECT_EQ(forwarded->GetDestination(), dest);
+}
+
+TEST_F(DataMessageTest, CreateForwardedReturnsNulloptAtTTLOne) {
+    auto opt_msg = DataMessage::Create(dest, src, next_hop, payload, 1, 10);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    auto forwarded = DataMessage::CreateForwarded(*opt_msg, 0x9999);
+    EXPECT_FALSE(forwarded.has_value());
+}
+
+TEST_F(DataMessageTest, CreateForwardedReturnsNulloptAtTTLZero) {
+    auto opt_msg = DataMessage::Create(dest, src, next_hop, payload, 0, 10);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    auto forwarded = DataMessage::CreateForwarded(*opt_msg, 0x9999);
+    EXPECT_FALSE(forwarded.has_value());
+}
+
 }  // namespace test
 }  // namespace loramesher

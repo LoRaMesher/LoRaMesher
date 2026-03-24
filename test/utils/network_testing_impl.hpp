@@ -154,6 +154,11 @@ class VirtualNetwork {
      * @param radio Pointer to the node's radio receiver interface
      */
     void RegisterNode(uint32_t address, IRadioReceiver* radio) {
+        RegisterNode(address, radio, RadioConfig());
+    }
+
+    void RegisterNode(uint32_t address, IRadioReceiver* radio,
+                      const RadioConfig& config) {
         if (nodes_.find(address) != nodes_.end()) {
             std::cerr << "Node with address " << address
                       << " already registered" << std::endl;
@@ -162,6 +167,7 @@ class VirtualNetwork {
 
         NodeInfo node_info;
         node_info.radio = radio;
+        node_info.radio_config = config;
         nodes_[address] = node_info;
     }
 
@@ -210,7 +216,12 @@ class VirtualNetwork {
 
         LOG_DEBUG("Transmitting message from 0x%04X, hex: %s", source,
                   hex_data.c_str());
-        uint32_t toa = GetTimeOnAirOverhead(static_cast<uint8_t>(data.size()));
+        const auto& src_config = nodes_[source].radio_config;
+        uint32_t toa = CalculateLoRaTimeOnAir(
+            static_cast<uint8_t>(data.size()), src_config.getSpreadingFactor(),
+            static_cast<uint32_t>(src_config.getBandwidth() * 1000),
+            src_config.getCodingRate(), src_config.getPreambleLength(), true,
+            src_config.getCRC());
         LOG_DEBUG("Time-on-Air for message: %u ms", toa);
 
         // Determine which nodes should receive the message
@@ -442,6 +453,7 @@ class VirtualNetwork {
         IRadioReceiver* radio;
         std::map<uint32_t, bool> active_links;
         std::map<uint32_t, uint32_t> link_delays;
+        RadioConfig radio_config;
     };
 
     /**

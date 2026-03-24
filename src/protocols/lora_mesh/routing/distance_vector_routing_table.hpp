@@ -100,6 +100,10 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     void UpdateLinkStatistics() override;
 
+    void SetLinkQualityParams(uint8_t ewma_alpha_fixed,
+                              uint8_t inactivation_threshold,
+                              uint8_t reactivation_threshold) override;
+
     bool ProcessRoutingTableMessage(
         AddressType source_address, std::span<const RoutingTableEntry> entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
@@ -174,15 +178,15 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     void LogRouteEntry(
         const types::protocols::lora_mesh::NetworkNodeRoute& node);
 
-    // Constants
+    // Link quality parameters (configurable via SetLinkQualityParams)
 
-    /// Consecutive misses before quality halving begins
-    static constexpr uint8_t kConsecutiveMissedForDegradation = 3;
+    uint8_t ewma_alpha_fixed_ = 77;  ///< EWMA alpha in fixed-point (0.30 * 256)
     /// Consecutive misses before hard invalidation (is_active = false)
-    static constexpr uint8_t kConsecutiveMissedForInactivation = 6;
-    /// Minimum received messages before degradation/invalidation applies
-    /// (avoids killing links during network formation)
+    uint8_t inactivation_threshold_ = 10;
+    /// Minimum received messages before invalidation applies
     static constexpr uint8_t kMinMessagesBeforeInvalidation = 1;
+    /// Consecutive receptions required to re-activate an inactive route
+    uint8_t reactivation_threshold_ = 2;
 
     // Member variables
 

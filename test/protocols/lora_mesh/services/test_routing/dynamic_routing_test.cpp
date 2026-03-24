@@ -71,10 +71,10 @@ TEST_F(DynamicRoutingTests, RouteUpdateAfterLinkFailure) {
     uint32_t step_ms = 15u;
 
     uint32_t end_superframe_time = 0;
-    // Wait for routing tables to update
-    // The route from N1 to N3 should now go through N2 or N4
+    // Wait for routing tables to update (needs enough superframes for EWMA
+    // decay + inactivation threshold + distance-vector convergence)
     bool updated = AdvanceTime(
-        superframe_time * 8, superframe_time * 8, step_ms, 0, [&]() {
+        superframe_time * 16, superframe_time * 16, step_ms, 0, [&]() {
             // N1 should still have a route to N3, but with more hops
             if (!HasRouteTo(*nodes[0], nodes[2]->address)) {
                 return false;
@@ -317,56 +317,45 @@ TEST_F(DynamicRoutingTests, LoopPreventionInComplexTopology) {
  * Topology: 5 fully connected nodes
  *
  * Verifies:
- * - Broadcast message (address 0xFFFF) reaches all nodes
+ * - Broadcast message reaches all nodes
  * - Each node receives exactly one copy (no duplicates)
  */
 TEST_F(DynamicRoutingTests, BroadcastToAllNodes) {
-    GTEST_SKIP()
-        << "Broadcast not implemented (BroadcastSlotAllocation returns "
-           "kNotImplemented)";
-    // Create full mesh with 5 nodes (first node is network manager)
     auto nodes = GenerateFullMeshTopology(5, 0x1000, "Node", 0);
 
     ASSERT_EQ(nodes.size(), 5) << "Expected 5 nodes";
 
-    // Start all nodes
     for (auto* node : nodes) {
         ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
     }
 
-    // Wait for network formation (4 normal + 1 manager)
     ASSERT_TRUE(WaitForNetworkFormation(nodes, 4))
         << "Network formation failed";
 
-    // Wait for full mesh routing to converge
     ASSERT_TRUE(WaitForFullMeshConvergence(nodes))
         << "Full mesh routing did not converge";
 
-    // Clear any previous messages
     ClearAllReceivedMessages();
 
-    // Create and send broadcast message from N1
+    // Send broadcast from N1
     std::vector<uint8_t> payload = {0xBC, 0xBC, 0xBC};
-    auto message_opt =
-        BaseMessage::Create(0xFFFF,  // Broadcast address
-                            nodes[0]->address, MessageType::DATA, payload);
-
-    ASSERT_TRUE(message_opt.has_value())
-        << "Failed to create broadcast message";
-    ASSERT_TRUE(nodes[0]->protocol->SendMessage(message_opt.value()))
-        << "Failed to send broadcast message";
+    auto result = nodes[0]->protocol->SendBroadcast(payload);
+    ASSERT_TRUE(result) << "Failed to send broadcast: "
+                        << result.GetErrorMessage();
 
     // Wait for broadcast to propagate
-    uint32_t step_ms = 15u;
-    bool all_received = AdvanceTime(10000, 15000, step_ms, 0, [&]() {
-        for (size_t i = 1; i < nodes.size(); i++) {
-            if (!HasReceivedMessageFrom(*nodes[i], nodes[0]->address,
-                                        MessageType::DATA)) {
-                return false;
+    auto superframe_time = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms = 50u;
+    bool all_received = AdvanceTime(
+        superframe_time * 4, superframe_time * 4, step_ms, 0, [&]() {
+            for (size_t i = 1; i < nodes.size(); i++) {
+                if (!HasReceivedMessageFrom(*nodes[i], nodes[0]->address,
+                                            MessageType::DATA)) {
+                    return false;
+                }
             }
-        }
-        return true;
-    });
+            return true;
+        });
 
     EXPECT_TRUE(all_received) << "Not all nodes received broadcast message";
 
@@ -386,6 +375,182 @@ TEST_F(DynamicRoutingTests, BroadcastToAllNodes) {
                 << "Broadcast payload mismatch at Node " << i + 1;
         }
     }
+}
+
+/**
+ * @brief Test broadcast propagation through multi-hop line topology
+ *
+ * Topology: N1 -- N2 -- N3 -- N4 (line, not fully connected)
+ *
+ * Verifies:
+ * - Broadcast propagates through intermediate nodes
+ * - All nodes receive exactly one copy
+ */
+TEST_F(DynamicRoutingTests, BroadcastMultiHop) {
+    auto nodes = GenerateLineTopology(4, 0x1000, "Node", 0);
+
+    ASSERT_EQ(nodes.size(), 4) << "Expected 4 nodes";
+
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 3))
+        << "Network formation failed";
+
+    ASSERT_TRUE(WaitForRoutingStabilization(nodes))
+        << "Routing stabilization failed";
+
+    std::cout << "=== Line topology before broadcast ===" << std::endl;
+    for (auto* node : nodes) {
+        PrintRoutingTable(*node);
+    }
+
+    ClearAllReceivedMessages();
+
+    // Send broadcast from N1 (one end of the line)
+    std::vector<uint8_t> payload = {0xAA, 0xBB};
+    auto result = nodes[0]->protocol->SendBroadcast(payload);
+    ASSERT_TRUE(result) << "Failed to send broadcast: "
+                        << result.GetErrorMessage();
+
+    // Wait for broadcast to propagate through the entire line
+    auto superframe_time = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms = 50u;
+    bool all_received = AdvanceTime(
+        superframe_time * 6, superframe_time * 6, step_ms, 0, [&]() {
+            for (size_t i = 1; i < nodes.size(); i++) {
+                if (!HasReceivedMessageFrom(*nodes[i], nodes[0]->address,
+                                            MessageType::DATA)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+    EXPECT_TRUE(all_received) << "Broadcast did not reach all nodes in line";
+
+    // Verify each node received exactly one copy
+    for (size_t i = 1; i < nodes.size(); i++) {
+        size_t count = CountReceivedMessages(*nodes[i], nodes[0]->address,
+                                             MessageType::DATA);
+        std::cout << "Node " << i + 1 << " received " << count
+                  << " broadcast message(s)" << std::endl;
+
+        EXPECT_EQ(count, 1u)
+            << "Node " << i + 1
+            << " should receive exactly 1 broadcast in line topology";
+    }
+}
+
+/**
+ * @brief Test broadcast de-duplication in a ring topology
+ *
+ * Topology: N1 -- N2 -- N3 -- N1 (fully connected triangle)
+ *
+ * The broadcast from N1 reaches N2 and N3 directly, then N2 and N3
+ * re-broadcast. Without de-duplication, N2 would receive a second copy
+ * from N3 (and vice versa). The de-duplication cache prevents this.
+ *
+ * Verifies:
+ * - Each node receives exactly one copy despite multiple paths
+ */
+TEST_F(DynamicRoutingTests, BroadcastDeduplication) {
+    auto nodes = GenerateFullMeshTopology(3, 0x1000, "Node", 0);
+
+    ASSERT_EQ(nodes.size(), 3) << "Expected 3 nodes";
+
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 2))
+        << "Network formation failed";
+
+    ASSERT_TRUE(WaitForFullMeshConvergence(nodes))
+        << "Full mesh routing did not converge";
+
+    ClearAllReceivedMessages();
+
+    // Send broadcast from N1
+    std::vector<uint8_t> payload = {0xDE, 0xAD};
+    auto result = nodes[0]->protocol->SendBroadcast(payload);
+    ASSERT_TRUE(result) << "Failed to send broadcast: "
+                        << result.GetErrorMessage();
+
+    // Wait for broadcast propagation and re-broadcasts
+    auto superframe_time = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms = 50u;
+    AdvanceTime(superframe_time * 4, superframe_time * 4, step_ms, 0, [&]() {
+        return HasReceivedMessageFrom(*nodes[1], nodes[0]->address,
+                                      MessageType::DATA) &&
+               HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
+                                      MessageType::DATA);
+    });
+
+    // Verify each non-sender node received exactly one copy
+    for (size_t i = 1; i < nodes.size(); i++) {
+        size_t count = CountReceivedMessages(*nodes[i], nodes[0]->address,
+                                             MessageType::DATA);
+        std::cout << "Node " << i + 1 << " received " << count
+                  << " broadcast message(s) (expected 1)" << std::endl;
+
+        EXPECT_EQ(count, 1u)
+            << "Node " << i + 1
+            << " should receive exactly 1 broadcast (de-duplication)";
+    }
+
+    // Verify sender did not receive its own broadcast
+    size_t sender_count =
+        CountReceivedMessages(*nodes[0], nodes[0]->address, MessageType::DATA);
+    EXPECT_EQ(sender_count, 0u)
+        << "Sender should not receive its own broadcast";
+}
+
+/**
+ * @brief Test that data message de-duplication prevents duplicate delivery
+ *
+ * Topology: 3-node line N1 -- N2 -- N3
+ *
+ * Sends data from N1 to N3 (traverses N2). Verifies N3 receives exactly
+ * one copy. The de-dup cache on N2 ensures forwarding happens only once.
+ */
+TEST_F(DynamicRoutingTests, DataMessageDeduplication) {
+    auto nodes = GenerateLineTopology(3, 0x1000, "Node", 0);
+
+    ASSERT_EQ(nodes.size(), 3) << "Expected 3 nodes";
+
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 2))
+        << "Network formation failed";
+
+    ASSERT_TRUE(WaitForRoutingStabilization(nodes))
+        << "Routing stabilization failed";
+
+    ClearAllReceivedMessages();
+
+    // Send data from N1 to N3
+    std::vector<uint8_t> payload = {0xDE, 0xAD};
+    auto result = nodes[0]->protocol->SendData(nodes[2]->address, payload);
+    ASSERT_TRUE(result) << "Failed to send data: " << result.GetErrorMessage();
+
+    auto superframe_time = GetSuperframeDuration(*nodes.front());
+    uint32_t step_ms = 50u;
+    bool received = AdvanceTime(
+        superframe_time * 4, superframe_time * 4, step_ms, 0, [&]() {
+            return HasReceivedMessageFrom(*nodes[2], nodes[0]->address,
+                                          MessageType::DATA);
+        });
+
+    EXPECT_TRUE(received) << "N3 did not receive data from N1";
+
+    // Verify exactly one copy delivered
+    size_t count =
+        CountReceivedMessages(*nodes[2], nodes[0]->address, MessageType::DATA);
+    EXPECT_EQ(count, 1u) << "N3 should receive exactly 1 data message";
 }
 
 }  // namespace test

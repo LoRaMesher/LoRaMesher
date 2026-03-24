@@ -99,13 +99,28 @@ bool DistanceVectorRoutingTable::UpdateRoute(
             should_update = IsBetterRoute(*node_it, potential_route);
         }
         if (!node_it->is_active && !should_update) {
-            // Re-activate using the existing (better) route — preserve hop_count/next_hop
-            node_it->is_active = true;
+            // Hysteresis: require multiple consecutive receptions before re-activation
+            node_it->link_stats.recovery_counter++;
             node_it->last_seen = current_time;
-            route_changed = true;
-            NotifyRouteUpdate(true, destination, node_it->next_hop,
-                              node_it->routing_entry.hop_count);
-            LogRouteEntry(*node_it);
+            if (node_it->link_stats.recovery_counter >=
+                reactivation_threshold_) {
+                // Check if the old next_hop is still active. If not, accept
+                // the new (worse-hops) route since the old one is broken.
+                auto old_hop_it = GetNode(node_it->next_hop);
+                bool old_hop_alive =
+                    old_hop_it != nodes_.end() && old_hop_it->is_active;
+                if (!old_hop_alive && source != node_it->next_hop) {
+                    node_it->UpdateRouteInfo(source, hop_count,
+                                             actual_link_quality, current_time);
+                } else {
+                    node_it->is_active = true;
+                }
+                node_it->link_stats.recovery_counter = 0;
+                route_changed = true;
+                NotifyRouteUpdate(true, destination, node_it->next_hop,
+                                  node_it->routing_entry.hop_count);
+                LogRouteEntry(*node_it);
+            }
         } else if (should_update) {
             route_changed = node_it->UpdateRouteInfo(
                 source, hop_count, actual_link_quality, current_time);
@@ -215,6 +230,7 @@ bool DistanceVectorRoutingTable::AddNode(
         }
 
         nodes_.push_back(node);
+        nodes_.back().link_stats.ewma_alpha = ewma_alpha_fixed_;
         LOG_INFO("Added new node 0x%04X to routing table",
                  node.routing_entry.destination);
         return true;
@@ -447,16 +463,26 @@ std::string DistanceVectorRoutingTable::GetStatistics() const {
     return oss.str();
 }
 
+void DistanceVectorRoutingTable::SetLinkQualityParams(
+    uint8_t ewma_alpha_fixed, uint8_t inactivation_threshold,
+    uint8_t reactivation_threshold) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    ewma_alpha_fixed_ = ewma_alpha_fixed;
+    inactivation_threshold_ = inactivation_threshold;
+    reactivation_threshold_ = reactivation_threshold;
+
+    // Propagate alpha to all existing nodes
+    for (auto& node : nodes_) {
+        node.link_stats.ewma_alpha = ewma_alpha_fixed;
+    }
+}
+
 void DistanceVectorRoutingTable::UpdateLinkStatistics() {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
     for (auto& node : nodes_) {
         if (node.routing_entry.hop_count == 1 && node.is_active) {
-            // Step 1: Calculate quality using complete previous-superframe data
-            //         (received and expected are balanced — no off-by-one)
-            //         Only degrade if we've actually heard from this node enough
-            //         times to establish it as a real link (avoids degrading
-            //         routes learned indirectly before the node starts sending)
+            // Step 1: Read EWMA quality (updated by ReceivedMessage/ExpectMessage)
             constexpr uint32_t kMinExpectedForDegradation = 5;
             if (node.link_stats.messages_expected >=
                     kMinExpectedForDegradation &&
@@ -465,37 +491,28 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                 node.routing_entry.link_quality =
                     node.link_stats.CalculateQuality();
                 LogRouteEntry(node);
-            }
 
-            // Step 2a: Quality degradation — halve quality each superframe
-            //          once consecutive_missed reaches threshold. ETX cost
-            //          rises, IsBetterRoute naturally picks multi-hop routes.
-            if (node.link_stats.consecutive_missed >=
-                    kConsecutiveMissedForDegradation &&
-                node.link_stats.messages_received >=
-                    kMinMessagesBeforeInvalidation) {
-                node.routing_entry.link_quality =
-                    node.routing_entry.link_quality / 2;
-                LogRouteEntry(node);
-
-                // Cascade: degrade multi-hop routes via this neighbor
-                AddressType degraded_hop = node.routing_entry.destination;
+                // Cascade: cap multi-hop routes through this neighbor
+                AddressType via = node.routing_entry.destination;
                 for (auto& other : nodes_) {
-                    if (other.next_hop == degraded_hop && other.is_active &&
+                    if (other.next_hop == via && other.is_active &&
                         other.routing_entry.hop_count > 1) {
-                        other.routing_entry.link_quality /= 2;
-                        LogRouteEntry(other);
+                        if (other.routing_entry.link_quality >
+                            node.routing_entry.link_quality) {
+                            other.routing_entry.link_quality =
+                                node.routing_entry.link_quality;
+                            LogRouteEntry(other);
+                        }
                     }
                 }
             }
 
-            // Step 2b: Hard invalidation after extended unresponsiveness.
-            //          Mark inactive for slot table cleanup + cascade.
-            if (node.link_stats.consecutive_missed >=
-                    kConsecutiveMissedForInactivation &&
+            // Step 2: Hard invalidation after extended unresponsiveness
+            if (node.link_stats.consecutive_missed >= inactivation_threshold_ &&
                 node.link_stats.messages_received >=
                     kMinMessagesBeforeInvalidation) {
                 node.is_active = false;
+                node.link_stats.recovery_counter = 0;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
                 LogRouteEntry(node);
 
@@ -504,6 +521,7 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     if (other.next_hop == lost_hop && other.is_active &&
                         other.routing_entry.hop_count > 1) {
                         other.is_active = false;
+                        other.link_stats.recovery_counter = 0;
                         NotifyRouteUpdate(
                             false, other.routing_entry.destination, 0, 0);
                         LogRouteEntry(other);
@@ -511,8 +529,8 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                 }
             }
 
-            // Step 3: THEN expect a new message for this superframe
-            //         (expected++, consecutive_missed++ — gives node time to
+            // Step 3: Expect a new message for this superframe
+            //         (EWMA decays, consecutive_missed++ — gives node time to
             //         respond; ReceivedMessage() resets consecutive_missed)
             node.ExpectRoutingMessage();
         }
@@ -566,9 +584,11 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             LogRouteEntry(*source_node_it);
         }
 
-        // Ensure that the node is active
+        // Direct source re-activation: receiving a routing message from
+        // this node is proof of liveness — re-activate immediately
         if (!source_node_it->is_active) {
             source_node_it->is_active = true;
+            source_node_it->link_stats.recovery_counter = 0;
             routing_changed = true;
         }
     } else {
@@ -593,6 +613,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             new_node.routing_entry.allocated_data_slots =
                 source_allocated_data_slots;
             new_node.is_active = true;
+            new_node.link_stats.ewma_alpha = ewma_alpha_fixed_;
 
             // Register the received message for link quality tracking
             new_node.ReceivedRoutingMessage(local_link_quality,
@@ -651,13 +672,29 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             }
 
             if (!node_it->is_active && !should_update) {
-                // Re-activate preserving the existing (better) route
-                node_it->is_active = true;
+                // Hysteresis: require multiple consecutive receptions
+                node_it->link_stats.recovery_counter++;
                 node_it->last_seen = reception_timestamp;
-                routing_changed = true;
-                NotifyRouteUpdate(true, dest, node_it->next_hop,
-                                  node_it->routing_entry.hop_count);
-                LogRouteEntry(*node_it);
+                if (node_it->link_stats.recovery_counter >=
+                    reactivation_threshold_) {
+                    // Check if old next_hop is still active. If broken,
+                    // accept the new route even though it has worse hops.
+                    auto old_hop_it = GetNode(node_it->next_hop);
+                    bool old_hop_alive =
+                        old_hop_it != nodes_.end() && old_hop_it->is_active;
+                    if (!old_hop_alive && source_address != node_it->next_hop) {
+                        node_it->UpdateRouteInfo(
+                            source_address, hop_count_via_source,
+                            actual_link_quality, reception_timestamp);
+                    } else {
+                        node_it->is_active = true;
+                    }
+                    node_it->link_stats.recovery_counter = 0;
+                    routing_changed = true;
+                    NotifyRouteUpdate(true, dest, node_it->next_hop,
+                                      node_it->routing_entry.hop_count);
+                    LogRouteEntry(*node_it);
+                }
             } else if (should_update) {
                 // Update the existing route
                 bool changed = node_it->UpdateRouteInfo(

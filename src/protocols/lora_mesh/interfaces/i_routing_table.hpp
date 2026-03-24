@@ -219,10 +219,21 @@ class IRoutingTable {
 
     /**
      * @brief Update link statistics for periodic measurements
-     * 
+     *
      * Called periodically to update expected message counts for link quality calculation
      */
     virtual void UpdateLinkStatistics() = 0;
+
+    /**
+     * @brief Set link quality parameters
+     *
+     * @param ewma_alpha_fixed EWMA alpha in fixed-point (0-255, maps to 0.0-1.0)
+     * @param inactivation_threshold Consecutive misses before hard inactivation
+     * @param reactivation_threshold Consecutive receptions to re-activate
+     */
+    virtual void SetLinkQualityParams(uint8_t ewma_alpha_fixed,
+                                      uint8_t inactivation_threshold,
+                                      uint8_t reactivation_threshold) = 0;
 
     /**
      * @brief Process a routing table message and update routes

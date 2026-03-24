@@ -361,6 +361,12 @@ Result RadioLibRadio::setPreambleLength(uint16_t length) {
     return current_module_->setPreambleLength(length);
 }
 
+Result RadioLibRadio::setCurrentLimit(float current_limit_ma) {
+    std::lock_guard<std::mutex> lock(radio_mutex_);
+    current_config_.setCurrentLimit(current_limit_ma);
+    return current_module_->setCurrentLimit(current_limit_ma);
+}
+
 Result RadioLibRadio::setActionReceive(
     std::function<void(std::unique_ptr<RadioEvent>)> callback) {
     std::lock_guard<std::mutex> lock(radio_mutex_);

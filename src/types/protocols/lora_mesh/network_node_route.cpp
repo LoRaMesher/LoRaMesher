@@ -15,31 +15,34 @@ namespace lora_mesh {
 // LinkQualityStats implementation
 uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
     if (messages_expected == 0) {
-        // No tracking started yet — use remote quality if available,
-        // otherwise assume good quality (we just received a message)
         return remote_link_quality > 0 ? remote_link_quality : 200;
     }
 
-    // Calculate local quality (0-255)
-    uint16_t local_quality =
-        std::min(static_cast<uint32_t>(255),
-                 (messages_received * 255) / messages_expected);
-
-    // Average with remote link quality if available
+    // Return EWMA quality, optionally averaged with remote link quality
     if (remote_link_quality > 0) {
-        return (local_quality + remote_link_quality) / 2;
+        return static_cast<uint8_t>(
+            (static_cast<uint16_t>(ewma_quality) + remote_link_quality) / 2);
     }
 
-    return static_cast<uint8_t>(local_quality);
+    return ewma_quality;
 }
 
 void NetworkNodeRoute::LinkQualityStats::Reset() {
     messages_expected = 0;
     messages_received = 0;
+    ewma_quality = 200;
+    recovery_counter = 0;
     // Don't reset last_message_time or remote_link_quality
 }
 
 void NetworkNodeRoute::LinkQualityStats::ExpectMessage() {
+    // Deferred decay: only apply EWMA decay if the previous expected
+    // message was actually missed (consecutive_missed > 0 means no
+    // ReceivedMessage() call since the last ExpectMessage())
+    if (consecutive_missed > 0) {
+        ewma_quality = static_cast<uint8_t>(
+            (static_cast<uint16_t>(256u - ewma_alpha) * ewma_quality) / 256u);
+    }
     messages_expected++;
     consecutive_missed++;
 }
@@ -49,6 +52,12 @@ void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(
     messages_received++;
     last_message_time = current_time;
     consecutive_missed = 0;
+    // EWMA update: sample = 255 (successful reception)
+    // ewma = alpha * 255 + (1 - alpha) * ewma
+    ewma_quality = static_cast<uint8_t>(
+        (static_cast<uint16_t>(ewma_alpha) * 255u +
+         static_cast<uint16_t>(256u - ewma_alpha) * ewma_quality) /
+        256u);
 }
 
 void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
@@ -292,9 +301,6 @@ RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
 
 void NetworkNodeRoute::ExpectRoutingMessage() {
     link_stats.ExpectMessage();
-    // Quality is NOT updated here — it's calculated separately in
-    // UpdateLinkStatistics() BEFORE ExpectMessage() is called,
-    // using complete previous-superframe data.
 }
 
 void NetworkNodeRoute::ReceivedRoutingMessage(uint8_t remote_quality,
@@ -302,7 +308,7 @@ void NetworkNodeRoute::ReceivedRoutingMessage(uint8_t remote_quality,
     link_stats.ReceivedMessage(current_time);
     link_stats.UpdateRemoteQuality(remote_quality);
 
-    // Update link quality from statistics
+    // Update link quality from EWMA statistics
     routing_entry.link_quality = link_stats.CalculateQuality();
 
     // Update last seen time

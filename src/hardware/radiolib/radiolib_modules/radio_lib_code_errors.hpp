@@ -39,6 +39,8 @@ class RadioLibCodeErrors {
                 return Result::Error(LoraMesherErrorCode::kInvalidParameter);
             case RADIOLIB_ERR_INVALID_SYNC_WORD:
                 return Result::Error(LoraMesherErrorCode::kSyncWordError);
+            case RADIOLIB_ERR_CRC_MISMATCH:
+                return Result::Error(LoraMesherErrorCode::kCrcError);
             case RADIOLIB_ERR_CHIP_NOT_FOUND:
                 return Result(LoraMesherErrorCode::kHardwareError,
                               "RadioLib error: Chip not found");

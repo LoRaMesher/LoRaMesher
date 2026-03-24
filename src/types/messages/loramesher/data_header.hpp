@@ -16,9 +16,11 @@ namespace loramesher {
  * The next_hop field indicates the immediate recipient, while the
  * destination in BaseHeader indicates the final destination.
  *
- * Wire format (9 bytes total):
- * - Bytes 0-6: BaseHeader (dest, src, type=0x11, payload_size)
- * - Bytes 7-8: next_hop (little-endian)
+ * Wire format (10 bytes total):
+ * - Bytes 0-5: BaseHeader (dest, src, type=0x11, payload_size)
+ * - Bytes 6-7: next_hop (little-endian)
+ * - Byte 8:    ttl (time-to-live for loop prevention)
+ * - Byte 9:    seq_num (per-source sequence number for de-duplication)
  */
 class DataHeader : public BaseHeader {
    public:
@@ -34,9 +36,11 @@ class DataHeader : public BaseHeader {
      * @param src Source address (original sender)
      * @param next_hop Next hop address for routing
      * @param payload_size Size of the data payload
+     * @param ttl Time-to-live for loop prevention (decremented at each hop)
+     * @param seq_num Per-source sequence number for de-duplication
      */
     DataHeader(AddressType dest, AddressType src, AddressType next_hop,
-               uint8_t payload_size);
+               uint8_t payload_size, uint8_t ttl = 0, uint8_t seq_num = 0);
 
     /**
      * @brief Gets the next hop address for routing
@@ -44,6 +48,10 @@ class DataHeader : public BaseHeader {
      * @return AddressType Next hop address
      */
     AddressType GetNextHop() const { return next_hop_; }
+
+    uint8_t GetTTL() const { return ttl_; }
+
+    uint8_t GetSeqNum() const { return seq_num_; }
 
     /**
      * @brief Sets the next hop address
@@ -76,10 +84,10 @@ class DataHeader : public BaseHeader {
     /**
      * @brief Calculates the size of the data header specific extension
      *
-     * @return size_t Size of the data header fields in bytes (2 bytes for next_hop)
+     * @return size_t Size of the data header fields in bytes (next_hop + ttl + seq_num)
      */
     static constexpr size_t DataFieldsSize() {
-        return sizeof(AddressType);  // next_hop
+        return sizeof(AddressType) + sizeof(uint8_t) + sizeof(uint8_t);
     }
 
     /**
@@ -93,6 +101,8 @@ class DataHeader : public BaseHeader {
 
    private:
     AddressType next_hop_ = 0;  ///< Next hop address for routing
+    uint8_t ttl_ = 0;           ///< Time-to-live for loop prevention
+    uint8_t seq_num_ = 0;  ///< Per-source sequence number for de-duplication
 };
 
 }  // namespace loramesher

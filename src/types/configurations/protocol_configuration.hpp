@@ -379,6 +379,36 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         min_sleep_fraction_ = std::clamp(fraction, 0.0f, 0.9f);
     }
 
+    /** @brief Get EWMA alpha for link quality (0.0–1.0, default 0.30) */
+    float getLinkQualityEwmaAlpha() const { return link_quality_ewma_alpha_; }
+
+    /** @brief Set EWMA alpha for link quality (0.05–0.95) */
+    void setLinkQualityEwmaAlpha(float alpha) {
+        link_quality_ewma_alpha_ = std::clamp(alpha, 0.05f, 0.95f);
+    }
+
+    /** @brief Get consecutive misses for hard inactivation (default 10) */
+    uint8_t getConsecutiveMissedForInactivation() const {
+        return consecutive_missed_for_inactivation_;
+    }
+
+    /** @brief Set consecutive misses for inactivation (4–30) */
+    void setConsecutiveMissedForInactivation(uint8_t n) {
+        consecutive_missed_for_inactivation_ =
+            std::clamp(n, static_cast<uint8_t>(4), static_cast<uint8_t>(30));
+    }
+
+    /** @brief Get consecutive receptions for re-activation (default 2) */
+    uint8_t getMinConsecutiveForReactivation() const {
+        return min_consecutive_for_reactivation_;
+    }
+
+    /** @brief Set consecutive receptions for re-activation (1–10) */
+    void setMinConsecutiveForReactivation(uint8_t n) {
+        min_consecutive_for_reactivation_ =
+            std::clamp(n, static_cast<uint8_t>(1), static_cast<uint8_t>(10));
+    }
+
     /**
      * @brief Get the node role for network formation
      *
@@ -554,6 +584,12 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
+    float link_quality_ewma_alpha_ =
+        0.30f;  ///< EWMA smoothing factor for link quality
+    uint8_t consecutive_missed_for_inactivation_ =
+        10;  ///< Consecutive misses before hard inactivation
+    uint8_t min_consecutive_for_reactivation_ =
+        2;  ///< Consecutive receptions to re-activate
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;

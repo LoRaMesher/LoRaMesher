@@ -136,6 +136,17 @@ class IRadio {
     virtual Result setPreambleLength(uint16_t length) = 0;
 
     /**
+     * @brief Set the OCP (over-current protection) limit
+     *
+     * @param current_limit_ma Current limit in mA
+     * @return Result Success if current limit was set successfully
+     */
+    virtual Result setCurrentLimit(float current_limit_ma) {
+        (void)current_limit_ma;
+        return Result::Success();
+    }
+
+    /**
      * @brief Set the local node address for task identification in logs
      *
      * @param address Local node address

@@ -33,8 +33,8 @@ enum class MessageType : uint8_t {
     // Predefined complete message types
 
     // Data messages (0x1x)
-    DATA = 0x11,  ///< 0001 0001: Regular data message
-    // XL_DATA = 0x12,  ///< 0001 0010: Large data message
+    DATA = 0x11,            ///< 0001 0001: Regular data message
+    DATA_BROADCAST = 0x12,  ///< 0001 0010: Broadcast data message
 
     // Control messages (0x2x)
     ACK = 0x21,  ///< 0010 0001: Acknowledgment

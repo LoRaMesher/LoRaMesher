@@ -104,6 +104,42 @@ Result RadioConfig::setPreambleLength(uint16_t preamble_length) {
     return Result::Success();
 }
 
+void RadioConfig::setCurrentLimit(float current_limit_ma) {
+    if (current_limit_ma == kAutoCurrentLimit) {
+        current_limit_ma_ = kAutoCurrentLimit;
+        return;
+    }
+    if (current_limit_ma < 45.0F || current_limit_ma > 240.0F) {
+        throw std::invalid_argument(
+            "Current limit must be 0 (auto) or between 45 and 240 mA");
+    }
+    current_limit_ma_ = current_limit_ma;
+}
+
+float RadioConfig::RecommendedCurrentLimit(RadioType type, int8_t power) {
+    switch (type) {
+        case RadioType::kSx1276:
+        case RadioType::kSx1278:
+            if (power <= 7)
+                return 45.0F;
+            if (power <= 14)
+                return 60.0F;
+            if (power <= 17)
+                return 100.0F;
+            return 150.0F;
+
+        case RadioType::kSx1262:
+            if (power <= 14)
+                return 60.0F;
+            if (power <= 17)
+                return 100.0F;
+            return 140.0F;
+
+        default:
+            return 60.0F;
+    }
+}
+
 void RadioConfig::setTcxoVoltage(float voltage) {
     if (voltage < 0.0F || voltage > 3.3F) {
         throw std::invalid_argument("TCXO voltage must be between 0.0 and 3.3");

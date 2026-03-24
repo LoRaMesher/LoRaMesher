@@ -17,7 +17,7 @@ DataMessage::DataMessage(const DataHeader& header,
 
 std::optional<DataMessage> DataMessage::Create(
     AddressType dest, AddressType src, AddressType next_hop,
-    const std::vector<uint8_t>& payload) {
+    const std::vector<uint8_t>& payload, uint8_t ttl, uint8_t seq_num) {
 
     // Validate payload size
     if (payload.size() >
@@ -28,9 +28,21 @@ std::optional<DataMessage> DataMessage::Create(
     }
 
     // Create the header with the data information
-    DataHeader header(dest, src, next_hop, payload.size());
+    DataHeader header(dest, src, next_hop, payload.size(), ttl, seq_num);
 
     return DataMessage(header, payload);
+}
+
+std::optional<DataMessage> DataMessage::CreateForwarded(
+    const DataMessage& original, AddressType new_next_hop) {
+
+    if (original.GetTTL() <= 1) {
+        return std::nullopt;
+    }
+
+    return DataMessage::Create(original.GetDestination(), original.GetSource(),
+                               new_next_hop, original.GetPayload(),
+                               original.GetTTL() - 1, original.GetSeqNum());
 }
 
 std::optional<DataMessage> DataMessage::CreateFromSerialized(
@@ -80,6 +92,14 @@ AddressType DataMessage::GetNextHop() const {
     return header_.GetNextHop();
 }
 
+uint8_t DataMessage::GetTTL() const {
+    return header_.GetTTL();
+}
+
+uint8_t DataMessage::GetSeqNum() const {
+    return header_.GetSeqNum();
+}
+
 const std::vector<uint8_t>& DataMessage::GetPayload() const {
     return payload_;
 }
@@ -109,6 +129,8 @@ BaseMessage DataMessage::ToBaseMessage() const {
 
     // Serialize only the DATA specific fields (not the BaseHeader part)
     serializer.WriteUint16(header_.GetNextHop());
+    serializer.WriteUint8(header_.GetTTL());
+    serializer.WriteUint8(header_.GetSeqNum());
 
     // Add user payload
     if (!payload_.empty()) {

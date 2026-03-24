@@ -25,6 +25,16 @@ TEST_F(DataHeaderTest, ConstructorSetsFields) {
     EXPECT_EQ(header.GetSource(), kSrc);
     EXPECT_EQ(header.GetNextHop(), kNextHop);
     EXPECT_EQ(header.GetType(), MessageType::DATA);
+    EXPECT_EQ(header.GetTTL(), 0);
+    EXPECT_EQ(header.GetSeqNum(), 0);
+}
+
+TEST_F(DataHeaderTest, ConstructorWithTTLAndSeqNum) {
+    DataHeader header(kDest, kSrc, kNextHop, kPayloadSize, 5, 42);
+
+    EXPECT_EQ(header.GetNextHop(), kNextHop);
+    EXPECT_EQ(header.GetTTL(), 5);
+    EXPECT_EQ(header.GetSeqNum(), 42);
 }
 
 TEST_F(DataHeaderTest, SetNextHopUpdatesValue) {
@@ -36,7 +46,7 @@ TEST_F(DataHeaderTest, SetNextHopUpdatesValue) {
 }
 
 TEST_F(DataHeaderTest, SerializeAndDeserializeRoundTrip) {
-    DataHeader original(kDest, kSrc, kNextHop, kPayloadSize);
+    DataHeader original(kDest, kSrc, kNextHop, kPayloadSize, 7, 99);
 
     // Serialize
     std::vector<uint8_t> buffer(original.GetSize());
@@ -53,6 +63,8 @@ TEST_F(DataHeaderTest, SerializeAndDeserializeRoundTrip) {
     EXPECT_EQ(deserialized->GetSource(), kSrc);
     EXPECT_EQ(deserialized->GetNextHop(), kNextHop);
     EXPECT_EQ(deserialized->GetType(), MessageType::DATA);
+    EXPECT_EQ(deserialized->GetTTL(), 7);
+    EXPECT_EQ(deserialized->GetSeqNum(), 99);
 }
 
 TEST_F(DataHeaderTest, DeserializeFailsWithEmptyBuffer) {
@@ -109,8 +121,9 @@ TEST_F(DataHeaderTest, DeserializePayloadSizeCalculation) {
               static_cast<uint8_t>(DataHeader::DataFieldsSize() + 5));
 }
 
-TEST_F(DataHeaderTest, DataFieldsSizeIsAddressTypeSize) {
-    EXPECT_EQ(DataHeader::DataFieldsSize(), sizeof(AddressType));
+TEST_F(DataHeaderTest, DataFieldsSizeIncludesTTLAndSeqNum) {
+    EXPECT_EQ(DataHeader::DataFieldsSize(),
+              sizeof(AddressType) + sizeof(uint8_t) + sizeof(uint8_t));
 }
 
 TEST_F(DataHeaderTest, GetSizeIncludesBaseAndDataFields) {
@@ -122,6 +135,8 @@ TEST_F(DataHeaderTest, GetSizeIncludesBaseAndDataFields) {
 TEST_F(DataHeaderTest, DefaultConstructor) {
     DataHeader header;
     EXPECT_EQ(header.GetNextHop(), 0);
+    EXPECT_EQ(header.GetTTL(), 0);
+    EXPECT_EQ(header.GetSeqNum(), 0);
 }
 
 }  // namespace test

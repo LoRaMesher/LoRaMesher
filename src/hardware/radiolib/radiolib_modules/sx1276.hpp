@@ -161,6 +161,13 @@ class LoraMesherSX1276 : public IRadio {
     Result setPreambleLength(uint16_t length) override;
 
     /**
+     * @brief Set the OCP current limit
+     * @param current_limit_ma Current limit in mA (45-240)
+     * @return Result Success if current limit was set successfully
+     */
+    Result setCurrentLimit(float current_limit_ma) override;
+
+    /**
      * @brief Sets the callback function for packet reception
      * 
      * @param callback Function pointer to the callback that will be executed when a packet is received
@@ -361,7 +368,8 @@ class LoraMesherSX1276 : public IRadio {
     std::unique_ptr<SX1276>
         radio_module_;  ///< RadioLib LoraMesherSX1276 instance
 
-    bool initialized_ = false;  ///< Boolean when module initialized
+    bool initialized_ = false;        ///< Boolean when module initialized
+    bool auto_current_limit_ = true;  ///< True = auto-set OCP from TX power
 };
 
 }  // namespace radio

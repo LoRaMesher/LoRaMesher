@@ -105,11 +105,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param radio_config Radio configuration (default: mock radio)
      * @return TestNode& Reference to the created node
      */
-    TestNode& CreateNode(
-        const std::string& name, AddressType address,
-        NodeRole node_role = NodeRole::AUTO,
-        const PinConfig& pin_config = PinConfig(),
-        const RadioConfig& /* radio_config */ = RadioConfig()) {
+    TestNode& CreateNode(const std::string& name, AddressType address,
+                         NodeRole node_role = NodeRole::AUTO,
+                         const PinConfig& pin_config = PinConfig(),
+                         const RadioConfig& radio_config = RadioConfig()) {
         // Create a node with unique address and pin configuration
         auto node = std::make_shared<TestNode>();
         node->name = name;
@@ -132,13 +131,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
         RadioConfig mock_config;
         mock_config.setRadioType(RadioType::kMockRadio);
         mock_config.setFrequency(868.0f);
-        mock_config.setSpreadingFactor(7);
-        mock_config.setBandwidth(125.0f);
-        mock_config.setCodingRate(5);  // 4/5
-        mock_config.setPower(17);      // 17 dBm
+        mock_config.setSpreadingFactor(radio_config.getSpreadingFactor());
+        mock_config.setBandwidth(radio_config.getBandwidth());
+        mock_config.setCodingRate(radio_config.getCodingRate());
+        mock_config.setPower(17);
         mock_config.setSyncWord(0x12);
-        mock_config.setCRC(true);
-        mock_config.setPreambleLength(8);
+        mock_config.setCRC(radio_config.getCRC());
+        mock_config.setPreambleLength(radio_config.getPreambleLength());
         node->radio_config = mock_config;
 
         // Create and initialize the hardware manager with our pin and radio config
@@ -262,7 +261,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         adapter->SetRadioConfig(radio_config);
 
         // Register the node with the virtual network
-        virtual_network_.RegisterNode(address, adapter.get());
+        virtual_network_.RegisterNode(address, adapter.get(), radio_config);
 
         // Store the adapter for cleanup
         network_adapters_.push_back(std::move(adapter));
