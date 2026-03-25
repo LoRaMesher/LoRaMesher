@@ -522,5 +522,42 @@ TEST_F(RoutingTableMessageTest, SetLinkQualityForExistingNodeSucceeds) {
     EXPECT_TRUE(result.IsSuccess());
 }
 
+// =============================================================================
+// GetLinkQualityFor — hop_count filtering (unidirectional link detection)
+// =============================================================================
+
+/**
+ * @brief Test GetLinkQualityFor returns quality for direct neighbor (hop_count==1)
+ */
+TEST_F(RoutingTableMessageTest, GetLinkQualityForDirectNeighborReturnsQuality) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // 0x1111 has hop_count=1 in fixture entries
+    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x1111), 90);
+}
+
+/**
+ * @brief Test GetLinkQualityFor returns 0 for multi-hop entries
+ *
+ * Multi-hop entries are filtered out to enable unidirectional link detection.
+ * The peer knowing us via multi-hop does not prove they can hear us directly.
+ */
+TEST_F(RoutingTableMessageTest, GetLinkQualityForMultiHopReturnsZero) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // 0x2222 has hop_count=2, 0x3333 has hop_count=3
+    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x2222), 0);
+    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x3333), 0);
+}
+
+/**
+ * @brief Test GetLinkQualityFor returns 0 for missing node
+ */
+TEST_F(RoutingTableMessageTest, GetLinkQualityForMissingNodeReturnsZero) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0xDEAD), 0);
+}
+
 }  // namespace test
 }  // namespace loramesher

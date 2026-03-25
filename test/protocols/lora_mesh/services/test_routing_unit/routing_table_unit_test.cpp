@@ -1568,5 +1568,54 @@ TEST_F(RoutingTableUnitTest, GetRoutingEntriesEmptyWhenAllInactive) {
         << "Inactive nodes must not be advertised in routing entries";
 }
 
+// =============================================================================
+// FindNextHop ETX Cost Selection Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, FindNextHopPrefersLowerCostOverFewerHops) {
+    // Direct neighbor with poor quality (1 hop, quality 50)
+    // Cost = 1 × 65536 / 50 = 1310
+    AddDirectNeighbor(kNeighbor1, kPoorQuality);
+
+    // 2-hop route via Neighbor2 with good quality (quality 200)
+    // Cost = 2 × 65536 / 200 = 655
+    ReceiveRoutingMessage(
+        kNeighbor2, {CreateEntry(kNeighbor1, 1, kGoodQuality)}, kGoodQuality);
+
+    // FindNextHop should prefer the 2-hop route (lower ETX cost)
+    EXPECT_EQ(routing_table_->FindNextHop(kNeighbor1), kNeighbor2)
+        << "FindNextHop should prefer 2-hop/q200 (cost=655) over "
+           "1-hop/q50 (cost=1310)";
+}
+
+TEST_F(RoutingTableUnitTest, FindNextHopConsistentWithIsBetterRoute) {
+    // Two routes to the same destination with different cost profiles
+    // Route A: 1 hop, quality 100 → cost = 655
+    AddDirectNeighbor(kNeighbor1, 100);
+
+    // Route B: 2 hops via Neighbor2, quality 200 → cost = 655
+    ReceiveRoutingMessage(
+        kNeighbor2, {CreateEntry(kNeighbor1, 1, kGoodQuality)}, kGoodQuality);
+
+    // Equal cost — tiebreaker should prefer fewer hops (Neighbor1, 1 hop)
+    EXPECT_EQ(routing_table_->FindNextHop(kNeighbor1), kNeighbor1)
+        << "Equal ETX cost should prefer fewer hops as tiebreaker";
+}
+
+TEST_F(RoutingTableUnitTest, FindNextHopSelectsGoodQualityDirectNeighbor) {
+    // Good direct neighbor (1 hop, quality 200)
+    // Cost = 1 × 65536 / 200 = 327
+    AddDirectNeighbor(kNeighbor1, kGoodQuality);
+
+    // 2-hop route (quality 200)
+    // Cost = 2 × 65536 / 200 = 655
+    ReceiveRoutingMessage(
+        kNeighbor2, {CreateEntry(kNeighbor1, 1, kGoodQuality)}, kGoodQuality);
+
+    // 1-hop with good quality should still win (lower cost)
+    EXPECT_EQ(routing_table_->FindNextHop(kNeighbor1), kNeighbor1)
+        << "Good direct neighbor should be preferred over 2-hop route";
+}
+
 }  // namespace test
 }  // namespace loramesher

@@ -208,11 +208,10 @@ Result NetworkService::ProcessRoutingTableMessage(
         last_sync_time_ = reception_timestamp;
     }
 
-    // Get local link quality to the source
+    // Get local link quality to the source (0 = peer doesn't list us as direct)
     uint8_t local_link_quality = routing_msg.GetLinkQualityFor(node_address_);
-    if (local_link_quality == 0) {
-        local_link_quality = 128;  // Default medium quality
-    }
+    LOG_DEBUG("Remote link quality from 0x%04X for us (0x%04X): %d", source,
+              node_address_, local_link_quality);
 
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
@@ -398,7 +397,7 @@ Result NetworkService::StartJoining(AddressType /* manager_address */,
 
     // Reset join retry backoff
     join_retry_count_ = 0;
-    join_backoff_remaining_ = 0;
+    join_backoff_remaining_ = 1;
 
     // Record discovery start time
     joining_start_time_ = GetRTOS().getTickCount();
@@ -1445,8 +1444,10 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     // We are the next hop - check if we are also the final destination
     if (final_dest == node_address_) {
         // Deliver to application layer
-        LOG_INFO("DATA reached final destination from 0x%04X, payload_size=%zu",
-                 original_src, data_msg.GetPayload().size());
+        LOG_INFO(
+            "DATA reached final destination: src=0x%04X, dest=0x%04X, seq=%u, "
+            "payload_size=%zu",
+            original_src, final_dest, seq_num, data_msg.GetPayload().size());
 
         if (data_received_callback_) {
             data_received_callback_(original_src, data_msg.GetPayload());
@@ -1457,13 +1458,14 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     } else {
         // TTL check before forwarding
         if (ttl <= 1) {
-            LOG_WARNING("DATA TTL expired (src=0x%04X, dest=0x%04X), dropping",
-                        original_src, final_dest);
+            LOG_WARNING(
+                "DATA TTL expired: src=0x%04X, dest=0x%04X, seq=%u, dropping",
+                original_src, final_dest, seq_num);
             return Result::Success();
         }
         // Forward to next hop toward final destination
-        LOG_INFO("Forwarding DATA from 0x%04X to 0x%04X (ttl=%u)", original_src,
-                 final_dest, ttl);
+        LOG_INFO("Forwarding DATA: src=0x%04X, dest=0x%04X, seq=%u, ttl=%u",
+                 original_src, final_dest, seq_num, ttl);
         return ForwardDataMessage(data_msg);
     }
 
@@ -1475,8 +1477,9 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
     AddressType new_next_hop = FindNextHop(original_msg.GetDestination());
 
     if (new_next_hop == 0) {
-        LOG_ERROR("No route found to destination 0x%04X for forwarding",
-                  original_msg.GetDestination());
+        LOG_ERROR("No route to dest=0x%04X for forwarding: src=0x%04X, seq=%u",
+                  original_msg.GetDestination(), original_msg.GetSource(),
+                  original_msg.GetSeqNum());
         return Result(LoraMesherErrorCode::kNoRoute,
                       "No route to destination for forwarding");
     }
@@ -3393,9 +3396,11 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             discovery_start_time_ = GetRTOS().getTickCount();
             SetDiscoverySlots();
             SetState(ProtocolState::DISCOVERY);
+        } else {
+            // Our priority wins — send counter-claim so the remote NM can
+            // compare priorities and yield without waiting for beacon alignment
+            SendNMClaim();
         }
-        // else: our priority wins; the remote will surrender when they receive
-        // our NM_CLAIM (already queued by HandleForeignBeacon).
         return Result::Success();
     }
 

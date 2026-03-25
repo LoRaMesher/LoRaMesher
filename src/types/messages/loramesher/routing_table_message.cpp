@@ -157,14 +157,18 @@ uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
 }
 
 uint8_t RoutingTableMessage::GetLinkQualityFor(AddressType node_address) const {
-    // Find the node entry with the specified address
+    // Only return quality for direct-neighbor entries (hop_count == 1).
+    // Multi-hop entries mean the sender knows us indirectly and cannot
+    // hear our transmissions — returning their quality would mask
+    // unidirectional links.
     for (uint8_t i = 0; i < entry_count_; ++i) {
-        if (entries_[i].destination == node_address) {
+        if (entries_[i].destination == node_address &&
+            entries_[i].hop_count == 1) {
             return entries_[i].link_quality;
         }
     }
 
-    // Node not found
+    // Node not found or only reachable via multi-hop
     return 0;
 }
 

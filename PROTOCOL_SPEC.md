@@ -764,6 +764,8 @@ if (combinedQuality < MIN_QUALITY_THRESHOLD) {
 }
 ```
 
+When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies instead, penalizing quality to `ewma / 4` after confirmation.
+
 **Route Comparison** (Weighted Cost Metric):
 
 The route selection uses an ETX-inspired cost metric based on Expected Transmission Count (RFC 6551):
@@ -912,6 +914,10 @@ Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This
 Multi-hop routes via a degraded neighbor have their quality capped to the direct link quality (`min()` cascade), ensuring that indirect routes cannot appear better than the bottleneck link.
 
 After `consecutive_missed_for_inactivation` (default 10, configurable) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
+
+**Unidirectional Link Detection**:
+
+When processing a routing table from peer B, node A checks whether B lists A as a direct neighbor (hop_count=1) via `GetLinkQualityFor(A)`. Only direct-neighbor entries are considered — multi-hop entries are ignored because they indicate indirect reachability, not direct radio contact. If B does not list A as a direct neighbor for 3 or more consecutive routing exchanges (`messages_expected >= 3, remote_link_quality == 0`), the link is classified as confirmed unidirectional and quality is penalized to `ewma_quality / 4`. This makes multi-hop bidirectional alternatives preferred. Recovery is automatic once the peer starts listing us. See `docs/unidirectional_link_detection.md` for full analysis.
 
 > **Note**: The implementation does not support ROUTE_PERMANENT flags. All routes are subject to timeout-based aging.
 

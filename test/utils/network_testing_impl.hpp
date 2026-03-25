@@ -373,8 +373,21 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Set a unidirectional link status between two nodes
+     *
+     * Only affects packets transmitted by 'from'. When active=true,
+     * 'to' will receive transmissions from 'from'. Does not affect
+     * the reverse direction.
+     */
+    void SetDirectionalLink(uint32_t from, uint32_t to, bool active) {
+        if (nodes_.find(from) != nodes_.end()) {
+            nodes_[from].active_links[to] = active;
+        }
+    }
+
+    /**
      * @brief Check if a link between two nodes is active
-     * 
+     *
      * @param node1 First node address
      * @param node2 Second node address
      * @return true if link is active, false otherwise

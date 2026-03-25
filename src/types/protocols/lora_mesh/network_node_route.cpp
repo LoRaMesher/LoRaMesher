@@ -18,10 +18,16 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
         return remote_link_quality > 0 ? remote_link_quality : 200;
     }
 
-    // Return EWMA quality, optionally averaged with remote link quality
+    // Bidirectional: average local EWMA with peer's reported quality
     if (remote_link_quality > 0) {
         return static_cast<uint8_t>(
             (static_cast<uint16_t>(ewma_quality) + remote_link_quality) / 2);
+    }
+
+    // Unidirectional link: received 3+ routing tables from peer
+    // but peer never lists us — they cannot hear us
+    if (messages_expected >= 3) {
+        return ewma_quality / 4;
     }
 
     return ewma_quality;

@@ -11,6 +11,11 @@
             padding: 20px;
             background: #f5f5f5;
         }
+        .node-id {
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
+            font-variant-numeric: tabular-nums;
+        }
         .container {
             max-width: 1400px;
             margin: 0 auto;
@@ -303,10 +308,14 @@
         .message-from {
             font-weight: bold;
             color: #e74c3c;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
         }
         .message-to {
             font-weight: bold;
             color: #27ae60;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
         }
         .stats-grid {
             display: grid;
@@ -328,6 +337,131 @@
         .stat-label {
             color: #7f8c8d;
             margin-top: 5px;
+        }
+        /* Delivery tab styles */
+        .delivery-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .delivery-summary .stat-card {
+            padding: 14px;
+        }
+        .delivery-table-wrapper {
+            overflow-x: auto;
+            margin-bottom: 24px;
+        }
+        .delivery-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .delivery-table th, .delivery-table td {
+            padding: 8px 12px;
+            border: 1px solid #dee2e6;
+            text-align: right;
+        }
+        .delivery-table th {
+            background: #f1f3f5;
+            color: #495057;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .delivery-table th:hover {
+            background: #dee2e6;
+        }
+        .delivery-table td:first-child,
+        .delivery-table th:first-child {
+            text-align: left;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
+        }
+        .delivery-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .flow-status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .flow-status.delivered { background: #d4edda; color: #155724; }
+        .flow-status.dropped   { background: #f8d7da; color: #721c24; }
+        .flow-status.in-flight { background: #fff3cd; color: #856404; }
+        .flow-row { cursor: pointer; }
+        .flow-row:hover { background: #e8f4f8 !important; }
+        .flow-detail {
+            display: none;
+            background: #f8f9fa;
+        }
+        .flow-detail.show {
+            display: table-row;
+        }
+        .flow-detail td {
+            padding: 10px 16px;
+            font-size: 12px;
+            border-top: none;
+        }
+        .hop-path {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .hop-node {
+            padding: 2px 6px;
+            background: #e8f4f8;
+            border-radius: 3px;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
+            font-size: 12px;
+        }
+        .hop-arrow { color: #adb5bd; font-size: 11px; }
+        .hop-time { font-size: 10px; color: #868e96; margin-left: 2px; }
+        /* Heatmap styles */
+        .heatmap-table {
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .heatmap-table th, .heatmap-table td {
+            padding: 6px 10px;
+            border: 1px solid #dee2e6;
+            text-align: center;
+            min-width: 60px;
+        }
+        .heatmap-table th {
+            background: #f1f3f5;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
+            font-size: 11px;
+        }
+        .heatmap-cell {
+            font-weight: 600;
+            font-size: 12px;
+        }
+        .delivery-section-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin: 20px 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        .delivery-filters {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .delivery-filters select {
+            padding: 4px 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 13px;
         }
         .log-info {
             background: #e8f4f8;
@@ -591,6 +725,8 @@
             padding: 0 6px;
             font-weight: bold;
             font-size: 12px;
+            font-family: Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            letter-spacing: 0.04em;
             color: #2c3e50;
             border-bottom: 1px solid #eee;
             overflow: hidden;
@@ -793,6 +929,7 @@
                 <button class="tab" onclick="showTab('messages', event)">Messages</button>
                 <button class="tab" onclick="showTab('stats', event)">Statistics</button>
                 <button class="tab" onclick="showTab('topology', event)">Topology</button>
+                <button class="tab" onclick="showTab('delivery', event)">Delivery</button>
             </div>
 
             <div id="timeline" class="tab-content active">
@@ -877,6 +1014,30 @@
                 <!-- Empty state -->
                 <div id="networkEmpty" style="text-align:center; color:#7f8c8d; padding:40px; display:none;">
                     No RTENTRY routing data found in loaded logs.
+                </div>
+            </div>
+
+            <div id="delivery" class="tab-content">
+                <h3>Message Delivery Analysis</h3>
+                <div id="deliverySummary" class="delivery-summary"></div>
+                <div class="delivery-section-title">Per-Node Delivery</div>
+                <div id="deliveryNodeTable" class="delivery-table-wrapper"></div>
+                <div class="delivery-section-title">Neighbor Link Reliability</div>
+                <div id="deliveryHeatmap" class="delivery-table-wrapper"></div>
+                <div class="delivery-section-title">Message Flows</div>
+                <div class="delivery-filters">
+                    <label>Source: <select id="deliverySrcFilter" class="node-id" onchange="analyzer.renderDelivery()"><option value="">All</option></select></label>
+                    <label>Dest: <select id="deliveryDstFilter" class="node-id" onchange="analyzer.renderDelivery()"><option value="">All</option></select></label>
+                    <label>Status: <select id="deliveryStatusFilter" onchange="analyzer.renderDelivery()">
+                        <option value="">All</option>
+                        <option value="delivered">Delivered</option>
+                        <option value="dropped">Dropped</option>
+                        <option value="in_flight">In-Flight</option>
+                    </select></label>
+                </div>
+                <div id="deliveryFlowTable" class="delivery-table-wrapper"></div>
+                <div id="deliveryEmpty" style="text-align:center; color:#7f8c8d; padding:40px; display:none;">
+                    No data message events found in loaded logs. Ensure logs contain DATA send/receive/forward entries.
                 </div>
             </div>
         </div>
@@ -1027,6 +1188,9 @@
                 this.isRefreshMode = false; // Track if we're in refresh mode
                 this.hiddenNodes = new Set(); // nodeIds (hex strings) that are toggled off
                 this.routingEntries  = [];        // [{timestamp, nodeId, dest, via, hops, quality, active, nm}]
+                this.dataEvents      = [];        // [{timestamp, nodeId, eventType, src, dest, seq, ...}]
+                this.messageFlows    = [];        // built by buildMessageFlows()
+                this.linkStats       = new Map();  // "sender-receiver" -> {sent, received}
                 this.nodePositions   = new Map(); // nodeId -> {x, y} — persists across time scrubs
                 this.networkCurrentTime = null;   // null = snap to latest on render
                 this.showInferredLinks = true;
@@ -1443,6 +1607,7 @@
                 fileData.events = [];
                 fileData.messages = [];
                 fileData.routingEntries = [];
+                fileData.dataEvents = [];
                 fileData.nodes.clear();
                 fileData.originalTimeMap = new Map();
                 fileData.usesLineNumbers = false;
@@ -1783,6 +1948,84 @@
                     fileData.nodes.get(nodeId).lastSeen = timestamp;
                 }
 
+                // ── DATA message lifecycle events (for delivery tracking)
+                const dataSentMatch = line.match(
+                    /Sending DATA to 0x([0-9A-Fa-f]+) via 0x([0-9A-Fa-f]+) \(ttl=(\d+), seq=(\d+)\), payload_size=(\d+)/);
+                if (dataSentMatch && nodeId !== 'unknown') {
+                    fileData.dataEvents.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        eventType: 'SENT',
+                        src: nodeId.toUpperCase(),
+                        dest: dataSentMatch[1].toUpperCase(),
+                        via: dataSentMatch[2].toUpperCase(),
+                        ttl: parseInt(dataSentMatch[3]),
+                        seq: parseInt(dataSentMatch[4]),
+                        size: parseInt(dataSentMatch[5]),
+                        fileId: fileData.id
+                    });
+                }
+                const dataDeliveredMatch = line.match(
+                    /DATA reached final destination: src=0x([0-9A-Fa-f]+), dest=0x([0-9A-Fa-f]+), seq=(\d+), payload_size=(\d+)/);
+                if (dataDeliveredMatch && nodeId !== 'unknown') {
+                    fileData.dataEvents.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        eventType: 'DELIVERED',
+                        src: dataDeliveredMatch[1].toUpperCase(),
+                        dest: dataDeliveredMatch[2].toUpperCase(),
+                        seq: parseInt(dataDeliveredMatch[3]),
+                        size: parseInt(dataDeliveredMatch[4]),
+                        fileId: fileData.id
+                    });
+                }
+                const dataFwdMatch = line.match(
+                    /Forwarding DATA: src=0x([0-9A-Fa-f]+), dest=0x([0-9A-Fa-f]+), seq=(\d+), ttl=(\d+)/);
+                if (dataFwdMatch && nodeId !== 'unknown') {
+                    fileData.dataEvents.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        eventType: 'FORWARDED',
+                        src: dataFwdMatch[1].toUpperCase(),
+                        dest: dataFwdMatch[2].toUpperCase(),
+                        seq: parseInt(dataFwdMatch[3]),
+                        ttl: parseInt(dataFwdMatch[4]),
+                        fileId: fileData.id
+                    });
+                }
+                const dataTtlMatch = line.match(
+                    /DATA TTL expired: src=0x([0-9A-Fa-f]+), dest=0x([0-9A-Fa-f]+), seq=(\d+), dropping/);
+                if (dataTtlMatch && nodeId !== 'unknown') {
+                    fileData.dataEvents.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        eventType: 'TTL_EXPIRED',
+                        src: dataTtlMatch[1].toUpperCase(),
+                        dest: dataTtlMatch[2].toUpperCase(),
+                        seq: parseInt(dataTtlMatch[3]),
+                        fileId: fileData.id
+                    });
+                }
+                const dataNoRouteMatch = line.match(
+                    /No route to dest=0x([0-9A-Fa-f]+) for forwarding: src=0x([0-9A-Fa-f]+), seq=(\d+)/);
+                if (dataNoRouteMatch && nodeId !== 'unknown') {
+                    fileData.dataEvents.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        eventType: 'NO_ROUTE',
+                        src: dataNoRouteMatch[2].toUpperCase(),
+                        dest: dataNoRouteMatch[1].toUpperCase(),
+                        seq: parseInt(dataNoRouteMatch[3]),
+                        fileId: fileData.id
+                    });
+                }
+                const dataDupMatch = line.match(
+                    /Dropping duplicate DATA from 0x([0-9A-Fa-f]+) seq=(\d+)/);
+                if (dataDupMatch && nodeId !== 'unknown') {
+                    fileData.dataEvents.push({
+                        timestamp, nodeId: nodeId.toUpperCase(),
+                        eventType: 'DUPLICATE',
+                        src: dataDupMatch[1].toUpperCase(),
+                        seq: parseInt(dataDupMatch[2]),
+                        fileId: fileData.id
+                    });
+                }
+
                 // ── RTENTRY: structured routing table entry
                 const rtentryMatch = line.match(
                     /RTENTRY\s+dest=0x([0-9A-Fa-f]+)\s+via=0x([0-9A-Fa-f]+)\s+hops=(\d+)\s+quality=(\d+)\s+active=(\d+)(?:\s+nm=(\d+))?/
@@ -1874,6 +2117,7 @@
                 this.messages = [];
                 this.events = [];
                 this.routingEntries = [];
+                this.dataEvents = [];
                 this.originalTimeMap.clear();
 
                 let allTimestamps = [];
@@ -1902,6 +2146,7 @@
                     this.messages = this.messages.concat(fileData.messages);
                     this.events = this.events.concat(fileData.events);
                     this.routingEntries = this.routingEntries.concat(fileData.routingEntries || []);
+                    this.dataEvents = this.dataEvents.concat(fileData.dataEvents || []);
 
                     // Merge originalTimeMap if it exists
                     if (fileData.originalTimeMap) {
@@ -2863,6 +3108,336 @@
                 });
             }
 
+            // ═══════════════════════════════════════════════════════════════════════
+            // DELIVERY TAB — message flow correlation, delivery stats, heatmap
+            // ═══════════════════════════════════════════════════════════════════════
+
+            buildMessageFlows() {
+                const flowMap = new Map(); // key: "SRC-DEST-SEQ" -> flow object
+
+                // Sort data events by timestamp for correct ordering
+                const sorted = [...this.dataEvents].sort((a, b) => a.timestamp - b.timestamp);
+
+                for (const ev of sorted) {
+                    // DUPLICATE events may not have dest — skip correlation for those
+                    if (ev.eventType === 'DUPLICATE') continue;
+
+                    const key = `${ev.src}-${ev.dest || '?'}-${ev.seq}`;
+
+                    if (!flowMap.has(key)) {
+                        flowMap.set(key, {
+                            key, src: ev.src, dest: ev.dest || '?', seq: ev.seq,
+                            sentTime: null, sentBy: null, via: null,
+                            deliveredTime: null, latency: null,
+                            status: 'in_flight', hops: [], size: null
+                        });
+                    }
+                    const flow = flowMap.get(key);
+
+                    flow.hops.push({
+                        nodeId: ev.nodeId, time: ev.timestamp, event: ev.eventType
+                    });
+
+                    if (ev.eventType === 'SENT') {
+                        flow.sentTime = ev.timestamp;
+                        flow.sentBy = ev.nodeId;
+                        flow.via = ev.via || null;
+                        flow.size = ev.size || flow.size;
+                    } else if (ev.eventType === 'DELIVERED') {
+                        flow.deliveredTime = ev.timestamp;
+                        flow.size = ev.size || flow.size;
+                        flow.status = 'delivered';
+                        if (flow.sentTime !== null) {
+                            flow.latency = flow.deliveredTime - flow.sentTime;
+                        }
+                    } else if (ev.eventType === 'TTL_EXPIRED' || ev.eventType === 'NO_ROUTE') {
+                        if (flow.status !== 'delivered') {
+                            flow.status = ev.eventType === 'TTL_EXPIRED' ? 'dropped_ttl' : 'dropped_no_route';
+                        }
+                    }
+                }
+
+                this.messageFlows = [...flowMap.values()];
+
+                // Build link stats for heatmap
+                this.linkStats = new Map();
+                for (const flow of this.messageFlows) {
+                    const hopsSorted = [...flow.hops]
+                        .filter(h => h.event === 'SENT' || h.event === 'FORWARDED' || h.event === 'DELIVERED')
+                        .sort((a, b) => a.time - b.time);
+
+                    for (let i = 0; i < hopsSorted.length - 1; i++) {
+                        const sender = hopsSorted[i].nodeId;
+                        const receiver = hopsSorted[i + 1].nodeId;
+                        const linkKey = `${sender}-${receiver}`;
+                        if (!this.linkStats.has(linkKey)) {
+                            this.linkStats.set(linkKey, { sent: 0, received: 0 });
+                        }
+                        this.linkStats.get(linkKey).sent++;
+                        this.linkStats.get(linkKey).received++;
+                    }
+                    // If flow has a SENT with via, but no FORWARDED/DELIVERED from that via node,
+                    // count the link as sent but not received
+                    if (flow.via && flow.sentBy) {
+                        const firstLinkKey = `${flow.sentBy}-${flow.via}`;
+                        if (!this.linkStats.has(firstLinkKey)) {
+                            this.linkStats.set(firstLinkKey, { sent: 0, received: 0 });
+                        }
+                        // Check if via node appears in hops
+                        const viaAppears = flow.hops.some(h =>
+                            h.nodeId === flow.via &&
+                            (h.event === 'FORWARDED' || h.event === 'DELIVERED'));
+                        if (!viaAppears) {
+                            this.linkStats.get(firstLinkKey).sent++;
+                        }
+                    }
+                }
+            }
+
+            renderDelivery() {
+                this.buildMessageFlows();
+
+                const emptyEl = document.getElementById('deliveryEmpty');
+                const summaryEl = document.getElementById('deliverySummary');
+                const nodeTableEl = document.getElementById('deliveryNodeTable');
+                const heatmapEl = document.getElementById('deliveryHeatmap');
+                const flowTableEl = document.getElementById('deliveryFlowTable');
+
+                if (this.dataEvents.length === 0) {
+                    emptyEl.style.display = 'block';
+                    summaryEl.innerHTML = '';
+                    nodeTableEl.innerHTML = '';
+                    heatmapEl.innerHTML = '';
+                    flowTableEl.innerHTML = '';
+                    return;
+                }
+                emptyEl.style.display = 'none';
+
+                const flows = this.messageFlows;
+                const totalSent = flows.filter(f => f.sentTime !== null).length;
+                const totalDelivered = flows.filter(f => f.status === 'delivered' && f.sentTime !== null).length;
+                const untrackedDeliveries = flows.filter(f => f.status === 'delivered' && f.sentTime === null).length;
+                const totalDropped = flows.filter(f => f.status.startsWith('dropped')).length;
+                const totalInFlight = flows.filter(f => f.status === 'in_flight').length;
+                const deliveredWithLatency = flows.filter(f => f.latency !== null && f.latency >= 0);
+                const avgLatency = deliveredWithLatency.length > 0
+                    ? Math.round(deliveredWithLatency.reduce((s, f) => s + f.latency, 0) / deliveredWithLatency.length)
+                    : '-';
+                const maxLatency = deliveredWithLatency.length > 0
+                    ? Math.max(...deliveredWithLatency.map(f => f.latency))
+                    : '-';
+                const ratio = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) + '%' : '-';
+
+                // Summary cards
+                const cards = [
+                    { label: 'Messages Sent', value: totalSent },
+                    { label: 'Delivered', value: totalDelivered, color: '#27ae60' },
+                    { label: 'Delivery Ratio', value: ratio, color: totalSent > 0 && totalDelivered / totalSent >= 0.9 ? '#27ae60' : '#e74c3c' },
+                    { label: 'Avg Latency', value: avgLatency === '-' ? '-' : avgLatency + ' ms' },
+                    { label: 'Max Latency', value: maxLatency === '-' ? '-' : maxLatency + ' ms' },
+                    { label: 'Dropped', value: totalDropped, color: totalDropped > 0 ? '#e74c3c' : undefined },
+                    { label: 'In-Flight', value: totalInFlight, color: totalInFlight > 0 ? '#f39c12' : undefined },
+                    ...(untrackedDeliveries > 0 ? [{ label: 'Untracked Deliveries', value: untrackedDeliveries, color: '#8e44ad' }] : []),
+                ];
+                summaryEl.innerHTML = cards.map(c => `
+                    <div class="stat-card">
+                        <div class="stat-value" ${c.color ? `style="color:${c.color}"` : ''}>${c.value}</div>
+                        <div class="stat-label">${c.label}</div>
+                    </div>`).join('');
+
+                // Per-node table
+                const nodeStats = new Map();
+                for (const flow of flows) {
+                    // Sender stats
+                    if (flow.sentBy) {
+                        if (!nodeStats.has(flow.sentBy)) nodeStats.set(flow.sentBy, { sent: 0, delivered: 0, forwarded: 0, received: 0, dropped: 0, latencies: [] });
+                        const s = nodeStats.get(flow.sentBy);
+                        s.sent++;
+                        if (flow.status === 'delivered') {
+                            s.delivered++;
+                            if (flow.latency !== null) s.latencies.push(flow.latency);
+                        }
+                    }
+                    // Destination stats (received)
+                    if (flow.status === 'delivered' && flow.dest) {
+                        if (!nodeStats.has(flow.dest)) nodeStats.set(flow.dest, { sent: 0, delivered: 0, forwarded: 0, received: 0, dropped: 0, latencies: [] });
+                        nodeStats.get(flow.dest).received++;
+                    }
+                    // Forwarder stats
+                    for (const hop of flow.hops) {
+                        if (hop.event === 'FORWARDED') {
+                            if (!nodeStats.has(hop.nodeId)) nodeStats.set(hop.nodeId, { sent: 0, delivered: 0, forwarded: 0, received: 0, dropped: 0, latencies: [] });
+                            nodeStats.get(hop.nodeId).forwarded++;
+                        }
+                        if (hop.event === 'TTL_EXPIRED' || hop.event === 'NO_ROUTE') {
+                            if (!nodeStats.has(hop.nodeId)) nodeStats.set(hop.nodeId, { sent: 0, delivered: 0, forwarded: 0, received: 0, dropped: 0, latencies: [] });
+                            nodeStats.get(hop.nodeId).dropped++;
+                        }
+                    }
+                }
+
+                const sortedNodes = [...nodeStats.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+                nodeTableEl.innerHTML = `<table class="delivery-table">
+                    <thead><tr>
+                        <th>Node</th><th>Sent</th><th>Delivered</th><th>Delivery %</th>
+                        <th>Forwarded</th><th>Received</th><th>Avg Latency</th><th>Dropped</th>
+                    </tr></thead>
+                    <tbody>${sortedNodes.map(([nodeId, s]) => {
+                        const pct = s.sent > 0 ? ((s.delivered / s.sent) * 100).toFixed(1) + '%' : '-';
+                        const avg = s.latencies.length > 0
+                            ? Math.round(s.latencies.reduce((a, b) => a + b, 0) / s.latencies.length) + ' ms'
+                            : '-';
+                        return `<tr>
+                            <td>0x${nodeId}</td><td>${s.sent}</td><td>${s.delivered}</td>
+                            <td>${pct}</td><td>${s.forwarded}</td><td>${s.received}</td>
+                            <td>${avg}</td><td>${s.dropped}</td>
+                        </tr>`;
+                    }).join('')}</tbody></table>`;
+
+                // Neighbor delivery heatmap
+                this._renderHeatmap(heatmapEl);
+
+                // Update filter dropdowns
+                this._updateDeliveryFilters();
+
+                // Message flow table
+                this._renderFlowTable(flowTableEl);
+            }
+
+            _renderHeatmap(container) {
+                if (this.linkStats.size === 0) {
+                    container.innerHTML = '<p style="color:#7f8c8d; font-size:13px;">No link data available.</p>';
+                    return;
+                }
+
+                // Collect unique sender and receiver nodes
+                const senders = new Set();
+                const receivers = new Set();
+                this.linkStats.forEach((_, key) => {
+                    const [s, r] = key.split('-');
+                    senders.add(s);
+                    receivers.add(r);
+                });
+                const senderList = [...senders].sort();
+                const receiverList = [...receivers].sort();
+
+                let html = '<table class="heatmap-table"><thead><tr><th>Sender \\ Receiver</th>';
+                for (const r of receiverList) html += `<th>0x${r}</th>`;
+                html += '</tr></thead><tbody>';
+
+                for (const s of senderList) {
+                    html += `<tr><th>0x${s}</th>`;
+                    for (const r of receiverList) {
+                        const key = `${s}-${r}`;
+                        const stat = this.linkStats.get(key);
+                        if (s === r || !stat || stat.sent === 0) {
+                            html += '<td style="color:#ccc;">-</td>';
+                        } else {
+                            const pct = Math.round((stat.received / stat.sent) * 100);
+                            const bg = pct >= 90 ? '#d4edda' : pct >= 50 ? '#fff3cd' : '#f8d7da';
+                            const fg = pct >= 90 ? '#155724' : pct >= 50 ? '#856404' : '#721c24';
+                            html += `<td class="heatmap-cell" style="background:${bg};color:${fg};" title="${stat.received}/${stat.sent} messages">${pct}%</td>`;
+                        }
+                    }
+                    html += '</tr>';
+                }
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            }
+
+            _updateDeliveryFilters() {
+                const srcFilter = document.getElementById('deliverySrcFilter');
+                const dstFilter = document.getElementById('deliveryDstFilter');
+                const srcs = new Set(this.messageFlows.filter(f => f.src).map(f => f.src));
+                const dsts = new Set(this.messageFlows.filter(f => f.dest).map(f => f.dest));
+
+                const currentSrc = srcFilter.value;
+                const currentDst = dstFilter.value;
+
+                srcFilter.innerHTML = '<option value="">All</option>' +
+                    [...srcs].sort().map(s => `<option value="${s}" ${s === currentSrc ? 'selected' : ''}>0x${s}</option>`).join('');
+                dstFilter.innerHTML = '<option value="">All</option>' +
+                    [...dsts].sort().map(d => `<option value="${d}" ${d === currentDst ? 'selected' : ''}>0x${d}</option>`).join('');
+            }
+
+            _renderFlowTable(container) {
+                const srcFilter = document.getElementById('deliverySrcFilter').value;
+                const dstFilter = document.getElementById('deliveryDstFilter').value;
+                const statusFilter = document.getElementById('deliveryStatusFilter').value;
+
+                let filtered = this.messageFlows;
+                if (srcFilter) filtered = filtered.filter(f => f.src === srcFilter);
+                if (dstFilter) filtered = filtered.filter(f => f.dest === dstFilter);
+                if (statusFilter) {
+                    if (statusFilter === 'dropped') {
+                        filtered = filtered.filter(f => f.status.startsWith('dropped'));
+                    } else {
+                        filtered = filtered.filter(f => f.status === statusFilter);
+                    }
+                }
+
+                // Sort by sent time (most recent first)
+                filtered.sort((a, b) => (b.sentTime || 0) - (a.sentTime || 0));
+
+                if (filtered.length === 0) {
+                    container.innerHTML = '<p style="color:#7f8c8d; font-size:13px;">No matching message flows.</p>';
+                    return;
+                }
+
+                let html = `<table class="delivery-table">
+                    <thead><tr>
+                        <th>Src</th><th>Dest</th><th>Seq</th><th>Status</th>
+                        <th style="text-align:left;">Path</th><th>Latency</th><th>Size</th>
+                    </tr></thead><tbody>`;
+
+                for (const flow of filtered) {
+                    const statusClass = flow.status === 'delivered' ? 'delivered'
+                        : flow.status.startsWith('dropped') ? 'dropped' : 'in-flight';
+                    const statusLabel = flow.status === 'delivered' ? 'Delivered'
+                        : flow.status === 'dropped_ttl' ? 'TTL Expired'
+                        : flow.status === 'dropped_no_route' ? 'No Route'
+                        : 'In-Flight';
+
+                    // Build path string from hops
+                    const pathHops = flow.hops
+                        .filter(h => h.event === 'SENT' || h.event === 'FORWARDED' || h.event === 'DELIVERED')
+                        .sort((a, b) => a.time - b.time);
+                    const pathStr = pathHops.length > 0
+                        ? pathHops.map(h => h.nodeId).join(' → ')
+                        : flow.sentBy || '?';
+
+                    const latStr = flow.latency !== null ? flow.latency + ' ms' : '-';
+                    const sizeStr = flow.size !== null ? flow.size + ' B' : '-';
+                    const rowId = `flow-${flow.key.replace(/[^a-zA-Z0-9]/g, '_')}`;
+
+                    html += `<tr class="flow-row" onclick="document.getElementById('${rowId}').classList.toggle('show')">
+                        <td class="node-id">0x${flow.src}</td><td class="node-id">0x${flow.dest}</td><td>${flow.seq}</td>
+                        <td><span class="flow-status ${statusClass}">${statusLabel}</span></td>
+                        <td class="node-id" style="text-align:left; font-size:12px;">${pathStr}</td>
+                        <td>${latStr}</td><td>${sizeStr}</td>
+                    </tr>`;
+
+                    // Expandable detail row
+                    html += `<tr class="flow-detail" id="${rowId}"><td colspan="7">`;
+                    html += '<div class="hop-path">';
+                    const allHops = [...flow.hops].sort((a, b) => a.time - b.time);
+                    for (let i = 0; i < allHops.length; i++) {
+                        const h = allHops[i];
+                        if (i > 0) html += '<span class="hop-arrow">→</span>';
+                        html += `<span class="hop-node">${h.nodeId}<span class="hop-time"> ${h.event} @${this._formatDeliveryTime(h.time)}</span></span>`;
+                    }
+                    html += '</div></td></tr>';
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            }
+
+            _formatDeliveryTime(ts) {
+                if (this.originalTimeMap.has(ts)) return this.originalTimeMap.get(ts);
+                return ts + ' ms';
+            }
+
             showError(message) {
                 const error = document.createElement('div');
                 error.className = 'error';
@@ -3220,7 +3795,7 @@
                     text.setAttribute('text-anchor', 'middle');
                     text.setAttribute('dominant-baseline', 'central');
                     text.setAttribute('fill', 'white');
-                    text.setAttribute('font-family', 'monospace');
+                    text.setAttribute('font-family', "Menlo, Consolas, 'DejaVu Sans Mono', monospace");
                     text.setAttribute('font-size', '12');
                     text.setAttribute('font-weight', 'bold');
                     text.setAttribute('pointer-events', 'none');
@@ -3338,6 +3913,9 @@
 
             if (tabName === 'topology') {
                 analyzer.renderNetwork(); // lazy: SVG has 0 clientWidth while hidden
+            }
+            if (tabName === 'delivery') {
+                analyzer.renderDelivery();
             }
         }
 

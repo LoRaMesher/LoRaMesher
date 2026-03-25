@@ -38,24 +38,22 @@ AddressType DistanceVectorRoutingTable::FindNextHop(
         return node_address_;
     }
 
-    // Find best active route
+    // Find best active route using ETX cost (consistent with IsBetterRouteThan)
     AddressType best_next_hop = 0;
+    uint16_t best_cost = UINT16_MAX;
     uint8_t best_hop_count = UINT8_MAX;
-    uint8_t best_link_quality = 0;
 
     for (const auto& node : nodes_) {
         if (node.routing_entry.destination == destination && node.is_active) {
-            // Prefer routes with fewer hops
-            if (node.routing_entry.hop_count < best_hop_count) {
+            uint16_t cost = types::protocols::lora_mesh::NetworkNodeRoute::
+                CalculateRouteCost(node.routing_entry.hop_count,
+                                   node.routing_entry.link_quality);
+            if (cost < best_cost ||
+                (cost == best_cost &&
+                 node.routing_entry.hop_count < best_hop_count)) {
+                best_cost = cost;
                 best_hop_count = node.routing_entry.hop_count;
                 best_next_hop = node.next_hop;
-                best_link_quality = node.routing_entry.link_quality;
-            }
-            // If hop counts equal, prefer better link quality
-            else if (node.routing_entry.hop_count == best_hop_count &&
-                     node.routing_entry.link_quality > best_link_quality) {
-                best_next_hop = node.next_hop;
-                best_link_quality = node.routing_entry.link_quality;
             }
         }
     }
@@ -488,8 +486,21 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     kMinExpectedForDegradation &&
                 node.link_stats.messages_received >=
                     kMinMessagesBeforeInvalidation) {
+                uint8_t old_quality = node.routing_entry.link_quality;
                 node.routing_entry.link_quality =
                     node.link_stats.CalculateQuality();
+                if (node.routing_entry.link_quality != old_quality) {
+                    LOG_DEBUG(
+                        "LinkStats 0x%04X: quality %d -> %d "
+                        "(ewma=%d remote=%d exp=%d recv=%d missed=%d)",
+                        node.routing_entry.destination, old_quality,
+                        node.routing_entry.link_quality,
+                        node.link_stats.ewma_quality,
+                        node.link_stats.remote_link_quality,
+                        node.link_stats.messages_expected,
+                        node.link_stats.messages_received,
+                        node.link_stats.consecutive_missed);
+                }
                 LogRouteEntry(node);
 
                 // Cascade: cap multi-hop routes through this neighbor
@@ -552,6 +563,18 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Update existing source node - it's a direct neighbor
         source_node_it->ReceivedRoutingMessage(local_link_quality,
                                                reception_timestamp);
+        LOG_DEBUG(
+            "Source 0x%04X: remote_quality=%d ewma=%d link_quality=%d "
+            "expected=%d received=%d%s",
+            source_address, local_link_quality,
+            source_node_it->link_stats.ewma_quality,
+            source_node_it->routing_entry.link_quality,
+            source_node_it->link_stats.messages_expected,
+            source_node_it->link_stats.messages_received,
+            (local_link_quality == 0 &&
+             source_node_it->link_stats.messages_expected >= 3)
+                ? " [UNIDIRECTIONAL]"
+                : "");
 
         // Always update capabilities for direct neighbor (source of the message)
         // The source is always the next hop to itself for direct neighbors

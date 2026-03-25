@@ -553,5 +553,91 @@ TEST_F(DynamicRoutingTests, DataMessageDeduplication) {
     EXPECT_EQ(count, 1u) << "N3 should receive exactly 1 data message";
 }
 
+/**
+ * @brief Test that unidirectional links are detected and avoided
+ *
+ * Topology:
+ *   Gateway(NM) <---> Relay <---> Edge
+ *        |                          ^
+ *        +-- unidirectional (GW→Edge only)
+ *
+ * Gateway can broadcast to Edge (Edge hears Gateway), but Edge's
+ * transmissions never reach Gateway. The library should detect this
+ * after 3+ routing exchanges and route Edge→Gateway via Relay.
+ */
+TEST_F(DynamicRoutingTests, UnidirectionalLinkAvoidance) {
+    // Create line topology: Gateway(NM) - Relay - Edge
+    auto nodes = GenerateLineTopology(3, 0x1000, "Node", 0);
+    ASSERT_EQ(nodes.size(), 3) << "Expected 3 nodes";
+
+    auto& gateway = *nodes[0];
+    auto& relay = *nodes[1];
+    auto& edge = *nodes[2];
+
+    // Start all nodes and let the network form normally first
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 2))
+        << "Network formation failed";
+
+    ASSERT_TRUE(WaitForRoutingStabilization(nodes))
+        << "Routing stabilization failed";
+
+    // Verify initial line topology: Edge routes to Gateway in 2 hops
+    EXPECT_EQ(GetHopCount(edge, gateway.address), 2)
+        << "Initial route should be 2 hops via Relay";
+
+    // Now introduce unidirectional link: Gateway broadcasts reach Edge
+    // directly, but Edge's transmissions don't reach Gateway.
+    // This simulates a marginal radio link developing at network edge.
+    SetDirectionalLink(gateway, edge, true);  // Edge hears Gateway
+    // Edge→Gateway was already disabled in line topology (no direct link)
+
+    auto superframe_time = GetSuperframeDuration(gateway);
+    uint32_t step_ms = 15u;
+
+    // Advance enough superframes for:
+    // 1. Edge to receive Gateway's routing tables directly (sees 1-hop route)
+    // 2. Unidirectional detection: messages_expected >= 3 with remote=0
+    // 3. kMinExpectedForDegradation = 5 in UpdateLinkStatistics
+    // 4. Distance-vector to converge back to the 2-hop relay route
+    bool route_correct = AdvanceTime(
+        superframe_time * 14, superframe_time * 14, step_ms, 0, [&]() {
+            if (!HasRouteTo(edge, gateway.address)) {
+                return false;
+            }
+            // Edge should maintain/restore 2-hop route via Relay
+            return GetHopCount(edge, gateway.address) == 2;
+        });
+
+    std::cout << "=== After unidirectional detection ===" << std::endl;
+    for (auto* node : nodes) {
+        PrintRoutingTable(*node);
+    }
+
+    EXPECT_TRUE(route_correct)
+        << "Edge should prefer 2-hop relay route over unidirectional direct";
+
+    if (route_correct) {
+        // Verify next hop is Relay, not Gateway directly
+        EXPECT_EQ(GetNextHop(edge, gateway.address), relay.address)
+            << "Edge should route to Gateway via Relay";
+
+        // Verify data delivery through the relay path
+        std::vector<uint8_t> payload = {0xDE, 0xAD, 0xBE, 0xEF};
+        ASSERT_TRUE(SendMessage(edge, gateway, payload));
+
+        bool received = AdvanceTime(
+            superframe_time * 5, superframe_time * 5, step_ms, 0, [&]() {
+                return HasReceivedMessageFrom(gateway, edge.address,
+                                              MessageType::DATA);
+            });
+
+        EXPECT_TRUE(received) << "Data should be delivered via relay path";
+    }
+}
+
 }  // namespace test
 }  // namespace loramesher

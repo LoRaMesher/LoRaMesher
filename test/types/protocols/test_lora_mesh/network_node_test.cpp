@@ -539,27 +539,29 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityNoTracking) {
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityPerfect) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // Simulate 10 superframes with perfect reception
+    // Simulate 10 superframes with perfect bidirectional reception
     for (int i = 0; i < 10; i++) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
     }
+    stats.UpdateRemoteQuality(200);
     // With deferred decay, perfect reception only boosts EWMA
-    EXPECT_GE(stats.CalculateQuality(), 250);
+    EXPECT_GE(stats.CalculateQuality(), 200);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityHalf) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // Simulate 10 superframes, receive only on even ones
+    // Simulate 10 superframes, receive only on even ones (bidirectional)
     for (int i = 0; i < 10; i++) {
         stats.ExpectMessage();
         if (i % 2 == 0) {
             stats.ReceivedMessage(i * 1000);
         }
     }
+    stats.UpdateRemoteQuality(200);
     uint8_t q = stats.CalculateQuality();
-    uint8_t perfect_q = 252;
-    EXPECT_LT(q, perfect_q);
+    // Quality should reflect 50% PDR, averaged with remote
+    EXPECT_LT(q, 250);
     EXPECT_GT(q, 50);
 }
 
@@ -570,12 +572,57 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
     }
-    uint8_t local_q = stats.CalculateQuality();
+    uint8_t ewma = stats.ewma_quality;
     stats.UpdateRemoteQuality(100);
     uint8_t q = stats.CalculateQuality();
     // quality = (ewma + remote) / 2
-    EXPECT_EQ(q,
-              static_cast<uint8_t>((static_cast<uint16_t>(local_q) + 100) / 2));
+    EXPECT_EQ(q, static_cast<uint8_t>((static_cast<uint16_t>(ewma) + 100) / 2));
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    // Simulate 4 superframes where peer never lists us (remote stays 0)
+    for (int i = 0; i < 4; i++) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+    }
+    EXPECT_GE(stats.messages_expected, 3u);
+    EXPECT_EQ(stats.remote_link_quality, 0);
+    // Unidirectional penalty: quality = ewma / 4
+    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality / 4);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       LinkQualityUnidirectionalNoPenaltyBeforeThreshold) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    // Only 2 superframes — below the 3-message threshold
+    for (int i = 0; i < 2; i++) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+    }
+    EXPECT_EQ(stats.messages_expected, 2u);
+    EXPECT_EQ(stats.remote_link_quality, 0);
+    // No penalty yet — full EWMA quality returned
+    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality);
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalRecovery) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    // Simulate 5 superframes with no remote quality — penalty active
+    for (int i = 0; i < 5; i++) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+    }
+    uint8_t penalized = stats.CalculateQuality();
+    EXPECT_EQ(penalized, stats.ewma_quality / 4);
+
+    // Peer starts hearing us — recovery
+    stats.UpdateRemoteQuality(200);
+    uint8_t recovered = stats.CalculateQuality();
+    EXPECT_EQ(recovered,
+              static_cast<uint8_t>(
+                  (static_cast<uint16_t>(stats.ewma_quality) + 200) / 2));
+    EXPECT_GT(recovered, penalized);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityReset) {

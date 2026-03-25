@@ -450,6 +450,16 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     /**
+     * @brief Set a unidirectional link between two nodes
+     *
+     * Only affects transmissions from 'from' to 'to'.
+     */
+    void SetDirectionalLink(const TestNode& from, const TestNode& to,
+                            bool active) {
+        virtual_network_.SetDirectionalLink(from.address, to.address, active);
+    }
+
+    /**
      * @brief Set message delay between two nodes
      *
      * @param node1 First node

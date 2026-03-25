@@ -131,10 +131,14 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
     size_t GetTotalPayloadSize() const;
 
     /**
-     * @brief Gets link quality for a specific node
-     * 
+     * @brief Gets direct-neighbor link quality for a specific node
+     *
+     * Returns the link quality only if the node is listed as a direct
+     * neighbor (hop_count == 1). Multi-hop entries are ignored to
+     * enable unidirectional link detection.
+     *
      * @param node_address Node address to check
-     * @return uint8_t Link quality (0-255) or 0 if not found
+     * @return uint8_t Link quality (0-255) for hop_count==1 entry, or 0 if not found
      */
     uint8_t GetLinkQualityFor(AddressType node_address) const;
 
