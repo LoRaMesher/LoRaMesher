@@ -84,6 +84,41 @@ std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateFromSerialized(
     return SyncBeaconMessage(*header);
 }
 
+std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateFromBaseMessage(
+    const BaseMessage& msg) {
+    auto payload = msg.GetPayload();
+
+    if (payload.size() < SyncBeaconHeader::SyncBeaconFieldsSize()) {
+        LOG_ERROR("Payload too small for sync beacon fields: %zu < %zu",
+                  payload.size(), SyncBeaconHeader::SyncBeaconFieldsSize());
+        return std::nullopt;
+    }
+
+    utils::ByteDeserializer deserializer(payload);
+
+    auto network_id = deserializer.ReadUint16();
+    auto total_slots = deserializer.ReadUint8();
+    auto slot_duration_ms = deserializer.ReadUint16();
+    auto network_manager = deserializer.ReadUint16();
+    auto hop_count = deserializer.ReadUint8();
+    auto propagation_delay_ms = deserializer.ReadUint32();
+    auto max_hops = deserializer.ReadUint8();
+    auto node_count = deserializer.ReadUint8();
+
+    if (!network_id || !total_slots || !slot_duration_ms || !network_manager ||
+        !hop_count || !propagation_delay_ms || !max_hops || !node_count) {
+        LOG_ERROR("Failed to read sync beacon fields from payload");
+        return std::nullopt;
+    }
+
+    SyncBeaconHeader header(msg.GetDestination(), msg.GetSource(), *network_id,
+                            *total_slots, *slot_duration_ms, *network_manager,
+                            *hop_count, *propagation_delay_ms, *max_hops,
+                            *node_count);
+
+    return SyncBeaconMessage(header);
+}
+
 // Core synchronization field getters (optimized)
 uint16_t SyncBeaconMessage::GetNetworkId() const {
     return header_.GetNetworkId();
@@ -141,10 +176,6 @@ const SyncBeaconHeader& SyncBeaconMessage::GetHeader() const {
 
 size_t SyncBeaconMessage::GetTotalSize() const {
     return header_.GetSize();  // No additional payload for sync beacons
-}
-
-bool SyncBeaconMessage::ShouldBeForwardedBy(uint8_t node_hop_count) const {
-    return header_.ShouldBeForwardedBy(node_hop_count);
 }
 
 std::optional<SyncBeaconMessage> SyncBeaconMessage::CreateForwardedBeacon(
@@ -212,17 +243,17 @@ std::optional<std::vector<uint8_t>> SyncBeaconMessage::Serialize() const {
 }
 
 void SyncBeaconMessage::Print() const {
-    LOG_INFO("SyncBeaconMessage:");
-    LOG_INFO("  Source: {0x%04X}", GetSource());
-    LOG_INFO("  Destination: {0x%04X}", GetDestination());
-    LOG_INFO("  Network ID: {0x%04X}", GetNetworkId());
-    LOG_INFO("  Total Slots: {%d}", GetTotalSlots());
-    LOG_INFO("  Slot Duration: {%d}", GetSlotDuration());
-    LOG_INFO("  Network Manager: {0x%04X}", GetNetworkManager());
-    LOG_INFO("  Hop Count: {%d}", GetHopCount());
-    LOG_INFO("  Propagation Delay: {%u}", GetPropagationDelay());
-    LOG_INFO("  Max Hops: {%d}", GetMaxHops());
-    LOG_INFO("  Node Count: {%d}", GetNodeCount());
+    LOG_DEBUG("SyncBeaconMessage:");
+    LOG_DEBUG("  Source: {0x%04X}", GetSource());
+    LOG_DEBUG("  Destination: {0x%04X}", GetDestination());
+    LOG_DEBUG("  Network ID: {0x%04X}", GetNetworkId());
+    LOG_DEBUG("  Total Slots: {%d}", GetTotalSlots());
+    LOG_DEBUG("  Slot Duration: {%d}", GetSlotDuration());
+    LOG_DEBUG("  Network Manager: {0x%04X}", GetNetworkManager());
+    LOG_DEBUG("  Hop Count: {%d}", GetHopCount());
+    LOG_DEBUG("  Propagation Delay: {%u}", GetPropagationDelay());
+    LOG_DEBUG("  Max Hops: {%d}", GetMaxHops());
+    LOG_DEBUG("  Node Count: {%d}", GetNodeCount());
 }
 
 }  // namespace loramesher

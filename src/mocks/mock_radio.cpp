@@ -74,19 +74,19 @@ Result MockRadio::setPreambleLength(uint16_t length) {
     return pimpl_->mock.setPreambleLength(length);
 }
 
-int8_t MockRadio::getRSSI() {
+float MockRadio::getRSSI() {
     return pimpl_->mock.getRSSI();
 }
 
-int8_t MockRadio::getSNR() {
+float MockRadio::getSNR() {
     return pimpl_->mock.getSNR();
 }
 
-int8_t MockRadio::getLastPacketRSSI() {
+float MockRadio::getLastPacketRSSI() {
     return pimpl_->mock.getLastPacketRSSI();
 }
 
-int8_t MockRadio::getLastPacketSNR() {
+float MockRadio::getLastPacketSNR() {
     return pimpl_->mock.getLastPacketSNR();
 }
 

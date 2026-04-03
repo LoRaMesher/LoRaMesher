@@ -114,6 +114,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                     node_it->is_active = true;
                 }
                 node_it->link_stats.recovery_counter = 0;
+                node_it->link_stats.inactive_probe_count = 0;
                 route_changed = true;
                 NotifyRouteUpdate(true, destination, node_it->next_hop,
                                   node_it->routing_entry.hop_count);
@@ -157,6 +158,16 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                 NotifyRouteUpdate(true, destination, source, hop_count);
                 LogRouteEntry(*node_it);
             }
+        }
+
+        // Capability propagation: update even when route cost hasn't
+        // changed, so a late-arriving GATEWAY flag isn't lost
+        if (node_it->is_active && capabilities != 0 &&
+            capabilities != node_it->routing_entry.capabilities &&
+            (node_it->routing_entry.capabilities == 0 ||
+             node_it->next_hop == source)) {
+            node_it->routing_entry.capabilities = capabilities;
+            route_changed = true;
         }
     } else {
         // Add new node
@@ -395,6 +406,44 @@ uint8_t DistanceVectorRoutingTable::GetLinkQuality(
     return 0;
 }
 
+uint8_t DistanceVectorRoutingTable::GetDirectLinkQuality(
+    AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+
+    auto node_it = GetNode(node_address);
+    if (node_it != nodes_.end() && node_it->link_stats.messages_received > 0) {
+        // Return at least 1 when we have measured data, reserving 0 for
+        // "truly unknown node". This prevents callers from treating a
+        // measured-but-terrible link as "no data available".
+        return std::max(static_cast<uint8_t>(1),
+                        node_it->link_stats.CalculateQuality());
+    }
+    return 0;
+}
+
+bool DistanceVectorRoutingTable::HasUnidirectionalRisk(
+    AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    for (const auto& node : nodes_) {
+        if (node.routing_entry.destination == node_address &&
+            node.routing_entry.hop_count == 1 && node.is_active) {
+            return node.link_stats.messages_received >= 2 &&
+                   node.link_stats.remote_link_quality == 0;
+        }
+    }
+    return false;
+}
+
+void DistanceVectorRoutingTable::DegradeRouteQuality(AddressType destination,
+                                                     uint8_t quality) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto node_it = GetNode(destination);
+    if (node_it != nodes_.end() &&
+        node_it->routing_entry.link_quality > quality) {
+        node_it->routing_entry.link_quality = quality;
+    }
+}
+
 void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     RouteUpdateCallback callback) {
     std::lock_guard<std::mutex> lock(table_mutex_);
@@ -479,7 +528,15 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
     for (auto& node : nodes_) {
-        if (node.routing_entry.hop_count == 1 && node.is_active) {
+        // Determine if this is an inactivated direct neighbor still being
+        // probed for recovery
+        bool is_probing =
+            !node.is_active && node.routing_entry.hop_count == 1 &&
+            node.link_stats.inactive_probe_count > 0 &&
+            node.link_stats.inactive_probe_count < kMaxInactiveProbes;
+
+        if (node.routing_entry.hop_count == 1 &&
+            (node.is_active || is_probing)) {
             // Step 1: Read EWMA quality (updated by ReceivedMessage/ExpectMessage)
             constexpr uint32_t kMinExpectedForDegradation = 5;
             if (node.link_stats.messages_expected >=
@@ -492,36 +549,53 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                 if (node.routing_entry.link_quality != old_quality) {
                     LOG_DEBUG(
                         "LinkStats 0x%04X: quality %d -> %d "
-                        "(ewma=%d remote=%d exp=%d recv=%d missed=%d)",
+                        "(ewma=%d remote=%d exp=%d recv=%d missed=%d%s)",
                         node.routing_entry.destination, old_quality,
                         node.routing_entry.link_quality,
                         node.link_stats.ewma_quality,
                         node.link_stats.remote_link_quality,
                         node.link_stats.messages_expected,
                         node.link_stats.messages_received,
-                        node.link_stats.consecutive_missed);
+                        node.link_stats.consecutive_missed,
+                        is_probing ? " PROBING" : "");
                 }
                 LogRouteEntry(node);
 
+                // Re-activate probing neighbor if quality recovered
+                if (is_probing && node.routing_entry.link_quality >=
+                                      kReactivationQualityThreshold) {
+                    node.is_active = true;
+                    node.link_stats.recovery_counter = 0;
+                    node.link_stats.inactive_probe_count = 0;
+                    NotifyRouteUpdate(true, node.routing_entry.destination,
+                                      node.routing_entry.destination, 1);
+                    LogRouteEntry(node);
+                    LOG_DEBUG(
+                        "Re-activated probing neighbor 0x%04X (quality=%d)",
+                        node.routing_entry.destination,
+                        node.routing_entry.link_quality);
+                }
+
                 // Cascade: cap multi-hop routes through this neighbor
-                AddressType via = node.routing_entry.destination;
-                for (auto& other : nodes_) {
-                    if (other.next_hop == via && other.is_active &&
-                        other.routing_entry.hop_count > 1) {
-                        if (other.routing_entry.link_quality >
-                            node.routing_entry.link_quality) {
-                            other.routing_entry.link_quality =
-                                node.routing_entry.link_quality;
-                            LogRouteEntry(other);
+                if (node.is_active) {
+                    AddressType via = node.routing_entry.destination;
+                    for (auto& other : nodes_) {
+                        if (other.next_hop == via && other.is_active &&
+                            other.routing_entry.hop_count > 1) {
+                            if (other.routing_entry.link_quality >
+                                node.routing_entry.link_quality) {
+                                other.routing_entry.link_quality =
+                                    node.routing_entry.link_quality;
+                                LogRouteEntry(other);
+                            }
                         }
                     }
                 }
             }
 
-            // Step 2: Hard invalidation after extended unresponsiveness
-            if (node.link_stats.consecutive_missed >= inactivation_threshold_ &&
-                node.link_stats.messages_received >=
-                    kMinMessagesBeforeInvalidation) {
+            // Step 2: Hard invalidation — only for active nodes
+            if (node.is_active &&
+                node.link_stats.consecutive_missed >= inactivation_threshold_) {
                 node.is_active = false;
                 node.link_stats.recovery_counter = 0;
                 NotifyRouteUpdate(false, node.routing_entry.destination, 0, 0);
@@ -539,10 +613,20 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
                     }
                 }
             }
+        }
 
-            // Step 3: Expect a new message for this superframe
-            //         (EWMA decays, consecutive_missed++ — gives node time to
-            //         respond; ReceivedMessage() resets consecutive_missed)
+        // Step 3: Track expected messages for direct neighbors AND for
+        // nodes we've received from.
+        if (node.routing_entry.hop_count == 1) {
+            if (node.is_active) {
+                node.link_stats.inactive_probe_count = 0;
+                node.ExpectRoutingMessage();
+            } else if (node.link_stats.inactive_probe_count <
+                       kMaxInactiveProbes) {
+                node.link_stats.inactive_probe_count++;
+                node.ExpectRoutingMessage();
+            }
+        } else if (node.is_active && node.link_stats.messages_received > 0) {
             node.ExpectRoutingMessage();
         }
     }
@@ -560,15 +644,23 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     // First, handle the source node as a direct neighbor
     auto source_node_it = GetNode(source_address);
     if (source_node_it != nodes_.end()) {
-        // Update existing source node - it's a direct neighbor
-        source_node_it->ReceivedRoutingMessage(local_link_quality,
-                                               reception_timestamp);
+        // Save current route parameters before updating link stats
+        uint8_t prev_hop_count = source_node_it->routing_entry.hop_count;
+        uint8_t prev_quality = source_node_it->routing_entry.link_quality;
+        AddressType prev_next_hop = source_node_it->next_hop;
+        bool was_inactive = !source_node_it->is_active;
+
+        // Update direct link statistics (always tracks the physical link)
+        source_node_it->link_stats.ReceivedMessage(reception_timestamp);
+        source_node_it->link_stats.UpdateRemoteQuality(local_link_quality);
+        source_node_it->last_seen = reception_timestamp;
+        uint8_t direct_quality = source_node_it->link_stats.CalculateQuality();
+
         LOG_DEBUG(
             "Source 0x%04X: remote_quality=%d ewma=%d link_quality=%d "
             "expected=%d received=%d%s",
             source_address, local_link_quality,
-            source_node_it->link_stats.ewma_quality,
-            source_node_it->routing_entry.link_quality,
+            source_node_it->link_stats.ewma_quality, direct_quality,
             source_node_it->link_stats.messages_expected,
             source_node_it->link_stats.messages_received,
             (local_link_quality == 0 &&
@@ -577,7 +669,6 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 : "");
 
         // Always update capabilities for direct neighbor (source of the message)
-        // The source is always the next hop to itself for direct neighbors
         if (source_node_it->routing_entry.capabilities != source_capabilities) {
             source_node_it->routing_entry.capabilities = source_capabilities;
             routing_changed = true;
@@ -596,22 +687,45 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 source_address, source_allocated_data_slots);
         }
 
-        // Ensure it's marked as direct neighbor with hop count 1
-        if (source_node_it->routing_entry.hop_count != 1 ||
-            source_node_it->next_hop != source_address) {
-            source_node_it->next_hop = source_address;
-            source_node_it->routing_entry.hop_count = 1;
-            routing_changed = true;
+        // Only force direct route (hop_count=1) when it has a lower ETX cost
+        // than the current route. An indirect route via a relay can be better
+        // when the direct link is unidirectional or very weak.
+        uint16_t direct_cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                1, direct_quality);
+        uint16_t current_cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                prev_hop_count, prev_quality);
 
-            NotifyRouteUpdate(true, source_address, source_address, 1);
-            LogRouteEntry(*source_node_it);
+        // A confirmed-unidirectional direct link should not replace an
+        // existing indirect route: the indirect path may still deliver
+        // packets while the direct one never will.
+        bool direct_confirmed_unidirectional =
+            source_node_it->link_stats.remote_link_quality == 0 &&
+            source_node_it->link_stats.messages_expected >= 3;
+
+        bool use_direct =
+            was_inactive || prev_next_hop == source_address ||
+            (direct_cost <= current_cost && !direct_confirmed_unidirectional);
+
+        if (use_direct) {
+            source_node_it->routing_entry.link_quality = direct_quality;
+            if (source_node_it->routing_entry.hop_count != 1 ||
+                source_node_it->next_hop != source_address) {
+                source_node_it->next_hop = source_address;
+                source_node_it->routing_entry.hop_count = 1;
+                routing_changed = true;
+
+                NotifyRouteUpdate(true, source_address, source_address, 1);
+                LogRouteEntry(*source_node_it);
+            }
         }
 
-        // Direct source re-activation: receiving a routing message from
-        // this node is proof of liveness — re-activate immediately
-        if (!source_node_it->is_active) {
+        // Re-activate if was inactive (hearing from node = proof of liveness)
+        if (was_inactive) {
             source_node_it->is_active = true;
             source_node_it->link_stats.recovery_counter = 0;
+            source_node_it->link_stats.inactive_probe_count = 0;
             routing_changed = true;
         }
     } else {
@@ -656,12 +770,32 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     uint8_t source_link_quality =
         CalculateComprehensiveLinkQuality(source_address);
 
+    // Cascade: degrade routes through this source when physical link
+    // quality has dropped. Prevents stale high-quality entries from
+    // persisting after a source becomes unidirectional or degrades.
+    for (auto& node : nodes_) {
+        if (node.next_hop == source_address && node.is_active &&
+            node.routing_entry.hop_count > 1 &&
+            node.routing_entry.link_quality > source_link_quality) {
+            node.routing_entry.link_quality = source_link_quality;
+            routing_changed = true;
+        }
+    }
+
     // Process each routing entry from the message
     for (const auto& entry : entries) {
         auto dest = entry.destination;
 
         // Skip entries for ourselves or invalid addresses
         if (dest == node_address_ || dest == 0) {
+            continue;
+        }
+
+        // Receiver-side split horizon: skip entries where the sender
+        // routes through us. Accepting would create a loop:
+        // us → source → us → ... The wire format carries next_hop
+        // so we can detect this deterministically.
+        if (entry.next_hop == node_address_) {
             continue;
         }
 
@@ -713,6 +847,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                         node_it->is_active = true;
                     }
                     node_it->link_stats.recovery_counter = 0;
+                    node_it->link_stats.inactive_probe_count = 0;
                     routing_changed = true;
                     NotifyRouteUpdate(true, dest, node_it->next_hop,
                                       node_it->routing_entry.hop_count);
@@ -765,6 +900,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                                       hop_count_via_source);
                     LogRouteEntry(*node_it);
                 }
+            }
+
+            // Capability propagation: update even when route cost hasn't
+            // changed, so a late-arriving GATEWAY flag isn't lost
+            if (node_it->is_active && entry.capabilities != 0 &&
+                entry.capabilities != node_it->routing_entry.capabilities &&
+                (node_it->routing_entry.capabilities == 0 ||
+                 node_it->next_hop == source_address)) {
+                node_it->routing_entry.capabilities = entry.capabilities;
+                routing_changed = true;
             }
 
             // Always refresh last_seen — receiving routing info about this
@@ -874,6 +1019,14 @@ uint8_t DistanceVectorRoutingTable::CalculateComprehensiveLinkQuality(
     AddressType node_address) const {
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end()) {
+        // Use measured physical link quality when we have direct
+        // observations. This prevents a stale routing_entry.link_quality
+        // (from an indirect route) from inflating source quality in the
+        // entries loop, which would create phantom routes through
+        // unidirectional neighbors.
+        if (node_it->link_stats.messages_received > 0) {
+            return node_it->link_stats.CalculateQuality();
+        }
         return node_it->GetLinkQuality();
     }
     return 128;  // Default medium quality for unknown nodes

@@ -104,27 +104,6 @@ TEST_F(SyncBeaconMessageTest, CreateForwardedBeacon) {
 }
 
 /**
- * @brief Test forwarding decision logic
- */
-TEST_F(SyncBeaconMessageTest, ForwardingDecisionLogic) {
-    ASSERT_TRUE(original_msg.has_value());
-    ASSERT_TRUE(forwarded_msg.has_value());
-
-    // Original beacon should be forwarded by nodes at hop 1
-    EXPECT_TRUE(original_msg->ShouldBeForwardedBy(1));
-
-    // Original beacon should not be forwarded by nodes at hop 0 (NM itself)
-    EXPECT_FALSE(original_msg->ShouldBeForwardedBy(0));
-
-    // Forwarded beacon (hop 2) should be forwarded by nodes at hop 3
-    EXPECT_TRUE(forwarded_msg->ShouldBeForwardedBy(3));
-
-    // Forwarded beacon should not be forwarded by nodes at wrong hops
-    EXPECT_FALSE(forwarded_msg->ShouldBeForwardedBy(1));
-    EXPECT_FALSE(forwarded_msg->ShouldBeForwardedBy(2));
-}
-
-/**
  * @brief Test creating forwarded beacon from original
  */
 TEST_F(SyncBeaconMessageTest, CreateForwardedFromOriginal) {

@@ -423,6 +423,22 @@ class LoRaMeshProtocol : public Protocol {
      */
     Result AddRoutingMessageToQueueService();
 
+    /// Returns true if a message can be transmitted before the slot ends.
+    /// @param message_size  Bytes (for ToA calculation via hardware)
+    /// @param additional_delay_ms  Pre-TX delay not yet elapsed (guard time, subslot wait)
+    bool CanFitInSlot(uint8_t message_size,
+                      uint32_t additional_delay_ms = 0) const;
+
+    /// Extracts a queued message and sends it with guard-time + ToA check.
+    Result TrySendGuardedMessage(
+        types::protocols::lora_mesh::SlotAllocation::SlotType slot_type);
+
+    /// Extracts a queued message, attempts subslotted TX. Falls back to
+    /// immediate TX if the subslot offset pushes ToA past the slot boundary.
+    Result TrySendSubslottedMessage(
+        types::protocols::lora_mesh::SlotAllocation::SlotType slot_type,
+        const lora_mesh::SubslotConfig& config, uint16_t identifier);
+
     // Services
     std::shared_ptr<lora_mesh::MessageQueueService> message_queue_service_;
     std::shared_ptr<lora_mesh::SuperframeService> superframe_service_;

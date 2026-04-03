@@ -121,25 +121,25 @@ class RadioEvent {
      * @brief Sets the RSSI value
      * @param rssi Received Signal Strength Indicator value
      */
-    void setRssi(int8_t rssi) { rssi_ = rssi; }
+    void setRssi(float rssi) { rssi_ = rssi; }
 
     /**
      * @brief Gets the RSSI value
      * @return Current RSSI value
      */
-    int8_t getRssi() const { return rssi_; }
+    float getRssi() const { return rssi_; }
 
     /**
      * @brief Sets the SNR value
      * @param snr Signal-to-Noise Ratio value
      */
-    void setSnr(int8_t snr) { snr_ = snr; }
+    void setSnr(float snr) { snr_ = snr; }
 
     /**
      * @brief Gets the SNR value
      * @return Current SNR value
      */
-    int8_t getSnr() const { return snr_; }
+    float getSnr() const { return snr_; }
 
     /**
      * @brief Sets the event timestamp
@@ -206,8 +206,8 @@ class RadioEvent {
     RadioEventType type_;  ///< Type of radio event
     std::unique_ptr<BaseMessage> message_ =
         nullptr;              ///< Optional message associated with event
-    int8_t rssi_ = 0;         ///< Received Signal Strength Indicator
-    int8_t snr_ = 0;          ///< Signal-to-Noise Ratio
+    float rssi_ = 0.0f;       ///< Received Signal Strength Indicator
+    float snr_ = 0.0f;        ///< Signal-to-Noise Ratio
     uint32_t timestamp_ = 0;  ///< Event timestamp
 };
 
@@ -222,7 +222,7 @@ class RadioEvent {
  * @return Unique pointer to the created RadioEvent
  */
 inline std::unique_ptr<RadioEvent> CreateReceivedEvent(
-    std::unique_ptr<BaseMessage> message, int8_t rssi, int8_t snr) {
+    std::unique_ptr<BaseMessage> message, float rssi, float snr) {
     auto event = std::make_unique<RadioEvent>(RadioEventType::kReceived,
                                               std::move(message));
     event->setRssi(rssi);

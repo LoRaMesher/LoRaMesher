@@ -2,10 +2,7 @@
 #pragma once
 
 #include <cstdarg>
-#include <functional>
 #include <memory>
-#include <sstream>
-#include <string>
 
 #include "config/system_config.hpp"
 #include "os/rtos.hpp"
@@ -50,9 +47,11 @@ class LogHandler {
     /**
      * @brief Write a log message.
      * @param level The severity level of the message.
+     * @param node_addr Node address prefix (empty string if none).
      * @param message The message to be logged.
      */
-    virtual void Write(LogLevel level, const std::string& message) = 0;
+    virtual void Write(LogLevel level, const char* node_addr,
+                       const char* message) = 0;
 
     /**
      * @brief Flushes any buffered log messages.
@@ -101,7 +100,8 @@ class SerialLogHandler : public LogHandler {
         }
     }
 
-    void Write(LogLevel level, const std::string& message) override {
+    void Write(LogLevel level, const char* node_addr,
+               const char* message) override {
         const char* level_str;
         switch (level) {
             case LogLevel::kDebug:
@@ -128,7 +128,12 @@ class SerialLogHandler : public LogHandler {
         Serial.print("[");
         Serial.print(level_str);
         Serial.print("] ");
-        Serial.print(message.c_str());
+        if (node_addr[0] != '\0') {
+            Serial.print("[");
+            Serial.print(node_addr);
+            Serial.print("] ");
+        }
+        Serial.print(message);
 #ifndef LOGGER_DISABLE_COLORS
         Serial.println(Colors::kReset);
 #endif
@@ -145,7 +150,8 @@ class SerialLogHandler : public LogHandler {
  */
 class ConsoleLogHandler : public LogHandler {
    public:
-    void Write(LogLevel level, const std::string& message) override {
+    void Write(LogLevel level, const char* node_addr,
+               const char* message) override {
         const char* level_str;
         switch (level) {
             case LogLevel::kDebug:
@@ -167,10 +173,15 @@ class ConsoleLogHandler : public LogHandler {
 
 #ifndef LOGGER_DISABLE_COLORS
         const char* color = GetColorForLevel(level);
-        std::cout << color << " [" << level_str << "] " << message
-                  << Colors::kReset << std::endl;
+        std::cout << color << " [" << level_str << "] ";
+        if (node_addr[0] != '\0')
+            std::cout << "[" << node_addr << "] ";
+        std::cout << message << Colors::kReset << std::endl;
 #else
-        std::cout << " [" << level_str << "] " << message << std::endl;
+        std::cout << " [" << level_str << "] ";
+        if (node_addr[0] != '\0')
+            std::cout << "[" << node_addr << "] ";
+        std::cout << message << std::endl;
 #endif
     }
 
@@ -212,14 +223,12 @@ class Logger {
     void SetHandler(std::unique_ptr<LogHandler> handler);
 
     /**
-     * @brief Log a message with the specified level.
+     * @brief Log a pre-formatted message (bypasses vsnprintf buffer limit).
      * @param level The severity level of the message.
-     * @param message The message to log.
+     * @param message The null-terminated message to log.
      * @thread_safety Thread-safe
      */
-    void Log(LogLevel level, const std::string& message) {
-        LogMessage(level, message);
-    }
+    void LogRaw(LogLevel level, const char* message);
 
     /**
      * @brief Log a formatted message with the specified level.
@@ -273,8 +282,7 @@ class Logger {
     // Shutdown flag to prevent logging during destruction (atomic for thread safety)
     bool shutdown_requested_{false};
 
-    void LogMessage(LogLevel level, const std::string& message);
-    std::string FormatMessageWithAddress(const std::string& message) const;
+    void LogMessage(LogLevel level, const char* message);
     void EnsureSemaphoreInitialized();
 };
 

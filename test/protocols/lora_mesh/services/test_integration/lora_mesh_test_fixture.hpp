@@ -144,8 +144,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
         node->hardware_manager = std::make_shared<hardware::HardwareManager>(
             node->pin_config, mock_config);
 
-        node->hardware_manager->SetLocalAddress(
-            0xFFFF);  // radio task logs as [0xFFFF] (test orchestrator)
+        // Set test thread address to this node for correct log attribution
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", address);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+
+        node->hardware_manager->SetLocalAddress(address);
         Result result = node->hardware_manager->Initialize();
         if (!result) {
             std::cerr << "Failed to initialize hardware manager for " << name
@@ -214,6 +218,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
                 }
             });
 
+        // Restore test thread address
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+
         // Add the node to our collection and return a reference to it
         nodes_.push_back(node);
         return *node;
@@ -278,7 +285,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Protocol not initialized");
         }
-        return node.protocol->Start();
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+        Result result = node.protocol->Start();
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        return result;
     }
 
     /**
@@ -482,6 +494,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     /**
+     * @brief Set per-link packet loss rate (one direction)
+     */
+    void SetDirectionalLinkLoss(const TestNode& from, const TestNode& to,
+                                float rate) {
+        virtual_network_.SetDirectionalLinkLoss(from.address, to.address, rate);
+    }
+
+    /**
+     * @brief Set per-link packet loss rate (both directions)
+     */
+    void SetLinkLoss(const TestNode& n1, const TestNode& n2, float rate) {
+        virtual_network_.SetLinkLoss(n1.address, n2.address, rate);
+    }
+
+    /**
      * @brief Send a message from one node to another
      *
      * @param from Source node
@@ -491,7 +518,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
      */
     Result SendMessage(TestNode& from, TestNode& to,
                        const std::vector<uint8_t>& payload) {
-        return from.protocol->SendData(to.address, payload);
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", from.address);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+        Result result = from.protocol->SendData(to.address, payload);
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        return result;
     }
 
     /**

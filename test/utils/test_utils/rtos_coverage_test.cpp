@@ -853,7 +853,7 @@ TEST(RTOSCoverageTest, SetAndGetCurrentTaskNodeAddress) {
             static_cast<std::pair<std::string*, std::atomic<bool>*>*>(param);
 
         GetRTOS().SetCurrentTaskNodeAddress("0xABCD");
-        std::string addr = GetRTOS().GetCurrentTaskNodeAddress();
+        const char* addr = GetRTOS().GetCurrentTaskNodeAddress();
 
         *p->first = addr;
         p->second->store(true);

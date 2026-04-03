@@ -115,8 +115,8 @@ class IRadioReceiver {
      * @param rssi Signal strength (-dBm)
      * @param snr Signal-to-noise ratio (dB)
      */
-    virtual void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
-                                int8_t snr) = 0;
+    virtual void ReceiveMessage(const std::vector<uint8_t>& data, float rssi,
+                                float snr) = 0;
 
     /**
      * @brief Check if the radio can currently receive messages
@@ -191,7 +191,7 @@ class VirtualNetwork {
      * @param snr Signal-to-noise ratio to simulate (dB)
      */
     void TransmitMessage(uint32_t source, const std::vector<uint8_t>& data,
-                         int8_t rssi = -65, int8_t snr = 8) {
+                         float rssi = -65.0f, float snr = 8.0f) {
         // Store the sent message for testing purposes
         {
             std::lock_guard<std::mutex> lock(sent_messages_mutex_);
@@ -239,7 +239,12 @@ class VirtualNetwork {
                 continue;
             }
 
-            // Check for packet loss
+            // Check for per-link packet loss
+            if (ShouldDropPacketForLink(source, dest_address)) {
+                continue;
+            }
+
+            // Check for global packet loss
             if (ShouldDropPacket()) {
                 continue;
             }
@@ -436,6 +441,30 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Set per-link packet loss rate (one direction)
+     *
+     * @param from_addr Source node address
+     * @param to_addr Destination node address
+     * @param rate Loss rate (0.0 = no loss, 1.0 = all packets lost)
+     */
+    void SetDirectionalLinkLoss(uint32_t from_addr, uint32_t to_addr,
+                                float rate) {
+        auto it = nodes_.find(from_addr);
+        if (it != nodes_.end()) {
+            it->second.link_loss_rates[to_addr] =
+                std::min(1.0f, std::max(0.0f, rate));
+        }
+    }
+
+    /**
+     * @brief Set per-link packet loss rate (both directions)
+     */
+    void SetLinkLoss(uint32_t node1, uint32_t node2, float rate) {
+        SetDirectionalLinkLoss(node1, node2, rate);
+        SetDirectionalLinkLoss(node2, node1, rate);
+    }
+
+    /**
      * @brief Advance the network simulation time
      * 
      * @param time_ms Time to advance in milliseconds
@@ -466,6 +495,7 @@ class VirtualNetwork {
         IRadioReceiver* radio;
         std::map<uint32_t, bool> active_links;
         std::map<uint32_t, uint32_t> link_delays;
+        std::map<uint32_t, float> link_loss_rates;
         RadioConfig radio_config;
     };
 
@@ -479,8 +509,8 @@ class VirtualNetwork {
         uint32_t transmission_start_time;  ///< When transmission started
         uint32_t time_on_air;              ///< Duration of transmission in ms
         uint32_t delivery_time;            ///< transmission_start + delay + toa
-        int8_t rssi;
-        int8_t snr;
+        float rssi;
+        float snr;
 
         /**
          * @brief Get the end time of this transmission's on-air window
@@ -513,6 +543,8 @@ class VirtualNetwork {
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
+    std::mt19937 link_loss_rng_{
+        42};  ///< Fixed seed for deterministic per-link loss
     std::atomic<uint32_t> dropped_message_count_{0};
 
     /**
@@ -534,7 +566,24 @@ class VirtualNetwork {
     }
 
     /**
-     * @brief Check if packet should be dropped based on loss rate
+     * @brief Check if packet should be dropped based on per-link loss rate
+     */
+    bool ShouldDropPacketForLink(uint32_t from_addr, uint32_t to_addr) {
+        auto it = nodes_.find(from_addr);
+        if (it == nodes_.end())
+            return false;
+        auto loss_it = it->second.link_loss_rates.find(to_addr);
+        if (loss_it == it->second.link_loss_rates.end() ||
+            loss_it->second <= 0.0f)
+            return false;
+        if (loss_it->second >= 1.0f)
+            return true;
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+        return dist(link_loss_rng_) < loss_it->second;
+    }
+
+    /**
+     * @brief Check if packet should be dropped based on global loss rate
      */
     bool ShouldDropPacket() {
         if (packet_loss_rate_ <= 0.0f)
@@ -553,7 +602,7 @@ class VirtualNetwork {
                               const std::vector<uint8_t>& data,
                               uint32_t transmission_start_time,
                               uint32_t time_on_air, uint32_t delivery_time,
-                              int8_t rssi, int8_t snr) {
+                              float rssi, float snr) {
         PendingMessage msg;
         msg.source = source;
         msg.destination = destination;
@@ -677,11 +726,17 @@ class VirtualNetwork {
      *         radio was busy (message dropped)
      */
     bool DeliverMessage(const PendingMessage& msg) {
+        // Set thread address to destination node for correct log attribution
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", msg.destination);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+
         auto it = nodes_.find(msg.destination);
         if (it == nodes_.end()) {
             LOG_ERROR(
                 "Message delivery failed - Node 0x%04X not found in network",
                 msg.destination);
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
@@ -689,6 +744,7 @@ class VirtualNetwork {
         if (!radio) {
             LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
                       msg.destination);
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
@@ -701,10 +757,12 @@ class VirtualNetwork {
                 current_time_, msg.source, msg.destination,
                 static_cast<int>(radio->GetRadioState()));
             ++dropped_message_count_;
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
         radio->ReceiveMessage(msg.data, msg.rssi, msg.snr);
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
         return true;
     }
 };
@@ -1026,8 +1084,8 @@ class RadioToNetworkAdapter : public IRadioReceiver {
         network_.UnregisterNode(address_);
     }
 
-    void ReceiveMessage(const std::vector<uint8_t>& data, int8_t rssi,
-                        int8_t snr) override {
+    void ReceiveMessage(const std::vector<uint8_t>& data, float rssi,
+                        float snr) override {
         // Queue the message to prevent race conditions with multiple simultaneous messages
         QueuedMessage msg;
         msg.data = data;
@@ -1076,8 +1134,8 @@ class RadioToNetworkAdapter : public IRadioReceiver {
    private:
     struct QueuedMessage {
         std::vector<uint8_t> data;
-        int8_t rssi;
-        int8_t snr;
+        float rssi;
+        float snr;
     };
 
     radio::test::MockRadio* radio_;

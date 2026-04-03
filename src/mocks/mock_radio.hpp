@@ -48,10 +48,10 @@ class MockRadio : public IRadio {
     Result setPreambleLength(uint16_t length) override;
 
     // Radio Status
-    int8_t getRSSI() override;
-    int8_t getSNR() override;
-    int8_t getLastPacketRSSI() override;
-    int8_t getLastPacketSNR() override;
+    float getRSSI() override;
+    float getSNR() override;
+    float getLastPacketRSSI() override;
+    float getLastPacketSNR() override;
     bool IsTransmitting() override;
     float getFrequency() override;
     uint8_t getSpreadingFactor() override;

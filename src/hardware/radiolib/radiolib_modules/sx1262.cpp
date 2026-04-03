@@ -237,17 +237,17 @@ Result LoraMesherSX1262::ClearActionReceive() {
     return Result::Success();
 }
 
-int8_t LoraMesherSX1262::getRSSI() {
+float LoraMesherSX1262::getRSSI() {
     if (!initialized_) {
-        return 0;
+        return 0.0f;
     }
 
     return radio_module_->getRSSI();
 }
 
-int8_t LoraMesherSX1262::getSNR() {
+float LoraMesherSX1262::getSNR() {
     if (!initialized_) {
-        return 0;
+        return 0.0f;
     }
 
     return radio_module_->getSNR();

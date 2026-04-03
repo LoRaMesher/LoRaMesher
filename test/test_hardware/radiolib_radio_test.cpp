@@ -267,8 +267,8 @@ TEST_F(RadioLibRadioTest, SetActionReceive) {
     // Prepare test data
     CreateMessage();
 
-    const int8_t kTestRSSI = -65;
-    const int8_t kTestSNR = 8;
+    const float kTestRSSI = -65.0f;
+    const float kTestSNR = 8.0f;
 
     std::vector<uint8_t> test_packet = msg_ptr->Serialize().value();
 
@@ -428,8 +428,8 @@ TEST_F(RadioLibRadioTest, MaxSizePacketHandling) {
     // Create a maximum-sized message
     CreateMaxSizeMessage();
 
-    const int8_t kTestRSSI = -45;  // Strong signal
-    const int8_t kTestSNR = 12;    // Good SNR
+    const float kTestRSSI = -45.0f;  // Strong signal
+    const float kTestSNR = 12.0f;    // Good SNR
 
     std::vector<uint8_t> max_packet = msg_ptr->Serialize().value();
 
@@ -553,8 +553,8 @@ TEST_F(RadioLibRadioTest, RepeatedMaxSizePacketHandling) {
     // Create a maximum-sized message
     CreateMaxSizeMessage();
 
-    const int8_t kTestRSSI = -45;  // Strong signal
-    const int8_t kTestSNR = 12;    // Good SNR
+    const float kTestRSSI = -45.0f;  // Strong signal
+    const float kTestSNR = 12.0f;    // Good SNR
 
     std::vector<uint8_t> max_packet = msg_ptr->Serialize().value();
 
@@ -598,8 +598,8 @@ TEST_F(RadioLibRadioTest, RepeatedMaxSizePacketHandling) {
 
     // Create a test callback that will be called for each reception
     auto test_callback = [&callback_count, &all_packets_valid,
-                          callback_semaphore,
-                          &max_packet](std::unique_ptr<RadioEvent> event) {
+                          callback_semaphore, &max_packet, kTestRSSI,
+                          kTestSNR](std::unique_ptr<RadioEvent> event) {
         // Check the received event
         if (event == nullptr || event->getType() != RadioEventType::kReceived ||
             event->getSnr() != kTestSNR || event->getRssi() != kTestRSSI) {

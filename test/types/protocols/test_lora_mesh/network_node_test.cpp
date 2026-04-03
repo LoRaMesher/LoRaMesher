@@ -567,16 +567,16 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityHalf) {
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // Simulate 10 superframes with perfect reception
-    for (int i = 0; i < 10; i++) {
+    // Simulate 16 superframes with perfect reception (fills sliding window)
+    for (int i = 0; i < 16; i++) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
     }
-    uint8_t ewma = stats.ewma_quality;
     stats.UpdateRemoteQuality(100);
     uint8_t q = stats.CalculateQuality();
-    // quality = (ewma + remote) / 2
-    EXPECT_EQ(q, static_cast<uint8_t>((static_cast<uint16_t>(ewma) + 100) / 2));
+    // Window PDR = 255 (all received), weighted bottleneck:
+    // (min(255,100)*7 + avg(255,100)*3) / 10 = (700 + 532) / 10 = 123
+    EXPECT_EQ(q, 123);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
@@ -588,8 +588,8 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
     }
     EXPECT_GE(stats.messages_expected, 3u);
     EXPECT_EQ(stats.remote_link_quality, 0);
-    // Unidirectional penalty: quality = ewma / 4
-    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality / 4);
+    // Unidirectional penalty: minimum quality (1)
+    EXPECT_EQ(stats.CalculateQuality(), 1);
 }
 
 TEST_F(NetworkNodeRouteTest,
@@ -614,14 +614,17 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalRecovery) {
         stats.ReceivedMessage(i * 1000);
     }
     uint8_t penalized = stats.CalculateQuality();
-    EXPECT_EQ(penalized, stats.ewma_quality / 4);
+    EXPECT_EQ(penalized, 1);
 
     // Peer starts hearing us — recovery
     stats.UpdateRemoteQuality(200);
     uint8_t recovered = stats.CalculateQuality();
+    // Bidirectional: weighted bottleneck. Window not ready (5 < 16), uses ewma.
+    uint16_t bottleneck =
+        std::min(stats.ewma_quality, static_cast<uint8_t>(200));
+    uint16_t average = (static_cast<uint16_t>(stats.ewma_quality) + 200) / 2;
     EXPECT_EQ(recovered,
-              static_cast<uint8_t>(
-                  (static_cast<uint16_t>(stats.ewma_quality) + 200) / 2));
+              static_cast<uint8_t>((bottleneck * 7 + average * 3) / 10));
     EXPECT_GT(recovered, penalized);
 }
 
@@ -702,6 +705,35 @@ TEST_F(NetworkNodeRouteTest, ToRoutingTableEntry) {
     EXPECT_EQ(entry.hop_count, node_.routing_entry.hop_count);
     EXPECT_EQ(entry.link_quality, node_.routing_entry.link_quality);
     EXPECT_EQ(entry.capabilities, node_.routing_entry.capabilities);
+    // hop_count=0 in fixture, so reception_quality stays 0
+    EXPECT_EQ(entry.reception_quality, 0u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryDirectNeighborHasReceptionQuality) {
+    node_.routing_entry.hop_count = 1;
+    node_.link_stats.ewma_quality = 180;
+    node_.link_stats.messages_received = 3;
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 180u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryMultiHopNoReceptionHasZeroReceptionQuality) {
+    node_.routing_entry.hop_count = 2;
+    node_.link_stats.ewma_quality = 180;
+    node_.link_stats.messages_received = 0;  // Never received from this node
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 0u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryMultiHopWithReceptionHasReceptionQuality) {
+    node_.routing_entry.hop_count = 2;
+    node_.link_stats.ewma_quality = 48;
+    node_.link_stats.messages_received = 5;  // Heard directly (lossy link)
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 48u);
 }
 
 // ---- GetAddress / GetAllocatedDataSlots ----

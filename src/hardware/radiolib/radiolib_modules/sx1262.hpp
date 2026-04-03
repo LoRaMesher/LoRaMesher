@@ -68,8 +68,8 @@ class LoraMesherSX1262 : public IRadio {
     Result setPreambleLength(uint16_t length) override;
     Result setActionReceive(void (*callback)(void)) override;
     Result ClearActionReceive() override;
-    int8_t getRSSI() override;
-    int8_t getSNR() override;
+    float getRSSI() override;
+    float getSNR() override;
     uint8_t getPacketLength() override;
     uint32_t getTimeOnAir(uint8_t length) override;
     Result readData(uint8_t* data, size_t len) override;
@@ -89,12 +89,12 @@ class LoraMesherSX1262 : public IRadio {
             "setActionReceive not supported in LoraMesherSX1262");
     }
 
-    int8_t getLastPacketRSSI() override {
+    float getLastPacketRSSI() override {
         throw std::runtime_error(
             "getLastPacketRSSI not supported in LoraMesherSX1262");
     }
 
-    int8_t getLastPacketSNR() override {
+    float getLastPacketSNR() override {
         throw std::runtime_error(
             "getLastPacketSNR not supported in LoraMesherSX1262");
     }

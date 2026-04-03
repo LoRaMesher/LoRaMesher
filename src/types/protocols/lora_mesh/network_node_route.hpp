@@ -11,6 +11,7 @@
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
+#include "types/protocols/lora_mesh/sliding_window_pdr.hpp"
 #include "utils/byte_operations.h"
 
 namespace loramesher {
@@ -37,7 +38,10 @@ class NetworkNodeRoute {
         uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
         uint8_t ewma_quality = 200;    ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
-        uint8_t ewma_alpha = 77;       ///< EWMA alpha fixed-point (0.30 * 256)
+        uint8_t inactive_probe_count =
+            0;                        ///< Superframes probed since inactivation
+        uint8_t ewma_alpha = 77;      ///< EWMA alpha fixed-point (0.30 * 256)
+        SlidingWindowPDR<16> window;  ///< Sliding window PDR tracker
 
         /**
          * @brief Calculate link quality (0-255)

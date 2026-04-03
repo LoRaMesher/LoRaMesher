@@ -128,13 +128,13 @@ TEST_F(MockRadioCoverageTest, SetPreambleLength) {
 // ---------------------------------------------------------------------------
 
 TEST_F(MockRadioCoverageTest, GetLastPacketRSSI) {
-    int8_t rssi = radio_.getLastPacketRSSI();
+    float rssi = radio_.getLastPacketRSSI();
     (void)rssi;
     SUCCEED();
 }
 
 TEST_F(MockRadioCoverageTest, GetLastPacketSNR) {
-    int8_t snr = radio_.getLastPacketSNR();
+    float snr = radio_.getLastPacketSNR();
     (void)snr;
     SUCCEED();
 }

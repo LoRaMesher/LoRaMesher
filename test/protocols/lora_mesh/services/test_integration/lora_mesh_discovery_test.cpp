@@ -170,6 +170,9 @@ TEST_F(LoRaMeshDiscoveryTests, SingleNodeDiscovery) {
     // EXPECT_EQ(slot_table[0].target_address, node.address)
     //     << "Slot should be assigned to the node's address";
 
+    // Re-read slot duration after CreateNetwork (auto-calculated from ToA)
+    slot_duration = GetSlotDuration(node);
+
     // Expect that the node after AdvanceTime goes to different slots
     for (size_t i = 0; i < slot_table.size(); ++i) {
         advanced = AdvanceTime(

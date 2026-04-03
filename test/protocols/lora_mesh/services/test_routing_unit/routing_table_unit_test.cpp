@@ -1150,7 +1150,7 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsMultiHopNode) {
     EXPECT_EQ(it_after->link_stats.messages_expected, expected_before);
 }
 
-TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
+TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsProbesInactiveNeighbor) {
     AddDirectNeighbor(kNeighbor1);
 
     // Mark inactive
@@ -1163,8 +1163,10 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
                          return n.routing_entry.destination == kNeighbor1;
                      });
     ASSERT_NE(it_before, nodes_before.end());
+    ASSERT_FALSE(it_before->is_active);
     uint32_t expected_before = it_before->link_stats.messages_expected;
 
+    // Inactive direct neighbor should still be probed (expectations increment)
     routing_table_->UpdateLinkStatistics();
 
     const auto& nodes_after = routing_table_->GetNodes();
@@ -1173,8 +1175,26 @@ TEST_F(RoutingTableUnitTest, UpdateLinkStatisticsSkipsInactiveNeighbor) {
             return n.routing_entry.destination == kNeighbor1;
         });
     ASSERT_NE(it_after, nodes_after.end());
-    // Inactive neighbor should NOT have expected incremented
-    EXPECT_EQ(it_after->link_stats.messages_expected, expected_before);
+    EXPECT_EQ(it_after->link_stats.messages_expected, expected_before + 1);
+    EXPECT_EQ(it_after->link_stats.inactive_probe_count, 1);
+
+    // After kMaxInactiveProbes (32) probes, expectations should stop
+    for (int i = 1; i < 32; i++) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    auto it_final = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    uint32_t expected_at_limit = it_final->link_stats.messages_expected;
+
+    routing_table_->UpdateLinkStatistics();
+    auto it_past = std::find_if(
+        nodes_after.begin(), nodes_after.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    // Probe limit reached — expectations should stop incrementing
+    EXPECT_EQ(it_past->link_stats.messages_expected, expected_at_limit);
 }
 
 // =============================================================================
@@ -1615,6 +1635,227 @@ TEST_F(RoutingTableUnitTest, FindNextHopSelectsGoodQualityDirectNeighbor) {
     // 1-hop with good quality should still win (lower cost)
     EXPECT_EQ(routing_table_->FindNextHop(kNeighbor1), kNeighbor1)
         << "Good direct neighbor should be preferred over 2-hop route";
+}
+
+// =============================================================================
+// Phantom Direct Neighbor Cleanup Tests
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, PhantomDirectNeighborIsInactivated) {
+    // Simulate sponsor path: AddDirectNeighbor calls UpdateRoute which
+    // creates hop_count=1 with messages_received=0
+    AddDirectNeighbor(kNeighbor1);
+
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_TRUE(it->is_active);
+        EXPECT_EQ(it->link_stats.messages_received, 0u);
+    }
+
+    // inactivation_threshold_ = 10. Each UpdateLinkStatistics call increments
+    // consecutive_missed via ExpectRoutingMessage (Step 3). Step 2 fires when
+    // consecutive_missed >= 10, which happens on the 11th call.
+    for (int i = 0; i < 10; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_TRUE(it->is_active)
+            << "Should still be active after 10 calls (consecutive_missed=10, "
+               "Step 2 checks at start of next call)";
+    }
+
+    // 11th call: Step 2 fires (consecutive_missed == 10 >= threshold)
+    routing_table_->UpdateLinkStatistics();
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_FALSE(it->is_active)
+            << "Phantom neighbor (messages_received=0) should be inactivated "
+               "after consecutive_missed reaches inactivation_threshold";
+    }
+}
+
+TEST_F(RoutingTableUnitTest, RealDirectNeighborStillInactivatedByStep2) {
+    // Add neighbor via ProcessRoutingTableMessage (real reception)
+    ReceiveRoutingMessage(kNeighbor1, {});
+
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_GT(it->link_stats.messages_received, 0u);
+        EXPECT_TRUE(it->is_active);
+    }
+
+    // After enough missed messages, Step 2 should still inactivate
+    for (int i = 0; i < 11; ++i) {
+        routing_table_->UpdateLinkStatistics();
+    }
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_FALSE(it->is_active)
+        << "Real neighbor should still be inactivated by Step 2 after "
+           "consecutive_missed reaches threshold";
+}
+
+// =============================================================================
+// Unidirectional direct route must not replace working indirect route
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest,
+       UnidirectionalDirectRouteDoesNotReplaceIndirectRoute) {
+    // Reproduces the experiment scenario:
+    // 1. Node hears kNeighbor1 directly — link goes unidirectional (quality=1)
+    // 2. A better indirect route (via kNeighbor2) replaces it
+    // 3. Cascade degradation drops the indirect route to quality=1 too
+    // 4. kNeighbor1 sends another routing table → the fix should prevent
+    //    the unidirectional direct route from overwriting the indirect one
+
+    // Step 1: Establish kNeighbor2 as a good direct neighbor
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+
+    // Step 2: Receive routing tables from kNeighbor1 directly with
+    // remote_link_quality=0 (unidirectional from the start).
+    // Interleave UpdateLinkStatistics to build messages_expected >= 3.
+    uint32_t t = kCurrentTime;
+    for (int i = 0; i < 5; i++) {
+        std::vector<RoutingTableEntry> empty;
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+    }
+
+    // kNeighbor1 is direct, quality=1 (confirmed unidirectional)
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->next_hop, kNeighbor1);
+    EXPECT_EQ(it->routing_entry.link_quality, 1);
+    EXPECT_GE(it->link_stats.messages_expected, 3u);
+
+    // Step 3: kNeighbor2 advertises a route to kNeighbor1 (1 hop from
+    // kNeighbor2 = 2 hops from us). With kNeighbor2 quality=200 and
+    // entry quality=200, actual_quality = min(200, 200) = 200.
+    // Cost: CalculateRouteCost(2, 200) = 655 vs current (1, 1) = 65535.
+    // The indirect route is much better → replaces the direct.
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kNeighbor1, 1, kGoodQuality));
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+
+    EXPECT_EQ(it->next_hop, kNeighbor2)
+        << "Indirect route should replace direct unidirectional route";
+    EXPECT_EQ(it->routing_entry.hop_count, 2);
+
+    // Step 4: Degrade the indirect route to quality=1 (simulates cascade
+    // degradation from ScheduleRoutingMessageExpectations when the
+    // next_hop kNeighbor2 also has unidirectional risk).
+    routing_table_->DegradeRouteQuality(kNeighbor1, 1);
+    EXPECT_EQ(it->routing_entry.link_quality, 1);
+
+    // Step 5: kNeighbor1 sends another routing table (remote_quality=0).
+    // The fix should block the direct unidirectional route from replacing
+    // the indirect route — both have cost 65535, but the indirect one
+    // may still deliver packets.
+    {
+        std::vector<RoutingTableEntry> empty;
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
+    }
+
+    EXPECT_EQ(it->next_hop, kNeighbor2)
+        << "Unidirectional direct route should not replace indirect route "
+           "when both have quality=1";
+    EXPECT_EQ(it->routing_entry.hop_count, 2);
+}
+
+TEST_F(RoutingTableUnitTest, BidirectionalDirectRouteCanReplaceIndirectRoute) {
+    // Same setup: kNeighbor1 via kNeighbor2 (2 hops)
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kNeighbor1, 1, kGoodQuality));
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+
+    // Degrade to quality=1
+    routing_table_->DegradeRouteQuality(kNeighbor1, 1);
+
+    // Now receive from kNeighbor1 directly with GOOD remote quality
+    // (kNeighbor1 CAN hear us → bidirectional)
+    for (int i = 0; i < 4; i++) {
+        std::vector<RoutingTableEntry> empty;
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, kCurrentTime + i * 1000,
+            /*local_link_quality=*/kGoodQuality, kMaxHops);
+    }
+
+    // Verify: route should switch to direct (bidirectional link is better)
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->next_hop, kNeighbor1)
+        << "Bidirectional direct route should replace degraded indirect route";
+    EXPECT_EQ(it->routing_entry.hop_count, 1);
+}
+
+TEST_F(RoutingTableUnitTest, InactiveRouteCanBeReplacedByUnidirectionalDirect) {
+    // Set up: kNeighbor1 via kNeighbor2 (2 hops), then mark inactive
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kNeighbor1, 1, kGoodQuality));
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+
+    // Inactivate the route
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 500000, 1000, 100000);
+
+    // Receive from kNeighbor1 directly with unidirectional link
+    for (int i = 0; i < 4; i++) {
+        std::vector<RoutingTableEntry> empty;
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, kCurrentTime + 600000 + i * 1000,
+            /*local_link_quality=*/0, kMaxHops);
+    }
+
+    // Verify: inactive route should be replaced (was_inactive = true)
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kNeighbor1;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->next_hop, kNeighbor1)
+        << "Inactive route should be replaced even by unidirectional direct";
+    EXPECT_TRUE(it->is_active);
 }
 
 }  // namespace test

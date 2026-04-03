@@ -1418,6 +1418,67 @@ TEST_F(NetworkServiceCoverageTest,
     superframe_->StopSuperframe();
 }
 
+// ============================================================================
+// ExpandSyncBeaconListening on missed beacons
+// ============================================================================
+
+TEST_F(NetworkServiceCoverageTest, ExpandSyncListeningAfterMissedBeacons) {
+    // Set up node at hop=2 in NORMAL_OPERATION with a proper slot table
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    service_->SetNetworkManager(kNMAddress);
+    service_->SetMaxHopCount(4);                  // 5 sync beacon slots (0..4)
+    service_->SetNumberOfSlotsPerSuperframe(40);  // Enough room for all phases
+    // Add NM route at hop=2 (UpdateRouteEntry adds +1, so pass 1)
+    service_->UpdateRouteEntry(kOtherNode, kNMAddress, 1, 200, 2, 0);
+
+    superframe_->StartSuperframe();
+
+    Result r = service_->UpdateSlotTable();
+    ASSERT_TRUE(r) << r.GetErrorMessage();
+
+    auto slot_table = service_->GetSlotTable();
+    ASSERT_GT(slot_table.size(), 3u);
+
+    // Verify initial state: some sync beacon slots should be SLEEP
+    // For hop=2 node with max_hops=5: slot 0=RX, slot 1=RX, slot 2=TX,
+    // slots 3..5=SLEEP
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+    bool has_sleep_sync_slot = false;
+    for (const auto& slot : slot_table) {
+        if (slot.IsSyncBeaconSlot() || slot.type == SlotType::SLEEP) {
+            // Check first few slots (sync beacon phase)
+            if (slot.slot_number < 6 && slot.type == SlotType::SLEEP) {
+                has_sleep_sync_slot = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(has_sleep_sync_slot)
+        << "Expected at least one SLEEP slot in sync beacon phase";
+
+    // Simulate 2 missed beacons by calling HandleSuperframeStart twice
+    // (in NORMAL_OPERATION without receiving any beacon)
+    service_->HandleSuperframeStart();
+    service_->HandleSuperframeStart();
+
+    // After 2 missed beacons, ALL sync beacon slots should be RX
+    slot_table = service_->GetSlotTable();
+    for (const auto& slot : slot_table) {
+        if (slot.slot_number < 6 && slot.IsSyncBeaconSlot()) {
+            EXPECT_EQ(slot.type, SlotType::SYNC_BEACON_RX)
+                << "Slot " << slot.slot_number
+                << " should be SYNC_BEACON_RX after missed beacons";
+        }
+        // SLEEP slots in sync phase should also become RX
+        if (slot.slot_number < 6 && slot.type == SlotType::SLEEP) {
+            ADD_FAILURE() << "Slot " << slot.slot_number
+                          << " is still SLEEP after missed beacon expansion";
+        }
+    }
+
+    superframe_->StopSuperframe();
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

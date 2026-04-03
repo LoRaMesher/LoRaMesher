@@ -18,19 +18,31 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
         return remote_link_quality > 0 ? remote_link_quality : 200;
     }
 
-    // Bidirectional: average local EWMA with peer's reported quality
+    // Use sliding window PDR when ready, otherwise fall back to EWMA
+    uint8_t local_quality = window.IsReady() ? window.GetPDR() : ewma_quality;
+
+    // Bidirectional: weighted bottleneck — 70% min + 30% average.
+    // Pure min() causes premature abandonment of marginal direct links
+    // (death spiral: route switch → EWMA decay → inactivation →
+    // false UNIDIRECTIONAL → /4 penalty → no recovery).
     if (remote_link_quality > 0) {
-        return static_cast<uint8_t>(
-            (static_cast<uint16_t>(ewma_quality) + remote_link_quality) / 2);
+        uint16_t bottleneck = std::min(local_quality, remote_link_quality);
+        uint16_t average =
+            (static_cast<uint16_t>(local_quality) + remote_link_quality) / 2;
+        return static_cast<uint8_t>((bottleneck * 7 + average * 3) / 10);
     }
 
     // Unidirectional link: received 3+ routing tables from peer
-    // but peer never lists us — they cannot hear us
+    // but peer never lists us — they cannot hear us.
+    // Return 1 (minimum quality): a link we cannot transmit on has
+    // maximum ETX cost (65535). This lets the entries loop find an
+    // indirect route via relay. Using 1 instead of 0 avoids the
+    // "unknown/unset" semantics of quality=0.
     if (messages_expected >= 3) {
-        return ewma_quality / 4;
+        return 1;
     }
 
-    return ewma_quality;
+    return local_quality;
 }
 
 void NetworkNodeRoute::LinkQualityStats::Reset() {
@@ -38,6 +50,8 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
     messages_received = 0;
     ewma_quality = 200;
     recovery_counter = 0;
+    inactive_probe_count = 0;
+    window.Reset();
     // Don't reset last_message_time or remote_link_quality
 }
 
@@ -51,6 +65,7 @@ void NetworkNodeRoute::LinkQualityStats::ExpectMessage() {
     }
     messages_expected++;
     consecutive_missed++;
+    window.Expect();
 }
 
 void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(
@@ -64,6 +79,7 @@ void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(
         (static_cast<uint16_t>(ewma_alpha) * 255u +
          static_cast<uint16_t>(256u - ewma_alpha) * ewma_quality) /
         256u);
+    window.Received();
 }
 
 void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
@@ -302,6 +318,12 @@ bool NetworkNodeRoute::UpdateCapabilities(uint8_t new_capabilities,
 RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
     RoutingTableEntry entry = routing_entry;
     entry.control_slot_index = control_slot_index;
+    entry.next_hop = next_hop;
+    if (link_stats.messages_received > 0) {
+        entry.reception_quality = link_stats.window.IsReady()
+                                      ? link_stats.window.GetPDR()
+                                      : link_stats.ewma_quality;
+    }
     return entry;
 }
 

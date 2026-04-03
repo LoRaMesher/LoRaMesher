@@ -111,3 +111,21 @@ Update these files when protocol or library behavior changes:
 - When a planned feature (Section 10) is implemented, move it to the appropriate main section
 - Section 7.2 table must list ALL message types with correct total sizes
 - Do not describe unimplemented mechanisms (e.g., ROUTE_POISON) in main sections — use Section 10
+
+## Code Quality
+- Do not apply quick fixes or patches
+- If architecture is flawed, refactor it
+- Write code a senior engineer would approve
+
+## Context Management
+- Re-read files before editing
+- Work in phases (max 5 files per phase)
+- Remove dead code before refactoring
+
+## Execution
+- Split large tasks into parallel agents
+- Read large files in chunks (never assume full context)
+
+## Search Safety
+- Do not rely on a single search
+- Check: function calls, types, strings, imports, tests

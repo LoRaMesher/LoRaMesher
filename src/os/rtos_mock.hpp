@@ -1913,9 +1913,9 @@ class RTOSMock : public RTOS {
 
     /**
      * @brief Set the node address for the current task
-     * @param address The node address as a string (e.g., "0x1001")
+     * @param address The node address (e.g., "0x1001"), max 7 chars
      */
-    void SetCurrentTaskNodeAddress(const std::string& address) override {
+    void SetCurrentTaskNodeAddress(const char* address) override {
         // Update thread-local cache first for immediate availability
         setThreadLocalNodeAddress(address);
 
@@ -1925,7 +1925,8 @@ class RTOSMock : public RTOS {
         std::thread::id current_id = std::this_thread::get_id();
         for (auto& [thread_ptr, task_info] : tasks_) {
             if (task_info.thread_id == current_id) {
-                task_info.node_address = address;
+                snprintf(task_info.node_address, sizeof(task_info.node_address),
+                         "%s", address);
                 break;
             }
         }
@@ -1933,23 +1934,20 @@ class RTOSMock : public RTOS {
 
     /**
      * @brief Get the node address for the current task
-     * @return The node address as a string, or empty string if not set
+     * @return The node address, or "" if not set
      */
-    std::string GetCurrentTaskNodeAddress() const override {
+    const char* GetCurrentTaskNodeAddress() const override {
         // First try thread-local cache for best performance
-        std::string cached_address = getThreadLocalNodeAddress();
-        if (!cached_address.empty()) {
-            return cached_address;
+        const char* cached = getThreadLocalNodeAddress();
+        if (cached[0] != '\0') {
+            return cached;
         }
 
         // Fallback to mutex-protected lookup with a short timeout
         std::unique_lock<std::timed_mutex> lock(tasksMutex_, std::try_to_lock);
 
-        // If we can't acquire the lock immediately, try with a short timeout
         if (!lock.owns_lock()) {
             if (!lock.try_lock_for(std::chrono::milliseconds(5))) {
-                // If still can't get the lock after timeout, return empty to prevent deadlock
-                // This should be rare since most operations are fast
                 return "";
             }
         }
@@ -1958,8 +1956,7 @@ class RTOSMock : public RTOS {
         std::thread::id current_id = std::this_thread::get_id();
         for (const auto& [thread_ptr, task_info] : tasks_) {
             if (task_info.thread_id == current_id) {
-                // Update thread-local cache for future calls
-                if (!task_info.node_address.empty()) {
+                if (task_info.node_address[0] != '\0') {
                     setThreadLocalNodeAddress(task_info.node_address);
                 }
                 return task_info.node_address;
@@ -1973,7 +1970,7 @@ class RTOSMock : public RTOS {
      * @brief Thread-local storage for node address cache
      * This avoids mutex contention in GetCurrentTaskNodeAddress()
      */
-    static thread_local std::string thread_local_node_address_;
+    static thread_local char thread_local_node_address_[8];
 
     /**
      * @brief Returns a reference to this thread's cached TaskInfo pointer.
@@ -1990,15 +1987,16 @@ class RTOSMock : public RTOS {
      * @brief Set the thread-local node address cache
      * @param address The node address to cache
      */
-    static void setThreadLocalNodeAddress(const std::string& address) {
-        thread_local_node_address_ = address;
+    static void setThreadLocalNodeAddress(const char* address) {
+        snprintf(thread_local_node_address_, sizeof(thread_local_node_address_),
+                 "%s", address);
     }
 
     /**
      * @brief Get the thread-local node address cache
-     * @return The cached node address, or empty string if not cached
+     * @return The cached node address, or "" if not cached
      */
-    static std::string getThreadLocalNodeAddress() {
+    static const char* getThreadLocalNodeAddress() {
         return thread_local_node_address_;
     }
 
@@ -2348,7 +2346,7 @@ class RTOSMock : public RTOS {
         std::condition_variable delay_cv;
 
         // For logging context
-        std::string node_address;
+        char node_address[8] = {};
 
         // For tracking queue condition variables the task is waiting on
         std::vector<std::condition_variable*> waiting_on_queue_cvs;

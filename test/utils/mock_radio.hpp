@@ -35,10 +35,10 @@ class MockRadio : public IRadio {
     MOCK_METHOD(Result, setPreambleLength, (uint16_t length), (override));
 
     // Radio Status
-    MOCK_METHOD(int8_t, getRSSI, (), (override));
-    MOCK_METHOD(int8_t, getSNR, (), (override));
-    MOCK_METHOD(int8_t, getLastPacketRSSI, (), (override));
-    MOCK_METHOD(int8_t, getLastPacketSNR, (), (override));
+    MOCK_METHOD(float, getRSSI, (), (override));
+    MOCK_METHOD(float, getSNR, (), (override));
+    MOCK_METHOD(float, getLastPacketRSSI, (), (override));
+    MOCK_METHOD(float, getLastPacketSNR, (), (override));
     MOCK_METHOD(bool, IsTransmitting, (), (override));
     MOCK_METHOD(float, getFrequency, (), (override));
     MOCK_METHOD(uint8_t, getSpreadingFactor, (), (override));

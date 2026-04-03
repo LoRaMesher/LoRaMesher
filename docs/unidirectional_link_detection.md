@@ -32,13 +32,13 @@ The library has the data to detect unidirectional links but three code locations
 
 **Bug 3 (fixed post-experiment)**: `routing_table_message.cpp:GetLinkQualityFor()` returned link_quality for ANY entry matching the destination, including multi-hop indirect routes. In a real mesh, the peer almost always has some multi-hop route to us via NM, so `remote_link_quality` was never 0 and the penalty from Bug 2's fix never triggered.
 
-Fix: `GetLinkQualityFor()` now filters by `hop_count == 1`. Only a direct-neighbor entry proves the peer hears us. On the sender side, `SetLinkQualityFor()` already only updates quality for `IsDirectNeighbor()` entries, so multi-hop entries contain routing-table quality (not link quality) and should not be used for unidirectional detection.
+Fix: `GetLinkQualityFor()` (now renamed `GetReceptionQualityFor()`) filters by `hop_count == 1` and reads the dedicated `reception_quality` field. This field carries the sender's raw EWMA reception rate, not the combined bidirectional quality, eliminating a circular feedback loop where `CalculateQuality()` output was reflected back as `remote_link_quality`. The redundant `SetLinkQualityFor()` method was removed.
 
 ## Detection Algorithm
 
 ### Mechanism
 
-When node A receives a routing table from node B, A checks whether B lists A as a **direct neighbor** (hop_count=1) via `GetLinkQualityFor(A)`. The function only considers hop_count==1 entries — multi-hop entries are ignored because they prove indirect reachability, not direct radio contact. If A is not listed as a direct neighbor, `GetLinkQualityFor()` returns 0, meaning "B doesn't hear A directly."
+When node A receives a routing table from node B, A checks whether B lists A as a **direct neighbor** (hop_count=1) via `GetReceptionQualityFor(A)`. The function only considers hop_count==1 entries and reads their `reception_quality` field (the sender's raw EWMA). Multi-hop entries are ignored because they prove indirect reachability, not direct radio contact. If A is not listed as a direct neighbor, `GetReceptionQualityFor()` returns 0, meaning "B doesn't hear A directly."
 
 The detection adds a penalty after confirmation:
 
@@ -46,7 +46,9 @@ The detection adds a penalty after confirmation:
 
 2. **Confirmation**: After `messages_expected >= 3` routing table exchanges where the peer still doesn't list us, the link is classified as confirmed unidirectional.
 
-3. **Penalty**: Quality is reduced to `ewma_quality / 4`. With a typical ewma of ~200, this produces quality ~50.
+3. **Penalty**: Quality is reduced to `local_quality / 4`. With a typical window PDR of ~255, this produces quality ~63.
+
+For bidirectional links with asymmetric PDR, quality uses a weighted bottleneck: `(min(local, remote) × 7 + avg(local, remote) × 3) / 10`. This penalizes asymmetric links without the cliff effect of pure `min()` that causes premature abandonment of marginal direct neighbors.
 
 ### Why Threshold 3
 
@@ -57,20 +59,21 @@ Bidirectional link timeline:
 
 So `remote_link_quality > 0` by superframe 2 for bidirectional links. Threshold 3 provides margin for one dropped packet.
 
-### Why ewma/4
+### Why /4
 
 Route cost comparison (ETX-based: `cost = hop_count × 65536 / quality`):
 
 | Route | Quality | Cost |
 |-------|---------|------|
-| 1-hop unidirectional, ewma=200, penalty=200/4=50 | 50 | 1×65536/50 = 1310 |
+| 1-hop unidirectional, PDR=255, penalty=255/4=63 | 63 | 1×65536/63 = 1040 |
 | 2-hop bidirectional relay, quality=200 | 200 | 2×65536/200 = 655 |
+| 3-hop bidirectional relay, quality=200 | 200 | 3×65536/200 = 983 |
 
-The 2-hop relay wins decisively. A factor of `ewma/2` would produce equal costs (indeterminate routing), so `ewma/4` is the minimum divisor that reliably causes route switching.
+The 2-hop bidirectional path (cost=655) wins over the unidirectional 1-hop (cost=1040) by 37%. The `/8` divisor was too aggressive (cost=2114), preventing recovery from transient unidirectionality and creating an irreversible death spiral when combined with the inactivation → `reception_quality=0` → false UNIDIRECTIONAL cascade.
 
 ### Recovery
 
-Recovery is automatic. Once the peer starts listing us (`remote_link_quality > 0`), the penalty branch is skipped entirely and quality returns to `(ewma + remote) / 2`. This handles transient unidirectionality (e.g., temporary interference) without permanent damage.
+Recovery is automatic. Once the peer starts listing us (`remote_link_quality > 0`), the penalty branch is skipped entirely and quality returns to the weighted bottleneck formula. This handles transient unidirectionality (e.g., temporary interference) without permanent damage.
 
 ## Topology Example
 

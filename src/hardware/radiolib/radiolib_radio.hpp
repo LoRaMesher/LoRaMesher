@@ -104,28 +104,28 @@ class RadioLibRadio : public IRadio {
     /**
      * @brief Get the current RSSI value
      * 
-     * @return int8_t RSSI in dBm, or -255 if radio not initialized
+     * @return float RSSI in dBm, or -255.0f if radio not initialized
      */
-    int8_t getRSSI() override;
+    float getRSSI() override;
 
     /**
      * @brief Get the current SNR value
-     * 
-     * @return int8_t SNR in dB, or -128 if radio not initialized
+     *
+     * @return float SNR in dB, or -128.0f if radio not initialized
      */
-    int8_t getSNR() override;
+    float getSNR() override;
 
     /**
      * @brief Get the RSSI of the last received packet
-     * @return int8_t Last packet RSSI in dBm
+     * @return float Last packet RSSI in dBm
      */
-    int8_t getLastPacketRSSI() override;
+    float getLastPacketRSSI() override;
 
     /**
      * @brief Get the SNR of the last received packet
-     * @return int8_t Last packet SNR in dB
+     * @return float Last packet SNR in dB
      */
-    int8_t getLastPacketSNR() override;
+    float getLastPacketSNR() override;
 
     /**
      * @brief Check if the radio is currently transmitting
@@ -367,8 +367,8 @@ class RadioLibRadio : public IRadio {
     RadioState current_state_{RadioState::kIdle};  ///< Current radio state
     RadioConfig current_config_;  ///< Current radio configuration
 
-    int8_t last_packet_rssi_{0};  ///< RSSI of last received packet
-    int8_t last_packet_snr_{0};   ///< SNR of last received packet
+    float last_packet_rssi_{0.0f};  ///< RSSI of last received packet
+    float last_packet_snr_{0.0f};   ///< SNR of last received packet
 
     // Message queue for received data
     os::QueueHandle_t receive_queue_{nullptr};  // Queue for radio events

@@ -39,6 +39,9 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons
 
+static const uint8_t kExpandListeningThreshold =
+    2;  ///< Missed beacons before expanding all sync slots to RX
+
 /// Minimum listen window before election fires (ms). 2 superframes @ 500ms ea.
 static constexpr uint32_t kElectionListenWindowMs = 5000;
 
@@ -620,6 +623,16 @@ class NetworkService : public INetworkService {
     Result HandleSuperframeStart();
 
     /**
+     * @brief Expand all sync beacon slots to RX after missed beacons
+     *
+     * When beacons are missed (e.g., because the node's hop distance changed
+     * and the slot table no longer covers the right layer), this converts all
+     * sync beacon SLEEP and TX slots to SYNC_BEACON_RX so the node can hear
+     * beacons from any hop layer and recover synchronization.
+     */
+    void ExpandSyncBeaconListening();
+
+    /**
      * @brief Apply pending join request at superframe boundary
      * 
      * Called by the Network Manager at the start of each superframe to apply
@@ -828,9 +841,14 @@ class NetworkService : public INetworkService {
 
    private:
     /**
+     * @brief Log a compact grid visualization of the current slot table
+     */
+    void LogSlotTable() const;
+
+    /**
      * @brief Get comprehensive link quality for a node
-     * 
-     * @param node_address Target node address  
+     *
+     * @param node_address Target node address
      * @return uint8_t Link quality (0-255)
      */
     uint8_t GetNodeLinkQuality(AddressType node_address) const;
@@ -908,6 +926,17 @@ class NetworkService : public INetworkService {
                                  uint8_t nm_data_slots) const;
 
     /**
+     * @brief Calculate minimum slot duration from radio parameters
+     *
+     * Returns ToA(max_packet_size) + guard_time + processing margin,
+     * rounded up to the nearest 50 ms. Falls back to DEFAULT_SLOT_DURATION_MS
+     * when the hardware manager is unavailable.
+     *
+     * @return uint32_t Minimum slot duration in milliseconds
+     */
+    uint32_t CalculateMinSlotDuration() const;
+
+    /**
      * @brief Calculate link stability metric
      * 
      * @param node Node to evaluate
@@ -926,7 +955,9 @@ class NetworkService : public INetworkService {
      */
     std::pair<bool, uint8_t> ShouldAcceptJoin(AddressType node_address,
                                               uint8_t requested_slots,
-                                              uint8_t hops);
+                                              uint8_t hops,
+                                              size_t pending_node_count = 0,
+                                              uint8_t pending_slot_count = 0);
 
     /**
      * @brief Forward a join request to the network manager
@@ -1072,6 +1103,16 @@ class NetworkService : public INetworkService {
      */
     Result ForwardBroadcastMessage(const BroadcastMessage& original);
 
+    /**
+     * @brief Check if an address has an allocated RX slot in the TDMA schedule
+     *
+     * Must be called while holding network_mutex_.
+     *
+     * @param address Node address to check
+     * @return true if we have an RX slot for this address
+     */
+    bool IsTDMANeighbor(AddressType address) const;
+
     // Member variables
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
@@ -1118,10 +1159,9 @@ class NetworkService : public INetworkService {
         0;  ///< Count of nº superframes without receiving sync beacons
 
     // Join request buffering for superframe coordination
-    bool pending_join_request_ =
-        false;  ///< Flag indicating join request is buffered
-    std::optional<JoinRequestMessage>
-        pending_join_data_;  ///< Buffered join request data
+    static constexpr size_t kMaxPendingJoins = 3;
+    std::vector<JoinRequestMessage>
+        pending_joins_;  ///< Buffered join requests (up to kMaxPendingJoins)
 
     bool pending_slot_table_rebuild_ =
         false;  ///< Flag indicating slot table rebuild is deferred to next superframe boundary
@@ -1167,6 +1207,8 @@ class NetworkService : public INetworkService {
         0xFF;  ///< Our election priority (lower = higher priority)
     uint32_t nm_election_start_time_ =
         0;  ///< Tick count when NM_ELECTION began
+    bool surrendered_in_election_ =
+        false;  ///< True if this node yielded to a higher-priority claimant
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
     uint16_t network_id_ = 0;
@@ -1187,6 +1229,10 @@ class NetworkService : public INetworkService {
     uint8_t message_cache_head_ = 0;
     uint8_t message_seq_ =
         0;  ///< Per-node sequence counter (shared by unicast + broadcast)
+
+    // Slot table dirty flag — set when any input to UpdateSlotTable() changes.
+    // Only read/written on the protocol task, no synchronization needed.
+    bool slot_table_dirty_ = true;
 
     // Thread safety
     mutable std::mutex network_mutex_;

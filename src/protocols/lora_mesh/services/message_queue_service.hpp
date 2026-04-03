@@ -75,7 +75,8 @@ class MessageQueueService : public IMessageQueueService {
      *
      * @param type Type of queue to clear
      */
-    void ClearQueue(types::protocols::lora_mesh::SlotAllocation::SlotType type);
+    void ClearQueue(
+        types::protocols::lora_mesh::SlotAllocation::SlotType type) override;
 
     /**
      * @brief Check if any queues have messages

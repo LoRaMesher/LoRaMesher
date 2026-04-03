@@ -23,7 +23,7 @@ namespace loramesher {
 namespace os {
 
 // Thread-local storage definition for node address cache
-thread_local std::string RTOSMock::thread_local_node_address_;
+thread_local char RTOSMock::thread_local_node_address_[8] = {};
 
 RTOS& RTOS::instance() {
     static RTOSMock instance;

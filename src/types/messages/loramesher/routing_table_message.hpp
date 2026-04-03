@@ -26,9 +26,18 @@ namespace loramesher {
 class RoutingTableMessage : public IConvertibleToBaseMessage {
    public:
     /**
-     * @brief Default constructor
+     * @brief Creates a RoutingTableMessage from a received BaseMessage
+     *
+     * Reads directly from the BaseMessage payload without an intermediate
+     * Serialize/CreateFromSerialized round-trip.  Returns std::nullopt on
+     * type mismatch, truncated payload, or any deserialization error.
+     *
+     * @param message The received base message
+     * @return std::optional<RoutingTableMessage> Deserialized message if successful,
+     *         std::nullopt otherwise
      */
-    RoutingTableMessage(const BaseMessage& message);
+    static std::optional<RoutingTableMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
 
     /**
      * @brief Creates a new routing table message
@@ -76,10 +85,10 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
     /**
      * @brief Maximum number of routing table entries that fit in one message
      *
-     * (255 - BaseHeader::Size(6) - RoutingTableFieldsSize(6)) / RoutingTableEntry::Size(7) = 34
+     * (255 - BaseHeader::Size(6) - RoutingTableFieldsSize(6)) / RoutingTableEntry::Size(10) = 24
      */
     // TODO: Make it programatically
-    static constexpr uint8_t kMaxRoutingEntries = 34;
+    static constexpr uint8_t kMaxRoutingEntries = 24;
 
     /**
      * @brief Gets the list of routing table entries as a span
@@ -131,27 +140,15 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
     size_t GetTotalPayloadSize() const;
 
     /**
-     * @brief Gets direct-neighbor link quality for a specific node
+     * @brief Gets the sender's raw EWMA reception quality for a direct neighbor
      *
-     * Returns the link quality only if the node is listed as a direct
-     * neighbor (hop_count == 1). Multi-hop entries are ignored to
-     * enable unidirectional link detection.
+     * Returns the reception_quality field only for entries with hop_count == 1.
+     * Multi-hop entries are ignored to enable unidirectional link detection.
      *
      * @param node_address Node address to check
-     * @return uint8_t Link quality (0-255) for hop_count==1 entry, or 0 if not found
+     * @return uint8_t Reception quality (0-255) for hop_count==1 entry, or 0 if not found
      */
-    uint8_t GetLinkQualityFor(AddressType node_address) const;
-
-    /**
-     * @brief Sets the link quality for a specific node
-     * 
-     * @param node_address Node address to update
-     * @param link_quality New link quality value (0-255)
-     * 
-     * @return Result Success if setting the link quality succeeded,
-     *         error code otherwise
-     */
-    Result SetLinkQualityFor(AddressType node_address, uint8_t link_quality);
+    uint8_t GetReceptionQualityFor(AddressType node_address) const;
 
     /**
      * @brief Converts to a BaseMessage for transmission

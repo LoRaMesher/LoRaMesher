@@ -392,15 +392,15 @@ class RTOS {
 
     /**
      * @brief Set the node address for the current task
-     * @param address The node address as a string (e.g., "0x1001")
+     * @param address The node address (e.g., "0x1001"), max 7 chars
      */
-    virtual void SetCurrentTaskNodeAddress(const std::string& address) = 0;
+    virtual void SetCurrentTaskNodeAddress(const char* address) = 0;
 
     /**
      * @brief Get the node address for the current task
-     * @return The node address as a string, or empty string if not set
+     * @return The node address, or "" if not set. Valid until next Set call.
      */
-    virtual std::string GetCurrentTaskNodeAddress() const = 0;
+    virtual const char* GetCurrentTaskNodeAddress() const = 0;
 
    protected:
     RTOS() = default;

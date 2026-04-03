@@ -450,7 +450,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     uint32_t elapsed_time = external_slot * slot_duration;
     uint32_t current_time = GetRTOS().getTickCount();
 
-    // Enhanced diagnostic logging for timing analysis - ALWAYS LOG
+    // Enhanced diagnostic logging for timing analysis
     LOG_INFO("[TIMING_SYNC] Node 0x%04X synchronization START:", node_address_);
     LOG_INFO("[TIMING_SYNC]   external_slot_start_time: %u ms",
              external_slot_start_time);

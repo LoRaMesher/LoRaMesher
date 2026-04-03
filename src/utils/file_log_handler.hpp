@@ -58,9 +58,11 @@ class FileLogHandler : public LogHandler {
     /**
      * @brief Write a log message to the file
      * @param level The severity level of the message
+     * @param node_addr Node address prefix (empty string if none)
      * @param message The message to be logged
      */
-    void Write(LogLevel level, const std::string& message) override {
+    void Write(LogLevel level, const char* node_addr,
+               const char* message) override {
         // Compute timestamp BEFORE acquiring file_mutex_ to avoid M0→M1 lock-order inversion
         // (file_mutex_ → timeMutex_ would conflict with M1→M2 edge in setTimeMode).
         std::string timestamp;
@@ -88,6 +90,13 @@ class FileLogHandler : public LogHandler {
         buffer_ += "[";
         buffer_ += GetLevelString(level);
         buffer_ += "] ";
+
+        // Add node address if present
+        if (node_addr[0] != '\0') {
+            buffer_ += "[";
+            buffer_ += node_addr;
+            buffer_ += "] ";
+        }
 
         // Add message
         buffer_ += message;

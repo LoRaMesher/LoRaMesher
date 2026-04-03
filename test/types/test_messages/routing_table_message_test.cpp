@@ -38,8 +38,9 @@ class RoutingTableMessageTest : public ::testing::Test {
 
     void SetupEntries() {
         // Create a few test routing entries
-        entries.push_back(RoutingTableEntry(
-            0x1111, 1, 90, 2));  // Direct connection, high quality
+        RoutingTableEntry direct(0x1111, 1, 90, 2);
+        direct.reception_quality = 90;  // Direct neighbor has reception quality
+        entries.push_back(direct);
         entries.push_back(
             RoutingTableEntry(0x2222, 2, 70, 3));  // 2 hops, good quality
         entries.push_back(
@@ -97,7 +98,7 @@ TEST_F(RoutingTableMessageTest, CreationTest) {
 /**
  * @brief Test creation failure with too many entries
  *
- * kMaxRoutingEntries is 34. Creating a message with 35 entries must return
+ * kMaxRoutingEntries is 30. Creating a message with 31 entries must return
  * nullopt (exercises routing_table_message.cpp lines 58-62).
  */
 TEST_F(RoutingTableMessageTest, TooManyEntriesTest) {
@@ -311,7 +312,7 @@ TEST_F(RoutingTableMessageTest, GetHeaderTest) {
  * @brief Test deserialization failure when entry_count in header exceeds max
  *
  * Manually patches the entry_count byte in a valid serialized buffer to a
- * value larger than kMaxRoutingEntries (34), then verifies that
+ * value larger than kMaxRoutingEntries (30), then verifies that
  * CreateFromSerialized returns nullopt
  * (exercises routing_table_message.cpp lines 105-109).
  */
@@ -454,109 +455,143 @@ TEST_F(RoutingTableMessageTest, GetSize) {
 }
 
 // =============================================================================
-// RoutingTableMessage(const BaseMessage&) constructor — error branches
+// CreateFromBaseMessage — factory method (replaces throwing constructor)
 // =============================================================================
 
-/**
- * @brief Test constructing RoutingTableMessage from a BaseMessage with wrong type throws
- *
- * Covers lines 26-30: LOG_ERROR + throw invalid_argument when type != ROUTE_TABLE.
- */
-TEST_F(RoutingTableMessageTest, ConstructFromBaseMessageWrongTypeThrows) {
-    // Create a DATA message (wrong type)
+TEST_F(RoutingTableMessageTest, CreateFromBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::ROUTE_TABLE);
+
+    auto result = RoutingTableMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetDestination(), dest);
+    EXPECT_EQ(result->GetSource(), src);
+    EXPECT_EQ(result->GetEntries().size(), entries.size());
+    EXPECT_EQ(result->GetNetworkManager(), network_id);
+    EXPECT_EQ(result->GetTableVersion(), table_version);
+}
+
+TEST_F(RoutingTableMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
     std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
     BaseMessage wrong_type_msg(dest, src, MessageType::DATA,
                                std::span<const uint8_t>(payload));
 
-    EXPECT_THROW(
-        { RoutingTableMessage rt(wrong_type_msg); }, std::invalid_argument);
+    auto result = RoutingTableMessage::CreateFromBaseMessage(wrong_type_msg);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(RoutingTableMessageTest, CreateFromBaseMessageTruncatedReturnsNullopt) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // Serialize the message, then truncate so only 1 of 3 entries fits
+    auto serialized = msg_ptr->Serialize();
+    ASSERT_TRUE(serialized.has_value());
+
+    size_t truncated_size = BaseHeader::Size() +
+                            RoutingTableHeader::RoutingTableFieldsSize() +
+                            1 * RoutingTableEntry::Size();
+    ASSERT_LT(truncated_size, serialized->size());
+
+    std::vector<uint8_t> truncated(serialized->begin(),
+                                   serialized->begin() + truncated_size);
+
+    // Reconstruct a BaseMessage from truncated data
+    auto truncated_base =
+        BaseMessage::CreateFromSerialized(std::span<const uint8_t>(truncated));
+    // BaseMessage::CreateFromSerialized checks payload_size vs buffer, so this
+    // will fail because the header's payload_size field claims more bytes than
+    // available.  Build the BaseMessage manually instead.
+    // Manually construct: use the truncated payload with correct payload_size.
+    size_t truncated_payload_size = truncated_size - BaseHeader::Size();
+    BaseMessage manual_msg(
+        dest, src, MessageType::ROUTE_TABLE,
+        std::span<const uint8_t>(truncated.data() + BaseHeader::Size(),
+                                 truncated_payload_size));
+
+    auto result = RoutingTableMessage::CreateFromBaseMessage(manual_msg);
+    EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(RoutingTableMessageTest, CreateFromSerializedEntryCountExceedsBuffer) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // Serialize the full message (3 entries), then truncate to fit only 1 entry
+    auto serialized = msg_ptr->Serialize();
+    ASSERT_TRUE(serialized.has_value());
+
+    size_t truncated_size = BaseHeader::Size() +
+                            RoutingTableHeader::RoutingTableFieldsSize() +
+                            1 * RoutingTableEntry::Size();
+    ASSERT_LT(truncated_size, serialized->size());
+
+    std::vector<uint8_t> truncated(serialized->begin(),
+                                   serialized->begin() + truncated_size);
+
+    // entry_count in the header still says 3, but only 1 entry of data exists
+    auto result = RoutingTableMessage::CreateFromSerialized(truncated);
+    EXPECT_FALSE(result.has_value());
+}
+
+// =============================================================================
+// GetReceptionQualityFor — hop_count filtering (unidirectional link detection)
+// =============================================================================
+
+/**
+ * @brief Test GetReceptionQualityFor returns reception quality for direct
+ * neighbor (hop_count==1)
+ */
+TEST_F(RoutingTableMessageTest,
+       GetReceptionQualityForDirectNeighborReturnsQuality) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // 0x1111 has hop_count=1 with reception_quality=90 in fixture entries
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x1111), 90);
 }
 
 /**
- * @brief Test constructing RoutingTableMessage from a valid BaseMessage succeeds
+ * @brief Test GetReceptionQualityFor returns 0 for multi-hop entries without
+ * reception data
+ */
+TEST_F(RoutingTableMessageTest,
+       GetReceptionQualityForMultiHopNoReceptionReturnsZero) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    // 0x2222 has hop_count=2, 0x3333 has hop_count=3, both with
+    // reception_quality=0 (no direct reception data)
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x2222), 0);
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0x3333), 0);
+}
+
+/**
+ * @brief Test GetReceptionQualityFor returns quality for multi-hop entries
+ * that have direct reception data (reception_quality > 0)
  *
- * Exercises the BaseMessage constructor happy path (lines 23-50).
+ * A node can be routed via multi-hop but still heard directly (lossy link).
  */
-TEST_F(RoutingTableMessageTest, ConstructFromValidBaseMessageSucceeds) {
-    ASSERT_TRUE(msg_ptr != nullptr);
+TEST_F(RoutingTableMessageTest,
+       GetReceptionQualityForMultiHopWithReceptionReturnsQuality) {
+    // Create a hop=2 entry with reception_quality set (lossy but heard)
+    std::vector<RoutingTableEntry> test_entries;
+    RoutingTableEntry lossy_entry(0x4444, 2, 200, 1);
+    lossy_entry.reception_quality = 48;  // Sender hears this node at 48
+    test_entries.push_back(lossy_entry);
 
-    // Convert to BaseMessage then construct back
-    BaseMessage base = msg_ptr->ToBaseMessage();
-    ASSERT_EQ(base.GetType(), MessageType::ROUTE_TABLE);
+    auto opt_msg = RoutingTableMessage::Create(dest, src, network_id,
+                                               table_version, test_entries);
+    ASSERT_TRUE(opt_msg.has_value());
 
-    // This should succeed without throwing
-    EXPECT_NO_THROW({
-        RoutingTableMessage rt(base);
-        EXPECT_EQ(rt.GetDestination(), dest);
-        EXPECT_EQ(rt.GetSource(), src);
-        EXPECT_EQ(rt.GetEntries().size(), entries.size());
-    });
-}
-
-// =============================================================================
-// SetLinkQualityFor — missing-node error path (lines 189-190)
-// =============================================================================
-
-/**
- * @brief Test SetLinkQualityFor returns kInvalidState when node not found
- *
- * Covers lines 189-190.
- */
-TEST_F(RoutingTableMessageTest, SetLinkQualityForMissingNodeReturnsError) {
-    ASSERT_TRUE(msg_ptr != nullptr);
-
-    // Address 0xDEAD is not in the routing table
-    Result result = msg_ptr->SetLinkQualityFor(0xDEAD, 100);
-    EXPECT_FALSE(result.IsSuccess());
-    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+    EXPECT_EQ(opt_msg->GetReceptionQualityFor(0x4444), 48);
 }
 
 /**
- * @brief Test SetLinkQualityFor succeeds when node is present
+ * @brief Test GetReceptionQualityFor returns 0 for missing node
  */
-TEST_F(RoutingTableMessageTest, SetLinkQualityForExistingNodeSucceeds) {
+TEST_F(RoutingTableMessageTest, GetReceptionQualityForMissingNodeReturnsZero) {
     ASSERT_TRUE(msg_ptr != nullptr);
 
-    // 0x1111 is in the entries list
-    Result result = msg_ptr->SetLinkQualityFor(0x1111, 200);
-    EXPECT_TRUE(result.IsSuccess());
-}
-
-// =============================================================================
-// GetLinkQualityFor — hop_count filtering (unidirectional link detection)
-// =============================================================================
-
-/**
- * @brief Test GetLinkQualityFor returns quality for direct neighbor (hop_count==1)
- */
-TEST_F(RoutingTableMessageTest, GetLinkQualityForDirectNeighborReturnsQuality) {
-    ASSERT_TRUE(msg_ptr != nullptr);
-
-    // 0x1111 has hop_count=1 in fixture entries
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x1111), 90);
-}
-
-/**
- * @brief Test GetLinkQualityFor returns 0 for multi-hop entries
- *
- * Multi-hop entries are filtered out to enable unidirectional link detection.
- * The peer knowing us via multi-hop does not prove they can hear us directly.
- */
-TEST_F(RoutingTableMessageTest, GetLinkQualityForMultiHopReturnsZero) {
-    ASSERT_TRUE(msg_ptr != nullptr);
-
-    // 0x2222 has hop_count=2, 0x3333 has hop_count=3
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x2222), 0);
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0x3333), 0);
-}
-
-/**
- * @brief Test GetLinkQualityFor returns 0 for missing node
- */
-TEST_F(RoutingTableMessageTest, GetLinkQualityForMissingNodeReturnsZero) {
-    ASSERT_TRUE(msg_ptr != nullptr);
-
-    EXPECT_EQ(msg_ptr->GetLinkQualityFor(0xDEAD), 0);
+    EXPECT_EQ(msg_ptr->GetReceptionQualityFor(0xDEAD), 0);
 }
 
 }  // namespace test

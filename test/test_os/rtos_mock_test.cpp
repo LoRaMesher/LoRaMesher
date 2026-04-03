@@ -1646,9 +1646,10 @@ TEST_F(RTOSMockTest, SemaphoreTest) {
  */
 TEST_F(RTOSMockTest, GetCurrentTaskNodeAddressMainThread) {
     // Called from the main test thread (not a registered task)
-    std::string addr = rtosInstance->GetCurrentTaskNodeAddress();
+    const char* addr = rtosInstance->GetCurrentTaskNodeAddress();
     // No assertion on value — may be empty on non-task thread
     // The important thing is that it doesn't crash
+    (void)addr;
     SUCCEED();
 }
 
@@ -1675,7 +1676,7 @@ TEST_F(RTOSMockTest, GetCurrentTaskNodeAddressFromTask) {
         auto* mtx = std::get<3>(*state);
 
         // Read node address from within the task context
-        std::string addr = GetRTOS().GetCurrentTaskNodeAddress();
+        const char* addr = GetRTOS().GetCurrentTaskNodeAddress();
 
         {
             std::lock_guard<std::mutex> lk(*mtx);
@@ -2060,7 +2061,7 @@ TEST_F(RTOSMockTest, GetCurrentTaskNodeAddressWithAddressSet) {
         GetRTOS().SetCurrentTaskNodeAddress("0xABCD");
 
         // Read it back
-        std::string addr = GetRTOS().GetCurrentTaskNodeAddress();
+        const char* addr = GetRTOS().GetCurrentTaskNodeAddress();
 
         {
             std::lock_guard<std::mutex> lk(*p->mtx);

@@ -198,6 +198,8 @@ class HardwareManager : public IHardwareManager {
     // State
     bool is_initialized_ = false;  ///< Whether hardware is initialized
     bool is_running_ = false;      ///< Whether hardware is running
+    AddressType local_address_{
+        0};  ///< Pending address for radio initialization
 
     // Callback
     EventCallback event_callback_ = nullptr;  ///< Callback for radio events

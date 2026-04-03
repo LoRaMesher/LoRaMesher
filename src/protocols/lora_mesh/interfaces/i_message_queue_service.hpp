@@ -67,6 +67,15 @@ class IMessageQueueService {
     virtual void ClearAllQueues() = 0;
 
     /**
+     * @brief Clear a specific message queue
+     *
+     * @param type Slot type whose queue should be cleared
+     */
+    virtual void ClearQueue(
+        loramesher::types::protocols::lora_mesh::SlotAllocation::SlotType
+            type) = 0;
+
+    /**
      * @brief Returns true if any queue has messages of type
      * @param type Type of message to check
      * @return bool True if any queue has messages of the specified type

@@ -186,30 +186,30 @@ class IRadio {
     /**
      * @brief Get the current RSSI value
      * 
-     * @return int8_t RSSI in dBm
+     * @return float RSSI in dBm
      */
-    virtual int8_t getRSSI() = 0;
+    virtual float getRSSI() = 0;
 
     /**
      * @brief Get the current SNR value
-     * 
-     * @return int8_t SNR in dB
+     *
+     * @return float SNR in dB
      */
-    virtual int8_t getSNR() = 0;
+    virtual float getSNR() = 0;
 
     /**
      * @brief Get the last packet's RSSI
-     * 
-     * @return int8_t Last packet RSSI in dBm
+     *
+     * @return float Last packet RSSI in dBm
      */
-    virtual int8_t getLastPacketRSSI() = 0;
+    virtual float getLastPacketRSSI() = 0;
 
     /**
      * @brief Get the last packet's SNR
-     * 
-     * @return int8_t Last packet SNR in dB
+     *
+     * @return float Last packet SNR in dB
      */
-    virtual int8_t getLastPacketSNR() = 0;
+    virtual float getLastPacketSNR() = 0;
 
     /**
      * @brief Check if the radio is currently transmitting

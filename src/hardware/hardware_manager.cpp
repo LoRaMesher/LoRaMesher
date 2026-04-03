@@ -205,6 +205,9 @@ Result HardwareManager::InitializeRadioModule() {
                       "Failed to create radio module");
     }
 
+    if (local_address_ != 0)
+        radio_->SetLocalAddress(local_address_);
+
     Result result = radio_->Configure(radio_config_);
     if (!result) {
         return result;
@@ -214,6 +217,7 @@ Result HardwareManager::InitializeRadioModule() {
 }
 
 void HardwareManager::SetLocalAddress(AddressType address) {
+    local_address_ = address;
     if (radio_)
         radio_->SetLocalAddress(address);
 }

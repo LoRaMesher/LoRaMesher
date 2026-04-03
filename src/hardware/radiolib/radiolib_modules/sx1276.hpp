@@ -185,15 +185,15 @@ class LoraMesherSX1276 : public IRadio {
 
     /**
      * @brief Get the current RSSI value
-     * @return int8_t Current RSSI in dBm
+     * @return float Current RSSI in dBm
      */
-    int8_t getRSSI() override;
+    float getRSSI() override;
 
     /**
      * @brief Get the current SNR value
-     * @return int8_t Current SNR in dB
+     * @return float Current SNR in dB
      */
-    int8_t getSNR() override;
+    float getSNR() override;
 
     /**
      * @brief Get the length of the received packet
@@ -247,20 +247,20 @@ class LoraMesherSX1276 : public IRadio {
 
     /**
      * @brief Get the RSSI (Received Signal Strength Indicator) of the last received packet
-     * @return int8_t Never returns - throws exception
+     * @return float Never returns - throws exception
      * @throws std::runtime_error This operation is not supported
      */
-    int8_t getLastPacketRSSI() override {
+    float getLastPacketRSSI() override {
         throw std::runtime_error(
             "getLastPacketRSSI not supported in LoraMesherSX1276");
     }
 
     /**
      * @brief Get the SNR (Signal-to-Noise Ratio) of the last received packet
-     * @return int8_t Never returns - throws exception  
+     * @return float Never returns - throws exception
      * @throws std::runtime_error This operation is not supported
      */
-    int8_t getLastPacketSNR() override {
+    float getLastPacketSNR() override {
         throw std::runtime_error(
             "getLastPacketSNR not supported in LoraMesherSX1276");
     }

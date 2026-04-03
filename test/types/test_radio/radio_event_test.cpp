@@ -24,14 +24,14 @@ class RadioEventTest : public ::testing::Test {
 };
 
 TEST_F(RadioEventTest, CreateReceivedEventTest) {
-    const int8_t test_rssi = -70;
-    const int8_t test_snr = 5;
+    const float test_rssi = -70.5f;
+    const float test_snr = 5.25f;
 
     auto event = CreateReceivedEvent(std::move(message), test_rssi, test_snr);
 
     EXPECT_EQ(event->getType(), RadioEventType::kReceived);
-    EXPECT_EQ(event->getRssi(), test_rssi);
-    EXPECT_EQ(event->getSnr(), test_snr);
+    EXPECT_FLOAT_EQ(event->getRssi(), test_rssi);
+    EXPECT_FLOAT_EQ(event->getSnr(), test_snr);
     EXPECT_TRUE(event->HasMessage());
 }
 

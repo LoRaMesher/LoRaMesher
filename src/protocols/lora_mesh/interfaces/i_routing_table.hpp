@@ -177,6 +177,40 @@ class IRoutingTable {
      */
     virtual uint8_t GetLinkQuality(AddressType node_address) const = 0;
 
+    /**
+     * @brief Get direct physical link quality from link_stats
+     *
+     * Returns CalculateQuality() from the node's LinkQualityStats,
+     * reflecting the actual measured direct link (EWMA + remote quality),
+     * not the route quality. Returns 0 if no direct reception data.
+     *
+     * @param node_address Target node address
+     * @return uint8_t Direct link quality (0-255), or 0 if unknown
+     */
+    virtual uint8_t GetDirectLinkQuality(AddressType node_address) const = 0;
+
+    /**
+     * @brief Check if a hop-1 neighbor has confirmed unidirectional link
+     *
+     * Returns true when we have received routing messages from the neighbor
+     * but their routing table never lists us — meaning the link is
+     * asymmetric (we hear them but they cannot hear us).
+     *
+     * @param node_address Neighbor address to check
+     * @return true if confirmed unidirectional (they cannot hear us)
+     */
+    virtual bool HasUnidirectionalRisk(AddressType node_address) const = 0;
+
+    /**
+     * @brief Degrade route quality for a destination
+     *
+     * Sets quality to the given value if current quality is higher.
+     * Used by FindNextHop to proactively degrade routes through
+     * unreachable next_hops so the entries loop can replace them.
+     */
+    virtual void DegradeRouteQuality(AddressType destination,
+                                     uint8_t quality) = 0;
+
     // Configuration and callbacks
 
     /**

@@ -74,14 +74,11 @@ class LoraMesherArduinoHal : public IHal {
             constexpr int8_t kDefaultSck = LORA_SCK;
             constexpr int8_t kDefaultMiso = LORA_MISO;
             constexpr int8_t kDefaultMosi = LORA_MOSI;
-#elif defined(SCK)
-            constexpr int8_t kDefaultSck = SCK;
-            constexpr int8_t kDefaultMiso = MISO;
-            constexpr int8_t kDefaultMosi = MOSI;
 #else
-            constexpr int8_t kDefaultSck = -1;
-            constexpr int8_t kDefaultMiso = -1;
-            constexpr int8_t kDefaultMosi = -1;
+            // SCK/MISO/MOSI may be constexpr (ESP32 core v3+) or macros (v2)
+            constexpr int8_t kDefaultSck = static_cast<int8_t>(SCK);
+            constexpr int8_t kDefaultMiso = static_cast<int8_t>(MISO);
+            constexpr int8_t kDefaultMosi = static_cast<int8_t>(MOSI);
 #endif
             int8_t sck =
                 pin_config_.getSck() != -1 ? pin_config_.getSck() : kDefaultSck;

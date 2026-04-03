@@ -103,6 +103,9 @@ class ISuperframeService {
     virtual uint32_t GetSuperframeDuration() const = 0;
 
     static constexpr uint32_t DEFAULT_DISCOVERY_SLOT_COUNT = 10;
+    /// Fallback slot duration used during discovery before radio ToA is known.
+    /// The NM auto-calculates the operational value in CreateNetwork() via
+    /// CalculateMinSlotDuration(): ToA(max_packet) + guard_time + margin.
     static constexpr uint32_t DEFAULT_SLOT_DURATION_MS = 1000;
     static constexpr uint32_t DEFAULT_DISCOVERY_TIMEOUT_MS =
         DEFAULT_SLOT_DURATION_MS * DEFAULT_DISCOVERY_SLOT_COUNT * 3;

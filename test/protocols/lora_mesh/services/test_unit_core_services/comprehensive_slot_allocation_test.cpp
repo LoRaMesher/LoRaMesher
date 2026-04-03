@@ -51,6 +51,8 @@ class MockMessageQueueService : public protocols::IMessageQueueService {
 
     void ClearAllQueues() override {}
 
+    void ClearQueue(SlotAllocation::SlotType /* type */) override {}
+
     bool HasMessage(MessageType /* type */) const override { return false; }
 
     bool RemoveMessage(MessageType /* type */) override { return false; }
