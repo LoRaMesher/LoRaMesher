@@ -329,5 +329,43 @@ TEST_F(JoinRequestMessageTest, GetHeaderTest) {
     EXPECT_EQ(header.GetSponsorAddress(), 0);  // Default sponsor address
 }
 
+TEST_F(JoinRequestMessageTest, CreateFromBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::JOIN_REQUEST);
+
+    auto result = JoinRequestMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetDestination(), dest);
+    EXPECT_EQ(result->GetSource(), src);
+    EXPECT_EQ(result->GetBatteryLevel(), battery_level);
+    EXPECT_EQ(result->GetRequestedSlots(), requested_slots);
+    EXPECT_EQ(result->GetAdditionalInfo(), additional_info);
+}
+
+TEST_F(JoinRequestMessageTest, CreateFromBaseMessageWithSponsor) {
+    const AddressType sponsor = 0xCAFE;
+    auto opt_msg =
+        JoinRequestMessage::Create(dest, src, battery_level, requested_slots,
+                                   additional_info, 0, sponsor, 2);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    BaseMessage base = opt_msg->ToBaseMessage();
+    auto result = JoinRequestMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetHeader().GetSponsorAddress(), sponsor);
+    EXPECT_EQ(result->GetHopCount(), 2);
+}
+
+TEST_F(JoinRequestMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
+    std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
+    BaseMessage wrong(dest, src, MessageType::DATA,
+                      std::span<const uint8_t>(payload));
+
+    auto result = JoinRequestMessage::CreateFromBaseMessage(wrong);
+    EXPECT_FALSE(result.has_value());
+}
+
 }  // namespace test
 }  // namespace loramesher

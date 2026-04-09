@@ -289,7 +289,8 @@ class IRoutingTable {
         AddressType source_address, std::span<const RoutingTableEntry> entries,
         uint32_t reception_timestamp, uint8_t local_link_quality,
         uint8_t max_hops, uint8_t source_capabilities = 0,
-        uint8_t source_allocated_data_slots = 0) = 0;
+        uint8_t source_allocated_data_slots = 0, float rssi = 0.0f,
+        float snr = 0.0f) = 0;
 };
 
 /**

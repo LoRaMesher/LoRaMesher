@@ -271,6 +271,13 @@ uint32_t LoraMesherSX1262::getTimeOnAir(uint8_t length) {
         return 0;
     }
 
+    // Guard against RadioLib overflow: no LoRa packet takes >10 seconds
+    if (time_on_air > 10000) {
+        LOG_ERROR("RadioLib ToA overflow: %lu ms for %u bytes",
+                  static_cast<unsigned long>(time_on_air), length);
+        return 0;
+    }
+
     return static_cast<uint32_t>(time_on_air);
 }
 

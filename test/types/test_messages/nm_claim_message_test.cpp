@@ -137,5 +137,31 @@ TEST_F(NMClaimMessageTest, MultipleSerializeDeserializeCycles) {
     }
 }
 
+TEST_F(NMClaimMessageTest, CreateFromBaseMessageSucceeds) {
+    auto msg = NMClaimMessage::Create(kSrc, kPriority, kBattery, kNodeCount,
+                                      kNetworkId);
+    ASSERT_TRUE(msg.has_value());
+
+    BaseMessage base = msg->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::NM_CLAIM);
+
+    auto result = NMClaimMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetSource(), kSrc);
+    EXPECT_EQ(result->GetPriority(), kPriority);
+    EXPECT_EQ(result->GetBatteryLevel(), kBattery);
+    EXPECT_EQ(result->GetNetworkNodeCount(), kNodeCount);
+    EXPECT_EQ(result->GetNetworkId(), kNetworkId);
+}
+
+TEST_F(NMClaimMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
+    std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
+    BaseMessage wrong(0xFFFF, kSrc, MessageType::DATA,
+                      std::span<const uint8_t>(payload));
+
+    auto result = NMClaimMessage::CreateFromBaseMessage(wrong);
+    EXPECT_FALSE(result.has_value());
+}
+
 }  // namespace test
 }  // namespace loramesher

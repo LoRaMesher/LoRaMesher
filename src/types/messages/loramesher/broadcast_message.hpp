@@ -62,6 +62,15 @@ class BroadcastMessage : public IConvertibleToBaseMessage {
         const std::vector<uint8_t>& data);
 
     /**
+     * @brief Creates a broadcast message directly from a BaseMessage
+     *
+     * @param message The base message to convert
+     * @return std::optional<BroadcastMessage> Deserialized message if successful
+     */
+    static std::optional<BroadcastMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
+
+    /**
      * @brief Creates a forwarded copy with TTL decremented by 1
      *
      * @param original The original broadcast message to forward

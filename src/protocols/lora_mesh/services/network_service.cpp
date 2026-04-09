@@ -170,8 +170,9 @@ size_t NetworkService::RemoveInactiveNodes() {
     return nodes_removed;
 }
 
-Result NetworkService::ProcessRoutingTableMessage(
-    const BaseMessage& message, uint32_t reception_timestamp) {
+Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
+                                                  uint32_t reception_timestamp,
+                                                  float rssi, float snr) {
     // Deserialize routing table message
     auto routing_msg_opt = RoutingTableMessage::CreateFromBaseMessage(message);
     if (!routing_msg_opt.has_value()) {
@@ -227,7 +228,8 @@ Result NetworkService::ProcessRoutingTableMessage(
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
         source, entries, reception_timestamp, local_link_quality,
-        config_.max_hops, source_capabilities, source_allocated_data_slots);
+        config_.max_hops, source_capabilities, source_allocated_data_slots,
+        rssi, snr);
 
     routing_changed |= routes_updated;
 
@@ -501,7 +503,8 @@ bool NetworkService::IsNetworkCreator() const {
 }
 
 Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
-                                              uint32_t reception_timestamp) {
+                                              uint32_t reception_timestamp,
+                                              float rssi, float snr) {
     LOG_INFO(
         "*** RECEIVED MESSAGE: type 0x%02X from 0x%04X to 0x%04X (my state: "
         "%d, "
@@ -513,7 +516,8 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
     // Route message to appropriate handler based on type
     switch (message.GetType()) {
         case MessageType::ROUTE_TABLE:
-            return ProcessRoutingTableMessage(message, reception_timestamp);
+            return ProcessRoutingTableMessage(message, reception_timestamp,
+                                              rssi, snr);
 
         case MessageType::JOIN_REQUEST:
             return ProcessJoinRequest(message, reception_timestamp);
@@ -1145,9 +1149,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         message.GetSource(), static_cast<int>(state_), network_manager_);
     LOG_DEBUG("Processing JOIN_REQUEST from 0x%04X", message.GetSource());
 
-    auto join_request_opt =
-        JoinRequestMessage::CreateFromSerialized(*message.Serialize());
-
+    auto join_request_opt = JoinRequestMessage::CreateFromBaseMessage(message);
     if (!join_request_opt) {
         return Result(LoraMesherErrorCode::kSerializationError,
                       "Failed to deserialize join request");
@@ -1353,7 +1355,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
                                            uint32_t /* reception_timestamp */) {
     // Deserialize to get sponsor information for forwarding logic
     auto join_response_opt =
-        JoinResponseMessage::CreateFromSerialized(*message.Serialize());
+        JoinResponseMessage::CreateFromBaseMessage(message);
     if (!join_response_opt) {
         return Result(
             LoraMesherErrorCode::kSerializationError,
@@ -1543,7 +1545,7 @@ Result NetworkService::SendJoinResponse(AddressType dest,
 Result NetworkService::ProcessDataMessage(const BaseMessage& message,
                                           uint32_t /* reception_timestamp */) {
     // Deserialize the data message
-    auto data_msg_opt = DataMessage::CreateFromSerialized(*message.Serialize());
+    auto data_msg_opt = DataMessage::CreateFromBaseMessage(message);
     if (!data_msg_opt) {
         LOG_ERROR("Failed to deserialize DATA message");
         return Result(LoraMesherErrorCode::kSerializationError,
@@ -1720,8 +1722,7 @@ Result NetworkService::SendData(AddressType destination,
 
 Result NetworkService::ProcessBroadcastMessage(
     const BaseMessage& message, uint32_t /* reception_timestamp */) {
-    auto bcast_opt =
-        BroadcastMessage::CreateFromSerialized(*message.Serialize());
+    auto bcast_opt = BroadcastMessage::CreateFromBaseMessage(message);
     if (!bcast_opt) {
         LOG_ERROR("Failed to deserialize broadcast message");
         return Result(LoraMesherErrorCode::kSerializationError,
@@ -1834,9 +1835,7 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
         return Result::Success();
     }
 
-    auto slot_request_opt =
-        SlotRequestMessage::CreateFromSerialized(*message.Serialize());
-
+    auto slot_request_opt = SlotRequestMessage::CreateFromBaseMessage(message);
     if (!slot_request_opt) {
         return Result(LoraMesherErrorCode::kSerializationError,
                       "Failed to deserialize slot request");
@@ -1953,7 +1952,8 @@ Result NetworkService::UpdateSlotTable() {
                                   });
 
     if (!self_found) {
-        NetworkNodeRoute self_node(node_address_, 0, 0, false, 0,
+        NetworkNodeRoute self_node(node_address_, 0, 0, false,
+                                   local_capabilities_,
                                    local_allocated_data_slots_, 0);
         self_node.is_active = true;
         self_node.is_network_manager = (network_manager_ == node_address_);
@@ -3674,7 +3674,7 @@ void NetworkService::HandleForeignBeacon(const SyncBeaconMessage& beacon) {
 }
 
 Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
-    auto claim_opt = NMClaimMessage::CreateFromSerialized(*message.Serialize());
+    auto claim_opt = NMClaimMessage::CreateFromBaseMessage(message);
     if (!claim_opt) {
         LOG_ERROR("Failed to deserialize NM_CLAIM message");
         return Result::Error(LoraMesherErrorCode::kSerializationError);

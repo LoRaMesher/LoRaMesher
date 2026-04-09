@@ -80,6 +80,44 @@ std::optional<DataMessage> DataMessage::CreateFromSerialized(
     return DataMessage(*header, payload);
 }
 
+std::optional<DataMessage> DataMessage::CreateFromBaseMessage(
+    const BaseMessage& message) {
+    if (message.GetType() != MessageType::DATA) {
+        LOG_ERROR("Invalid message type for DataMessage: %d",
+                  static_cast<int>(message.GetType()));
+        return std::nullopt;
+    }
+
+    auto payload = message.GetPayload();
+    if (payload.size() < DataHeader::DataFieldsSize()) {
+        LOG_ERROR("Payload too small for data fields: %zu < %zu",
+                  payload.size(), DataHeader::DataFieldsSize());
+        return std::nullopt;
+    }
+
+    utils::ByteDeserializer deserializer(payload);
+
+    auto next_hop = deserializer.ReadUint16();
+    auto ttl = deserializer.ReadUint8();
+    auto seq_num = deserializer.ReadUint8();
+
+    if (!next_hop || !ttl || !seq_num) {
+        LOG_ERROR("Failed to read data message payload fields");
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> user_payload;
+    size_t fields_size = DataHeader::DataFieldsSize();
+    if (payload.size() > fields_size) {
+        user_payload.assign(payload.begin() + fields_size, payload.end());
+    }
+
+    DataHeader header(message.GetDestination(), message.GetSource(), *next_hop,
+                      user_payload.size(), *ttl, *seq_num);
+
+    return DataMessage(header, user_payload);
+}
+
 AddressType DataMessage::GetDestination() const {
     return header_.GetDestination();
 }

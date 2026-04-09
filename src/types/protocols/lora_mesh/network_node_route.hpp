@@ -41,6 +41,8 @@ class NetworkNodeRoute {
         uint8_t inactive_probe_count =
             0;                        ///< Superframes probed since inactivation
         uint8_t ewma_alpha = 77;      ///< EWMA alpha fixed-point (0.30 * 256)
+        float last_rssi = 0.0f;       ///< Last RSSI from direct reception (dBm)
+        float last_snr = 0.0f;        ///< Last SNR from direct reception (dB)
         SlidingWindowPDR<16> window;  ///< Sliding window PDR tracker
 
         /**
@@ -67,8 +69,11 @@ class NetworkNodeRoute {
          * @brief Register received message and boost EWMA quality
          *
          * @param current_time Current timestamp
+         * @param rssi RSSI of received packet (dBm), 0 = unknown
+         * @param snr SNR of received packet (dB), 0 = unknown
          */
-        void ReceivedMessage(uint32_t current_time);
+        void ReceivedMessage(uint32_t current_time, float rssi = 0.0f,
+                             float snr = 0.0f);
 
         /**
          * @brief Update remote link quality
@@ -295,8 +300,11 @@ class NetworkNodeRoute {
      *
      * @param remote_quality Link quality reported by remote
      * @param current_time Current timestamp
+     * @param rssi RSSI of received packet (dBm), 0 = unknown
+     * @param snr SNR of received packet (dB), 0 = unknown
      */
-    void ReceivedRoutingMessage(uint8_t remote_quality, uint32_t current_time);
+    void ReceivedRoutingMessage(uint8_t remote_quality, uint32_t current_time,
+                                float rssi = 0.0f, float snr = 0.0f);
 
     /**
      * @brief Get current link quality

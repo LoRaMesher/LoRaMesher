@@ -21,12 +21,15 @@ struct RouteEntry {
     AddressType next_hop;     ///< Next hop address for reaching destination
     uint8_t hop_count;        ///< Number of hops to destination
     uint8_t link_quality;     ///< Link quality metric (0-255)
-    uint32_t last_seen_ms;    ///< Timestamp when route was last updated
+    uint32_t last_seen_ms;    ///< Milliseconds since route was last updated
     bool is_valid;            ///< Whether route is currently valid
     uint8_t capabilities =
         0;  ///< Node capabilities bitmap (NodeCapabilities flags)
     bool is_network_manager =
         false;  ///< Whether this node is the network manager
+    float last_rssi =
+        0.0f;  ///< Last RSSI for direct neighbors (dBm), 0 = unknown
+    float last_snr = 0.0f;  ///< Last SNR for direct neighbors (dB), 0 = unknown
 };
 
 /**

@@ -158,6 +158,9 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                 NotifyRouteUpdate(true, destination, source, hop_count);
                 LogRouteEntry(*node_it);
             }
+        } else if (node_it->is_active) {
+            // Route cost unchanged but node is still reachable — refresh timestamp
+            node_it->last_seen = current_time;
         }
 
         // Capability propagation: update even when route cost hasn't
@@ -635,7 +638,8 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
 bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     AddressType source_address, std::span<const RoutingTableEntry> entries,
     uint32_t reception_timestamp, uint8_t local_link_quality, uint8_t max_hops,
-    uint8_t source_capabilities, uint8_t source_allocated_data_slots) {
+    uint8_t source_capabilities, uint8_t source_allocated_data_slots,
+    float rssi, float snr) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     update_count_++;
 
@@ -651,7 +655,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         bool was_inactive = !source_node_it->is_active;
 
         // Update direct link statistics (always tracks the physical link)
-        source_node_it->link_stats.ReceivedMessage(reception_timestamp);
+        source_node_it->link_stats.ReceivedMessage(reception_timestamp, rssi,
+                                                   snr);
         source_node_it->link_stats.UpdateRemoteQuality(local_link_quality);
         source_node_it->last_seen = reception_timestamp;
         uint8_t direct_quality = source_node_it->link_stats.CalculateQuality();
@@ -754,7 +759,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
 
             // Register the received message for link quality tracking
             new_node.ReceivedRoutingMessage(local_link_quality,
-                                            reception_timestamp);
+                                            reception_timestamp, rssi, snr);
 
             nodes_.push_back(new_node);
             routing_changed = true;

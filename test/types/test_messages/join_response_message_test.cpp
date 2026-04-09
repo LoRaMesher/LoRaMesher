@@ -322,5 +322,29 @@ TEST_F(JoinResponseMessageTest, GetHeaderTest) {
     EXPECT_EQ(header.GetTargetAddress(), 0);  // Default target address
 }
 
+TEST_F(JoinResponseMessageTest, CreateFromBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::JOIN_RESPONSE);
+
+    auto result = JoinResponseMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetDestination(), dest);
+    EXPECT_EQ(result->GetSource(), src);
+    EXPECT_EQ(result->GetNetworkId(), network_id);
+    EXPECT_EQ(result->GetAllocatedSlots(), allocated_slots);
+    EXPECT_EQ(result->GetStatus(), status);
+}
+
+TEST_F(JoinResponseMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
+    std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
+    BaseMessage wrong(dest, src, MessageType::DATA,
+                      std::span<const uint8_t>(payload));
+
+    auto result = JoinResponseMessage::CreateFromBaseMessage(wrong);
+    EXPECT_FALSE(result.has_value());
+}
+
 }  // namespace test
 }  // namespace loramesher

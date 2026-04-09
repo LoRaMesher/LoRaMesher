@@ -47,6 +47,16 @@ class DataMessage : public IConvertibleToBaseMessage {
         const std::vector<uint8_t>& data);
 
     /**
+     * @brief Creates a data message directly from a BaseMessage
+     *
+     * @param message The base message to convert
+     * @return std::optional<DataMessage> Deserialized message if successful,
+     *         std::nullopt otherwise
+     */
+    static std::optional<DataMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
+
+    /**
      * @brief Gets the final destination address
      *
      * @return AddressType Final destination address

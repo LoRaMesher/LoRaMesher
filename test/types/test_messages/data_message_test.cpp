@@ -366,5 +366,39 @@ TEST_F(DataMessageTest, CreateForwardedReturnsNulloptAtTTLZero) {
     EXPECT_FALSE(forwarded.has_value());
 }
 
+TEST_F(DataMessageTest, CreateFromBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::DATA);
+
+    auto result = DataMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetDestination(), dest);
+    EXPECT_EQ(result->GetSource(), src);
+    EXPECT_EQ(result->GetNextHop(), next_hop);
+    EXPECT_EQ(result->GetPayload(), payload);
+}
+
+TEST_F(DataMessageTest, CreateFromBaseMessageWithTTLAndSeqNum) {
+    auto opt_msg = DataMessage::Create(dest, src, next_hop, payload, 5, 42);
+    ASSERT_TRUE(opt_msg.has_value());
+
+    BaseMessage base = opt_msg->ToBaseMessage();
+    auto result = DataMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetTTL(), 5);
+    EXPECT_EQ(result->GetSeqNum(), 42);
+}
+
+TEST_F(DataMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
+    std::array<uint8_t, 4> payload_arr{0x01, 0x02, 0x03, 0x04};
+    BaseMessage wrong(dest, src, MessageType::JOIN_REQUEST,
+                      std::span<const uint8_t>(payload_arr));
+
+    auto result = DataMessage::CreateFromBaseMessage(wrong);
+    EXPECT_FALSE(result.has_value());
+}
+
 }  // namespace test
 }  // namespace loramesher

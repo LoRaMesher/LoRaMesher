@@ -71,6 +71,49 @@ std::optional<JoinRequestMessage> JoinRequestMessage::CreateFromSerialized(
     return JoinRequestMessage(*header, additional_info);
 }
 
+std::optional<JoinRequestMessage> JoinRequestMessage::CreateFromBaseMessage(
+    const BaseMessage& message) {
+    if (message.GetType() != MessageType::JOIN_REQUEST) {
+        LOG_ERROR("Invalid message type for JoinRequestMessage: %d",
+                  static_cast<int>(message.GetType()));
+        return std::nullopt;
+    }
+
+    auto payload = message.GetPayload();
+    if (payload.size() < JoinRequestHeader::JoinRequestFieldsSize()) {
+        LOG_ERROR("Payload too small for join request fields: %zu < %zu",
+                  payload.size(), JoinRequestHeader::JoinRequestFieldsSize());
+        return std::nullopt;
+    }
+
+    utils::ByteDeserializer deserializer(payload);
+
+    auto battery_level = deserializer.ReadUint8();
+    auto requested_slots = deserializer.ReadUint8();
+    auto next_hop = deserializer.ReadUint16();
+    auto sponsor_address = deserializer.ReadUint16();
+    auto hop_count = deserializer.ReadUint8();
+
+    if (!battery_level || !requested_slots || !next_hop || !sponsor_address ||
+        !hop_count) {
+        LOG_ERROR("Failed to read join request payload fields");
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> additional_info;
+    size_t fields_size = JoinRequestHeader::JoinRequestFieldsSize();
+    if (payload.size() > fields_size) {
+        additional_info.assign(payload.begin() + fields_size, payload.end());
+    }
+
+    JoinRequestHeader header(message.GetDestination(), message.GetSource(),
+                             *battery_level, *requested_slots, *next_hop,
+                             additional_info.size(), *sponsor_address,
+                             *hop_count);
+
+    return JoinRequestMessage(header, additional_info);
+}
+
 uint8_t JoinRequestMessage::GetBatteryLevel() const {
     return header_.GetBatteryLevel();
 }

@@ -245,6 +245,7 @@ std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
     }
 
     const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
+    uint32_t now = GetRTOS().getTickCount();
 
     std::optional<RouteEntry> best;
     uint16_t best_cost = UINT16_MAX;
@@ -268,7 +269,7 @@ std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
             entry.next_hop = node.next_hop;
             entry.hop_count = node.routing_entry.hop_count;
             entry.link_quality = node.GetLinkQuality();
-            entry.last_seen_ms = node.last_seen;
+            entry.last_seen_ms = now - node.last_seen;
             entry.is_valid = node.is_active;
             entry.capabilities = node.routing_entry.capabilities;
             entry.is_network_manager = node.is_network_manager;
@@ -321,6 +322,7 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
     }
 
     const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
+    uint32_t now = GetRTOS().getTickCount();
     routes.reserve(network_nodes.size());
 
     for (const auto& node : network_nodes) {
@@ -329,10 +331,12 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         entry.next_hop = node.next_hop;
         entry.hop_count = node.routing_entry.hop_count;
         entry.link_quality = node.GetLinkQuality();
-        entry.last_seen_ms = node.last_seen;
+        entry.last_seen_ms = now - node.last_seen;
         entry.is_valid = node.is_active;
         entry.capabilities = node.routing_entry.capabilities;
         entry.is_network_manager = node.is_network_manager;
+        entry.last_rssi = node.link_stats.last_rssi;
+        entry.last_snr = node.link_stats.last_snr;
         routes.push_back(entry);
     }
 

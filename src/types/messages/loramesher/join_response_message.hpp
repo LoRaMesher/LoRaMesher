@@ -54,6 +54,16 @@ class JoinResponseMessage : public IConvertibleToBaseMessage {
         const std::vector<uint8_t>& data);
 
     /**
+      * @brief Creates a join response message directly from a BaseMessage
+      *
+      * @param message The base message to convert
+      * @return std::optional<JoinResponseMessage> Deserialized message if successful,
+      *         std::nullopt otherwise
+      */
+    static std::optional<JoinResponseMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
+
+    /**
       * @brief Gets the network ID
       * 
       * @return uint16_t Network identifier

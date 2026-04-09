@@ -39,6 +39,25 @@ std::optional<SlotRequestMessage> SlotRequestMessage::CreateFromSerialized(
     return SlotRequestMessage(0, 0, requested_slots);
 }
 
+std::optional<SlotRequestMessage> SlotRequestMessage::CreateFromBaseMessage(
+    const BaseMessage& message) {
+    if (message.GetType() != MessageType::SLOT_REQUEST) {
+        LOG_ERROR("Invalid message type for SlotRequestMessage: %d",
+                  static_cast<int>(message.GetType()));
+        return std::nullopt;
+    }
+
+    auto payload = message.GetPayload();
+    if (payload.size() < 1) {
+        LOG_ERROR("Payload too small for slot request fields");
+        return std::nullopt;
+    }
+
+    uint8_t requested_slots = payload[0];
+    return SlotRequestMessage(message.GetDestination(), message.GetSource(),
+                              requested_slots);
+}
+
 size_t SlotRequestMessage::GetTotalSize() const {
     // Just the payload size (1 byte for requested slots)
     return 1;

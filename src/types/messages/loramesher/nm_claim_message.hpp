@@ -44,6 +44,40 @@ class NMClaimMessage : public IConvertibleToBaseMessage {
     /**
      * @brief Deserializes an NMClaimMessage from raw bytes
      */
+    /**
+     * @brief Creates an NMClaimMessage directly from a BaseMessage
+     */
+    static std::optional<NMClaimMessage> CreateFromBaseMessage(
+        const BaseMessage& message) {
+        if (message.GetType() != MessageType::NM_CLAIM) {
+            LOG_ERROR("Invalid message type for NMClaimMessage: %d",
+                      static_cast<int>(message.GetType()));
+            return std::nullopt;
+        }
+        auto payload = message.GetPayload();
+        if (payload.size() < NMClaimHeader::NMClaimFieldsSize()) {
+            LOG_ERROR("Payload too small for NM claim fields: %zu < %zu",
+                      payload.size(), NMClaimHeader::NMClaimFieldsSize());
+            return std::nullopt;
+        }
+        utils::ByteDeserializer deserializer(payload);
+        auto priority = deserializer.ReadUint8();
+        auto battery_level = deserializer.ReadUint8();
+        auto network_node_count = deserializer.ReadUint8();
+        auto network_id = deserializer.ReadUint16();
+        if (!priority || !battery_level || !network_node_count || !network_id) {
+            LOG_ERROR("Failed to read NM claim payload fields");
+            return std::nullopt;
+        }
+        NMClaimHeader header(message.GetDestination(), message.GetSource(),
+                             *priority, *battery_level, *network_node_count,
+                             *network_id);
+        return NMClaimMessage(header);
+    }
+
+    /**
+     * @brief Deserializes an NMClaimMessage from raw bytes
+     */
     static std::optional<NMClaimMessage> CreateFromSerialized(
         const std::vector<uint8_t>& data) {
         static const size_t kMinSize =

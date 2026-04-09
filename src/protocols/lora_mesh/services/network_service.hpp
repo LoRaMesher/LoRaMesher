@@ -174,7 +174,9 @@ class NetworkService : public INetworkService {
      * @return Result Success or error details
      */
     Result ProcessRoutingTableMessage(const BaseMessage& message,
-                                      uint32_t reception_timestamp) override;
+                                      uint32_t reception_timestamp,
+                                      float rssi = 0.0f,
+                                      float snr = 0.0f) override;
 
     /**
      * @brief Send a routing table update to the network
@@ -328,7 +330,8 @@ class NetworkService : public INetworkService {
      * @return Result Success or error details
      */
     Result ProcessReceivedMessage(const BaseMessage& message,
-                                  uint32_t reception_timestamp) override;
+                                  uint32_t reception_timestamp,
+                                  float rssi = 0.0f, float snr = 0.0f) override;
 
     // INetworkService superframe integration
 

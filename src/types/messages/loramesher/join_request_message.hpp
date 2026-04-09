@@ -53,6 +53,16 @@ class JoinRequestMessage : public IConvertibleToBaseMessage {
         const std::vector<uint8_t>& data);
 
     /**
+      * @brief Creates a join request message directly from a BaseMessage
+      *
+      * @param message The base message to convert
+      * @return std::optional<JoinRequestMessage> Deserialized message if successful,
+      *         std::nullopt otherwise
+      */
+    static std::optional<JoinRequestMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
+
+    /**
       * @brief Gets the battery level
       *
       * @return uint8_t Battery level (0-100%)

@@ -66,6 +66,51 @@ std::optional<JoinResponseMessage> JoinResponseMessage::CreateFromSerialized(
     return JoinResponseMessage(*header, superframe_info);
 }
 
+std::optional<JoinResponseMessage> JoinResponseMessage::CreateFromBaseMessage(
+    const BaseMessage& message) {
+    if (message.GetType() != MessageType::JOIN_RESPONSE) {
+        LOG_ERROR("Invalid message type for JoinResponseMessage: %d",
+                  static_cast<int>(message.GetType()));
+        return std::nullopt;
+    }
+
+    auto payload = message.GetPayload();
+    if (payload.size() < JoinResponseHeader::JoinResponseFieldsSize()) {
+        LOG_ERROR("Payload too small for join response fields: %zu < %zu",
+                  payload.size(), JoinResponseHeader::JoinResponseFieldsSize());
+        return std::nullopt;
+    }
+
+    utils::ByteDeserializer deserializer(payload);
+
+    auto network_id = deserializer.ReadUint16();
+    auto allocated_slots = deserializer.ReadUint8();
+    auto status = deserializer.ReadUint8();
+    auto next_hop = deserializer.ReadUint16();
+    auto target_address = deserializer.ReadUint16();
+    auto control_slot_index = deserializer.ReadUint8();
+
+    if (!network_id || !allocated_slots || !status || !next_hop ||
+        !target_address || !control_slot_index) {
+        LOG_ERROR("Failed to read join response payload fields");
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> superframe_info;
+    size_t fields_size = JoinResponseHeader::JoinResponseFieldsSize();
+    if (payload.size() > fields_size) {
+        superframe_info.assign(payload.begin() + fields_size, payload.end());
+    }
+
+    JoinResponseHeader header(
+        message.GetDestination(), message.GetSource(), *network_id,
+        *allocated_slots,
+        static_cast<JoinResponseHeader::ResponseStatus>(*status), *next_hop,
+        superframe_info.size(), *target_address, *control_slot_index);
+
+    return JoinResponseMessage(header, superframe_info);
+}
+
 uint16_t JoinResponseMessage::GetNetworkId() const {
     return header_.GetNetworkId();
 }

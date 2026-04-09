@@ -89,6 +89,41 @@ std::optional<BroadcastMessage> BroadcastMessage::CreateFromSerialized(
     return BroadcastMessage(base_header->GetSource(), *ttl, *seq_num, payload);
 }
 
+std::optional<BroadcastMessage> BroadcastMessage::CreateFromBaseMessage(
+    const BaseMessage& message) {
+    if (message.GetType() != MessageType::DATA_BROADCAST) {
+        LOG_ERROR("Invalid message type for BroadcastMessage: %d",
+                  static_cast<int>(message.GetType()));
+        return std::nullopt;
+    }
+
+    auto payload = message.GetPayload();
+    if (payload.size() < kBroadcastFieldsSize) {
+        LOG_ERROR("Payload too small for broadcast fields: %zu < %zu",
+                  payload.size(), kBroadcastFieldsSize);
+        return std::nullopt;
+    }
+
+    utils::ByteDeserializer deserializer(payload);
+
+    auto next_hop = deserializer.ReadUint16();  // consumed but not stored
+    auto ttl = deserializer.ReadUint8();
+    auto seq_num = deserializer.ReadUint8();
+
+    if (!next_hop || !ttl || !seq_num) {
+        LOG_ERROR("Failed to read broadcast payload fields");
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> user_payload;
+    if (payload.size() > kBroadcastFieldsSize) {
+        user_payload.assign(payload.begin() + kBroadcastFieldsSize,
+                            payload.end());
+    }
+
+    return BroadcastMessage(message.GetSource(), *ttl, *seq_num, user_payload);
+}
+
 std::optional<BroadcastMessage> BroadcastMessage::CreateForwarded(
     const BroadcastMessage& original) {
 

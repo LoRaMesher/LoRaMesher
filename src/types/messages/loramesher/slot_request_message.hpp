@@ -43,6 +43,16 @@ class SlotRequestMessage : public IConvertibleToBaseMessage {
         const std::vector<uint8_t>& data);
 
     /**
+      * @brief Creates a slot request message directly from a BaseMessage
+      *
+      * @param message The base message to convert
+      * @return std::optional<SlotRequestMessage> Deserialized message if successful,
+      *         std::nullopt otherwise
+      */
+    static std::optional<SlotRequestMessage> CreateFromBaseMessage(
+        const BaseMessage& message);
+
+    /**
       * @brief Gets the number of requested data slots
       * 
       * @return uint8_t Number of data slots requested

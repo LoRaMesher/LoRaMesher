@@ -143,5 +143,27 @@ TEST_F(SlotRequestMessageTest, GetTotalSizeTest) {
     EXPECT_EQ(total_size, 1);
 }
 
+TEST_F(SlotRequestMessageTest, CreateFromBaseMessageSucceeds) {
+    ASSERT_TRUE(msg_ptr != nullptr);
+
+    BaseMessage base = msg_ptr->ToBaseMessage();
+    ASSERT_EQ(base.GetType(), MessageType::SLOT_REQUEST);
+
+    auto result = SlotRequestMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->GetDestination(), dest);
+    EXPECT_EQ(result->GetSource(), src);
+    EXPECT_EQ(result->GetRequestedSlots(), requested_slots);
+}
+
+TEST_F(SlotRequestMessageTest, CreateFromBaseMessageWrongTypeReturnsNullopt) {
+    std::array<uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
+    BaseMessage wrong(dest, src, MessageType::DATA,
+                      std::span<const uint8_t>(payload));
+
+    auto result = SlotRequestMessage::CreateFromBaseMessage(wrong);
+    EXPECT_FALSE(result.has_value());
+}
+
 }  // namespace test
 }  // namespace loramesher
