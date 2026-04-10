@@ -574,7 +574,7 @@ BaseHeader (6 bytes):
 
 DataHeader Extension (4 bytes):
   next_hop        (2 bytes) - Immediate next hop for routing
-  ttl             (1 byte)  - Time-to-live (decremented at each hop, default = max_hops)
+  ttl             (1 byte)  - Time-to-live (decremented at each hop, default = 2 × max_hops)
   seq_num         (1 byte)  - Per-source sequence number for de-duplication
 
 User payload: up to 251 bytes (255 max payload - 4 extension bytes)
@@ -925,7 +925,7 @@ The EWMA formula uses fixed-point arithmetic:
 - On received message: `ewma = α × 255 + (1 − α) × ewma`
 - On missed message (deferred to next `ExpectMessage`): `ewma = (1 − α) × ewma`
 
-Once 8 superframes of data are available, a sliding window PDR (packet delivery ratio over the last 8 superframes) replaces the EWMA for quality calculation and `reception_quality` advertisement, providing a more stable metric on lossy links.
+Once 16 superframes of data are available, a sliding window PDR (packet delivery ratio over the last 16 superframes) replaces the EWMA for quality calculation and `reception_quality` advertisement, providing a more stable metric on lossy links.
 
 Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
 
@@ -1561,7 +1561,7 @@ Each slot is divided into `N` subslots. Each node is deterministically assigned 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `num_subslots` | 5 | Number of subslots per slot |
-| `guard_time_ms` | 10 ms | Guard time before each subslot TX window |
+| `guard_time_ms` | 50 ms | Guard time before each subslot TX window (configurable) |
 | `strategy` | Slot-dependent | `HOP_BASED`, `ADDRESS_MODULO`, or `RANDOM` |
 
 **Timing Formulas:**
@@ -1591,8 +1591,7 @@ Subslot 4: TX at [810, 1000) ms
 
 | Strategy | Formula | When Used |
 |----------|---------|-----------|
-| `HOP_BASED` | `subslot = hop_count % N` | Sync beacon TX — NM gets subslot 0, hop-1 nodes get subslot 1, etc. |
-| `ADDRESS_MODULO` | `subslot = node_address % N` | Fixed subslot based on address — deterministic but collision-prone with many nodes |
+| `ADDRESS_MODULO` | `subslot = node_address % N` | Sync beacon, control, and data slots — deterministic and consistent across the network |
 | `RANDOM` | `subslot = random() % N` | Discovery TX (default) — Slotted ALOHA approach; caller provides a hardware-generated random value via `RTOS::GetRandom()`, so each attempt picks a different subslot, resolving collisions probabilistically |
 
 **Radio State Behavior During Subslotted Slots:**
@@ -2546,7 +2545,7 @@ The base header structure used by all messages:
 | SYNC_BEACON | network_id(2), total_slots(1), slot_duration_ms(2), network_manager(2), hop_count(1), propagation_delay_ms(4), max_hops(1), node_count(1) | 20 bytes |
 | JOIN_REQUEST | battery_level(1), requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 13 bytes |
 | JOIN_RESPONSE | network_id(2), allocated_slots(1), status(1), next_hop(2), target_address(2), control_slot_index(1) | 15 bytes |
-| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(8 each) | 12+ bytes |
+| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(10 each) | 12+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | NM_CLAIM | election_priority(1), battery_level(1), network_node_count(1), network_id(2) | 11 bytes |
@@ -2559,12 +2558,12 @@ The base header structure used by all messages:
 
 | LoRa Configuration | Max Frame Size | Sync Beacon Size | Data Message Size |
 |-------------------|----------------|------------------|-------------------|
-| SF7, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF8, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF9, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF10, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF11, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
-| SF12, BW125, CR4/5 | 255 bytes | 19 bytes | 249 bytes |
+| SF7, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF8, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF9, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF10, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF11, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
+| SF12, BW125, CR4/5 | 255 bytes | 20 bytes | 249 bytes |
 
 *Note: BaseHeader overhead is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific). Maximum data payload is 251 bytes (255 max payload - 4 data header extension).*
 
@@ -2725,13 +2724,13 @@ Recovery flow when sync is lost:
 - **Total Static**: ~800 bytes
 
 #### 9.4.2 Dynamic Memory (per node)
-- **Routing Table**: ~50 routes × 16 bytes = 800 bytes
+- **Routing Table**: ~50 routes × ~24 bytes (in-memory with link stats) = ~1.2KB
 - **Message Queues**: ~10 messages × 255 bytes = 2.5KB
 - **Network State**: ~300 bytes
-- **Total Dynamic**: ~3.6KB
+- **Total Dynamic**: ~4KB (approximate, depends on configuration)
 
 #### 9.4.3 Total Memory Footprint
-- **ESP32 Usage**: ~4.4KB RAM + ~50KB Flash
+- **ESP32 Usage**: Fits comfortably within ESP32's 520KB SRAM
 - **Acceptable for**: ESP32 with >100KB RAM available
 
 ---
@@ -2929,7 +2928,7 @@ See Section 4.3 for details on EWMA quality calculation, multi-hop quality cappi
 Mitigations for the direct neighbor abandonment cascade (see Section 4.3):
 
 - **Weighted bottleneck quality**: Replaced `min(local, remote)` with `(min × 7 + avg × 3) / 10` for bidirectional links. At local=63, remote=238: result=89 (cost=736) preserves the direct link vs 3-hop (cost=882), while still penalizing true asymmetry
-- **Reduced unidirectional penalty**: Reverted from `/8` to `/4`. The `/4` penalty (cost=1040 at quality=255) already makes 2-hop routes (cost=655) strongly preferred
+- **Hard unidirectional penalty**: Quality is set to 1 (minimum) when a link is confirmed unidirectional, producing cost=65535 (maximum). This ensures any bidirectional alternative is always preferred
 
 **Explicit Route Poisoning**:
 ```cpp
@@ -2981,7 +2980,7 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 - **Sync Beacon Size**: 20 bytes total (6 base + 14 sync-specific)
 - **Maximum Data Payload**: 251 bytes (255 max payload - 4 data header extension)
 - **Route Timeout**: Default 180,000 ms (3 minutes)
-- **Memory Footprint**: ~4.4KB RAM usage suitable for ESP32 deployment
+- **Memory Footprint**: Designed for resource-constrained MCUs; fits within ESP32's available SRAM
 
 ### Implementation Notes
 This specification has been synchronized with the actual codebase as of version 1.7. Several features documented in earlier versions are marked as planned in Section 10:

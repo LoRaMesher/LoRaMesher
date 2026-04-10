@@ -266,14 +266,25 @@ uint32_t LoraMesherSX1262::getTimeOnAir(uint8_t length) {
         return 0;
     }
 
-    RadioLibTime_t time_on_air = radio_module_->getTimeOnAir(length) / 1000;
-    if (time_on_air == 0) {
+    RadioLibTime_t raw_us = radio_module_->getTimeOnAir(length);
+    if (raw_us == 0) {
         return 0;
     }
 
-    // Guard against RadioLib overflow: no LoRa packet takes >10 seconds
+    // RadioLib returns signed error codes (e.g. RADIOLIB_ERR_WRONG_MODEM
+    // = -20) through its unsigned RadioLibTime_t return type. Any raw
+    // value above 2^31 us (~35 minutes) is a negative error cast to
+    // unsigned, not a real time-on-air.
+    constexpr RadioLibTime_t kErrorThresholdUs = 0x7FFFFFFFul;
+    if (raw_us > kErrorThresholdUs) {
+        LOG_ERROR("getTimeOnAir error for %u bytes: RadioLib code %d", length,
+                  static_cast<int16_t>(raw_us));
+        return 0;
+    }
+
+    RadioLibTime_t time_on_air = raw_us / 1000;
     if (time_on_air > 10000) {
-        LOG_ERROR("RadioLib ToA overflow: %lu ms for %u bytes",
+        LOG_ERROR("getTimeOnAir sanity fail: %lu ms for %u bytes",
                   static_cast<unsigned long>(time_on_air), length);
         return 0;
     }

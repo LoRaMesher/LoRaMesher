@@ -1693,7 +1693,10 @@ Result NetworkService::SendData(AddressType destination,
 
     // Assign TTL and sequence number
     message_seq_++;
-    uint8_t ttl = (config_.max_hops > 0) ? config_.max_hops : kDefaultTTL;
+    uint8_t ttl =
+        (config_.max_hops > 0)
+            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
+            : kDefaultTTL;
 
     auto data_msg = DataMessage::Create(destination, node_address_, next_hop,
                                         data, ttl, message_seq_);
@@ -1770,8 +1773,13 @@ Result NetworkService::ProcessBroadcastMessage(
 Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
     message_seq_++;
 
-    auto bcast = BroadcastMessage::Create(node_address_, kDefaultTTL,
-                                          message_seq_, data);
+    uint8_t ttl =
+        (config_.max_hops > 0)
+            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
+            : kDefaultTTL;
+
+    auto bcast =
+        BroadcastMessage::Create(node_address_, ttl, message_seq_, data);
     if (!bcast) {
         LOG_ERROR("Failed to create broadcast message");
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -1781,8 +1789,8 @@ Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
     // Prevent self-receive if we hear our own broadcast
     AddToMessageCache(node_address_, message_seq_);
 
-    LOG_INFO("Sending BROADCAST (ttl=%u, seq=%u), payload_size=%zu",
-             kDefaultTTL, message_seq_, data.size());
+    LOG_INFO("Sending BROADCAST (ttl=%u, seq=%u), payload_size=%zu", ttl,
+             message_seq_, data.size());
 
     auto base_msg = std::make_unique<BaseMessage>(bcast->ToBaseMessage());
     message_queue_service_->AddMessageToQueue(SlotAllocation::SlotType::TX,
