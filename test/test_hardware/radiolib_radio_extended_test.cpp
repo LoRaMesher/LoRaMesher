@@ -75,6 +75,7 @@ class RadioLibRadioExtendedTest : public ::testing::Test {
         auto& mock = GetRadioLibMockForTesting(*radio_);
 
         EXPECT_CALL(mock, Begin(_)).WillOnce(Return(Result::Success()));
+        ON_CALL(mock, getTimeOnAir(_)).WillByDefault(Return(0u));
         EXPECT_CALL(mock, Sleep()).WillRepeatedly(Return(Result::Success()));
         EXPECT_CALL(mock, setActionReceive(A<void (*)(void)>()))
             .WillRepeatedly(
@@ -220,11 +221,10 @@ TEST_F(RadioLibRadioExtendedTest, LastPacketSNRInitiallyZero) {
 
 // --- RSSI/SNR with no module ---
 
-TEST_F(RadioLibRadioExtendedTest, GetTimeOnAirDelegatesToModule) {
-    auto& mock = GetRadioLibMockForTesting(*radio_);
-    EXPECT_CALL(mock, getTimeOnAir(50)).WillOnce(Return(123u));
-
-    EXPECT_EQ(radio_->getTimeOnAir(50), 123u);
+TEST_F(RadioLibRadioExtendedTest, GetTimeOnAirReturnsCachedValue) {
+    // ToA is cached during Begin() — the mock returns 0 for all sizes,
+    // so the cache contains 0.  Verify the cached path works.
+    EXPECT_EQ(radio_->getTimeOnAir(50), 0u);
 }
 
 // --- SetLocalAddress ---

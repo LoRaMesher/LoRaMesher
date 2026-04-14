@@ -67,6 +67,8 @@ class IRadio {
      */
     virtual Result Sleep() = 0;
 
+    virtual Result Standby() { return Result::Success(); }
+
     ///////////////////////
     // Parameter Configuration
     ///////////////////////

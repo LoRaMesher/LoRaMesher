@@ -58,6 +58,7 @@ class LoraMesherSX1262 : public IRadio {
     Result Send(const uint8_t* data, size_t len) override;
     Result StartReceive() override;
     Result Sleep() override;
+    Result Standby() override;
     Result setFrequency(float frequency) override;
     Result setSpreadingFactor(uint8_t sf) override;
     Result setBandwidth(float bandwidth) override;

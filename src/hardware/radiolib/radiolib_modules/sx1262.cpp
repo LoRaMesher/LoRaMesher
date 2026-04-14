@@ -120,6 +120,19 @@ Result LoraMesherSX1262::Sleep() {
     return RadioLibCodeErrors::ConvertStatus(status);
 }
 
+Result LoraMesherSX1262::Standby() {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->standby();
+    if (status == RADIOLIB_ERR_NONE) {
+        return Result::Success();
+    }
+
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
 Result LoraMesherSX1262::setFrequency(float frequency) {
     if (!initialized_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
@@ -266,7 +279,22 @@ uint32_t LoraMesherSX1262::getTimeOnAir(uint8_t length) {
         return 0;
     }
 
-    RadioLibTime_t raw_us = radio_module_->getTimeOnAir(length);
+    // Use calculateTimeOnAir (pure math, no SPI) instead of
+    // getTimeOnAir which reads getPacketType() via SPI and can
+    // accidentally wake the SX1262 from sleep.
+    DataRate_t dr{};
+    dr.lora.spreadingFactor = radio_module_->spreadingFactor;
+    dr.lora.bandwidth = radio_module_->bandwidthKhz;
+    dr.lora.codingRate = radio_module_->codingRate;
+
+    PacketConfig_t pc{};
+    pc.lora.preambleLength = radio_module_->preambleLengthLoRa;
+    pc.lora.crcEnabled = (radio_module_->crcTypeLoRa != 0);
+    pc.lora.implicitHeader =
+        (radio_module_->headerType == RADIOLIB_SX126X_LORA_HEADER_IMPLICIT);
+
+    RadioLibTime_t raw_us =
+        radio_module_->calculateTimeOnAir(RADIOLIB_MODEM_LORA, dr, pc, length);
     if (raw_us == 0) {
         return 0;
     }

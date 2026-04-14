@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -384,6 +385,9 @@ class RadioLibRadio : public IRadio {
 
     AddressType local_address_{
         0};  ///< Local node address for task identification
+
+    /// Cached ToA indexed by packet size so getTimeOnAir() never touches SPI.
+    std::array<uint32_t, 256> toa_cache_ms_{};
 };
 
 /**

@@ -103,6 +103,7 @@ class LoraMesherSX1276 : public IRadio {
      * @return Result Success if sleep mode was entered successfully
      */
     Result Sleep() override;
+    Result Standby() override;
 
     /**
      * @brief Set the radio frequency
@@ -368,8 +369,10 @@ class LoraMesherSX1276 : public IRadio {
     std::unique_ptr<SX1276>
         radio_module_;  ///< RadioLib LoraMesherSX1276 instance
 
-    bool initialized_ = false;        ///< Boolean when module initialized
-    bool auto_current_limit_ = true;  ///< True = auto-set OCP from TX power
+    bool initialized_ = false;
+    bool auto_current_limit_ = true;
+    uint16_t preamble_length_ =
+        8;  ///< Cached for calculateTimeOnAir (SX127x has no member)
 };
 
 }  // namespace radio

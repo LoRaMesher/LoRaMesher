@@ -27,7 +27,83 @@ jobs:
     - name: Run Tests
       run: |
         LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
-          pio test -e test_native_profile -v
+          pio test -e test_native_profile -v \
+          --junit-output-path test-results.xml
+
+    - name: Test Results Summary
+      if: always()
+      run: |
+        python3 << 'PYEOF'
+        import xml.etree.ElementTree as ET
+        import os, sys
+
+        junit_path = "test-results.xml"
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+
+        with open(summary_path, "a") as out:
+            if not os.path.isfile(junit_path):
+                out.write("## Test Results\n\n")
+                out.write("> **Warning:** No test results file found. "
+                          "Tests may have failed to build.\n\n")
+                sys.exit(0)
+
+            tree = ET.parse(junit_path)
+            root = tree.getroot()
+
+            # Count from individual test cases (root totals include empty suites)
+            total = failures = errors = skipped = 0
+            failed_tests = []
+            for ts in root.iter("testsuite"):
+                for tc in ts.findall("testcase"):
+                    total += 1
+                    fail_el = tc.find("failure")
+                    err_el = tc.find("error")
+                    skip_el = tc.find("skipped")
+                    if fail_el is not None:
+                        failures += 1
+                        failed_tests.append((
+                            ts.attrib.get("name", "?"),
+                            tc.attrib.get("name", "?"),
+                            fail_el.attrib.get("message", "").strip(),
+                            (fail_el.text or "").strip(),
+                        ))
+                    elif err_el is not None:
+                        errors += 1
+                        failed_tests.append((
+                            ts.attrib.get("name", "?"),
+                            tc.attrib.get("name", "?"),
+                            err_el.attrib.get("message", "").strip(),
+                            (err_el.text or "").strip(),
+                        ))
+                    elif skip_el is not None:
+                        skipped += 1
+            passed = total - failures - errors - skipped
+            elapsed = root.attrib.get("time", "?")
+
+            if failures + errors == 0:
+                icon = "\u2705"
+                status = f"{icon} All {total} tests passed"
+            else:
+                icon = "\u274c"
+                status = f"{icon} {failures + errors} test(s) failed"
+
+            out.write("## Test Results\n\n")
+            out.write(f"**{status}** ({elapsed}s)\n\n")
+            out.write("| Total | Passed | Failed | Errors | Skipped |\n")
+            out.write("|------:|-------:|-------:|-------:|--------:|\n")
+            out.write(f"| {total} | {passed} | {failures} | {errors} | {skipped} |\n\n")
+
+            if failed_tests:
+                out.write("### Failed Tests\n\n")
+                for suite, name, message, detail in failed_tests:
+                    out.write(f"**`{suite} > {name}`**\n\n")
+                    if detail:
+                        out.write("<details>\n<summary>Show output</summary>\n\n")
+                        out.write(f"```\n{detail}\n```\n\n")
+                        out.write("</details>\n\n")
+                    elif message:
+                        out.write(f"> {message}\n\n")
+        PYEOF
 
     - name: Generate Coverage Report
       if: always()

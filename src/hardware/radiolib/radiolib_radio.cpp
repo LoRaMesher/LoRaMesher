@@ -115,7 +115,19 @@ Result RadioLibRadio::Begin(const RadioConfig& config) {
     LOG_DEBUG("Begin radio operation");
 
     // Begin radio operation
-    return current_module_->Begin(current_config_);
+    Result result = current_module_->Begin(current_config_);
+    if (!result) {
+        return result;
+    }
+
+    // Cache ToA while the radio is awake so getTimeOnAir() never
+    // touches SPI during sleep (avoids accidental SX1262 wake-ups).
+    for (size_t i = 0; i < toa_cache_ms_.size(); ++i) {
+        toa_cache_ms_[i] =
+            current_module_->getTimeOnAir(static_cast<uint8_t>(i));
+    }
+
+    return Result::Success();
 }
 
 Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
@@ -169,6 +181,13 @@ Result RadioLibRadio::StartReceive() {
     // We might need to suspend the processing task temporarily
     if (processing_task_) {
         GetRTOS().SuspendTask(processing_task_);
+    }
+
+    // SX1262 can enter a corrupt state during sleep→active transitions
+    // (RadioLib issues #575, #1207). Reset its state machine before
+    // configuring DIO1.
+    if (current_state_ == RadioState::kSleep) {
+        current_module_->Standby();
     }
 
     if (current_state_ != RadioState::kIdle) {
@@ -297,11 +316,9 @@ uint8_t RadioLibRadio::getPower() {
 }
 
 uint32_t RadioLibRadio::getTimeOnAir(uint8_t length) {
-    if (!current_module_) {
-        return 0;
-    }
-
-    return current_module_->getTimeOnAir(length);
+    // Return cached value to avoid SPI access while the radio may be sleeping.
+    // The cache is populated once in Begin() when the radio is awake.
+    return toa_cache_ms_[length];
 }
 
 Result RadioLibRadio::setFrequency(float frequency) {
