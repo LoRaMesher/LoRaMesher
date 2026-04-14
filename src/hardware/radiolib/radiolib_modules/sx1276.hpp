@@ -371,8 +371,6 @@ class LoraMesherSX1276 : public IRadio {
 
     bool initialized_ = false;
     bool auto_current_limit_ = true;
-    uint16_t preamble_length_ =
-        8;  ///< Cached for calculateTimeOnAir (SX127x has no member)
 };
 
 }  // namespace radio

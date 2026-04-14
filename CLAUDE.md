@@ -20,6 +20,14 @@ pio test -e test_native -v
 - Use `-f {test_name}` to filter a function.
 - Use `--list-tests` to get the tests names.
 
+### ESP32 Compilation Check
+
+```bash
+pio run -e esp32
+```
+
+Verifies the library compiles for ESP32 (catches errors in Arduino/RadioLib-specific code paths).
+
 ### CMake (Desktop Testing)
 ```bash
 mkdir build && cd build

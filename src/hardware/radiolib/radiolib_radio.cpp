@@ -122,10 +122,7 @@ Result RadioLibRadio::Begin(const RadioConfig& config) {
 
     // Cache ToA while the radio is awake so getTimeOnAir() never
     // touches SPI during sleep (avoids accidental SX1262 wake-ups).
-    for (size_t i = 0; i < toa_cache_ms_.size(); ++i) {
-        toa_cache_ms_[i] =
-            current_module_->getTimeOnAir(static_cast<uint8_t>(i));
-    }
+    RefreshToACache();
 
     return Result::Success();
 }
@@ -330,19 +327,31 @@ Result RadioLibRadio::setFrequency(float frequency) {
 Result RadioLibRadio::setSpreadingFactor(uint8_t sf) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setSpreadingFactor(sf);
-    return current_module_->setSpreadingFactor(sf);
+    Result result = current_module_->setSpreadingFactor(sf);
+    if (result) {
+        RefreshToACache();
+    }
+    return result;
 }
 
 Result RadioLibRadio::setBandwidth(float bandwidth) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setBandwidth(bandwidth);
-    return current_module_->setBandwidth(bandwidth);
+    Result result = current_module_->setBandwidth(bandwidth);
+    if (result) {
+        RefreshToACache();
+    }
+    return result;
 }
 
 Result RadioLibRadio::setCodingRate(uint8_t coding_rate) {
     std::lock_guard<std::mutex> lock(radio_mutex_);
     current_config_.setCodingRate(coding_rate);
-    return current_module_->setCodingRate(coding_rate);
+    Result result = current_module_->setCodingRate(coding_rate);
+    if (result) {
+        RefreshToACache();
+    }
+    return result;
 }
 
 Result RadioLibRadio::setPower(int8_t power) {
@@ -366,7 +375,11 @@ Result RadioLibRadio::setCRC(bool enable) {
     if (!result) {
         return result;
     }
-    return current_module_->setCRC(enable);
+    result = current_module_->setCRC(enable);
+    if (result) {
+        RefreshToACache();
+    }
+    return result;
 }
 
 Result RadioLibRadio::setPreambleLength(uint16_t length) {
@@ -375,7 +388,11 @@ Result RadioLibRadio::setPreambleLength(uint16_t length) {
     if (!result) {
         return result;
     }
-    return current_module_->setPreambleLength(length);
+    result = current_module_->setPreambleLength(length);
+    if (result) {
+        RefreshToACache();
+    }
+    return result;
 }
 
 Result RadioLibRadio::setCurrentLimit(float current_limit_ma) {
@@ -549,6 +566,13 @@ void RadioLibRadio::ProcessEvents(void* parameters) {
     }
 
     LOG_DEBUG("RadioLibRadio event processing task ending");
+}
+
+void RadioLibRadio::RefreshToACache() {
+    for (size_t i = 0; i < toa_cache_ms_.size(); ++i) {
+        toa_cache_ms_[i] =
+            current_module_->getTimeOnAir(static_cast<uint8_t>(i));
+    }
 }
 
 }  // namespace radio

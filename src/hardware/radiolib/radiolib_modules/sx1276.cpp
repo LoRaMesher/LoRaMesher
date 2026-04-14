@@ -79,7 +79,6 @@ Result LoraMesherSX1276::Begin(const RadioConfig& config) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
 
-    preamble_length_ = config.getPreambleLength();
     initialized_ = true;
 
     return Result::Success();
@@ -286,21 +285,7 @@ uint32_t LoraMesherSX1276::getTimeOnAir(uint8_t length) {
         return 0;
     }
 
-    // Use calculateTimeOnAir (pure math, no SPI) instead of
-    // getTimeOnAir which reads registers via SPI and can return
-    // WRONG_MODEM when the radio is sleeping.
-    DataRate_t dr{};
-    dr.lora.spreadingFactor = radio_module_->spreadingFactor;
-    dr.lora.bandwidth = radio_module_->bandwidth;
-    dr.lora.codingRate = radio_module_->codingRate;
-
-    PacketConfig_t pc{};
-    pc.lora.preambleLength = preamble_length_;
-    pc.lora.crcEnabled = radio_module_->crcEnabled;
-    pc.lora.implicitHeader = radio_module_->implicitHdr;
-
-    RadioLibTime_t raw_us =
-        radio_module_->calculateTimeOnAir(RADIOLIB_MODEM_LORA, dr, pc, length);
+    RadioLibTime_t raw_us = radio_module_->getTimeOnAir(length);
     if (raw_us == 0) {
         return 0;
     }

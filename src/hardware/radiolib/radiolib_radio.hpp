@@ -388,6 +388,8 @@ class RadioLibRadio : public IRadio {
 
     /// Cached ToA indexed by packet size so getTimeOnAir() never touches SPI.
     std::array<uint32_t, 256> toa_cache_ms_{};
+
+    void RefreshToACache();
 };
 
 /**
