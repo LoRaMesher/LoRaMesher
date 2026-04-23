@@ -437,6 +437,13 @@ TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
     auto& helper = CreateNode("Helper", 0x0002, NodeRole::NODE_ONLY);
     auto& nm_b = CreateNode("NM_B", 0x0080, NodeRole::NETWORK_MANAGER);
 
+    // Deterministic RNG eliminates phase-alignment randomness between
+    // the two NMs' superframes (both have 16 slots = identical period,
+    // so the phase offset is constant — zero drift).
+    auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+    ASSERT_NE(rtos, nullptr);
+    rtos->SeedRandom(42);
+
     // Phase 1a: Form NM_A's network (NM_A + Helper).
     SetLinkStatus(nm_a, helper, true);
     SetLinkStatus(nm_a, nm_b, false);
@@ -450,9 +457,19 @@ TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
     ASSERT_TRUE(WaitForNetworkFormation(net_a, 1))
         << "Network A (NM_A + Helper) failed to form";
 
-    // Phase 1b: Start NM_B isolated (creates its own network), then bridge.
-    // NM_A's 2-node network has ~7 RX slots for reliable merge.
-    AdvanceTime(slot_duration * 3 + slot_duration / 2);
+    // Phase 1b: Start NM_B so its SYNC_BEACON TX lands in NM_A's
+    // DISCOVERY_RX range (last 4 slots of the superframe).
+    // Both NMs share kMinSlots=16, so the phase offset is permanent.
+    uint32_t sf_a = GetSuperframeDuration(nm_a);
+    uint16_t current_slot = nm_a.protocol->GetCurrentSlot();
+    uint16_t total_slots = sf_a / slot_duration;
+    uint16_t target_slot = total_slots - 3;  // middle of DISCOVERY_RX
+    uint32_t advance =
+        ((target_slot - current_slot + total_slots) % total_slots) *
+        slot_duration;
+    if (advance < slot_duration * 2)
+        advance += sf_a;
+    AdvanceTime(advance);
     ASSERT_TRUE(StartNode(nm_b));
 
     SetLinkStatus(nm_a, nm_b, true);

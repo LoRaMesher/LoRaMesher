@@ -221,6 +221,27 @@ void LoraMesher::SetNodeCapabilities(uint8_t capabilities) {
     }
 }
 
+Result LoraMesher::SetNodeRole(NodeRole role) {
+    if (!is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoraMesher not running");
+    }
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoRaMesh protocol not active");
+    }
+    return mesh_protocol->RequestNodeRoleChange(role);
+}
+
+NodeRole LoraMesher::GetNodeRole() const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return NodeRole::AUTO;
+    }
+    return mesh_protocol->GetNodeRole();
+}
+
 uint8_t LoraMesher::GetNodeCapabilities() const {
     auto mesh_protocol = GetLoRaMeshProtocol();
     if (mesh_protocol) {

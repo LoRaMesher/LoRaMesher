@@ -186,6 +186,12 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
     auto& nm_b = CreateNode("NM_B", 0x0080, NodeRole::NETWORK_MANAGER);
     auto& node_b = CreateNode("NodeB", 0x0081, NodeRole::NODE_ONLY);
 
+    // Deterministic RNG: both NMs get 16 slots (kMinSlots), so the phase
+    // offset is permanent. A fixed seed makes the offset reproducible.
+    auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+    ASSERT_NE(rtos, nullptr);
+    rtos->SeedRandom(42);
+
     // Phase 1: Isolate both networks — no cross-links
     SetLinkStatus(nm_a, node_a, true);
     SetLinkStatus(nm_b, node_b, true);
@@ -195,8 +201,6 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
     SetLinkStatus(node_a, node_b, false);
 
     // Phase 2: Form Network A first (NM_B and NodeB not started yet).
-    // Starting networks sequentially gives them different superframe phases so
-    // NM_A's SYNC_BEACON_TX slot can fall into NM_B's RX slot after bridging.
     ASSERT_TRUE(StartNode(nm_a)) << "Failed to start NM_A";
     ASSERT_TRUE(StartNode(node_a)) << "Failed to start NodeA";
 
@@ -204,11 +208,21 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
     ASSERT_TRUE(WaitForNetworkFormation(net_a, 1))
         << "Network A failed to form";
 
-    // Add a 3.5-slot offset to guarantee the two superframes are out of phase.
+    // Align NM_B's start so its SYNC_BEACON TX lands in NM_A's DISCOVERY_RX
+    // range (last 4 slots). Both NMs share kMinSlots=16, so the phase offset
+    // is permanent — it must be correct from the start.
     uint32_t slot_ms = GetSlotDuration(nm_a);
-    AdvanceTime(slot_ms * 3 + slot_ms / 2);
+    uint32_t sf_a = GetSuperframeDuration(nm_a);
+    uint16_t current_slot = nm_a.protocol->GetCurrentSlot();
+    uint16_t total_slots = sf_a / slot_ms;
+    uint16_t target_slot = total_slots - 3;  // middle of DISCOVERY_RX
+    uint32_t advance =
+        ((target_slot - current_slot + total_slots) % total_slots) * slot_ms;
+    if (advance < slot_ms * 2)
+        advance += sf_a;
+    AdvanceTime(advance);
 
-    // Now start Network B — its superframe will be out of phase with Network A.
+    // Now start Network B — its superframe phase is aligned with Network A.
     ASSERT_TRUE(StartNode(nm_b)) << "Failed to start NM_B";
     ASSERT_TRUE(StartNode(node_b)) << "Failed to start NodeB";
 
@@ -310,6 +324,12 @@ TEST_F(NMMergeTests, AutoRoleNMYieldsToConfiguredNM) {
     auto& nm_b = CreateNode("NM_B", 0x0001, NodeRole::AUTO);
     auto& node_b = CreateNode("NodeB", 0x0004, NodeRole::NODE_ONLY);
 
+    // Deterministic RNG: both NMs get 16 slots (kMinSlots), so the phase
+    // offset is permanent. A fixed seed makes the offset reproducible.
+    auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+    ASSERT_NE(rtos, nullptr);
+    rtos->SeedRandom(42);
+
     // Phase 1: Isolate both networks — no cross-links
     SetLinkStatus(nm_a, node_a, true);
     SetLinkStatus(nm_b, node_b, true);
@@ -318,7 +338,7 @@ TEST_F(NMMergeTests, AutoRoleNMYieldsToConfiguredNM) {
     SetLinkStatus(node_a, nm_b, false);
     SetLinkStatus(node_a, node_b, false);
 
-    // Form Network A first to ensure different superframe phases after bridging.
+    // Form Network A first.
     ASSERT_TRUE(StartNode(nm_a)) << "Failed to start NM_A";
     ASSERT_TRUE(StartNode(node_a)) << "Failed to start NodeA";
 
@@ -326,9 +346,19 @@ TEST_F(NMMergeTests, AutoRoleNMYieldsToConfiguredNM) {
     ASSERT_TRUE(WaitForNetworkFormation(net_a, 1))
         << "Network A failed to form";
 
-    // 3.5-slot offset so NM_B's superframe is out of phase with NM_A's.
+    // Align NM_B's start so its SYNC_BEACON TX lands in NM_A's DISCOVERY_RX
+    // range (last 4 slots). Both NMs share kMinSlots=16, so the phase offset
+    // is permanent — it must be correct from the start.
     uint32_t slot_ms = GetSlotDuration(nm_a);
-    AdvanceTime(slot_ms * 3 + slot_ms / 2);
+    uint32_t sf_a = GetSuperframeDuration(nm_a);
+    uint16_t current_slot = nm_a.protocol->GetCurrentSlot();
+    uint16_t total_slots = sf_a / slot_ms;
+    uint16_t target_slot = total_slots - 3;
+    uint32_t advance =
+        ((target_slot - current_slot + total_slots) % total_slots) * slot_ms;
+    if (advance < slot_ms * 2)
+        advance += sf_a;
+    AdvanceTime(advance);
 
     ASSERT_TRUE(StartNode(nm_b)) << "Failed to start NM_B";
     ASSERT_TRUE(StartNode(node_b)) << "Failed to start NodeB";

@@ -68,6 +68,8 @@ class INetworkService {
         float target_duty_cycle = 0.01f;  ///< Target TX duty cycle (default 1%)
         float min_sleep_fraction =
             0.30f;  ///< Minimum sleep fraction (0.0–1.0, default 30%)
+        uint8_t churn_margin_slots =
+            2;  ///< Absolute extra slots reserved by NM to absorb routing churn
         float link_quality_ewma_alpha =
             0.30f;  ///< EWMA smoothing factor for link quality
         uint8_t consecutive_missed_for_inactivation =
@@ -361,6 +363,36 @@ class INetworkService {
      * @return uint32_t Remaining milliseconds
      */
     virtual uint32_t GetNMElectionTimeout() const = 0;
+
+    /**
+     * @brief Get the node role currently in effect.
+     *
+     * @return NodeRole Current role
+     */
+    virtual NodeRole GetNodeRole() const = 0;
+
+    /**
+     * @brief Apply a runtime role change.
+     *
+     * Must be called on the protocol task. Drives the appropriate state
+     * transition based on (old_role, new_role, current_state):
+     *  - Same role -> no-op.
+     *  - Promotion to NETWORK_MANAGER while in DISCOVERY / FAULT_RECOVERY /
+     *    NM_ELECTION / INITIALIZING: call CreateNetwork().
+     *  - Promotion to NETWORK_MANAGER while in NORMAL_OPERATION: broadcast
+     *    NM_CLAIM with updated priority so the incumbent yields via the
+     *    standard merge path.
+     *  - Demotion from NETWORK_MANAGER: surrender and enter DISCOVERY,
+     *    reusing surrendered_in_election_; the rest of the network runs an
+     *    election to pick a new NM.
+     *  - Other role changes with no active network: update role and let
+     *    discovery/election logic pick up the new priority naturally.
+     *
+     * @param new_role Requested role
+     * @return Result Success or error (e.g., kInvalidState for unsupported
+     *         transitions, kInvalidParameter for invalid enum values)
+     */
+    virtual Result ApplyRoleChange(NodeRole new_role) = 0;
 };
 
 }  // namespace lora_mesh

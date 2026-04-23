@@ -102,5 +102,55 @@ TEST_F(ConfigTest, ValidateWithZeroSleepDuration) {
     EXPECT_FALSE(errors.empty());
 }
 
+// ===========================================================================
+// LoRaMeshProtocolConfig::ApplySfDerivedDefaults — override semantics
+// ===========================================================================
+
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, AppliesDefaultWhenNotUserSet) {
+    LoRaMeshProtocolConfig config;
+    EXPECT_FALSE(config.IsMaxPacketSizeUserSet());
+
+    uint8_t cap = config.ApplySfDerivedDefaults(10, 125.0F);
+    EXPECT_EQ(cap, 51);
+    EXPECT_EQ(config.getMaxPacketSize(), 51);
+}
+
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, RespectsUserOverride) {
+    LoRaMeshProtocolConfig config;
+    config.setMaxPacketSize(200);
+    EXPECT_TRUE(config.IsMaxPacketSizeUserSet());
+
+    uint8_t cap = config.ApplySfDerivedDefaults(10, 125.0F);
+    EXPECT_EQ(cap, 51);  // Cap reported for caller's warning logic
+    EXPECT_EQ(config.getMaxPacketSize(),
+              200);  // User value preserved unchanged
+}
+
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, UserValueBelowCapIsKept) {
+    LoRaMeshProtocolConfig config;
+    config.setMaxPacketSize(32);
+    EXPECT_TRUE(config.IsMaxPacketSizeUserSet());
+
+    uint8_t cap = config.ApplySfDerivedDefaults(7, 125.0F);
+    EXPECT_EQ(cap, 242);
+    EXPECT_EQ(config.getMaxPacketSize(), 32);
+}
+
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, AppliesDefaultForEachSfAtBw125) {
+    struct Expected {
+        uint8_t sf;
+        uint8_t size;
+    };
+
+    constexpr Expected table[] = {{7, 242}, {8, 242}, {9, 115},
+                                  {10, 51}, {11, 51}, {12, 51}};
+    for (const auto& e : table) {
+        LoRaMeshProtocolConfig config;
+        config.ApplySfDerivedDefaults(e.sf, 125.0F);
+        EXPECT_EQ(config.getMaxPacketSize(), e.size)
+            << "SF=" << static_cast<int>(e.sf);
+    }
+}
+
 }  // namespace test
 }  // namespace loramesher

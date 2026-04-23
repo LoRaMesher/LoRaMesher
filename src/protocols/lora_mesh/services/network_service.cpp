@@ -288,50 +288,88 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
         return best;
     }
 
-    // Best next_hop is reachable: TDMA neighbor with confirmed bidirectional
-    // link (or too few messages to determine directionality yet)
-    if (IsTDMANeighbor(best) && !routing_table_->HasUnidirectionalRisk(best)) {
+    const bool best_is_tdma = IsTDMANeighbor(best);
+    const bool best_uni = routing_table_->HasUnidirectionalRisk(best);
+
+    // Fast path: best next_hop is directly usable.
+    if (best_is_tdma && !best_uni) {
         return best;
     }
 
-    // Best next_hop is NOT reachable — either not a TDMA neighbor (overheard
-    // from outside the network) or confirmed unidirectional (they cannot
-    // hear us). Find the best route among reachable next_hops.
-    auto nodes = routing_table_->GetNodesCopy();
-    AddressType fallback = 0;
+    // Scan nodes once to collect:
+    //   - the cost of the route that `best` represents (so we can
+    //     apply a unidirectional penalty to it)
+    //   - the best fallback candidate with TDMA reachability and no
+    //     unidirectional risk.
+    const auto nodes = routing_table_->GetNodesCopy();
     uint16_t best_cost = UINT16_MAX;
-    uint8_t best_hops = UINT8_MAX;
+    AddressType fallback = 0;
+    uint16_t fallback_cost = UINT16_MAX;
+    uint8_t fallback_hops = UINT8_MAX;
 
     for (const auto& node : nodes) {
-        if (node.routing_entry.destination == destination && node.is_active &&
-            IsTDMANeighbor(node.next_hop) &&
+        if (node.routing_entry.destination != destination || !node.is_active) {
+            continue;
+        }
+        const uint16_t cost =
+            types::protocols::lora_mesh::NetworkNodeRoute::CalculateRouteCost(
+                node.routing_entry.hop_count, node.routing_entry.link_quality);
+        if (node.next_hop == best && cost < best_cost) {
+            best_cost = cost;
+        }
+        if (IsTDMANeighbor(node.next_hop) &&
             !routing_table_->HasUnidirectionalRisk(node.next_hop)) {
-            uint16_t cost = types::protocols::lora_mesh::NetworkNodeRoute::
-                CalculateRouteCost(node.routing_entry.hop_count,
-                                   node.routing_entry.link_quality);
-            if (cost < best_cost ||
-                (cost == best_cost &&
-                 node.routing_entry.hop_count < best_hops)) {
-                best_cost = cost;
-                best_hops = node.routing_entry.hop_count;
+            if (cost < fallback_cost ||
+                (cost == fallback_cost &&
+                 node.routing_entry.hop_count < fallback_hops)) {
+                fallback_cost = cost;
+                fallback_hops = node.routing_entry.hop_count;
                 fallback = node.next_hop;
             }
         }
     }
 
-    if (fallback != 0) {
+    // A next_hop that isn't a TDMA neighbour at all has no slot to
+    // transmit on — it must be replaced unconditionally if an
+    // alternative exists. This preserves the pre-penalty safety.
+    if (!best_is_tdma) {
+        if (fallback != 0) {
+            LOG_WARNING(
+                "Next hop 0x%04X for dest 0x%04X is unreachable "
+                "(non-TDMA), using 0x%04X instead",
+                best, destination, fallback);
+            return fallback;
+        }
         LOG_WARNING(
             "Next hop 0x%04X for dest 0x%04X is unreachable "
-            "(non-TDMA or unidirectional), using 0x%04X instead",
-            best, destination, fallback);
+            "(non-TDMA) and no valid alternative found, using as last resort",
+            best, destination);
+        return best;
+    }
+
+    // `best` is a TDMA neighbour with unidirectional risk. Instead of
+    // excluding it outright, penalise its ETX cost by a factor and
+    // compare against the best fallback. This prevents a transient
+    // false-positive unidirectional flag from steering traffic into a
+    // multi-hop detour when the direct link is still the best option.
+    const uint32_t kUnidirectionalCostPenalty = 4;
+    const uint16_t best_effective = static_cast<uint16_t>(
+        std::min(static_cast<uint32_t>(best_cost) * kUnidirectionalCostPenalty,
+                 static_cast<uint32_t>(UINT16_MAX)));
+
+    if (fallback != 0 && fallback_cost < best_effective) {
+        LOG_WARNING(
+            "Next hop 0x%04X for dest 0x%04X penalised "
+            "(uni=1 cost=%u penalised=%u) vs fallback 0x%04X cost=%u",
+            best, destination, best_cost, best_effective, fallback,
+            fallback_cost);
         return fallback;
     }
 
-    // No valid alternative exists — use the original route as last resort.
-    LOG_WARNING(
-        "Next hop 0x%04X for dest 0x%04X is unreachable "
-        "and no valid alternative found, using as last resort",
-        best, destination);
+    LOG_DEBUG(
+        "Next hop 0x%04X for dest 0x%04X kept despite unidirectional risk "
+        "(cost=%u penalised=%u fallback_cost=%u)",
+        best, destination, best_cost, best_effective, fallback_cost);
     return best;
 }
 
@@ -618,6 +656,7 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     node_role_ = config.node_role;
     target_duty_cycle_ = config.target_duty_cycle;
     min_sleep_fraction_ = config.min_sleep_fraction;
+    churn_margin_slots_ = config.churn_margin_slots;
     ewma_alpha_fixed_ = static_cast<uint8_t>(
         std::clamp(config.link_quality_ewma_alpha, 0.05f, 0.95f) * 256.0f);
     consecutive_missed_for_inactivation_ =
@@ -2055,8 +2094,12 @@ Result NetworkService::UpdateSlotTable() {
                                    (1.0f - min_sleep_fraction_)),
                          255.0f));
         }
-        total_superframe_slots =
-            std::max({computed_slots, kMinSlots, min_for_sleep});
+        uint16_t active_plus_margin =
+            static_cast<uint16_t>(total_active_slots) + churn_margin_slots_;
+        uint8_t min_with_margin = static_cast<uint8_t>(
+            std::min(active_plus_margin, static_cast<uint16_t>(255)));
+        total_superframe_slots = std::max(
+            {computed_slots, kMinSlots, min_for_sleep, min_with_margin});
     }
 
     uint8_t sleep_slots = total_superframe_slots - total_active_slots;
@@ -2153,25 +2196,18 @@ Result NetworkService::UpdateSlotTable() {
         }
     }
 
-    // ── Phase 4: Sleep slots ──────────────────────────────────────────────────
-    for (size_t i = 0; i < sleep_slots; i++) {
-        if (slot_index >= slot_count_) {
-            LOG_ERROR("SLEEP slot index %zu out of bounds, skipping",
-                      slot_index);
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Slot index out of bounds");
-        }
+    // ── Phase 4: Sleep (elastic buffer, shrinks to guarantee discovery tail) ──
+    size_t remaining =
+        (slot_index < slot_count_) ? slot_count_ - slot_index : 0;
+    size_t discovery_reserve =
+        std::min(static_cast<size_t>(allocated_discovery_slots_), remaining);
+    size_t sleep_to_write = remaining - discovery_reserve;
+    for (size_t i = 0; i < sleep_to_write; i++) {
         AllocateSlot(SlotAllocation::SlotType::SLEEP, 0);
     }
 
-    // ── Phase 5: Discovery slots ──────────────────────────────────────────────
-    for (size_t i = 0; i < allocated_discovery_slots_; i++) {
-        if (slot_index >= slot_count_) {
-            LOG_ERROR("Discovery slot index %zu out of bounds, skipping",
-                      slot_index);
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Slot index out of bounds");
-        }
+    // ── Phase 5: Discovery slots (always last in the superframe) ──────────────
+    for (size_t i = 0; i < discovery_reserve; i++) {
         AllocateSlot(SlotAllocation::SlotType::DISCOVERY_RX, 0);
     }
 
@@ -2439,6 +2475,33 @@ void NetworkService::ExpandSyncBeaconListening() {
         limit, no_received_sync_beacon_count_);
 }
 
+void NetworkService::RestoreSyncBeaconTxSlot() {
+    if (no_received_sync_beacon_count_ < kExpandListeningThreshold) {
+        // No expansion happened this superframe, so nothing to restore.
+        // Guards against flipping a slot that is legitimately RX because the
+        // slot table is stale w.r.t. our current hop distance (routing table
+        // updates do not trigger a slot table rebuild).
+        return;
+    }
+    uint8_t our_hop_distance = GetHopDistanceToNM();
+    if (our_hop_distance == 0) {
+        return;
+    }
+    uint16_t tx_index = static_cast<uint16_t>(our_hop_distance);
+    if (tx_index >= slot_count_) {
+        return;
+    }
+    auto& slot = slot_table_[tx_index];
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+    if (slot.type == SlotType::SYNC_BEACON_RX) {
+        slot.type = SlotType::SYNC_BEACON_TX;
+        LOG_DEBUG(
+            "Restored SYNC_BEACON_TX at slot %u after receiving beacon in "
+            "expanded-listening mode",
+            tx_index);
+    }
+}
+
 Result NetworkService::BroadcastSlotAllocation() {
     // TODO: IMPLEMENT THISSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
     // Only network manager broadcasts
@@ -2694,6 +2757,9 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
     bool is_self_active = false;
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
+        if (!node.is_active) {
+            continue;
+        }
         total_allocated += node.GetAllocatedDataSlots();
         if (node.GetAddress() == node_address_) {
             is_self_active = true;
@@ -3079,6 +3145,11 @@ Result NetworkService::ForwardSyncBeacon(
     // which naturally includes any subslot delay that has elapsed.
     SetSyncBeaconPreSendCallback(base_msg);
 
+    // If listening was expanded after missed beacons, the designated TX slot
+    // was demoted to RX. Now that we have a fresh beacon to forward and are
+    // re-synced, restore the TX slot so the queued beacon can be transmitted.
+    RestoreSyncBeaconTxSlot();
+
     // Clear any stale beacon before queuing the fresh one
     message_queue_service_->ClearQueue(
         types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX);
@@ -3120,6 +3191,14 @@ bool NetworkService::ShouldForwardSyncBeacon(const SyncBeaconMessage& beacon) {
 }
 
 Result NetworkService::HandleSuperframeStart() {
+    // A forwarded sync beacon is only valid within the superframe in which it
+    // was received. If the SYNC_BEACON_TX slot's subslot window already closed
+    // before the forward completed, the queued copy persists into the next
+    // superframe and would be transmitted with stale timing. Drop any leftover
+    // before the new superframe's slot handlers run.
+    message_queue_service_->ClearQueue(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::SYNC_BEACON_TX);
+
     // Link quality tracking for active operational states only
     if (state_ == ProtocolState::NETWORK_MANAGER ||
         state_ == ProtocolState::NORMAL_OPERATION) {
@@ -3760,6 +3839,85 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
     }
     // If our priority is lower or equal, we win — ignore their claim
 
+    return Result::Success();
+}
+
+Result NetworkService::ApplyRoleChange(NodeRole new_role) {
+    if (new_role != NodeRole::AUTO && new_role != NodeRole::NETWORK_MANAGER &&
+        new_role != NodeRole::NODE_ONLY) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Invalid NodeRole value");
+    }
+
+    const NodeRole old_role = node_role_;
+    if (old_role == new_role) {
+        LOG_DEBUG("ApplyRoleChange: already role %d, no-op",
+                  static_cast<int>(new_role));
+        return Result::Success();
+    }
+
+    LOG_INFO("Role change: %d -> %d (state=%d)", static_cast<int>(old_role),
+             static_cast<int>(new_role), static_cast<int>(state_));
+
+    node_role_ = new_role;
+    config_.node_role = new_role;
+
+    const bool promoting_to_nm = (new_role == NodeRole::NETWORK_MANAGER);
+    const bool demoting_from_nm_state =
+        (state_ == ProtocolState::NETWORK_MANAGER &&
+         new_role != NodeRole::NETWORK_MANAGER);
+
+    if (promoting_to_nm) {
+        switch (state_) {
+            case ProtocolState::NETWORK_MANAGER:
+                election_priority_ = ComputeElectionPriority();
+                return Result::Success();
+            case ProtocolState::INITIALIZING:
+            case ProtocolState::DISCOVERY:
+            case ProtocolState::FAULT_RECOVERY:
+            case ProtocolState::NM_ELECTION:
+                LOG_INFO("Promoting to NETWORK_MANAGER: creating network");
+                return CreateNetwork();
+            case ProtocolState::JOINING:
+                election_priority_ = ComputeElectionPriority();
+                LOG_INFO(
+                    "Promotion deferred: currently JOINING, role takes "
+                    "effect at next state transition");
+                return Result::Success();
+            case ProtocolState::NORMAL_OPERATION:
+                election_priority_ = ComputeElectionPriority();
+                LOG_INFO(
+                    "Promoting to NETWORK_MANAGER in NORMAL_OPERATION: "
+                    "broadcasting NM_CLAIM (priority=%d) to unseat incumbent",
+                    election_priority_);
+                return SendNMClaim();
+        }
+        return Result::Success();
+    }
+
+    if (demoting_from_nm_state) {
+        LOG_INFO("Demoting from NETWORK_MANAGER: surrendering network 0x%04X",
+                 network_id_);
+        surrendered_in_election_ = true;
+        network_found_ = false;
+        network_creator_ = false;
+        selected_sponsor_ = 0;
+        discovery_start_time_ = GetRTOS().getTickCount();
+        Result r = SetDiscoverySlots();
+        if (!r) {
+            LOG_ERROR("Failed to set discovery slots during demotion: %s",
+                      r.GetErrorMessage().c_str());
+            return r;
+        }
+        SetState(ProtocolState::DISCOVERY);
+        election_priority_ = ComputeElectionPriority();
+        return Result::Success();
+    }
+
+    election_priority_ = ComputeElectionPriority();
+    if (state_ == ProtocolState::DISCOVERY && new_role == NodeRole::AUTO) {
+        discovery_start_time_ = GetRTOS().getTickCount();
+    }
     return Result::Success();
 }
 

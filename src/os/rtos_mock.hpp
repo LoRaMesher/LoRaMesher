@@ -1912,6 +1912,15 @@ class RTOSMock : public RTOS {
     }
 
     /**
+     * @brief Seed the PRNG for deterministic random sequences in tests.
+     * @param seed The seed value
+     */
+    void SeedRandom(uint32_t seed) {
+        std::lock_guard<std::mutex> lock(prng_mutex_);
+        prng_engine_.seed(seed);
+    }
+
+    /**
      * @brief Set the node address for the current task
      * @param address The node address (e.g., "0x1001"), max 7 chars
      */

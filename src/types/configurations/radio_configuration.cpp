@@ -116,6 +116,42 @@ void RadioConfig::setCurrentLimit(float current_limit_ma) {
     current_limit_ma_ = current_limit_ma;
 }
 
+uint8_t RadioConfig::GetMaxPacketSizeForSf(uint8_t sf, float bw_khz) {
+    uint8_t base = 51;
+    switch (sf) {
+        case 7:
+        case 8:
+            base = 242;
+            break;
+        case 9:
+            base = 115;
+            break;
+        case 10:
+        case 11:
+        case 12:
+            base = 51;
+            break;
+        default:
+            base = 51;
+            break;
+    }
+
+    uint32_t scaled = base;
+    if (bw_khz >= 500.0F - 0.1F) {
+        scaled = static_cast<uint32_t>(base) * 4U;
+    } else if (bw_khz >= 250.0F - 0.1F) {
+        scaled = static_cast<uint32_t>(base) * 2U;
+    }
+
+    if (scaled > 255U) {
+        scaled = 255U;
+    }
+    if (scaled < 1U) {
+        scaled = 1U;
+    }
+    return static_cast<uint8_t>(scaled);
+}
+
 float RadioConfig::RecommendedCurrentLimit(RadioType type, int8_t power) {
     switch (type) {
         case RadioType::kSx1276:

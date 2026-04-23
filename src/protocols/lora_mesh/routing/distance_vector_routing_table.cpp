@@ -724,6 +724,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 NotifyRouteUpdate(true, source_address, source_address, 1);
                 LogRouteEntry(*source_node_it);
             }
+        } else {
+            LOG_DEBUG(
+                "Kept relay route to 0x%04X via 0x%04X (direct_cost=%u "
+                "current_cost=%u uni=%d remote_q=%d exp=%d miss=%d recv=%d)",
+                source_address, prev_next_hop, direct_cost, current_cost,
+                direct_confirmed_unidirectional ? 1 : 0,
+                source_node_it->link_stats.remote_link_quality,
+                source_node_it->link_stats.messages_expected,
+                source_node_it->link_stats.consecutive_missed,
+                source_node_it->link_stats.messages_received);
         }
 
         // Re-activate if was inactive (hearing from node = proof of liveness)
@@ -845,6 +855,12 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                     bool old_hop_alive =
                         old_hop_it != nodes_.end() && old_hop_it->is_active;
                     if (!old_hop_alive && source_address != node_it->next_hop) {
+                        LOG_DEBUG(
+                            "Demote 0x%04X hop=%d via 0x%04X -> hop=%d via "
+                            "0x%04X (relay advertisement, old hop dead)",
+                            dest, node_it->routing_entry.hop_count,
+                            node_it->next_hop, hop_count_via_source,
+                            source_address);
                         node_it->UpdateRouteInfo(
                             source_address, hop_count_via_source,
                             actual_link_quality, reception_timestamp);

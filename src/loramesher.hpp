@@ -233,6 +233,38 @@ class LoraMesher {
     void SetNodeCapabilities(uint8_t capabilities);
 
     /**
+     * @brief Request a runtime change of this node's NodeRole
+     *
+     * Thread-safe. The request is queued on the protocol task and applied
+     * at a safe point, driving the appropriate state transition:
+     *  - NODE_ONLY/AUTO -> NETWORK_MANAGER before joining a network: the
+     *    node creates a network immediately.
+     *  - NODE_ONLY/AUTO -> NETWORK_MANAGER while already joined: the node
+     *    broadcasts NM_CLAIM with its new priority; the incumbent NM
+     *    yields via the standard merge protocol.
+     *  - NETWORK_MANAGER -> NODE_ONLY/AUTO while acting as NM: the node
+     *    surrenders and enters DISCOVERY; the rest of the network runs an
+     *    election to pick a new NM (~5 superframes of disruption).
+     *
+     * Typical use: boot all nodes as NODE_ONLY; promote one to
+     * NETWORK_MANAGER from an external event (e.g. Wi-Fi connect).
+     *
+     * @param role Desired NodeRole
+     * @return Result Success if queued; error if LoraMesher is not running
+     */
+    [[nodiscard]] Result SetNodeRole(NodeRole role);
+
+    /**
+     * @brief Get the node role currently in effect
+     *
+     * May transiently differ from a just-queued SetNodeRole() call until
+     * the protocol task drains the notification queue.
+     *
+     * @return NodeRole Current role
+     */
+    NodeRole GetNodeRole() const;
+
+    /**
      * @brief Get local node capabilities
      *
      * @return uint8_t Local node capabilities bitmap

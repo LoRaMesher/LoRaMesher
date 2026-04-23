@@ -238,6 +238,23 @@ class RadioConfig {
     static float RecommendedCurrentLimit(RadioType type, int8_t power);
 
     /**
+     * @brief Recommended max_packet_size for the given spreading factor and bandwidth
+     *
+     * Derived from the LoRaWAN EU868 regional parameters at BW125 kHz and
+     * scaled proportionally for higher bandwidths (BW250 -> x2, BW500 -> x4),
+     * clamped to the 255-byte LoRa PHY ceiling. Callers use this to size
+     * TDMA slot durations so that time-on-air stays within practical bounds
+     * at high SF where symbol time is long.
+     *
+     * Table at BW125 kHz: SF7/SF8 = 242, SF9 = 115, SF10/SF11/SF12 = 51.
+     *
+     * @param sf Spreading factor (6–12)
+     * @param bw_khz Bandwidth in kHz (e.g. 125.0, 250.0, 500.0)
+     * @return uint8_t Recommended max_packet_size in bytes (range [1, 255])
+     */
+    static uint8_t GetMaxPacketSizeForSf(uint8_t sf, float bw_khz);
+
+    /**
      * @brief Set TCXO reference voltage for SX1262 modules
      *
      * Boards using an SX1262 with a TCXO instead of an external crystal

@@ -236,10 +236,30 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
 
     // Store configuration
     config_ = config;
+    pending_role_.store(config.getNodeRole(), std::memory_order_release);
+
+    // Apply SF-derived max_packet_size default based on live radio settings.
+    // If the user explicitly set max_packet_size above the SF-safe cap, keep
+    // their value and warn so slot-duration inflation is traceable.
+    if (hardware_) {
+        uint8_t sf = hardware_->getSpreadingFactor();
+        float bw_khz = hardware_->getBandwidth();
+        uint8_t sf_safe = config_.ApplySfDerivedDefaults(sf, bw_khz);
+        if (config_.IsMaxPacketSizeUserSet() &&
+            config_.getMaxPacketSize() > sf_safe) {
+            LOG_WARNING(
+                "max_packet_size %u exceeds SF%u/BW%.0fkHz recommended cap %u; "
+                "slot duration will be inflated",
+                static_cast<unsigned>(config_.getMaxPacketSize()),
+                static_cast<unsigned>(sf), static_cast<double>(bw_khz),
+                static_cast<unsigned>(sf_safe));
+        }
+    }
+
 #ifdef DEBUG
-    service_config_ = CreateServiceConfigForTest(config);
+    service_config_ = CreateServiceConfigForTest(config_);
 #else
-    service_config_ = CreateServiceConfig(config);
+    service_config_ = CreateServiceConfig(config_);
 #endif  // DEBUG
 
     // Configure network service
@@ -249,6 +269,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     net_config.node_role = config.getNodeRole();
     net_config.target_duty_cycle = config.getTargetDutyCycle();
     net_config.min_sleep_fraction = config.getMinSleepFraction();
+    net_config.churn_margin_slots = config.getChurnMarginSlots();
     net_config.link_quality_ewma_alpha = config.getLinkQualityEwmaAlpha();
     net_config.consecutive_missed_for_inactivation =
         config.getConsecutiveMissedForInactivation();
@@ -578,6 +599,23 @@ std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodesCopy() const {
     return network_service_->GetNetworkNodesCopy();
 }
 
+Result LoRaMeshProtocol::RequestNodeRoleChange(NodeRole role) {
+    if (!protocol_notification_queue_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Protocol not running");
+    }
+    pending_role_.store(role, std::memory_order_release);
+    NotifyProtocolTask(ProtocolNotificationType::ROLE_CHANGE_REQUEST);
+    return Result::Success();
+}
+
+NodeRole LoRaMeshProtocol::GetNodeRole() const {
+    if (!network_service_) {
+        return pending_role_.load(std::memory_order_acquire);
+    }
+    return network_service_->GetNodeRole();
+}
+
 const LoRaMeshProtocol::ServiceConfiguration&
 LoRaMeshProtocol::GetServiceConfiguration() const {
     return service_config_;
@@ -729,6 +767,18 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 case ProtocolNotificationType::SHUTDOWN:
                     LOG_INFO("Protocol shutdown requested");
                     return;
+
+                case ProtocolNotificationType::ROLE_CHANGE_REQUEST: {
+                    NodeRole requested =
+                        protocol->pending_role_.load(std::memory_order_acquire);
+                    result =
+                        protocol->network_service_->ApplyRoleChange(requested);
+                    if (!result) {
+                        LOG_ERROR("Role change failed: %s",
+                                  result.GetErrorMessage().c_str());
+                    }
+                    break;
+                }
 
                 default:
                     LOG_WARNING("Unknown protocol notification type: %d",

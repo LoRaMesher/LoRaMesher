@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 
@@ -47,7 +48,8 @@ class LoRaMeshProtocol : public Protocol {
         STATE_TIMEOUT,    ///< State timeout occurred, check state transitions
         STATE_CHANGE,     ///< Protocol state changed, update behavior
         SHUTDOWN,         ///< Protocol shutdown requested
-        SLOT_TRANSITION  ///< Superframe slot boundary reached; drain slot_transition_queue_
+        SLOT_TRANSITION,  ///< Superframe slot boundary reached; drain slot_transition_queue_
+        ROLE_CHANGE_REQUEST  ///< Application requested a runtime NodeRole change; apply pending_role_
     };
 
     /**
@@ -234,6 +236,27 @@ class LoRaMeshProtocol : public Protocol {
 
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
     GetNetworkNodesCopy() const;
+
+    /**
+     * @brief Request a runtime change of this node's role.
+     *
+     * Thread-safe. The request is queued on the protocol task and applied
+     * at a safe point via NetworkService::ApplyRoleChange(). Returns
+     * synchronously after queueing — the actual state transition happens
+     * asynchronously.
+     *
+     * @param role Desired NodeRole (AUTO, NETWORK_MANAGER, or NODE_ONLY)
+     * @return Result Success if queued; error if the protocol is not running
+     */
+    Result RequestNodeRoleChange(NodeRole role);
+
+    /**
+     * @brief Get the node role currently in effect.
+     *
+     * May transiently differ from a just-queued change until the protocol
+     * task drains the notification queue.
+     */
+    NodeRole GetNodeRole() const;
 
 #ifdef DEBUG
     lora_mesh::NetworkService* GetNetworkServiceForTest() {
@@ -466,6 +489,10 @@ class LoRaMeshProtocol : public Protocol {
         false;  ///< True during subslotted slots (radio stays in RX)
     uint32_t current_slot_arrival_time_ms_ =
         0;  ///< GetTimeInSlot() at slot boundary (from SlotTransitionData)
+
+    // Runtime role change — written by application threads, read on the
+    // protocol task when draining ROLE_CHANGE_REQUEST notifications.
+    std::atomic<NodeRole> pending_role_{NodeRole::AUTO};
 
     // Constants
     static constexpr uint32_t PROTOCOL_TASK_STACK_SIZE = 8192;

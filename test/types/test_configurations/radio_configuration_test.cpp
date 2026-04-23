@@ -188,5 +188,55 @@ TEST_F(RadioConfigCoverageTest, SetTcxoVoltageRejectsInvalid) {
     EXPECT_THROW(c.setTcxoVoltage(3.4F), std::invalid_argument);
 }
 
+// ===========================================================================
+// GetMaxPacketSizeForSf — LoRaWAN EU868-derived table with BW scaling
+// ===========================================================================
+
+TEST(RadioConfigMaxPacketForSfTest, TableAtBw125) {
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(7, 125.0F), 242);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(8, 125.0F), 242);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(9, 125.0F), 115);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(10, 125.0F), 51);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(11, 125.0F), 51);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(12, 125.0F), 51);
+}
+
+TEST(RadioConfigMaxPacketForSfTest, ScalesAtBw250) {
+    // SF7/8: 242 * 2 = 484 -> clamped to 255
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(7, 250.0F), 255);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(8, 250.0F), 255);
+    // SF9: 115 * 2 = 230 (below 255)
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(9, 250.0F), 230);
+    // SF10-12: 51 * 2 = 102
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(10, 250.0F), 102);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(11, 250.0F), 102);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(12, 250.0F), 102);
+}
+
+TEST(RadioConfigMaxPacketForSfTest, ScalesAtBw500) {
+    // All SF7-9 clamp to 255 at x4
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(7, 500.0F), 255);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(9, 500.0F), 255);
+    // SF10-12: 51 * 4 = 204
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(10, 500.0F), 204);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(12, 500.0F), 204);
+}
+
+TEST(RadioConfigMaxPacketForSfTest, ReturnsInValidRange) {
+    for (uint8_t sf = 6; sf <= 12; ++sf) {
+        for (float bw : {125.0F, 250.0F, 500.0F}) {
+            uint8_t v = RadioConfig::GetMaxPacketSizeForSf(sf, bw);
+            EXPECT_GE(v, 1);
+            EXPECT_LE(v, 255);
+        }
+    }
+}
+
+TEST(RadioConfigMaxPacketForSfTest, UnknownSfReturnsConservativeDefault) {
+    // Out-of-range SF falls back to the most conservative cap (51)
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(6, 125.0F), 51);
+    EXPECT_EQ(RadioConfig::GetMaxPacketSizeForSf(13, 125.0F), 51);
+}
+
 }  // namespace test
 }  // namespace loramesher

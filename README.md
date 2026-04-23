@@ -204,6 +204,36 @@ Add these defines before including `loramesher.h` (or in `platformio.ini` as `bu
 #define LOGGER_BUFFER_SIZE 256
 ```
 
+### Spreading factor and `max_packet_size`
+
+LoRaMesher selects a default `max_packet_size` from the active spreading factor and bandwidth so that time-on-air — and therefore TDMA slot duration — stays within practical bounds at high SF. At BW 125 kHz:
+
+| SF | Default `max_packet_size` |
+|----|---------------------------|
+| SF7 / SF8 | 242 bytes |
+| SF9 | 115 bytes |
+| SF10 / SF11 / SF12 | 51 bytes |
+
+The table is scaled up by ×2 at BW 250 kHz and ×4 at BW 500 kHz, clamped to the 255-byte PHY ceiling. See `RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz)` for the authoritative helper.
+
+You can override the default explicitly — your value is preserved, and a warning is logged only if it exceeds the SF-safe cap:
+
+```cpp
+RadioConfig radio;
+radio.setSpreadingFactor(10);
+radio.setBandwidth(125.0f);
+
+LoRaMeshProtocolConfig protocol;
+protocol.setMaxPacketSize(200);  // keep 200 B at SF10 — logs a warning
+
+auto mesher = LoraMesher::Builder()
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    .Build();
+```
+
+If you don't call `setMaxPacketSize()`, the SF-derived default is applied at protocol configuration time.
+
 ---
 
 ## Testing & Analysis

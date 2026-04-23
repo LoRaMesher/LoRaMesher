@@ -636,6 +636,17 @@ class NetworkService : public INetworkService {
     void ExpandSyncBeaconListening();
 
     /**
+     * @brief Restore the SYNC_BEACON_TX slot demoted by ExpandSyncBeaconListening()
+     *
+     * Called when a sync beacon has been received and queued for forwarding in
+     * the same superframe. Flips the slot at our hop distance to NM from
+     * SYNC_BEACON_RX back to SYNC_BEACON_TX so the queued forward can be sent.
+     * No-op for the network manager (hop distance 0) and when the slot is
+     * already TX.
+     */
+    void RestoreSyncBeaconTxSlot();
+
+    /**
      * @brief Apply pending join request at superframe boundary
      * 
      * Called by the Network Manager at the start of each superframe to apply
@@ -841,6 +852,10 @@ class NetworkService : public INetworkService {
      * @return Result
      */
     Result SendNMClaim();
+
+    NodeRole GetNodeRole() const override { return node_role_; }
+
+    Result ApplyRoleChange(NodeRole new_role) override;
 
    private:
     /**
@@ -1189,6 +1204,8 @@ class NetworkService : public INetworkService {
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
+    uint8_t churn_margin_slots_ =
+        2;  ///< Absolute extra slots reserved by NM to absorb routing churn
     uint8_t ewma_alpha_fixed_ = 77;  ///< EWMA alpha in fixed-point (0.30 * 256)
     uint8_t consecutive_missed_for_inactivation_ =
         10;  ///< Consecutive misses before hard inactivation

@@ -1,5 +1,7 @@
 #include "mocks/mock_radio.hpp"
 
+#ifdef LORAMESHER_BUILD_NATIVE
+
 #include "../test/utils/mock_radio.hpp"
 
 namespace loramesher {
@@ -150,3 +152,5 @@ test::MockRadio& GetMockForTesting(MockRadio& radio) {
 
 }  // namespace radio
 }  // namespace loramesher
+
+#endif  // LORAMESHER_BUILD_NATIVE

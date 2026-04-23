@@ -3,6 +3,27 @@ name: Test
 on: [push, pull_request]
 
 jobs:
+  esp32-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install platformio
+
+    - name: Build ESP32 Example
+      run: |
+        cd examples/simple_example
+        sed -i 's|lib_deps =.*|lib_deps = symlink://../../|' platformio.ini
+        pio run -e ttgo-lora32-v1
+
   build:
     runs-on: ubuntu-latest
 

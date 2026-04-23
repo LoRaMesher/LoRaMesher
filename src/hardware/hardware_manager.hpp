@@ -122,10 +122,16 @@ class HardwareManager : public IHardwareManager {
 
     /**
      * @brief Get the current radio configuration
-     * 
+     *
      * @return const RadioConfig& Reference to current radio configuration
      */
     const RadioConfig& getRadioConfig() const { return radio_config_; }
+
+    uint8_t getSpreadingFactor() const override {
+        return radio_config_.getSpreadingFactor();
+    }
+
+    float getBandwidth() const override { return radio_config_.getBandwidth(); }
 
     /**
      * @brief Update the pin configuration

@@ -262,6 +262,28 @@ class IHardwareManager {
      * @param address Local node address
      */
     virtual void SetLocalAddress(AddressType address) = 0;
+
+    /**
+     * @brief Get the configured LoRa spreading factor
+     *
+     * Non-pure to keep test mocks minimal: returns a sensible default (SF7)
+     * when not overridden. Concrete hardware managers should forward to the
+     * live radio configuration.
+     *
+     * @return uint8_t Spreading factor (6–12)
+     */
+    virtual uint8_t getSpreadingFactor() const { return 7; }
+
+    /**
+     * @brief Get the configured LoRa bandwidth in kHz
+     *
+     * Non-pure to keep test mocks minimal: returns a sensible default
+     * (125 kHz) when not overridden. Concrete hardware managers should
+     * forward to the live radio configuration.
+     *
+     * @return float Bandwidth in kHz
+     */
+    virtual float getBandwidth() const { return 125.0F; }
 };
 
 }  // namespace hardware
