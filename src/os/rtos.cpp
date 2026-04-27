@@ -8,11 +8,14 @@
 namespace loramesher {
 namespace os {
 
+// Eagerly initialize before any threads access it
+static RTOSFreeRTOS g_rtos_instance;
+
 RTOS& RTOS::instance() {
-    static RTOSFreeRTOS instance;
-    return instance;
+    return g_rtos_instance;
 }
 
+}  // namespace os
 }  // namespace os
 }  // namespace loramesher
 
