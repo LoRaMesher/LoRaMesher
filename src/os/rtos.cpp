@@ -16,7 +16,6 @@ RTOS& RTOS::instance() {
 }
 
 }  // namespace os
-}  // namespace os
 }  // namespace loramesher
 
 #else
