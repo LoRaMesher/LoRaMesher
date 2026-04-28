@@ -1262,6 +1262,104 @@ TEST_F(RoutingTableUnitTest, GetLinkQualityAfterProcessRoutingMessage) {
 }
 
 // =============================================================================
+// RefreshRoute: refresh existing active route, no-op for missing/inactive
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, RefreshRoutePresentRefreshesLastSeen) {
+    AddDirectNeighbor(kNeighbor1);
+    const auto& nodes = routing_table_->GetNodes();
+    auto find_n1 = [&]() {
+        return std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kNeighbor1;
+            });
+    };
+    auto it = find_n1();
+    ASSERT_NE(it, nodes.end());
+    AddressType original_next_hop = it->next_hop;
+    uint8_t original_hop_count = it->routing_entry.hop_count;
+    uint8_t original_quality = it->routing_entry.link_quality;
+
+    uint32_t new_time = kCurrentTime + 12345;
+    EXPECT_TRUE(routing_table_->RefreshRoute(kNeighbor1, new_time));
+
+    it = find_n1();
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->last_seen, new_time);
+    EXPECT_EQ(it->next_hop, original_next_hop);
+    EXPECT_EQ(it->routing_entry.hop_count, original_hop_count);
+    EXPECT_EQ(it->routing_entry.link_quality, original_quality);
+}
+
+TEST_F(RoutingTableUnitTest, RefreshRouteAbsentReturnsFalse) {
+    EXPECT_FALSE(routing_table_->RefreshRoute(kNeighbor1, kCurrentTime));
+}
+
+TEST_F(RoutingTableUnitTest, RefreshRouteInactiveReturnsFalse) {
+    AddDirectNeighbor(kNeighbor1);
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 5000, 1000, 100000);
+    EXPECT_FALSE(routing_table_->RefreshRoute(kNeighbor1, kCurrentTime + 6000));
+}
+
+// =============================================================================
+// ProcessRoutingTableMessage: one packet does not promote direct over a
+// confirmed indirect route (Bug A — quality inflation from one packet)
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest,
+       ProcessRoutingMessageOnePacketDoesNotPromoteDirect) {
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+
+    // Seed kNeighbor2 with enough RT receptions to clear the provisional
+    // sample-count gate (its source quality must reflect the real link).
+    for (int i = 0; i < 4; ++i) {
+        std::vector<RoutingTableEntry> empty;
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor2, empty, kCurrentTime + i, kGoodQuality, kMaxHops);
+    }
+
+    // Indirect route to kRemoteNode via kNeighbor2 (hop=2, solid quality).
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kRemoteNode, 1, /*link_quality=*/200));
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor2, entries, kCurrentTime + 10, kGoodQuality, kMaxHops);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto find_remote = [&]() {
+        return std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kRemoteNode;
+            });
+    };
+    auto it = find_remote();
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->next_hop, kNeighbor2);
+    EXPECT_EQ(it->routing_entry.hop_count, 2);
+    uint16_t indirect_cost = NetworkNodeRoute::CalculateRouteCost(
+        it->routing_entry.hop_count, it->routing_entry.link_quality);
+
+    // One routing-table message arrives directly from kRemoteNode at high
+    // local link quality. The fresh source's CalculateQuality returns
+    // kProvisionalQuality=64 (one reception, below sample threshold), so
+    // direct ETX = 65536/64 = 1024, which must not displace a healthy
+    // indirect route.
+    std::vector<RoutingTableEntry> empty;
+    routing_table_->ProcessRoutingTableMessage(
+        kRemoteNode, empty, kCurrentTime + 100,
+        /*local_link_quality=*/255, kMaxHops);
+
+    EXPECT_LT(indirect_cost, 1024u)
+        << "Test premise broken: indirect route must be cheaper than the "
+           "provisional direct ETX (1024)";
+    it = find_remote();
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->next_hop, kNeighbor2)
+        << "One packet from a fresh source must not displace the established "
+           "indirect route";
+    EXPECT_EQ(it->routing_entry.hop_count, 2);
+}
+
+// =============================================================================
 // RemoveInactiveNodes: simultaneous mark-and-remove (route_timeout == node_timeout)
 // =============================================================================
 
@@ -1383,11 +1481,12 @@ TEST_F(RoutingTableUnitTest, EWMAQualityDecaysOnMissedMessages) {
             });
     };
 
-    // Initial EWMA after one received message with alpha=77/256:
-    // ewma = (77*255 + 179*200)/256 = 216
+    // Initial EWMA after one received message with alpha=77/256
+    // and seed kProvisionalQuality=64:
+    // ewma = (77*255 + 179*64)/256 = 121
     auto it = find_node();
     ASSERT_NE(it, nodes.end());
-    EXPECT_EQ(it->link_stats.ewma_quality, 216);
+    EXPECT_EQ(it->link_stats.ewma_quality, 121);
 
     // After 10 consecutive misses, EWMA should decay significantly
     // Each miss: ewma = ewma * 179/256
@@ -1596,6 +1695,14 @@ TEST_F(RoutingTableUnitTest, FindNextHopPrefersLowerCostOverFewerHops) {
     // Direct neighbor with poor quality (1 hop, quality 50)
     // Cost = 1 × 65536 / 50 = 1310
     AddDirectNeighbor(kNeighbor1, kPoorQuality);
+
+    // Seed kNeighbor2 above kMinSamplesForQuality so its source link
+    // quality is no longer provisional.
+    for (int i = 0; i < 4; ++i) {
+        std::vector<RoutingTableEntry> empty;
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor2, empty, kCurrentTime + i, kGoodQuality, kMaxHops);
+    }
 
     // 2-hop route via Neighbor2 with good quality (quality 200)
     // Cost = 2 × 65536 / 200 = 655

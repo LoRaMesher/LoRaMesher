@@ -6,6 +6,7 @@
 
 #include "hardware/hal_factory.hpp"
 #include "os/os_port.hpp"
+#include "os/rtos.hpp"
 #include "utils/address_generator.hpp"
 
 namespace loramesher {
@@ -23,6 +24,8 @@ LoraMesher::~LoraMesher() {
 }
 
 Result LoraMesher::Initialize() {
+    os::RTOS::Init();
+
     if (is_initialized_) {
         return Result::Success();
     }

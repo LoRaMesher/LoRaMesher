@@ -31,12 +31,18 @@ class NetworkNodeRoute {
      * @brief Link quality statistics structure
      */
     struct LinkQualityStats {
+        /// Minimum direct receptions before EWMA/window quality is reported
+        static constexpr uint32_t kMinSamplesForQuality = 3;
+        /// Quality reported below the sample threshold (~ETX 1024)
+        static constexpr uint8_t kProvisionalQuality = 64;
+
         uint32_t messages_expected = 0;   ///< Expected messages count
         uint32_t messages_received = 0;   ///< Received messages count
         uint32_t last_message_time = 0;   ///< Last message received time
         uint8_t remote_link_quality = 0;  ///< Link quality as reported by peer
         uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
-        uint8_t ewma_quality = 200;    ///< EWMA-smoothed link quality (0-255)
+        uint8_t ewma_quality =
+            kProvisionalQuality;       ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
         uint8_t inactive_probe_count =
             0;                        ///< Superframes probed since inactivation

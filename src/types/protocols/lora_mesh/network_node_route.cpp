@@ -14,8 +14,13 @@ namespace lora_mesh {
 
 // LinkQualityStats implementation
 uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
-    if (messages_expected == 0) {
-        return remote_link_quality > 0 ? remote_link_quality : 200;
+    // Until we have enough direct receptions to trust the EWMA/window,
+    // report a provisional value so a single packet cannot inflate quality.
+    if (messages_received < kMinSamplesForQuality) {
+        if (remote_link_quality > 0) {
+            return std::min<uint8_t>(remote_link_quality, kProvisionalQuality);
+        }
+        return kProvisionalQuality;
     }
 
     // Use sliding window PDR when ready, otherwise fall back to EWMA
@@ -48,7 +53,7 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
 void NetworkNodeRoute::LinkQualityStats::Reset() {
     messages_expected = 0;
     messages_received = 0;
-    ewma_quality = 200;
+    ewma_quality = kProvisionalQuality;
     recovery_counter = 0;
     inactive_probe_count = 0;
     last_rssi = 0.0f;
@@ -114,8 +119,8 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
                                    uint32_t time, bool is_manager, uint8_t caps,
                                    uint8_t slots, uint8_t hops)
-    : routing_entry(addr, hops, 200, slots,
-                    caps),  // Default link quality of 200
+    : routing_entry(addr, hops, LinkQualityStats::kProvisionalQuality, slots,
+                    caps),
       battery_level(battery),
       last_seen(time),
       is_network_manager(is_manager),
@@ -326,7 +331,8 @@ RoutingTableEntry NetworkNodeRoute::ToRoutingTableEntry() const {
     RoutingTableEntry entry = routing_entry;
     entry.control_slot_index = control_slot_index;
     entry.next_hop = next_hop;
-    if (link_stats.messages_received > 0) {
+    if (link_stats.messages_received >=
+        LinkQualityStats::kMinSamplesForQuality) {
         entry.reception_quality = link_stats.window.IsReady()
                                       ? link_stats.window.GetPDR()
                                       : link_stats.ewma_quality;

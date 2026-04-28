@@ -1,5 +1,7 @@
 #include "os/rtos.hpp"
 
+#include <cassert>
+
 #include "config/system_config.hpp"
 
 #ifdef LORAMESHER_BUILD_ARDUINO
@@ -8,11 +10,18 @@
 namespace loramesher {
 namespace os {
 
-// Eagerly initialize before any threads access it
-static RTOSFreeRTOS g_rtos_instance;
+namespace {
+RTOS* g_rtos = nullptr;
+}
+
+void RTOS::Init() {
+    static RTOSFreeRTOS impl;
+    g_rtos = &impl;
+}
 
 RTOS& RTOS::instance() {
-    return g_rtos_instance;
+    assert(g_rtos != nullptr && "RTOS::Init() must be called before instance()");
+    return *g_rtos;
 }
 
 }  // namespace os
@@ -27,9 +36,18 @@ namespace os {
 // Thread-local storage definition for node address cache
 thread_local char RTOSMock::thread_local_node_address_[8] = {};
 
+namespace {
+RTOS* g_rtos = nullptr;
+}
+
+void RTOS::Init() {
+    static RTOSMock impl;
+    g_rtos = &impl;
+}
+
 RTOS& RTOS::instance() {
-    static RTOSMock instance;
-    return instance;
+    assert(g_rtos != nullptr && "RTOS::Init() must be called before instance()");
+    return *g_rtos;
 }
 
 }  // namespace os

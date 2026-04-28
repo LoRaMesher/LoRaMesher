@@ -530,11 +530,17 @@ TEST_F(NetworkNodeRouteTest, UpdateFromRoutingTableEntry) {
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityNoTracking) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // No tracking → remote quality if available, else 200
-    EXPECT_EQ(stats.CalculateQuality(), 200);  // no remote quality
+    // Below sample threshold → provisional quality, regardless of remote
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
 
-    stats.remote_link_quality = 100;
-    EXPECT_EQ(stats.CalculateQuality(), 100);
+    stats.remote_link_quality = 200;
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+
+    // If remote is below provisional, peer's lower estimate wins
+    stats.remote_link_quality = 32;
+    EXPECT_EQ(stats.CalculateQuality(), 32);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityPerfect) {
@@ -595,15 +601,16 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
 TEST_F(NetworkNodeRouteTest,
        LinkQualityUnidirectionalNoPenaltyBeforeThreshold) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // Only 2 superframes — below the 3-message threshold
+    // Only 2 receptions — below the kMinSamplesForQuality gate
     for (int i = 0; i < 2; i++) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
     }
-    EXPECT_EQ(stats.messages_expected, 2u);
+    EXPECT_EQ(stats.messages_received, 2u);
     EXPECT_EQ(stats.remote_link_quality, 0);
-    // No penalty yet — full EWMA quality returned
-    EXPECT_EQ(stats.CalculateQuality(), stats.ewma_quality);
+    // Below sample threshold → provisional, no unidirectional penalty
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
 }
 
 TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalRecovery) {
@@ -734,6 +741,49 @@ TEST_F(NetworkNodeRouteTest,
     node_.link_stats.messages_received = 5;  // Heard directly (lossy link)
     RoutingTableEntry entry = node_.ToRoutingTableEntry();
     EXPECT_EQ(entry.reception_quality, 48u);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       ToRoutingTableEntryReceptionQualityZeroBelowThreshold) {
+    node_.routing_entry.hop_count = 1;
+    node_.link_stats.ewma_quality = 180;
+    node_.link_stats.messages_received = 2;  // below kMinSamplesForQuality
+    RoutingTableEntry entry = node_.ToRoutingTableEntry();
+    EXPECT_EQ(entry.reception_quality, 0u);
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityProvisionalBelowSampleThreshold) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.ReceivedMessage(1000);
+    EXPECT_EQ(stats.messages_received, 1u);
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+
+    stats.ReceivedMessage(2000);
+    EXPECT_EQ(stats.messages_received, 2u);
+    EXPECT_EQ(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityClimbsAfterSampleThreshold) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.UpdateRemoteQuality(240);
+    for (int i = 0; i < 5; ++i) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+    }
+    EXPECT_GE(stats.messages_received,
+              NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality);
+    EXPECT_GT(stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityProvisionalCappedByRemote) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.UpdateRemoteQuality(32);
+    stats.ReceivedMessage(1000);
+    // Below sample threshold: peer's lower estimate wins over provisional
+    EXPECT_EQ(stats.CalculateQuality(), 32);
 }
 
 // ---- GetAddress / GetAllocatedDataSlots ----

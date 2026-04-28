@@ -3,6 +3,7 @@
  * @brief Test suite for lora_mesh unit tests
  */
 #include <gtest/gtest.h>
+#include "os/rtos.hpp"
 
 #if defined(ARDUINO)
 #include <Arduino.h>
@@ -27,6 +28,7 @@ void loop() {
 #else
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
+    loramesher::os::RTOS::Init();
     if (RUN_ALL_TESTS()) {}
     // Always return zero-code and allow PlatformIO to parse results
     return 0;

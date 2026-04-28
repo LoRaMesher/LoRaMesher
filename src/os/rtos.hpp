@@ -70,7 +70,18 @@ struct TaskStats {
 class RTOS {
    public:
     /**
-     * @brief Get singleton instance
+     * @brief Initialise the RTOS singleton.
+     *
+     * Must be called once on the main thread before any worker task or ISR
+     * can reach instance(). Idempotent: subsequent calls are no-ops and
+     * always reach the same singleton. LoraMesher::Start() invokes this
+     * automatically; applications that bypass Start() and use GetRTOS()
+     * directly must call it explicitly.
+     */
+    static void Init();
+
+    /**
+     * @brief Get singleton instance. Init() must have been called first.
      */
     static RTOS& instance();
 

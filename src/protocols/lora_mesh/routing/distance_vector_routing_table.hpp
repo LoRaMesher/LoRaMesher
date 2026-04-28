@@ -63,6 +63,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     bool RemoveNode(AddressType address) override;
 
+    bool RefreshRoute(AddressType destination, uint32_t current_time) override;
+
     size_t RemoveInactiveNodes(uint32_t current_time, uint32_t route_timeout_ms,
                                uint32_t node_timeout_ms) override;
 

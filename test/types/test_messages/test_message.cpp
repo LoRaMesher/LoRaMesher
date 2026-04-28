@@ -1,5 +1,6 @@
 // test/types/test_messages/test_message.cpp
 #include <gtest/gtest.h>
+#include "os/rtos.hpp"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -23,6 +24,7 @@ void loop() {
 #else
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
+    loramesher::os::RTOS::Init();
     if (RUN_ALL_TESTS()) {}
     // Always return zero-code and allow PlatformIO to parse results
     return 0;

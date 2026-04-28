@@ -312,6 +312,18 @@ bool DistanceVectorRoutingTable::RemoveNode(AddressType address) {
     return false;
 }
 
+bool DistanceVectorRoutingTable::RefreshRoute(AddressType destination,
+                                              uint32_t current_time) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+
+    auto node_it = GetNode(destination);
+    if (node_it == nodes_.end() || !node_it->is_active) {
+        return false;
+    }
+    node_it->last_seen = current_time;
+    return true;
+}
+
 size_t DistanceVectorRoutingTable::RemoveInactiveNodes(
     uint32_t current_time, uint32_t route_timeout_ms,
     uint32_t node_timeout_ms) {

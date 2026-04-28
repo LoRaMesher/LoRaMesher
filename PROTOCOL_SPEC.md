@@ -929,6 +929,8 @@ Once 16 superframes of data are available, a sliding window PDR (packet delivery
 
 Where `α` defaults to 0.30 (configurable via `setLinkQualityEwmaAlpha()`). This means quality responds to recent link conditions within 3–4 superframes rather than being dominated by cumulative history.
 
+**Sample-Count Gate**: Link quality requires at least `kMinSamplesForQuality = 3` direct receptions before the EWMA / sliding-window value is reported. Below that threshold, `CalculateQuality()` returns `kProvisionalQuality = 64` (or `min(remote_link_quality, kProvisionalQuality)` if the peer reports a value), and `reception_quality` is left at 0 in advertised entries so peers cannot inflate via us. The seed `ewma_quality` is `kProvisionalQuality`. This prevents a single received packet on a marginal link from inflating quality (the EWMA seed combined with one boost would otherwise short-circuit the calculation and report a high quality on a single observation).
+
 Multi-hop routes via a degraded neighbor have their quality capped to the direct link quality (`min()` cascade), ensuring that indirect routes cannot appear better than the bottleneck link.
 
 After `consecutive_missed_for_inactivation` (default 10, configurable) consecutive misses, the route is marked inactive for slot table cleanup and full cascade invalidation.
@@ -1455,6 +1457,8 @@ void ProcessSyncBeacon(const SyncMessage& sync) {
 ```
 
 > **Note**: Only one sync beacon is processed per superframe. If a sync beacon is received within half the superframe duration of the previously processed one, it is silently ignored. This prevents redundant timing adjustments when a node receives multiple forwarded copies of the same beacon from different hops.
+
+> **Route Installation Policy**: A sync beacon refreshes `last_seen` on an existing NM route. It installs a new route only when the beacon comes directly from the NM (`hop_count == 0`, i.e. `beacon_source == network_manager`). Multi-hop relayed beacons do not install new routes — those are confirmed by routing-table exchanges. This prevents a single forwarded beacon from installing a phantom multi-hop route through a relay that may itself have lost the path to the NM.
 
 ### 5.4 Slot Allocation
 

@@ -73,6 +73,16 @@ class IRoutingTable {
                              uint32_t current_time) = 0;
 
     /**
+     * @brief Refresh last_seen on an existing active route
+     *
+     * @param destination Destination address of the route to refresh
+     * @param current_time Current timestamp
+     * @return bool True if an active route existed and was refreshed
+     */
+    virtual bool RefreshRoute(AddressType destination,
+                              uint32_t current_time) = 0;
+
+    /**
      * @brief Add a network node to the routing table
      * 
      * @param node Network node to add

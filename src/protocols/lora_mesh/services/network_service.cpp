@@ -2920,39 +2920,31 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         SetState(ProtocolState::DISCOVERY);
     }
 
-    // Add/update route to NM based on sync beacon info
-    // Our hop distance to NM = beacon's hop_count + 1 (we're one hop further than the forwarder)
+    // Sync beacons are weak evidence: relayed beacons must not install
+    // phantom multi-hop routes from a single observation. Refresh-only for
+    // multi-hop, install only when the beacon comes directly from the NM.
     AddressType beacon_source = sync_beacon.GetSource();
     AddressType beacon_nm = sync_beacon.GetNetworkManager();
     uint8_t our_hop_count_to_nm = sync_beacon.GetHopCount() + 1;
-    // Always refresh the NM route on beacon receipt.
-    // UpdateRoute() internally handles "don't overwrite a better active route",
-    // so this is safe even when the NM route is already active.
-    // Removing the IsNodePresent() guard fixes the case where a stale node entry
-    // (is_active=false) blocks the route refresh, leaving IsDirectNeighbor() false.
     if (beacon_nm != node_address_) {
         current_time = GetRTOS().getTickCount();
-        // Use direct physical link quality if available, otherwise default 200.
-        // GetDirectLinkQuality returns link_stats.CalculateQuality() (EWMA +
-        // unidirectional penalty), not the route quality which may reflect a
-        // good multi-hop path.
-        uint8_t beacon_quality =
-            routing_table_->GetDirectLinkQuality(beacon_source);
-        if (beacon_quality == 0) {
-            beacon_quality = 200;  // First beacon, no stats yet
-        }
-        bool route_updated = routing_table_->UpdateRoute(
-            beacon_source,        // next_hop: go through the beacon forwarder
-            beacon_nm,            // destination: the network manager
-            our_hop_count_to_nm,  // hop_count: beacon's hop_count + 1
-            beacon_quality,       // link_quality: measured or default
-            config_.default_data_slots,  // allocated_data_slots
-            0,                           // capabilities: unknown
-            current_time);
-
-        if (route_updated) {
-            LOG_DEBUG("Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
-                      beacon_nm, beacon_source, our_hop_count_to_nm);
+        bool direct_nm_beacon = (beacon_source == beacon_nm);
+        if (direct_nm_beacon) {
+            uint8_t beacon_quality =
+                routing_table_->GetDirectLinkQuality(beacon_source);
+            if (beacon_quality == 0) {
+                beacon_quality = types::protocols::lora_mesh::NetworkNodeRoute::
+                    LinkQualityStats::kProvisionalQuality;
+            }
+            bool route_updated = routing_table_->UpdateRoute(
+                beacon_source, beacon_nm, our_hop_count_to_nm, beacon_quality,
+                config_.default_data_slots, 0, current_time);
+            if (route_updated) {
+                LOG_DEBUG("Updated route to NM 0x%04X via 0x%04X, hop_count=%d",
+                          beacon_nm, beacon_source, our_hop_count_to_nm);
+            }
+        } else {
+            routing_table_->RefreshRoute(beacon_nm, current_time);
         }
     }
 
