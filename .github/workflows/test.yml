@@ -172,7 +172,7 @@ jobs:
 
     - name: Upload failing test logs
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: failed-test-logs
         path: failed_test_logs/
