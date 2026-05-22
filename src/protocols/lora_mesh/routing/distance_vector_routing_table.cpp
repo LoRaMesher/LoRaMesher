@@ -410,6 +410,39 @@ std::vector<RoutingTableEntry> DistanceVectorRoutingTable::GetRoutingEntries(
     return entries;
 }
 
+std::vector<RoutingTableEntry>
+DistanceVectorRoutingTable::GetNextBroadcastSlice(AddressType exclude_address,
+                                                  size_t max_entries) {
+
+    std::lock_guard<std::mutex> lock(table_mutex_);
+
+    std::vector<RoutingTableEntry> all;
+    all.reserve(nodes_.size());
+    for (const auto& node : nodes_) {
+        if (node.is_active &&
+            node.routing_entry.destination != exclude_address &&
+            node.routing_entry.destination != node_address_) {
+            all.push_back(node.ToRoutingTableEntry());
+        }
+    }
+
+    if (all.empty() || max_entries == 0) {
+        next_broadcast_offset_ = 0;
+        return {};
+    }
+
+    if (next_broadcast_offset_ >= all.size()) {
+        next_broadcast_offset_ = 0;
+    }
+
+    const size_t start = next_broadcast_offset_;
+    const size_t end = std::min(start + max_entries, all.size());
+    std::vector<RoutingTableEntry> slice(all.begin() + start,
+                                         all.begin() + end);
+    next_broadcast_offset_ = (end >= all.size()) ? 0 : end;
+    return slice;
+}
+
 uint8_t DistanceVectorRoutingTable::GetLinkQuality(
     AddressType node_address) const {
     std::lock_guard<std::mutex> lock(table_mutex_);
@@ -500,6 +533,7 @@ void DistanceVectorRoutingTable::Clear() {
     lookup_count_ = 0;
     update_count_ = 0;
     last_cleanup_time_ = 0;
+    next_broadcast_offset_ = 0;
 
     LOG_INFO("Cleared routing table for node 0x%04X", node_address_);
 }

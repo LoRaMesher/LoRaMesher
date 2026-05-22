@@ -83,6 +83,9 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     std::vector<RoutingTableEntry> GetRoutingEntries(
         AddressType exclude_address) const override;
 
+    std::vector<RoutingTableEntry> GetNextBroadcastSlice(
+        AddressType exclude_address, size_t max_entries) override;
+
     uint8_t GetLinkQuality(AddressType node_address) const override;
 
     uint8_t GetDirectLinkQuality(AddressType node_address) const override;
@@ -214,6 +217,10 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     mutable uint32_t lookup_count_;       ///< Number of route lookups
     mutable uint32_t update_count_;       ///< Number of route updates
     mutable uint32_t last_cleanup_time_;  ///< Last cleanup timestamp
+
+    /// Rotation cursor for sliced routing broadcasts; advances by slice
+    /// size and wraps when the active set is exhausted. Reset on Clear().
+    size_t next_broadcast_offset_ = 0;
 };
 
 }  // namespace lora_mesh

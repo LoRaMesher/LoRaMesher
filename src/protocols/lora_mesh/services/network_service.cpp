@@ -155,9 +155,29 @@ size_t NetworkService::RemoveInactiveNodes() {
 
     uint32_t current_time = GetRTOS().getTickCount();
 
-    // Delegate to routing table implementation
+    // Scale aging timeouts to the rotation period so a node whose
+    // route appears in a sliced broadcast every ceil(N/k) superframes
+    // is not pruned by a single missed cycle. Margin = 2 full rotations.
+    const size_t k = ComputeBroadcastSliceCapacity();
+    const size_t n = routing_table_->GetSize();
+    const size_t rotation_steps = (k == 0 || n == 0) ? 1 : (n + k - 1) / k;
+    const uint32_t superframe_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration()
+                            : 1000;
+    const uint32_t rotation_period_ms =
+        static_cast<uint32_t>(rotation_steps) * superframe_ms;
+
+    const uint32_t scaled_route_timeout =
+        std::max<uint32_t>(config_.route_timeout_ms, 2u * rotation_period_ms);
+    const uint32_t node_grace_ms =
+        (config_.node_timeout_ms > config_.route_timeout_ms)
+            ? (config_.node_timeout_ms - config_.route_timeout_ms)
+            : 0u;
+    const uint32_t scaled_node_timeout = std::max<uint32_t>(
+        config_.node_timeout_ms, scaled_route_timeout + node_grace_ms);
+
     size_t nodes_removed = routing_table_->RemoveInactiveNodes(
-        current_time, config_.route_timeout_ms, config_.node_timeout_ms);
+        current_time, scaled_route_timeout, scaled_node_timeout);
 
     // Update topology if any nodes were removed
     if (nodes_removed > 0) {
@@ -685,13 +705,33 @@ uint8_t NetworkService::CalculateLinkQuality(AddressType node_address) const {
     return routing_table_->GetLinkQuality(node_address);
 }
 
+size_t NetworkService::ComputeBroadcastSliceCapacity() const {
+    constexpr size_t header_overhead =
+        BaseHeader::Size() + RoutingTableHeader::RoutingTableFieldsSize();
+    if (config_.max_packet_size <= header_overhead) {
+        return 0;
+    }
+    const size_t cap =
+        (config_.max_packet_size - header_overhead) / RoutingTableEntry::Size();
+    return std::min<size_t>(cap, RoutingTableMessage::kMaxRoutingEntries);
+}
+
 std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     AddressType destination) {
     std::lock_guard<std::mutex> lock(network_mutex_);
 
-    // Get routing entries from routing table (excludes own address)
+    // Slice the routing table to fit within the current per-frame entry
+    // budget. The routing table owns the rotation cursor.
+    const size_t slice_capacity = ComputeBroadcastSliceCapacity();
+    if (slice_capacity == 0) {
+        LOG_ERROR(
+            "max_packet_size %u cannot carry a routing fragment "
+            "(header overhead exceeds frame)",
+            config_.max_packet_size);
+        return nullptr;
+    }
     std::vector<RoutingTableEntry> entries =
-        routing_table_->GetRoutingEntries(node_address_);
+        routing_table_->GetNextBroadcastSlice(node_address_, slice_capacity);
 
     // Increment table version
     table_version_ = (table_version_ + 1) % 256;

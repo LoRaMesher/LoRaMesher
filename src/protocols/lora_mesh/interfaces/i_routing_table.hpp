@@ -180,6 +180,23 @@ class IRoutingTable {
         AddressType exclude_address) const = 0;
 
     /**
+     * @brief Get the next slice of active routing entries for broadcast
+     *
+     * Returns up to @p max_entries entries starting at the internal
+     * rotation cursor; wraps to the beginning of the active set when the
+     * cursor reaches the end. Self entries and @p exclude_address are
+     * filtered out. Used by the sender to fragment the routing table
+     * across superframes when the full table cannot fit in a single
+     * radio frame.
+     *
+     * @param exclude_address Address to exclude (typically own address)
+     * @param max_entries Maximum entries to return in this slice
+     * @return std::vector<RoutingTableEntry> Slice of routing entries
+     */
+    virtual std::vector<RoutingTableEntry> GetNextBroadcastSlice(
+        AddressType exclude_address, size_t max_entries) = 0;
+
+    /**
      * @brief Calculate link quality for a specific node
      * 
      * @param node_address Target node address

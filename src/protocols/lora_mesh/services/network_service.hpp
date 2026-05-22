@@ -411,12 +411,24 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Create a routing table message for broadcast
-     * 
+     *
      * @param destination Destination address (default broadcast)
      * @return std::unique_ptr<BaseMessage> Message ready for transmission
      */
     std::unique_ptr<BaseMessage> CreateRoutingTableMessage(
         AddressType destination = 0xFFFF);
+
+    /**
+     * @brief Compute the maximum number of routing entries that fit in
+     *        a single broadcast frame given the current PHY cap.
+     *
+     * Used both by CreateRoutingTableMessage() to size the rotation slice
+     * and by RemoveInactiveNodes() to scale aging timeouts to the
+     * rotation period. Clamped to RoutingTableMessage::kMaxRoutingEntries.
+     *
+     * @return size_t Slice capacity (0 if header overhead exceeds the cap)
+     */
+    size_t ComputeBroadcastSliceCapacity() const;
 
     /**
      * @brief Join an existing network
