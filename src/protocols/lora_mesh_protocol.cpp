@@ -241,20 +241,21 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     config_ = config;
     pending_role_.store(config.getNodeRole(), std::memory_order_release);
 
-    // Apply SF-derived max_packet_size default based on live radio settings.
-    // If the user explicitly set max_packet_size above the SF-safe cap, keep
-    // their value and warn so slot-duration inflation is traceable.
+    // Cap max_packet_size to the physical SF-safe limit for the live radio
+    // settings. A value above the cap (or the 255 default) is clamped so it
+    // can never produce a slot duration the radio cannot transmit within.
     if (hardware_) {
         uint8_t sf = hardware_->getSpreadingFactor();
         float bw_khz = hardware_->getBandwidth();
+        uint8_t requested = config_.getMaxPacketSize();
+        bool user_set = config_.IsMaxPacketSizeUserSet();
         uint8_t sf_safe = config_.ApplySfDerivedDefaults(sf, bw_khz);
-        if (config_.IsMaxPacketSizeUserSet() &&
-            config_.getMaxPacketSize() > sf_safe) {
+        if (user_set && requested > sf_safe) {
             LOG_WARNING(
-                "max_packet_size %u exceeds SF%u/BW%.0fkHz recommended cap %u; "
-                "slot duration will be inflated",
-                static_cast<unsigned>(config_.getMaxPacketSize()),
-                static_cast<unsigned>(sf), static_cast<double>(bw_khz),
+                "max_packet_size %u exceeds SF%u/BW%.0fkHz physical cap %u; "
+                "clamped to %u",
+                static_cast<unsigned>(requested), static_cast<unsigned>(sf),
+                static_cast<double>(bw_khz), static_cast<unsigned>(sf_safe),
                 static_cast<unsigned>(sf_safe));
         }
     }
@@ -1068,12 +1069,12 @@ bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
     uint32_t time_in_slot = superframe_service_->GetTimeInSlot();
     uint32_t slot_duration = superframe_service_->GetSlotDuration();
 
-    // Guard against RadioLib overflow or SPI errors returning absurd values
+    // A packet whose airtime alone exceeds the slot can never fit; skip the
+    // TX rather than transmit and overrun into the following slot.
     if (toa_ms > slot_duration) {
-        LOG_ERROR(
-            "ToA sanity failed: %u ms for %u bytes (slot=%u). Using fallback.",
-            toa_ms, message_size, slot_duration);
-        toa_ms = static_cast<uint32_t>(message_size) * 10;
+        LOG_ERROR("ToA %u ms for %u bytes exceeds slot %u ms; skipping TX",
+                  toa_ms, message_size, slot_duration);
+        return false;
     }
 
     uint32_t needed =

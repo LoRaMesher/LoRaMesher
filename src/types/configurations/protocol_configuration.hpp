@@ -299,11 +299,13 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     /**
      * @brief Apply SF-derived defaults to the configuration
      *
-     * If max_packet_size has not been explicitly set via setMaxPacketSize(),
-     * overwrites it with RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz).
-     * If the user has explicitly set a value greater than the SF-safe cap,
-     * the value is kept and the caller is expected to log a warning; this
-     * method remains silent and returns the cap so the caller can decide.
+     * Treats max_packet_size as an upper bound that is itself capped by the
+     * physical SF-safe limit: the effective value becomes
+     * min(max_packet_size, RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz)).
+     * A user request below the cap is respected; a request above it (or the
+     * 255 default) is reduced to the cap so it can never drive an impossible
+     * slot duration. Returns the SF-safe cap so the caller can warn when a
+     * user-set value exceeded it.
      *
      * @param sf Active spreading factor
      * @param bw_khz Active bandwidth in kHz
@@ -312,9 +314,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      */
     uint8_t ApplySfDerivedDefaults(uint8_t sf, float bw_khz) {
         uint8_t sf_safe = RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz);
-        if (!max_packet_size_user_set_) {
-            max_packet_size_ = sf_safe;
-        }
+        max_packet_size_ = std::min(max_packet_size_, sf_safe);
         return sf_safe;
     }
 
