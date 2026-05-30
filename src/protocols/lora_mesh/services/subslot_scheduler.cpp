@@ -25,56 +25,67 @@ SubslotTiming SubslotScheduler::ComputeTiming(uint32_t slot_duration_ms,
         return timing;  // is_valid = false
     }
 
-    // Reserve a trailing guard so the last subslot's TX completes before the
-    // slot boundary, leaving the superframe task time to re-schedule.
-    uint32_t trailing_guard =
-        std::min(kTrailingGuardMs, slot_duration_ms / 10u);
+    // Compute the equal-division layout for a candidate subslot count.
+    // Returns false if the count cannot yield a usable TX window.
+    auto compute_layout = [&](uint8_t n, uint32_t& subslot_duration,
+                              uint32_t& tx_window) -> bool {
+        uint32_t total_guard = static_cast<uint32_t>(n) * config.guard_time_ms;
+        if (total_guard >= slot_duration_ms)
+            return false;
+        // Reserve a trailing guard so the last subslot's TX completes before
+        // the slot boundary, leaving the superframe task time to re-schedule.
+        uint32_t trailing_guard =
+            std::min(kTrailingGuardMs, slot_duration_ms / 10u);
+        if (total_guard + trailing_guard >= slot_duration_ms)
+            trailing_guard = 0;  // degrade gracefully for very short slots
+        uint32_t available_tx_time =
+            slot_duration_ms - total_guard - trailing_guard;
+        tx_window = available_tx_time / n;
+        if (tx_window == 0)
+            return false;
+        subslot_duration = config.guard_time_ms + tx_window;
+        return true;
+    };
 
-    // Fit as many subslots as the slot allows. Each subslot must hold one
-    // transmission (guard + ToA), so when the time-on-air is a large fraction
-    // of the slot (high spreading factors) the count collapses toward a single
-    // subslot. With ToA unknown (0) the configured count is kept.
+    // Pick the largest subslot count (up to the configured value) whose last
+    // subslot still completes a transmission of the given ToA within the slot.
+    // When ToA is small relative to the slot (low spreading factors) the full
+    // configured count fits and behaviour is unchanged; when ToA approaches the
+    // slot duration (high spreading factors) the count collapses toward a
+    // single subslot rather than scheduling TX past the slot boundary. With ToA
+    // unknown (0) the configured count is kept.
     uint8_t effective_subslots = config.num_subslots;
+    uint32_t subslot_duration = 0;
+    uint32_t tx_window = 0;
     if (toa_ms > 0) {
-        uint32_t per_subslot = toa_ms + config.guard_time_ms;
-        uint32_t usable = (slot_duration_ms > trailing_guard)
-                              ? slot_duration_ms - trailing_guard
-                              : 0;
-        uint32_t fit = (per_subslot > 0) ? usable / per_subslot : 0;
-        if (fit < 1)
-            fit = 1;
-        if (fit < effective_subslots)
-            effective_subslots = static_cast<uint8_t>(fit);
+        effective_subslots = 1;
+        for (uint8_t n = config.num_subslots; n >= 1; --n) {
+            uint32_t sd = 0;
+            uint32_t txw = 0;
+            if (compute_layout(n, sd, txw)) {
+                uint32_t last_offset =
+                    static_cast<uint32_t>(n - 1) * sd + config.guard_time_ms;
+                if (last_offset + toa_ms <= slot_duration_ms) {
+                    effective_subslots = n;
+                    break;
+                }
+            }
+            if (n == 1)
+                break;
+        }
     }
+
+    if (!compute_layout(effective_subslots, subslot_duration, tx_window)) {
+        LOG_WARNING("Subslot layout infeasible: slot_duration=%u, subslots=%d",
+                    slot_duration_ms, effective_subslots);
+        return timing;  // is_valid = false
+    }
+    timing.tx_window_ms = tx_window;
+    timing.subslot_duration_ms = subslot_duration;
 
     // All assignment strategies map the identifier onto the feasible subslots.
     timing.assigned_subslot =
         static_cast<uint8_t>(node_identifier % effective_subslots);
-
-    // Each subslot = guard_time + tx_window; the windows plus guards must fit
-    // within slot_duration_ms.
-    uint32_t total_guard_time =
-        static_cast<uint32_t>(effective_subslots) * config.guard_time_ms;
-
-    if (total_guard_time >= slot_duration_ms) {
-        LOG_WARNING("Guard times alone (%u ms) exceed slot duration (%u ms)",
-                    total_guard_time, slot_duration_ms);
-        return timing;  // is_valid = false
-    }
-
-    if (total_guard_time + trailing_guard >= slot_duration_ms) {
-        trailing_guard = 0;  // degrade gracefully for very short slots
-    }
-    uint32_t available_tx_time =
-        slot_duration_ms - total_guard_time - trailing_guard;
-    timing.tx_window_ms = available_tx_time / effective_subslots;
-    timing.subslot_duration_ms = config.guard_time_ms + timing.tx_window_ms;
-
-    if (timing.tx_window_ms == 0) {
-        LOG_WARNING("TX window is zero: slot_duration=%u, subslots=%d",
-                    slot_duration_ms, effective_subslots);
-        return timing;  // is_valid = false
-    }
 
     // TX start = subslot_index * subslot_duration + guard_time
     timing.tx_start_offset_ms = static_cast<uint32_t>(timing.assigned_subslot) *
@@ -82,13 +93,9 @@ SubslotTiming SubslotScheduler::ComputeTiming(uint32_t slot_duration_ms,
                                 config.guard_time_ms;
 
     // With a known ToA, confirm the transmission completes within the slot.
-    if (toa_ms > 0 && timing.tx_start_offset_ms + toa_ms + trailing_guard >
-                          slot_duration_ms) {
-        LOG_WARNING(
-            "Subslot infeasible: offset=%u + ToA=%u + trailing=%u > "
-            "slot=%u",
-            timing.tx_start_offset_ms, toa_ms, trailing_guard,
-            slot_duration_ms);
+    if (toa_ms > 0 && timing.tx_start_offset_ms + toa_ms > slot_duration_ms) {
+        LOG_WARNING("Subslot infeasible: offset=%u + ToA=%u > slot=%u",
+                    timing.tx_start_offset_ms, toa_ms, slot_duration_ms);
         return timing;  // is_valid = false
     }
 
