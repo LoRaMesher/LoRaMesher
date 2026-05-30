@@ -1126,9 +1126,10 @@ Result LoRaMeshProtocol::TrySendSubslottedMessage(
         return Result::Success();
 
     uint8_t msg_size = static_cast<uint8_t>(message->GetTotalSize());
+    uint32_t msg_toa_ms = hardware_->getTimeOnAir(msg_size);
 
     auto subslot_timing = lora_mesh::SubslotScheduler::ComputeTiming(
-        superframe_service_->GetSlotDuration(), config, identifier);
+        superframe_service_->GetSlotDuration(), config, identifier, msg_toa_ms);
 
     bool use_subslot = false;
     if (subslot_timing.is_valid) {

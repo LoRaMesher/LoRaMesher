@@ -14,6 +14,7 @@
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "protocols/lora_mesh/services/superframe_service.hpp"
 #include "types/configurations/protocol_configuration.hpp"
+#include "types/messages/loramesher/data_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
 #include "types/messages/loramesher/nm_claim_message.hpp"
@@ -1651,6 +1652,44 @@ TEST_F(NetworkServiceCoverageTest,
     Result recovered = service_->SendData(kOtherNode, payload);
     EXPECT_TRUE(recovered.IsSuccess()) << recovered.GetErrorMessage();
     EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 3u);
+}
+
+// ============================================================================
+// SendData rejects a payload whose packet exceeds max_packet_size (the per-SF
+// MTU), instead of queuing a packet that can never fit the slot and would be
+// re-queued forever. A payload exactly at the MTU is accepted.
+// ============================================================================
+
+TEST_F(NetworkServiceCoverageTest, SendDataRejectsPayloadAboveMtu) {
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+    // Configure a small MTU like SF12 (max_packet_size = 51).
+    auto svc = std::make_unique<NetworkService>(kNodeAddress, message_queue_,
+                                                superframe_, nullptr);
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kNodeAddress;
+    cfg.max_hops = 5;
+    cfg.max_packet_size = 51;
+    cfg.default_data_slots = 2;
+    cfg.max_network_nodes = 20;
+    ASSERT_TRUE(svc->Configure(cfg));
+    svc->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    const size_t header = BaseHeader::Size() + DataHeader::DataFieldsSize();
+    const size_t mtu = 51u - header;
+
+    // One byte over the MTU is rejected and nothing is queued.
+    std::vector<uint8_t> too_big(mtu + 1, 0xAB);
+    Result rejected = svc->SendData(kOtherNode, too_big);
+    EXPECT_FALSE(rejected.IsSuccess());
+    EXPECT_EQ(rejected.getErrorCode(), LoraMesherErrorCode::kInvalidParameter);
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 0u);
+
+    // Exactly at the MTU is accepted and queued.
+    std::vector<uint8_t> at_mtu(mtu, 0xCD);
+    Result ok = svc->SendData(kOtherNode, at_mtu);
+    EXPECT_TRUE(ok.IsSuccess()) << ok.GetErrorMessage();
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 1u);
 }
 
 }  // namespace test

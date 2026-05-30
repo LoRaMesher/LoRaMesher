@@ -1775,6 +1775,23 @@ Result NetworkService::SendData(AddressType destination,
                       "Cannot send data outside normal operation");
     }
 
+    // Enforce the per-packet MTU for the active radio settings. The slot is
+    // sized to ToA(max_packet_size); a larger packet could never be
+    // transmitted and would otherwise be re-queued every superframe forever.
+    const size_t data_header_overhead =
+        BaseHeader::Size() + DataHeader::DataFieldsSize();
+    if (data.size() + data_header_overhead > config_.max_packet_size) {
+        size_t mtu = (config_.max_packet_size > data_header_overhead)
+                         ? config_.max_packet_size - data_header_overhead
+                         : 0;
+        LOG_WARNING(
+            "DATA payload %zu B exceeds MTU %zu B (max_packet_size=%u); "
+            "rejected",
+            data.size(), mtu, static_cast<unsigned>(config_.max_packet_size));
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Payload exceeds max packet size for current SF");
+    }
+
     // Find the next hop to the destination
     AddressType next_hop = FindNextHop(destination);
 

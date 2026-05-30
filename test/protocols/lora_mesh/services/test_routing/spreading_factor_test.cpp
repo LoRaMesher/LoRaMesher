@@ -11,8 +11,13 @@
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 #include "routing_test_fixture.hpp"
+#include "types/configurations/radio_configuration.hpp"
+#include "types/error_codes/loramesher_error_codes.hpp"
+#include "types/error_codes/result.hpp"
+#include "types/messages/loramesher/data_message.hpp"
 
 namespace loramesher {
 namespace test {
@@ -116,6 +121,29 @@ TEST_P(SpreadingFactorTests, ThreeNodeLine) {
         EXPECT_TRUE(std::ranges::equal(messages[0].GetPayload(), payload))
             << "Message payload mismatch at SF" << static_cast<int>(sf);
     }
+
+    // MTU enforcement (P1): the per-SF MTU is max_packet_size minus the DATA
+    // header overhead (the on-air packet is header + payload). A payload one
+    // byte over the MTU must be rejected outright rather than queued to starve
+    // forever; a payload exactly at the MTU must be accepted.
+    const size_t data_header_overhead =
+        BaseHeader::Size() + DataHeader::DataFieldsSize();
+    const uint8_t sf_cap = RadioConfig::GetMaxPacketSizeForSf(sf, 125.0F);
+    ASSERT_GT(sf_cap, data_header_overhead);
+    const size_t mtu = sf_cap - data_header_overhead;
+
+    std::vector<uint8_t> over_mtu(mtu + 1, 0xAB);
+    Result rejected = node1.protocol->SendData(node3.address, over_mtu);
+    EXPECT_FALSE(rejected.IsSuccess())
+        << "Over-MTU payload should be rejected at SF" << static_cast<int>(sf);
+    EXPECT_EQ(rejected.getErrorCode(), LoraMesherErrorCode::kInvalidParameter)
+        << "Over-MTU rejection should report kInvalidParameter at SF"
+        << static_cast<int>(sf);
+
+    std::vector<uint8_t> at_mtu(mtu, 0xCD);
+    Result accepted = node1.protocol->SendData(node3.address, at_mtu);
+    EXPECT_TRUE(accepted.IsSuccess())
+        << "At-MTU payload should be accepted at SF" << static_cast<int>(sf);
 }
 
 INSTANTIATE_TEST_SUITE_P(AllSpreadingFactors, SpreadingFactorTests,
