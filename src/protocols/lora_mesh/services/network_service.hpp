@@ -431,6 +431,19 @@ class NetworkService : public INetworkService {
     size_t ComputeBroadcastSliceCapacity() const;
 
     /**
+     * @brief Number of sliced broadcasts a peer needs to cycle its whole
+     *        active table once: ceil(table_size / slice_capacity).
+     *
+     * Used to scale both route aging (RemoveInactiveNodes) and the
+     * unidirectional-detection threshold to the rotation period, so a node
+     * whose entry only appears once per rotation is not mistaken for a missed
+     * or unidirectional link.
+     *
+     * @return size_t Rotation steps (at least 1)
+     */
+    size_t ComputeRotationSteps() const;
+
+    /**
      * @brief Join an existing network
      * 
      * @param manager_address Network manager address

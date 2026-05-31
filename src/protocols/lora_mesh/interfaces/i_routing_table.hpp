@@ -310,6 +310,8 @@ class IRoutingTable {
      * @param max_hops Maximum allowed hop count
      * @param source_capabilities Capabilities bitmap of the source node
      * @param source_allocated_data_slots Number of allocated data slots for source node
+     * @param remote_absent_threshold Consecutive sliced broadcasts that may
+     *        omit our entry before the direct link is treated as unidirectional
      * @return bool True if any routes were updated
      */
     virtual bool ProcessRoutingTableMessage(
@@ -317,7 +319,7 @@ class IRoutingTable {
         uint32_t reception_timestamp, uint8_t local_link_quality,
         uint8_t max_hops, uint8_t source_capabilities = 0,
         uint8_t source_allocated_data_slots = 0, float rssi = 0.0f,
-        float snr = 0.0f) = 0;
+        float snr = 0.0f, uint8_t remote_absent_threshold = 1) = 0;
 };
 
 /**

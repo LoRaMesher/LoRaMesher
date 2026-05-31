@@ -120,7 +120,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
         uint32_t reception_timestamp, uint8_t local_link_quality,
         uint8_t max_hops, uint8_t source_capabilities = 0,
         uint8_t source_allocated_data_slots = 0, float rssi = 0.0f,
-        float snr = 0.0f) override;
+        float snr = 0.0f, uint8_t remote_absent_threshold = 1) override;
 
    private:
     // Internal helper methods

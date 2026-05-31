@@ -685,7 +685,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     AddressType source_address, std::span<const RoutingTableEntry> entries,
     uint32_t reception_timestamp, uint8_t local_link_quality, uint8_t max_hops,
     uint8_t source_capabilities, uint8_t source_allocated_data_slots,
-    float rssi, float snr) {
+    float rssi, float snr, uint8_t remote_absent_threshold) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     update_count_++;
 
@@ -703,7 +703,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Update direct link statistics (always tracks the physical link)
         source_node_it->link_stats.ReceivedMessage(reception_timestamp, rssi,
                                                    snr);
-        source_node_it->link_stats.UpdateRemoteQuality(local_link_quality);
+        source_node_it->link_stats.UpdateRemoteQuality(local_link_quality,
+                                                       remote_absent_threshold);
         source_node_it->last_seen = reception_timestamp;
         uint8_t direct_quality = source_node_it->link_stats.CalculateQuality();
 
@@ -714,7 +715,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             source_node_it->link_stats.ewma_quality, direct_quality,
             source_node_it->link_stats.messages_expected,
             source_node_it->link_stats.messages_received,
-            (local_link_quality == 0 &&
+            (source_node_it->link_stats.remote_link_quality == 0 &&
              source_node_it->link_stats.messages_expected >= 3)
                 ? " [UNIDIRECTIONAL]"
                 : "",

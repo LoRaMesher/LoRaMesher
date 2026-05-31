@@ -61,6 +61,7 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
     last_rssi = 0.0f;
     last_snr = 0.0f;
     window.Reset();
+    remote_absent_streak = 0;
     // Don't reset last_message_time or remote_link_quality
 }
 
@@ -100,8 +101,25 @@ void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(uint32_t current_time,
     window.Received();
 }
 
-void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
-    remote_link_quality = quality;
+void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(
+    uint8_t quality, uint8_t absent_threshold) {
+    if (quality > 0) {
+        // Peer's current slice lists us as a reception: refresh and reset the
+        // absence streak.
+        remote_link_quality = quality;
+        remote_absent_streak = 0;
+        return;
+    }
+
+    // Our entry was absent from this slice. Hold the last known value until the
+    // peer's table has had a full rotation cycle (plus margin) to broadcast it;
+    // only then treat the link as unidirectional/degraded.
+    if (remote_absent_streak < 255) {
+        remote_absent_streak++;
+    }
+    if (remote_absent_streak >= absent_threshold) {
+        remote_link_quality = 0;
+    }
 }
 
 // NetworkNodeRoute implementation

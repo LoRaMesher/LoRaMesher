@@ -40,7 +40,9 @@ class NetworkNodeRoute {
         uint32_t messages_received = 0;   ///< Received messages count
         uint32_t last_message_time = 0;   ///< Last message received time
         uint8_t remote_link_quality = 0;  ///< Link quality as reported by peer
-        uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
+        uint8_t remote_absent_streak =
+            0;  ///< Consecutive peer broadcasts not listing us as a reception
+        uint8_t consecutive_missed = 0;  ///< Consecutive missed messages
         uint8_t ewma_quality =
             kProvisionalQuality;       ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
@@ -82,11 +84,21 @@ class NetworkNodeRoute {
                              float snr = 0.0f);
 
         /**
-         * @brief Update remote link quality
+         * @brief Update remote link quality from a received routing broadcast
          *
-         * @param quality Link quality as reported by peer
+         * Routing tables are broadcast as rotating slices when they exceed the
+         * per-frame entry budget, so our own entry is absent from most slices.
+         * The reported quality is therefore held sticky: a positive value
+         * refreshes it immediately, while an absent report (quality == 0) only
+         * clears it after our entry has been missing for a full rotation cycle
+         * of the peer's table (absent_threshold), which distinguishes slice
+         * rotation from a genuinely unidirectional or degraded link.
+         *
+         * @param quality Reception quality reported by peer (0 = not listed)
+         * @param absent_threshold Consecutive absent reports tolerated before
+         *        the link is treated as unidirectional/degraded
          */
-        void UpdateRemoteQuality(uint8_t quality);
+        void UpdateRemoteQuality(uint8_t quality, uint8_t absent_threshold = 1);
     };
 
     /**

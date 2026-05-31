@@ -158,9 +158,7 @@ size_t NetworkService::RemoveInactiveNodes() {
     // Scale aging timeouts to the rotation period so a node whose
     // route appears in a sliced broadcast every ceil(N/k) superframes
     // is not pruned by a single missed cycle. Margin = 2 full rotations.
-    const size_t k = ComputeBroadcastSliceCapacity();
-    const size_t n = routing_table_->GetSize();
-    const size_t rotation_steps = (k == 0 || n == 0) ? 1 : (n + k - 1) / k;
+    const size_t rotation_steps = ComputeRotationSteps();
     const uint32_t superframe_ms =
         superframe_service_ ? superframe_service_->GetSuperframeDuration()
                             : 1000;
@@ -245,11 +243,21 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     LOG_DEBUG("Remote link quality from 0x%04X for us (0x%04X): %d", source,
               node_address_, local_link_quality);
 
+    // When the table fits in a single broadcast (no slicing), every broadcast
+    // lists all the peer's receptions, so a single absence is definitive and
+    // the link is judged unidirectional immediately. When the table is sliced,
+    // our entry only appears once per rotation, so tolerate its absence for two
+    // full rotations before judging — mirroring the 2x rotation margin used for
+    // route aging in RemoveInactiveNodes() and keeping the timescales aligned.
+    const size_t rotation_steps = ComputeRotationSteps();
+    const uint8_t remote_absent_threshold = static_cast<uint8_t>(
+        rotation_steps <= 1 ? 1u : std::min<size_t>(255u, 2u * rotation_steps));
+
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
         source, entries, reception_timestamp, local_link_quality,
         config_.max_hops, source_capabilities, source_allocated_data_slots,
-        rssi, snr);
+        rssi, snr, remote_absent_threshold);
 
     routing_changed |= routes_updated;
 
@@ -714,6 +722,12 @@ size_t NetworkService::ComputeBroadcastSliceCapacity() const {
     const size_t cap =
         (config_.max_packet_size - header_overhead) / RoutingTableEntry::Size();
     return std::min<size_t>(cap, RoutingTableMessage::kMaxRoutingEntries);
+}
+
+size_t NetworkService::ComputeRotationSteps() const {
+    const size_t k = ComputeBroadcastSliceCapacity();
+    const size_t n = routing_table_->GetSize();
+    return (k == 0 || n == 0) ? 1 : (n + k - 1) / k;
 }
 
 std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
