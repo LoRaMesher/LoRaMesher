@@ -6,6 +6,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <mutex>
 #include <vector>
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
@@ -190,6 +191,33 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     void LogRouteEntry(
         const types::protocols::lora_mesh::NetworkNodeRoute& node);
 
+    /**
+     * @brief Record the last-known non-zero capabilities for a destination
+     *
+     * Capabilities are remembered independently of the route entry so that a
+     * node erased by aging and later re-learned (possibly from a relay whose
+     * rotating slice has not yet refreshed the capability bit) restores its
+     * last-known capabilities instead of reverting to unknown (0x00).
+     *
+     * Backed by a fixed-capacity table to avoid runtime heap growth: when the
+     * table is full the farthest (highest hop count) remembered node is
+     * evicted in favour of a closer one.
+     *
+     * @param destination Destination address
+     * @param capabilities Capabilities bitmap; ignored when 0
+     * @param hop_count Hop count to the destination (used for eviction)
+     */
+    void RememberCapabilities(AddressType destination, uint8_t capabilities,
+                              uint8_t hop_count);
+
+    /**
+     * @brief Recall the last-known capabilities for a destination
+     *
+     * @param destination Destination address
+     * @return uint8_t Last-known capabilities, or 0 if none recorded
+     */
+    uint8_t RecallCapabilities(AddressType destination) const;
+
     // Link quality parameters (configurable via SetLinkQualityParams)
 
     uint8_t ewma_alpha_fixed_ = 77;  ///< EWMA alpha in fixed-point (0.30 * 256)
@@ -221,6 +249,25 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     /// Rotation cursor for sliced routing broadcasts; advances by slice
     /// size and wraps when the active set is exhausted. Reset on Clear().
     size_t next_broadcast_offset_ = 0;
+
+    /// Rotation cursor for capability-bearing entries when there are more of
+    /// them than fit in the per-slice priority reservation. Reset on Clear().
+    size_t next_priority_offset_ = 0;
+
+    /// Fixed-capacity memory of last-known capabilities for the closest
+    /// capability-bearing nodes. Survives route aging so a re-learned node
+    /// restores its capabilities, without allocating at runtime.
+    static constexpr size_t kMaxRememberedCapabilities = 16;
+
+    struct RememberedCapability {
+        AddressType address = 0;
+        uint8_t capabilities = 0;
+        uint8_t hop_count = 0xFF;
+        bool valid = false;
+    };
+
+    std::array<RememberedCapability, kMaxRememberedCapabilities>
+        remembered_capabilities_{};
 };
 
 }  // namespace lora_mesh

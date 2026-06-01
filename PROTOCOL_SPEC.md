@@ -885,6 +885,8 @@ Topology: Node1 ← → Node2 (bidirectional)
 5. No loop formed: stale information cannot propagate
 ```
 
+**Sticky Capabilities Across Re-learn**: The routing table keeps a small fixed-capacity memory of the last-known non-zero capabilities for the closest capability-bearing nodes, independent of their route entries (no runtime allocation; when full, the farthest remembered node is evicted in favour of a closer one). When a node is aged out (see §4.3) and later re-learned from a relay whose rotating slice has not yet refreshed the capability bit (entry advertises `capabilities = 0`), the re-added route restores its remembered capabilities instead of reverting to unknown. A fresh non-zero advertisement always overrides the remembered value (last-non-zero wins; bits are not OR-latched), so a node can still legitimately drop a capability via the authoritative next-hop path.
+
 **Route Poisoning**:
 
 ### 4.3 Route Aging
@@ -1293,7 +1295,9 @@ slice_capacity = (max_packet_size − BaseHeader::Size() − RoutingTableHeader:
 
 clamped to `RoutingTableMessage::kMaxRoutingEntries = 24`. At SF12/BW125 (`max_packet_size = 51`) this yields 3 entries per broadcast; at SF7–SF9 the entire table fits in one slice and the cursor never advances past zero, so behavior is unchanged.
 
-The rotation cursor lives on `DistanceVectorRoutingTable` (`next_broadcast_offset_`) and resets to 0 on `Clear()`. The slice helper, `GetNextBroadcastSlice(exclude_address, max_entries)`, filters out the sender's own address and inactive entries, then returns a contiguous window starting at the cursor and advancing it by the slice size.
+The slice helper, `GetNextBroadcastSlice(exclude_address, max_entries)`, filters out the sender's own address and inactive entries, then partitions the remaining routes into a **priority** set (entries whose `capabilities` bitmap is non-zero, e.g. gateways) and a **normal** set. Priority entries are emitted in every slice so capability-bearing routes reach far nodes without waiting for a full rotation; the normal set rotates through the remaining per-slice budget via a contiguous-window cursor.
+
+To prevent priority entries from starving the rotation, at least one slot per slice is reserved for the normal set whenever it is non-empty (priority reservation is capped at `max_entries − 1`). When priority entries exceed their reservation they rotate through a second cursor. Both cursors (`next_broadcast_offset_` for normal, `next_priority_offset_` for priority) live on `DistanceVectorRoutingTable` and reset to 0 on `Clear()`. Because the two sets are disjoint, a destination never appears twice in one slice.
 
 ---
 

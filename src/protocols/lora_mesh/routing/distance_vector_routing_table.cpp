@@ -151,6 +151,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                     destination, node_it->routing_entry.capabilities,
                     capabilities, source);
                 node_it->routing_entry.capabilities = capabilities;
+                RememberCapabilities(destination, capabilities, hop_count);
                 route_changed = true;
             }
 
@@ -170,6 +171,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
             (node_it->routing_entry.capabilities == 0 ||
              node_it->next_hop == source)) {
             node_it->routing_entry.capabilities = capabilities;
+            RememberCapabilities(destination, capabilities, hop_count);
             route_changed = true;
         }
     } else {
@@ -186,14 +188,17 @@ bool DistanceVectorRoutingTable::UpdateRoute(
             destination, source, hop_count, actual_link_quality, current_time);
         new_node.routing_entry.allocated_data_slots = allocated_data_slots;
 
-        // For new nodes, store capabilities only if non-zero
+        // For new nodes, store capabilities only if non-zero, otherwise restore
+        // the last-known value so an aged-out node does not revert to unknown.
         // Source becomes the next_hop, so future updates will only be accepted from this source
         if (capabilities != 0) {
             new_node.routing_entry.capabilities = capabilities;
+            RememberCapabilities(destination, capabilities, hop_count);
             LOG_DEBUG("New node 0x%04X via 0x%04X: caps=0x%02X", destination,
                       source, capabilities);
         } else {
-            new_node.routing_entry.capabilities = 0;
+            new_node.routing_entry.capabilities =
+                RecallCapabilities(destination);
             LOG_DEBUG("New node 0x%04X via 0x%04X: capabilities unknown",
                       destination, source);
         }
@@ -416,30 +421,75 @@ DistanceVectorRoutingTable::GetNextBroadcastSlice(AddressType exclude_address,
 
     std::lock_guard<std::mutex> lock(table_mutex_);
 
-    std::vector<RoutingTableEntry> all;
-    all.reserve(nodes_.size());
+    // Partition advertisable routes into capability-bearing ("priority") and
+    // normal sets, preserving table order. Priority entries are included in
+    // every broadcast so capability information reaches far nodes without
+    // waiting for a full rotation; normal entries rotate through the remaining
+    // per-slice budget.
+    std::vector<RoutingTableEntry> priority;
+    std::vector<RoutingTableEntry> normal;
+    priority.reserve(nodes_.size());
+    normal.reserve(nodes_.size());
     for (const auto& node : nodes_) {
-        if (node.is_active &&
-            node.routing_entry.destination != exclude_address &&
-            node.routing_entry.destination != node_address_) {
-            all.push_back(node.ToRoutingTableEntry());
+        if (!node.is_active ||
+            node.routing_entry.destination == exclude_address ||
+            node.routing_entry.destination == node_address_) {
+            continue;
+        }
+        if (node.routing_entry.capabilities != 0) {
+            priority.push_back(node.ToRoutingTableEntry());
+        } else {
+            normal.push_back(node.ToRoutingTableEntry());
         }
     }
 
-    if (all.empty() || max_entries == 0) {
+    if ((priority.empty() && normal.empty()) || max_entries == 0) {
         next_broadcast_offset_ = 0;
+        next_priority_offset_ = 0;
         return {};
     }
 
-    if (next_broadcast_offset_ >= all.size()) {
-        next_broadcast_offset_ = 0;
+    // Reserve at least one slot for the normal rotation whenever normal routes
+    // exist, so priority entries can never starve it.
+    size_t priority_budget = priority.size();
+    if (!normal.empty()) {
+        priority_budget = std::min<size_t>(priority_budget, max_entries - 1);
+    }
+    priority_budget = std::min(priority_budget, max_entries);
+
+    std::vector<RoutingTableEntry> slice;
+    slice.reserve(max_entries);
+
+    // Emit priority entries, rotating only when they exceed the per-slice budget.
+    if (priority_budget > 0) {
+        if (priority.size() <= priority_budget) {
+            slice.insert(slice.end(), priority.begin(), priority.end());
+            next_priority_offset_ = 0;
+        } else {
+            if (next_priority_offset_ >= priority.size()) {
+                next_priority_offset_ = 0;
+            }
+            for (size_t i = 0; i < priority_budget; ++i) {
+                slice.push_back(
+                    priority[(next_priority_offset_ + i) % priority.size()]);
+            }
+            next_priority_offset_ =
+                (next_priority_offset_ + priority_budget) % priority.size();
+        }
     }
 
-    const size_t start = next_broadcast_offset_;
-    const size_t end = std::min(start + max_entries, all.size());
-    std::vector<RoutingTableEntry> slice(all.begin() + start,
-                                         all.begin() + end);
-    next_broadcast_offset_ = (end >= all.size()) ? 0 : end;
+    // Fill the remaining budget from the rotating normal window.
+    const size_t normal_budget = max_entries - slice.size();
+    if (!normal.empty() && normal_budget > 0) {
+        if (next_broadcast_offset_ >= normal.size()) {
+            next_broadcast_offset_ = 0;
+        }
+        const size_t start = next_broadcast_offset_;
+        const size_t end = std::min(start + normal_budget, normal.size());
+        slice.insert(slice.end(), normal.begin() + start, normal.begin() + end);
+        next_broadcast_offset_ = (end >= normal.size()) ? 0 : end;
+    }
+
     return slice;
 }
 
@@ -530,10 +580,12 @@ void DistanceVectorRoutingTable::Clear() {
     }
 
     nodes_.clear();
+    remembered_capabilities_.fill(RememberedCapability{});
     lookup_count_ = 0;
     update_count_ = 0;
     last_cleanup_time_ = 0;
     next_broadcast_offset_ = 0;
+    next_priority_offset_ = 0;
 
     LOG_INFO("Cleared routing table for node 0x%04X", node_address_);
 }
@@ -728,6 +780,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Always update capabilities for direct neighbor (source of the message)
         if (source_node_it->routing_entry.capabilities != source_capabilities) {
             source_node_it->routing_entry.capabilities = source_capabilities;
+            RememberCapabilities(source_address, source_capabilities, 1);
             routing_changed = true;
             LOG_DEBUG("Updated capabilities for direct neighbor 0x%04X: 0x%02X",
                       source_address, source_capabilities);
@@ -971,6 +1024,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                         dest, node_it->routing_entry.capabilities,
                         entry.capabilities, source_address);
                     node_it->routing_entry.capabilities = entry.capabilities;
+                    RememberCapabilities(dest, entry.capabilities,
+                                         hop_count_via_source);
                     changed = true;
                 }
 
@@ -989,6 +1044,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 (node_it->routing_entry.capabilities == 0 ||
                  node_it->next_hop == source_address)) {
                 node_it->routing_entry.capabilities = entry.capabilities;
+                RememberCapabilities(dest, entry.capabilities,
+                                     hop_count_via_source);
                 routing_changed = true;
             }
 
@@ -1014,13 +1071,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
 
             // For new nodes, we learn capabilities from whoever told us about them
             // Since source_address is the next_hop, this is consistent with our rule
-            // Only store non-zero capabilities
+            // Only store non-zero capabilities; otherwise restore the last-known
+            // value so an aged-out node does not revert to unknown.
             if (entry.capabilities == 0) {
-                new_node.routing_entry.capabilities = 0;
+                new_node.routing_entry.capabilities = RecallCapabilities(dest);
                 LOG_DEBUG("New node 0x%04X via 0x%04X: capabilities unknown",
                           dest, source_address);
             } else {
                 // Keep the capability from the entry (already set above via entry assignment)
+                RememberCapabilities(dest, entry.capabilities,
+                                     hop_count_via_source);
                 LOG_DEBUG("New node 0x%04X via 0x%04X: caps=0x%02X", dest,
                           source_address, entry.capabilities);
             }
@@ -1058,6 +1118,54 @@ DistanceVectorRoutingTable::GetNode(AddressType node_address) const {
             const types::protocols::lora_mesh::NetworkNodeRoute& node) {
             return node.routing_entry.destination == node_address;
         });
+}
+
+void DistanceVectorRoutingTable::RememberCapabilities(AddressType destination,
+                                                      uint8_t capabilities,
+                                                      uint8_t hop_count) {
+    if (capabilities == 0) {
+        return;
+    }
+
+    // Update the slot if this address is already remembered.
+    for (auto& slot : remembered_capabilities_) {
+        if (slot.valid && slot.address == destination) {
+            slot.capabilities = capabilities;
+            slot.hop_count = hop_count;
+            return;
+        }
+    }
+
+    // Otherwise claim a free slot.
+    for (auto& slot : remembered_capabilities_) {
+        if (!slot.valid) {
+            slot = {destination, capabilities, hop_count, true};
+            return;
+        }
+    }
+
+    // Full: evict the farthest remembered node only if the newcomer is closer,
+    // keeping the closest capability-bearing nodes.
+    auto farthest = remembered_capabilities_.begin();
+    for (auto it = remembered_capabilities_.begin();
+         it != remembered_capabilities_.end(); ++it) {
+        if (it->hop_count > farthest->hop_count) {
+            farthest = it;
+        }
+    }
+    if (hop_count < farthest->hop_count) {
+        *farthest = {destination, capabilities, hop_count, true};
+    }
+}
+
+uint8_t DistanceVectorRoutingTable::RecallCapabilities(
+    AddressType destination) const {
+    for (const auto& slot : remembered_capabilities_) {
+        if (slot.valid && slot.address == destination) {
+            return slot.capabilities;
+        }
+    }
+    return 0;
 }
 
 bool DistanceVectorRoutingTable::WouldExceedLimit() const {

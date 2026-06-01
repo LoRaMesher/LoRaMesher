@@ -46,6 +46,11 @@ class RoutingTableRotationTest : public ::testing::Test {
         }
     }
 
+    void AddGateway(AddressType neighbor, uint8_t capabilities = 0x01) {
+        routing_table_->UpdateRoute(neighbor, neighbor, 1, kQuality, 0,
+                                    capabilities, kCurrentTime);
+    }
+
     std::unique_ptr<DistanceVectorRoutingTable> routing_table_;
 };
 
@@ -158,6 +163,66 @@ TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_ResetsOnClear) {
     EXPECT_EQ(slice.size(), 3u);
     EXPECT_EQ(slice.front().destination, 0x2000)
         << "Cursor must reset to 0 on Clear()";
+}
+
+TEST_F(RoutingTableRotationTest,
+       GetNextBroadcastSlice_AlwaysIncludesCapabilityEntry) {
+    SeedActiveRoutes(9);  // 9 normal routes
+    AddGateway(0x3000);   // 1 capability-bearing route
+
+    // With max=3 and one gateway, every slice reserves a slot for the gateway
+    // and fills the remaining 2 from the rotating normal window. Five slices
+    // cover all 9 normal routes (2 per slice).
+    std::set<AddressType> normal_seen;
+    for (int i = 0; i < 5; ++i) {
+        auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+        ASSERT_FALSE(slice.empty());
+        EXPECT_LE(slice.size(), 3u);
+
+        bool has_gateway = false;
+        std::set<AddressType> in_slice;
+        for (const auto& e : slice) {
+            EXPECT_TRUE(in_slice.insert(e.destination).second)
+                << "No destination may appear twice in a single slice";
+            if (e.destination == 0x3000) {
+                has_gateway = true;
+            } else {
+                normal_seen.insert(e.destination);
+            }
+        }
+        EXPECT_TRUE(has_gateway)
+            << "Capability-bearing entry must appear in every slice (slice "
+            << i << ")";
+    }
+
+    EXPECT_EQ(normal_seen.size(), 9u)
+        << "Normal routes must still all be covered across a full rotation";
+}
+
+TEST_F(RoutingTableRotationTest,
+       GetNextBroadcastSlice_PriorityDoesNotStarveNormal) {
+    // More gateways than the per-slice priority reservation, plus a few normal
+    // routes. The normal cursor must keep advancing every slice.
+    for (int i = 0; i < 5; ++i)
+        AddGateway(static_cast<AddressType>(0x3000 + i));
+    SeedActiveRoutes(3, 0x2000);
+
+    std::set<AddressType> normal_seen;
+    for (int i = 0; i < 3; ++i) {
+        auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+        ASSERT_FALSE(slice.empty());
+        EXPECT_LE(slice.size(), 3u);
+        std::set<AddressType> in_slice;
+        for (const auto& e : slice) {
+            EXPECT_TRUE(in_slice.insert(e.destination).second)
+                << "No destination may appear twice in a single slice";
+            if (e.destination >= 0x2000 && e.destination < 0x3000)
+                normal_seen.insert(e.destination);
+        }
+    }
+
+    EXPECT_EQ(normal_seen.size(), 3u)
+        << "Normal routes must not be starved by priority entries";
 }
 
 }  // namespace test
