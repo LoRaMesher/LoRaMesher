@@ -927,15 +927,18 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp, event->getRssi(),
                         event->getSnr());
-                    // During subslotted slots, stay in RX to catch more
-                    // transmissions from other subslots
-                    if (in_subslotted_slot_) {
+                    // Stay in RX for the rest of any listening window (a
+                    // subslotted slot or an RX/CONTROL_RX/SYNC_BEACON_RX slot)
+                    // so a later transmission in the same slot is still caught.
+                    // Sleeping after the first packet drops any neighbour whose
+                    // packet arrives later in the window.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
-                                "Failed to set radio to receive in "
-                                "subslotted slot: %s",
+                                "Failed to keep radio in receive during "
+                                "listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -949,15 +952,15 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
-                    // After TX in subslotted slots, return to RX to catch
-                    // transmissions from later subslots
-                    if (in_subslotted_slot_) {
+                    // After TX in a listening window (subslotted or RX slot),
+                    // return to RX to catch later transmissions in the slot.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
                                 "Failed to set radio to receive after TX "
-                                "in subslotted slot: %s",
+                                "in listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -984,8 +987,9 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
 
 void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
                                         bool new_superframe) {
-    // Reset subslotted slot flag at every slot transition
+    // Reset per-slot radio-window flags at every slot transition
     in_subslotted_slot_ = false;
+    in_rx_slot_ = false;
 
     // Finalize NM election once counter-claim window has closed
     if (network_service_->GetState() ==
@@ -1295,6 +1299,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 LOG_ERROR("Failed to set radio to receive: %s",
                           result.GetErrorMessage().c_str());
             }
+            // An RX slot is a listening window that may carry more than one
+            // transmission (timing jitter can defer a neighbour's packet into
+            // this slot). Keep the radio in RX for the whole slot instead of
+            // sleeping after the first packet.
+            in_rx_slot_ = true;
             break;
 
         case SlotAllocation::SlotType::SLEEP:
