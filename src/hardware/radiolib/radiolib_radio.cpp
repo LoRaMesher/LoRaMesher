@@ -14,7 +14,9 @@
 #endif  // DEBUG
 
 #include "radiolib_modules/sx1262.hpp"
+#include "radiolib_modules/sx1268.hpp"
 #include "radiolib_modules/sx1276.hpp"
+#include "radiolib_modules/sx1278.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -433,9 +435,21 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
                 cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO
+        case RadioType::kSx1278:
+#ifdef LORAMESHER_BUILD_ARDUINO
+            current_module_ = std::make_unique<LoraMesherSX1278>(
+                cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
+            break;
+#endif  // LORAMESHER_BUILD_ARDUINO
         case RadioType::kSx1262:
 #ifdef LORAMESHER_BUILD_ARDUINO
             current_module_ = std::make_unique<LoraMesherSX1262>(
+                cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
+            break;
+#endif  // LORAMESHER_BUILD_ARDUINO
+        case RadioType::kSx1268:
+#ifdef LORAMESHER_BUILD_ARDUINO
+            current_module_ = std::make_unique<LoraMesherSX1268>(
                 cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO

@@ -69,6 +69,13 @@ TEST_F(RadioConfigCoverageTest, CreateDefaultSx1262IsValid) {
     EXPECT_EQ(c.getRadioTypeString(), "SX1262");
 }
 
+TEST_F(RadioConfigCoverageTest, CreateDefaultSx1268IsValid) {
+    RadioConfig c = RadioConfig::CreateDefaultSx1268();
+    EXPECT_TRUE(c.IsValid());
+    EXPECT_EQ(c.getRadioType(), RadioType::kSx1268);
+    EXPECT_EQ(c.getRadioTypeString(), "SX1268");
+}
+
 TEST_F(RadioConfigCoverageTest, GetRadioTypeStringAllValues) {
     RadioConfig sx1276 = RadioConfig::CreateDefaultSx1276();
     EXPECT_EQ(sx1276.getRadioTypeString(), "SX1276");
@@ -321,6 +328,14 @@ TEST(RadioConfigRecommendedCurrentLimitTest, Sx1262PowerTiers) {
         RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, 17), 100.0F);
     EXPECT_FLOAT_EQ(
         RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, 22), 140.0F);
+}
+
+TEST(RadioConfigRecommendedCurrentLimitTest, Sx1268PowerTiersMatchSx1262) {
+    for (int8_t power : {5, 14, 17, 22}) {
+        EXPECT_FLOAT_EQ(
+            RadioConfig::RecommendedCurrentLimit(RadioType::kSx1268, power),
+            RadioConfig::RecommendedCurrentLimit(RadioType::kSx1262, power));
+    }
 }
 
 TEST(RadioConfigRecommendedCurrentLimitTest, MockRadioFallsThroughToDefault) {

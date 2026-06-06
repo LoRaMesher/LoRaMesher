@@ -1,0 +1,333 @@
+#include "sx1278.hpp"
+
+#ifdef LORAMESHER_BUILD_ARDUINO
+
+#include "radio_lib_code_errors.hpp"
+#include "utils/logger.hpp"
+
+namespace loramesher {
+namespace radio {
+
+Result LoraMesherSX1278::InitializeHardware() {
+#ifdef LORAMESHER_BUILD_ARDUINO
+    // Create HAL module for SPI communication
+    hal_module_ = std::make_unique<Module>(cs_pin_, irq_pin_, reset_pin_,
+                                           busy_pin_, spi_);
+    if (!hal_module_) {
+        return Result(LoraMesherErrorCode::kHardwareError,
+                      "Hal module not initialized correctly, check for "
+                      "correctly setted pins");
+    }
+#else
+// TODO: Implement esp-idf HAL
+// Create HAL module for SPI communication
+// include the hardware abstraction layer
+// #include "hal/ESP-IDF/EspHal.h"
+
+// // create a new instance of the HAL class
+// EspHal* hal = new EspHal(5, 19, 27);
+
+//     hal_module_ = std::make_unique<Module>(hal, cs_pin_, irq_pin_, reset_pin_, busy_pin_);
+#endif
+
+    // Create RadioLib SX1278 instance
+    radio_module_ = std::make_unique<SX1278>(hal_module_.get());
+    if (!radio_module_) {
+        return Result(LoraMesherErrorCode::kHardwareError,
+                      "Something when wrong when initializing SX1278, check "
+                      "for correctly setted pins");
+    }
+
+    return Result::Success();
+}
+
+Result LoraMesherSX1278::Begin(const RadioConfig& config) {
+    // Validate configuration first
+    if (!config.IsValid()) {
+        return Result::InvalidArgument(config.Validate());
+    }
+
+    // Initialize hardware first
+    Result result = InitializeHardware();
+    if (!result) {
+        return result;
+    }
+
+    // Begin radio module with basic frequency
+    int16_t status = radio_module_->begin(
+        config.getFrequency(), config.getBandwidth(),
+        config.getSpreadingFactor(), config.getCodingRate(),
+        config.getSyncWord(), config.getPower(), config.getPreambleLength());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    // Set OCP current limit (begin() resets it to 60 mA default)
+    auto_current_limit_ = config.IsCurrentLimitAuto();
+    float limit = auto_current_limit_
+                      ? RadioConfig::RecommendedCurrentLimit(RadioType::kSx1278,
+                                                             config.getPower())
+                      : config.getCurrentLimit();
+    status = radio_module_->setCurrentLimit(static_cast<uint8_t>(limit));
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    // Enable/Disable CRC based on configuration
+    status = radio_module_->setCRC(config.getCRC());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
+    initialized_ = true;
+
+    return Result::Success();
+}
+
+Result LoraMesherSX1278::Send(const uint8_t* data, size_t len) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    // Attempt to transmit data
+    int status = radio_module_->transmit(data, len);
+    if (status == RADIOLIB_ERR_NONE) {
+        return Result::Success();
+    }
+
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::StartReceive() {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    // Start continuous receive mode
+    int status = radio_module_->startReceive();
+
+    if (status == RADIOLIB_ERR_NONE) {
+        return Result::Success();
+    }
+
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::Sleep() {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->sleep();
+    if (status == RADIOLIB_ERR_NONE) {
+        return Result::Success();
+    }
+
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::Standby() {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->standby();
+    if (status == RADIOLIB_ERR_NONE) {
+        return Result::Success();
+    }
+
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setFrequency(float frequency) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setFrequency(frequency);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setSpreadingFactor(uint8_t sf) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setSpreadingFactor(sf);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setBandwidth(float bandwidth) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setBandwidth(bandwidth);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setCodingRate(uint8_t coding_rate) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setCodingRate(coding_rate);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setPower(int8_t power) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    // Raise OCP ceiling before PA ramps up to new power level
+    if (auto_current_limit_) {
+        float limit =
+            RadioConfig::RecommendedCurrentLimit(RadioType::kSx1278, power);
+        int status =
+            radio_module_->setCurrentLimit(static_cast<uint8_t>(limit));
+        if (status != RADIOLIB_ERR_NONE) {
+            return RadioLibCodeErrors::ConvertStatus(status);
+        }
+    }
+
+    int status = radio_module_->setOutputPower(power);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setCurrentLimit(float current_limit_ma) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    auto_current_limit_ = false;
+    int status =
+        radio_module_->setCurrentLimit(static_cast<uint8_t>(current_limit_ma));
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setSyncWord(uint8_t sync_word) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setSyncWord(sync_word);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setCRC(bool enable) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setCRC(enable);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setPreambleLength(uint16_t length) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->setPreambleLength(length);
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+Result LoraMesherSX1278::setActionReceive(void (*callback)(void)) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    if (!callback) {
+        return Result::Error(LoraMesherErrorCode::kInvalidParameter);
+    }
+
+    radio_module_->setPacketReceivedAction(callback);
+
+    return Result::Success();
+}
+
+Result LoraMesherSX1278::ClearActionReceive() {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+    radio_module_->clearPacketReceivedAction();
+
+    return Result::Success();
+}
+
+float LoraMesherSX1278::getRSSI() {
+    if (!initialized_) {
+        return 0.0f;
+    }
+
+    return radio_module_->getRSSI();
+}
+
+float LoraMesherSX1278::getSNR() {
+    if (!initialized_) {
+        return 0.0f;
+    }
+
+    return radio_module_->getSNR();
+}
+
+uint8_t LoraMesherSX1278::getPacketLength() {
+    if (!initialized_) {
+        return 0;
+    }
+
+    return radio_module_->getPacketLength();
+}
+
+uint32_t LoraMesherSX1278::getTimeOnAir(uint8_t length) {
+    if (!initialized_) {
+        return 0;
+    }
+
+    RadioLibTime_t raw_us = radio_module_->getTimeOnAir(length);
+    if (raw_us == 0) {
+        return 0;
+    }
+
+    // RadioLib returns signed error codes (e.g. RADIOLIB_ERR_WRONG_MODEM
+    // = -20) through its unsigned RadioLibTime_t return type. Any raw
+    // value above 2^31 us (~35 minutes) is a negative error cast to
+    // unsigned, not a real time-on-air.
+    constexpr RadioLibTime_t kErrorThresholdUs = 0x7FFFFFFFul;
+    if (raw_us > kErrorThresholdUs) {
+        LOG_ERROR("getTimeOnAir error for %u bytes: RadioLib code %d", length,
+                  static_cast<int16_t>(raw_us));
+        return 0;
+    }
+
+    RadioLibTime_t time_on_air = raw_us / 1000;
+    // A full 255-byte payload at SF12/BW125/CR4-8 is legitimately ~11-12 s on
+    // air, so only reject values beyond any real LoRa transmission as garbage.
+    constexpr RadioLibTime_t kMaxToaMs = 60000;
+    if (time_on_air > kMaxToaMs) {
+        LOG_ERROR("getTimeOnAir sanity fail: %lu ms for %u bytes",
+                  static_cast<unsigned long>(time_on_air), length);
+        return 0;
+    }
+
+    return static_cast<uint32_t>(time_on_air);
+}
+
+Result LoraMesherSX1278::readData(uint8_t* data, size_t len) {
+    if (!initialized_) {
+        return Result::Error(LoraMesherErrorCode::kNotInitialized);
+    }
+
+    int status = radio_module_->readData(data, len);
+    if (status == RADIOLIB_ERR_NONE) {
+        return Result::Success();
+    }
+
+    return RadioLibCodeErrors::ConvertStatus(status);
+}
+
+}  // namespace radio
+}  // namespace loramesher
+
+#endif  // LORAMESHER_BUILD_ARDUINO

@@ -15,6 +15,7 @@ enum class RadioType {
     kSx1276,    ///< Semtech SX1276 radio module
     kSx1278,    ///< Semtech SX1278 radio module
     kSx1262,    ///< Semtech SX1262 radio module (SX126x family)
+    kSx1268,    ///< Semtech SX1268 radio module (SX126x family)
     kMockRadio  ///< Mock radio module for testing
 };
 
@@ -64,6 +65,12 @@ class RadioConfig {
      * @return RadioConfig Optimized configuration for SX1262
      */
     static RadioConfig CreateDefaultSx1262();
+
+    /**
+     * @brief Create default configuration for SX1268
+     * @return RadioConfig Optimized configuration for SX1268
+     */
+    static RadioConfig CreateDefaultSx1268();
 
     /**
      * @brief Get the configured radio type
