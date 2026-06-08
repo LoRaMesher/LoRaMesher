@@ -1378,7 +1378,9 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
     service_config.network_config.guard_time_ms = config.getGuardTime();
 
     // Message queue configuration
@@ -1408,7 +1410,9 @@ LoRaMeshProtocol::CreateServiceConfigForTest(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
 
     // Message queue configuration
     service_config.message_queue_size = 10;

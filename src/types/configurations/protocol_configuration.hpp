@@ -197,6 +197,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param data_slots Number of data slots in the superframe
      * @param joining_timeout_ms Timeout for joining the network in milliseconds
      * @param max_network_nodes Maximum number of nodes in the network
+     * @param max_data_slots Maximum total data slots allocatable in the superframe
      * @param guard_time_ms TX guard time for RX readiness in milliseconds
      * @param wake_up_guard_ms Guard time before slot boundary for MCU wake-up in ms
      */
@@ -205,7 +206,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
         uint8_t max_packet_size = 255, uint8_t default_data_slots = 1,
         uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50,
-        uint32_t guard_time_ms = 50, uint32_t wake_up_guard_ms = 100)
+        uint8_t max_data_slots = 50, uint32_t guard_time_ms = 50,
+        uint32_t wake_up_guard_ms = 100)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),
@@ -214,6 +216,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
           default_data_slots_(default_data_slots),
           joining_timeout_ms_(joining_timeout_ms),
           max_network_nodes_(max_network_nodes),
+          max_data_slots_(max_data_slots),
           guard_time_ms_(guard_time_ms),
           wake_up_guard_ms_(wake_up_guard_ms) {}
 
@@ -365,6 +368,20 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     void setMaxNetworkNodes(uint8_t max_nodes) {
         max_network_nodes_ = max_nodes;
     }
+
+    /**
+     * @brief Get the maximum total data slots allocatable in the superframe
+     *
+     * @return uint8_t Maximum total data slots
+     */
+    uint8_t getMaxDataSlots() const { return max_data_slots_; }
+
+    /**
+     * @brief Set the maximum total data slots allocatable in the superframe
+     *
+     * @param max_slots Maximum total data slots
+     */
+    void setMaxDataSlots(uint8_t max_slots) { max_data_slots_ = max_slots; }
 
     /**
      * @brief Get the TX guard time for RX readiness
@@ -625,7 +642,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint32_t joining_timeout_ms_ =
         hello_interval_ * 3;  ///< Joining timeout in ms
     uint8_t max_network_nodes_ =
-        50;                        ///< Maximum number of nodes in the network
+        50;  ///< Maximum number of nodes in the network
+    uint8_t max_data_slots_ =
+        50;  ///< Maximum total data slots allocatable in the superframe
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
     uint32_t wake_up_guard_ms_ =
         100;  ///< Guard time before slot boundary for MCU wake-up

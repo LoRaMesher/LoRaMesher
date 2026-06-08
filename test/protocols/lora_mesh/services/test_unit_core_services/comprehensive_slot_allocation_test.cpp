@@ -13,6 +13,7 @@
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
+#include "types/messages/loramesher/join_request_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -1445,6 +1446,46 @@ TEST_F(ComprehensiveSlotAllocationTest,
 
     Result result = network_service_->ProcessReceivedMessage(base, 0);
     EXPECT_TRUE(result.IsSuccess());
+}
+
+TEST_F(ComprehensiveSlotAllocationTest, DataSlotBudgetIndependentOfNodeCap) {
+    // The data-slot budget (max_data_slots) governs slot admission independently
+    // of the node cap (max_network_nodes). With a generous node cap but a 6-slot
+    // budget and 2 data slots per node, only 3 nodes' worth of slots may be
+    // admitted regardless of how many nodes the node cap alone would permit.
+    NetworkConfig cfg;
+    cfg.node_address = test_node_address_;
+    cfg.max_network_nodes = 50;  // node cap is not the limiter here
+    cfg.max_data_slots = 6;      // budget allows 3 nodes * 2 slots
+    cfg.default_data_slots = 2;
+    ASSERT_TRUE(network_service_->Configure(cfg).IsSuccess());
+
+    network_service_->SetState(ProtocolState::NETWORK_MANAGER);
+    network_service_->SetNetworkManager(test_node_address_);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+
+    // Attempt to admit 6 nodes, each requesting 2 data slots. Apply each join
+    // immediately so the committed budget gates subsequent admissions.
+    for (int i = 0; i < 6; ++i) {
+        AddressType addr = static_cast<AddressType>(0x2001 + i);
+        auto msg_opt = JoinRequestMessage::Create(test_node_address_, addr,
+                                                  /*battery_level=*/100,
+                                                  /*requested_slots=*/2);
+        ASSERT_TRUE(msg_opt.has_value());
+        BaseMessage base = msg_opt->ToBaseMessage();
+        EXPECT_TRUE(
+            network_service_->ProcessReceivedMessage(base, 0).IsSuccess());
+        network_service_->ApplyPendingJoin();
+    }
+
+    // Total admitted data slots must be clamped to the 6-slot budget, not the
+    // 50-node cap (which would admit all 6 nodes = 12 slots).
+    uint16_t total_allocated = 0;
+    for (const auto& node : routing_table->GetNodes()) {
+        total_allocated += node.GetAllocatedDataSlots();
+    }
+    EXPECT_EQ(total_allocated, 6u);
 }
 
 TEST_F(ComprehensiveSlotAllocationTest,

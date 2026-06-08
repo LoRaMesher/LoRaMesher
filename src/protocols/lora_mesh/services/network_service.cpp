@@ -2011,8 +2011,7 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
     }
 
     // Determine allocation
-    uint8_t available_slots =
-        config_.max_network_nodes - GetAllocatedDataSlots();
+    uint8_t available_slots = config_.max_data_slots - GetAllocatedDataSlots();
     uint8_t allocated_slots = std::min(requested_slots, available_slots);
 
     if (allocated_slots > 0) {
@@ -2801,10 +2800,10 @@ std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
     // Check available slots accounting for pending joins
     uint8_t allocated_data_slots = GetAllocatedDataSlots();
     uint8_t total_committed =
-        (allocated_data_slots + pending_slot_count > config_.max_network_nodes)
-            ? config_.max_network_nodes
+        (allocated_data_slots + pending_slot_count > config_.max_data_slots)
+            ? config_.max_data_slots
             : allocated_data_slots + pending_slot_count;
-    uint8_t available_slots = config_.max_network_nodes - total_committed;
+    uint8_t available_slots = config_.max_data_slots - total_committed;
     if (available_slots == 0) {
         LOG_WARNING("No slots available, rejecting node 0x%04X", node_address);
         return {false, 0};
