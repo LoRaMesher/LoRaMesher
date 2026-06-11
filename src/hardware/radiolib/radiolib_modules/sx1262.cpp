@@ -56,6 +56,13 @@ Result LoraMesherSX1262::Begin(const RadioConfig& config) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
 
+    // Re-apply the bandwidth so the low-data-rate optimization and
+    // time-on-air state are recomputed for the configured spreading factor.
+    status = radio_module_->setBandwidth(config.getBandwidth());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
     // Set OCP current limit (begin() resets it to 60 mA default)
     auto_current_limit_ = config.IsCurrentLimitAuto();
     float limit = auto_current_limit_

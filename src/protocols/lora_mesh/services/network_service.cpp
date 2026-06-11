@@ -1110,24 +1110,12 @@ uint8_t NetworkService::CalculateComprehensiveLinkQuality(
 }
 
 uint32_t NetworkService::CalculateTimeOnAir(uint8_t message_size) const {
-    // Check cache first
-    auto cache_it = toa_cache_.find(message_size);
-    if (cache_it != toa_cache_.end()) {
-        return cache_it->second;
-    }
-
-    uint32_t toa;
     if (!hardware_manager_) {
         // Fallback to rough estimate: 10ms per byte
-        toa = message_size * 10;
-    } else {
-        toa = hardware_manager_->getTimeOnAir(message_size);
+        return message_size * 10;
     }
-
-    // Cache the result
-    toa_cache_[message_size] = toa;
-
-    return toa;
+    // getTimeOnAir() is already an O(1), SPI-free lookup in the hardware layer.
+    return hardware_manager_->getTimeOnAir(message_size);
 }
 
 uint32_t NetworkService::CalculateNMTxTimeMs(uint8_t rt_node_count,

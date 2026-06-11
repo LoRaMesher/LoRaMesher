@@ -9,7 +9,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
@@ -1161,9 +1160,6 @@ class NetworkService : public INetworkService {
     std::shared_ptr<IMessageQueueService> message_queue_service_;
     std::shared_ptr<ISuperframeService> superframe_service_;
     std::shared_ptr<hardware::IHardwareManager> hardware_manager_;
-
-    // ToA cache for performance optimization
-    mutable std::unordered_map<uint8_t, uint32_t> toa_cache_;
 
     // Network state
     std::unique_ptr<IRoutingTable> routing_table_;
