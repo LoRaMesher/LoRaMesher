@@ -1,4 +1,12 @@
-# LoRaMesher
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.png">
+    <img src="docs/assets/logo-light.png" alt="LoRaMesher logo" width="180" />
+  </picture>
+</p>
+
+<h1 align="center">LoRaMesher</h1>
 
 [![CI](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/test.yml/badge.svg)](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/test.yml)
 [![Format](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/format-check.yml/badge.svg)](https://github.com/LoRaMesher/LoRaMesher/actions/workflows/format-check.yml)
@@ -8,6 +16,7 @@
 [![ESP32](https://img.shields.io/badge/Platform-ESP32-green.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![Native](https://img.shields.io/badge/Platform-Native%20(Linux%2FmacOS)-blue.svg)](#testing--analysis)
 [![RadioLib](https://img.shields.io/badge/RadioLib-7.x-orange.svg)](https://github.com/jgromes/RadioLib)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/mWmKpuQx)
 
 A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-vector routing protocol. Uses [RadioLib](https://github.com/jgromes/RadioLib) for radio communication and FreeRTOS for task scheduling.
 
