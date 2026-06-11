@@ -14,6 +14,7 @@
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
+#include "types/messages/loramesher/slot_request_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -1730,6 +1731,55 @@ TEST_F(ComprehensiveSlotAllocationTest,
     Result result = network_service_->StartJoining(0x1001, 5000);
     EXPECT_FALSE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+}
+
+// =============================================================================
+// Slot request grant: updates data slots, preserves capabilities
+// =============================================================================
+
+/**
+ * @brief A SLOT_REQUEST grant must increase the requesting node's allocated
+ *        data slots without overwriting its advertised capabilities.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       ProcessSlotRequestGrantsSlotsWithoutClobberingCapabilities) {
+    constexpr AddressType kRequester = 0x2000;
+    constexpr uint8_t kCustomCapability = 0x04;
+    constexpr uint8_t kRequestedSlots = 2;
+
+    // We are the network manager handling the request.
+    network_service_->SetState(ProtocolState::NETWORK_MANAGER);
+    network_service_->SetNetworkManager(test_node_address_);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    uint32_t now = GetRTOS().getTickCount();
+
+    // Local node plus a direct-neighbor requester that already advertises a
+    // custom capability and holds no data slots yet.
+    routing_table->UpdateRoute(test_node_address_, test_node_address_, 0, 100,
+                               0, 0, now);
+    routing_table->UpdateRoute(kRequester, kRequester, 1, 100, 0,
+                               kCustomCapability, now);
+
+    auto request = SlotRequestMessage::Create(test_node_address_, kRequester,
+                                              kRequestedSlots);
+    ASSERT_TRUE(request.has_value());
+    BaseMessage base = request->ToBaseMessage();
+
+    Result result = network_service_->ProcessSlotRequest(base, now);
+    ASSERT_TRUE(result.IsSuccess()) << result.GetErrorMessage();
+
+    bool found = false;
+    for (const auto& node : network_service_->GetNetworkNodesCopy()) {
+        if (node.routing_entry.destination == kRequester) {
+            found = true;
+            EXPECT_EQ(node.routing_entry.capabilities, kCustomCapability)
+                << "Slot grant must not overwrite node capabilities";
+            EXPECT_GT(node.routing_entry.allocated_data_slots, 0)
+                << "Slot grant must update allocated data slots";
+        }
+    }
+    EXPECT_TRUE(found) << "Requesting node missing from routing table";
 }
 
 }  // namespace test

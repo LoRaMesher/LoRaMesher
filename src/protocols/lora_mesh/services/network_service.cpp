@@ -2003,8 +2003,11 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
     uint8_t allocated_slots = std::min(requested_slots, available_slots);
 
     if (allocated_slots > 0) {
-        // Update node with new allocation
-        UpdateNetworkNode(source, 100, false, 0, allocated_slots);
+        // Update the node's data-slot allocation, carrying its existing
+        // capabilities through unchanged.
+        uint8_t existing_capabilities = GetNodeCapabilities(source);
+        UpdateNetworkNode(source, 100, false, allocated_slots,
+                          existing_capabilities);
 
         // Defer slot table rebuild to next superframe boundary.
         // Non-NM nodes learn the new table only via the next SyncBeacon anyway,
