@@ -825,6 +825,7 @@ Result NetworkService::CreateNetwork() {
     // NETWORK_MANAGER from boot (never went through StartElectionBackoff).
     election_priority_ = ComputeElectionPriority();
     surrendered_in_election_ = false;
+    surrender_discovery_retries_ = 0;
 
     // Generate stable network_id_ if not already set (e.g. from a prior beacon)
     if (network_id_ == 0) {
@@ -1514,6 +1515,10 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
 
         // Move to normal operation first so UpdateNetworkNode allows adding local node
         SetState(ProtocolState::NORMAL_OPERATION);
+
+        // Joining a network completes any pending surrender (merge succeeded).
+        surrendered_in_election_ = false;
+        surrender_discovery_retries_ = 0;
 
         // Add ourselves to the network nodes so we get TX and CONTROL_TX slots
         UpdateNetworkNode(node_address_, 100, false, allocated_slots);
@@ -2659,31 +2664,46 @@ Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
     uint32_t current_time = GetRTOS().getTickCount();
     uint32_t end_time = discovery_start_time_ + timeout_ms;
 
-    // NETWORK_MANAGER-role nodes that surrendered in an election enter
-    // DISCOVERY to listen for the winner's beacon. If the winner is alive,
-    // the beacon triggers JOINING before the timeout. If the winner is dead
-    // (no beacon received), clear the surrender flag and restart election
-    // via FAULT_RECOVERY so the node can create its own network.
-    if (node_role_ == NodeRole::NETWORK_MANAGER && surrendered_in_election_) {
-        if (current_time >= end_time) {
-            LOG_INFO(
-                "Discovery timeout after surrender — clearing flag and "
-                "entering FAULT_RECOVERY for fresh election");
-            surrendered_in_election_ = false;
-            SetState(ProtocolState::FAULT_RECOVERY);
-            StartElectionBackoff();
-        }
+    // Still discovering - this will be called again
+    if (current_time < end_time) {
         return Result::Success();
     }
 
-    // Check if discovery timeout has elapsed (AUTO and unsurrendered NM roles)
-    if (current_time >= end_time) {
-        LOG_INFO("Discovery timeout - creating new network");
+    // A node that surrendered to a higher-priority NM stays committed to
+    // merging: it keeps listening for the winner across several discovery
+    // windows instead of re-forming its own network on the first timeout.
+    // Cross-network detection and the join handshake can take several
+    // superframes to phase-align, so a single timeout is not proof the winner
+    // is gone. Only after the winner stays silent through the whole window do
+    // we abandon the surrender and let the node re-elect / re-create.
+    if (surrendered_in_election_) {
+        if (surrender_discovery_retries_ < kMaxSurrenderDiscoveryRetries) {
+            surrender_discovery_retries_++;
+            LOG_INFO(
+                "Surrendered to a higher-priority NM — re-arming discovery to "
+                "keep merging (window %d/%d)",
+                surrender_discovery_retries_, kMaxSurrenderDiscoveryRetries);
+            discovery_start_time_ = current_time;
+            SetDiscoverySlots();
+            return Result::Success();
+        }
+
+        LOG_INFO(
+            "Winner silent through the full merge window — abandoning "
+            "surrender");
+        surrendered_in_election_ = false;
+        surrender_discovery_retries_ = 0;
+        if (node_role_ == NodeRole::NETWORK_MANAGER) {
+            SetState(ProtocolState::FAULT_RECOVERY);
+            StartElectionBackoff();
+            return Result::Success();
+        }
         return CreateNetwork();
     }
 
-    // Still discovering - this will be called again
-    return Result::Success();
+    // Not surrendered: discovery timed out with no network to join — create one.
+    LOG_INFO("Discovery timeout - creating new network");
+    return CreateNetwork();
 }
 
 Result NetworkService::PerformJoining(uint32_t timeout_ms) {

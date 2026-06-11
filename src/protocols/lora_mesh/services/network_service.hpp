@@ -38,6 +38,12 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons
 
+/// Discovery windows a surrendered node keeps listening for the election
+/// winner before assuming it is gone and re-forming its own network. Each
+/// window is one discovery timeout (~a few superframes); this must cover the
+/// worst-case TDMA phase-alignment + join handshake between two networks.
+static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
+
 static const uint8_t kExpandListeningThreshold =
     2;  ///< Missed beacons before expanding all sync slots to RX
 
@@ -1250,6 +1256,8 @@ class NetworkService : public INetworkService {
         0;  ///< Tick count when NM_ELECTION began
     bool surrendered_in_election_ =
         false;  ///< True if this node yielded to a higher-priority claimant
+    uint8_t surrender_discovery_retries_ =
+        0;  ///< Discovery windows spent waiting for the winner after surrender
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
     uint16_t network_id_ = 0;
