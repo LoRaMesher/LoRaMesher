@@ -9,7 +9,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
@@ -38,6 +37,12 @@ namespace lora_mesh {
 
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons
+
+/// Discovery windows a surrendered node keeps listening for the election
+/// winner before assuming it is gone and re-forming its own network. Each
+/// window is one discovery timeout (~a few superframes); this must cover the
+/// worst-case TDMA phase-alignment + join handshake between two networks.
+static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
 
 static const uint8_t kExpandListeningThreshold =
     2;  ///< Missed beacons before expanding all sync slots to RX
@@ -411,12 +416,37 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Create a routing table message for broadcast
-     * 
+     *
      * @param destination Destination address (default broadcast)
      * @return std::unique_ptr<BaseMessage> Message ready for transmission
      */
     std::unique_ptr<BaseMessage> CreateRoutingTableMessage(
         AddressType destination = 0xFFFF);
+
+    /**
+     * @brief Compute the maximum number of routing entries that fit in
+     *        a single broadcast frame given the current PHY cap.
+     *
+     * Used both by CreateRoutingTableMessage() to size the rotation slice
+     * and by RemoveInactiveNodes() to scale aging timeouts to the
+     * rotation period. Clamped to RoutingTableMessage::kMaxRoutingEntries.
+     *
+     * @return size_t Slice capacity (0 if header overhead exceeds the cap)
+     */
+    size_t ComputeBroadcastSliceCapacity() const;
+
+    /**
+     * @brief Number of sliced broadcasts a peer needs to cycle its whole
+     *        active table once: ceil(table_size / slice_capacity).
+     *
+     * Used to scale both route aging (RemoveInactiveNodes) and the
+     * unidirectional-detection threshold to the rotation period, so a node
+     * whose entry only appears once per rotation is not mistaken for a missed
+     * or unidirectional link.
+     *
+     * @return size_t Rotation steps (at least 1)
+     */
+    size_t ComputeRotationSteps() const;
 
     /**
      * @brief Join an existing network
@@ -1137,9 +1167,6 @@ class NetworkService : public INetworkService {
     std::shared_ptr<ISuperframeService> superframe_service_;
     std::shared_ptr<hardware::IHardwareManager> hardware_manager_;
 
-    // ToA cache for performance optimization
-    mutable std::unordered_map<uint8_t, uint32_t> toa_cache_;
-
     // Network state
     std::unique_ptr<IRoutingTable> routing_table_;
 
@@ -1229,6 +1256,8 @@ class NetworkService : public INetworkService {
         0;  ///< Tick count when NM_ELECTION began
     bool surrendered_in_election_ =
         false;  ///< True if this node yielded to a higher-priority claimant
+    uint8_t surrender_discovery_retries_ =
+        0;  ///< Discovery windows spent waiting for the winner after surrender
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
     uint16_t network_id_ = 0;

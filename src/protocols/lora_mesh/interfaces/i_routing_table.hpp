@@ -180,6 +180,23 @@ class IRoutingTable {
         AddressType exclude_address) const = 0;
 
     /**
+     * @brief Get the next slice of active routing entries for broadcast
+     *
+     * Returns up to @p max_entries entries starting at the internal
+     * rotation cursor; wraps to the beginning of the active set when the
+     * cursor reaches the end. Self entries and @p exclude_address are
+     * filtered out. Used by the sender to fragment the routing table
+     * across superframes when the full table cannot fit in a single
+     * radio frame.
+     *
+     * @param exclude_address Address to exclude (typically own address)
+     * @param max_entries Maximum entries to return in this slice
+     * @return std::vector<RoutingTableEntry> Slice of routing entries
+     */
+    virtual std::vector<RoutingTableEntry> GetNextBroadcastSlice(
+        AddressType exclude_address, size_t max_entries) = 0;
+
+    /**
      * @brief Calculate link quality for a specific node
      * 
      * @param node_address Target node address
@@ -293,6 +310,8 @@ class IRoutingTable {
      * @param max_hops Maximum allowed hop count
      * @param source_capabilities Capabilities bitmap of the source node
      * @param source_allocated_data_slots Number of allocated data slots for source node
+     * @param remote_absent_threshold Consecutive sliced broadcasts that may
+     *        omit our entry before the direct link is treated as unidirectional
      * @return bool True if any routes were updated
      */
     virtual bool ProcessRoutingTableMessage(
@@ -300,7 +319,7 @@ class IRoutingTable {
         uint32_t reception_timestamp, uint8_t local_link_quality,
         uint8_t max_hops, uint8_t source_capabilities = 0,
         uint8_t source_allocated_data_slots = 0, float rssi = 0.0f,
-        float snr = 0.0f) = 0;
+        float snr = 0.0f, uint8_t remote_absent_threshold = 1) = 0;
 };
 
 /**

@@ -62,6 +62,13 @@ Result LoraMesherSX1276::Begin(const RadioConfig& config) {
         return RadioLibCodeErrors::ConvertStatus(status);
     }
 
+    // Re-apply the bandwidth so the low-data-rate optimization and
+    // time-on-air state are recomputed for the configured spreading factor.
+    status = radio_module_->setBandwidth(config.getBandwidth());
+    if (status != RADIOLIB_ERR_NONE) {
+        return RadioLibCodeErrors::ConvertStatus(status);
+    }
+
     // Set OCP current limit (begin() resets it to 60 mA default)
     auto_current_limit_ = config.IsCurrentLimitAuto();
     float limit = auto_current_limit_
@@ -302,7 +309,10 @@ uint32_t LoraMesherSX1276::getTimeOnAir(uint8_t length) {
     }
 
     RadioLibTime_t time_on_air = raw_us / 1000;
-    if (time_on_air > 10000) {
+    // A full 255-byte payload at SF12/BW125/CR4-8 is legitimately ~11-12 s on
+    // air, so only reject values beyond any real LoRa transmission as garbage.
+    constexpr RadioLibTime_t kMaxToaMs = 60000;
+    if (time_on_air > kMaxToaMs) {
         LOG_ERROR("getTimeOnAir sanity fail: %lu ms for %u bytes",
                   static_cast<unsigned long>(time_on_air), length);
         return 0;

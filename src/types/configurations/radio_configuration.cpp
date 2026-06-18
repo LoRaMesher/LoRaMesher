@@ -72,6 +72,10 @@ RadioConfig RadioConfig::CreateDefaultSx1262() {
     return RadioConfig{RadioType::kSx1262};
 }
 
+RadioConfig RadioConfig::CreateDefaultSx1268() {
+    return RadioConfig{RadioType::kSx1268};
+}
+
 std::string RadioConfig::getRadioTypeString() const {
     switch (radio_type_) {
         case RadioType::kSx1276:
@@ -80,6 +84,8 @@ std::string RadioConfig::getRadioTypeString() const {
             return "SX1278";
         case RadioType::kSx1262:
             return "SX1262";
+        case RadioType::kSx1268:
+            return "SX1268";
         case RadioType::kMockRadio:
             return "MockRadio";
         default:
@@ -165,6 +171,7 @@ float RadioConfig::RecommendedCurrentLimit(RadioType type, int8_t power) {
             return 150.0F;
 
         case RadioType::kSx1262:
+        case RadioType::kSx1268:
             if (power <= 14)
                 return 60.0F;
             if (power <= 17)

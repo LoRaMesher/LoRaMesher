@@ -487,6 +487,59 @@ class VirtualNetwork {
 
     void ResetDroppedMessageCount() { dropped_message_count_ = 0; }
 
+    /**
+     * @brief Get the number of messages dropped at a specific destination
+     *        because its radio was not in a receiving state.
+     *
+     * @param address Destination node address
+     * @return Count of drops at that node
+     */
+    uint32_t GetDroppedMessageCount(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+        auto it = dropped_by_dest_.find(address);
+        return (it == dropped_by_dest_.end()) ? 0u : it->second;
+    }
+
+    /**
+     * @brief Reset the per-destination dropped counter for a node.
+     */
+    void ResetDroppedMessageCount(uint32_t address) {
+        std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+        dropped_by_dest_[address] = 0;
+    }
+
+    /**
+     * @brief Get the number of messages a node has actually accepted
+     *        (delivered while its radio was receiving).
+     */
+    uint32_t GetReceivedMessageCount(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(received_by_dest_mutex_);
+        auto it = received_by_dest_.find(address);
+        return (it == received_by_dest_.end()) ? 0u : it->second;
+    }
+
+    /**
+     * @brief Reset the per-destination received counter for a node.
+     */
+    void ResetReceivedMessageCount(uint32_t address) {
+        std::lock_guard<std::mutex> lock(received_by_dest_mutex_);
+        received_by_dest_[address] = 0;
+    }
+
+    /**
+     * @brief Get a node's current radio state (test introspection)
+     *
+     * @param address Node address
+     * @return Radio state, or kSleep if the node/radio is unknown
+     */
+    loramesher::radio::RadioState GetNodeRadioState(uint32_t address) const {
+        auto it = nodes_.find(address);
+        if (it == nodes_.end() || it->second.radio == nullptr) {
+            return loramesher::radio::RadioState::kSleep;
+        }
+        return it->second.radio->GetRadioState();
+    }
+
    private:
     /**
      * @brief Information about a node in the network
@@ -546,6 +599,12 @@ class VirtualNetwork {
     std::mt19937 link_loss_rng_{
         42};  ///< Fixed seed for deterministic per-link loss
     std::atomic<uint32_t> dropped_message_count_{0};
+    std::map<uint32_t, uint32_t>
+        dropped_by_dest_;  ///< Drops per destination (radio not receiving)
+    mutable std::mutex dropped_by_dest_mutex_;
+    std::map<uint32_t, uint32_t>
+        received_by_dest_;  ///< Accepted deliveries per destination
+    mutable std::mutex received_by_dest_mutex_;
 
     /**
      * @brief Get delay between two nodes
@@ -757,11 +816,19 @@ class VirtualNetwork {
                 current_time_, msg.source, msg.destination,
                 static_cast<int>(radio->GetRadioState()));
             ++dropped_message_count_;
+            {
+                std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+                ++dropped_by_dest_[msg.destination];
+            }
             GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
         radio->ReceiveMessage(msg.data, msg.rssi, msg.snr);
+        {
+            std::lock_guard<std::mutex> lock(received_by_dest_mutex_);
+            ++received_by_dest_[msg.destination];
+        }
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
         return true;
     }

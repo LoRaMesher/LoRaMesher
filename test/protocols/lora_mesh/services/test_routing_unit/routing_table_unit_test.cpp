@@ -779,6 +779,80 @@ TEST_F(RoutingTableUnitTest, UpdateRouteNewNodeWithCapabilities) {
 }
 
 // =============================================================================
+// Sticky capabilities across erase/re-learn
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, CapabilitiesRestoredAfterEraseAndReLearn) {
+    constexpr uint8_t kGateway = 0x01;
+
+    // Learn kRemoteNode (2 hops via kNeighbor1) carrying the GATEWAY capability.
+    RoutingTableEntry gw_entry = CreateEntry(kRemoteNode, 1, kGoodQuality);
+    gw_entry.capabilities = kGateway;
+    std::vector<RoutingTableEntry> gw_entries{gw_entry};
+    ReceiveRoutingMessage(kNeighbor1, gw_entries);
+
+    {
+        const auto& nodes = routing_table_->GetNodes();
+        auto it = std::find_if(
+            nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+                return n.routing_entry.destination == kRemoteNode;
+            });
+        ASSERT_NE(it, nodes.end());
+        EXPECT_EQ(it->routing_entry.capabilities, kGateway);
+    }
+
+    // Fully erase the table (route + node timeouts elapsed).
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 1'000'000, 1, 1);
+    EXPECT_FALSE(routing_table_->IsNodePresent(kRemoteNode));
+
+    // Re-learn the same destination, but the relay advertises caps=0 (its own
+    // copy not yet refreshed by the rotating slice).
+    RoutingTableEntry unknown_entry = CreateEntry(kRemoteNode, 1, kGoodQuality);
+    unknown_entry.capabilities = 0;
+    std::vector<RoutingTableEntry> unknown_entries{unknown_entry};
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, unknown_entries,
+                                               kCurrentTime + 1'000'001,
+                                               kGoodQuality, kMaxHops);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.capabilities, kGateway)
+        << "Re-learned node must restore last-known capabilities, not revert "
+           "to 0";
+}
+
+TEST_F(RoutingTableUnitTest, StickyCapabilitiesUseLastNonZeroNotOrLatch) {
+    // Learn with 0x01, erase, then re-learn with a different non-zero value.
+    RoutingTableEntry first = CreateEntry(kRemoteNode, 1, kGoodQuality);
+    first.capabilities = 0x01;
+    std::vector<RoutingTableEntry> first_entries{first};
+    ReceiveRoutingMessage(kNeighbor1, first_entries);
+
+    routing_table_->RemoveInactiveNodes(kCurrentTime + 1'000'000, 1, 1);
+
+    RoutingTableEntry second = CreateEntry(kRemoteNode, 1, kGoodQuality);
+    second.capabilities = 0x04;
+    std::vector<RoutingTableEntry> second_entries{second};
+    routing_table_->ProcessRoutingTableMessage(kNeighbor1, second_entries,
+                                               kCurrentTime + 1'000'001,
+                                               kGoodQuality, kMaxHops);
+
+    const auto& nodes = routing_table_->GetNodes();
+    auto it =
+        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == kRemoteNode;
+        });
+    ASSERT_NE(it, nodes.end());
+    EXPECT_EQ(it->routing_entry.capabilities, 0x04)
+        << "A fresh non-zero advertisement must win; sticky memory must not "
+           "OR-latch old bits";
+}
+
+// =============================================================================
 // ProcessRoutingTableMessage: Inactive Re-activation Tests (Fix F)
 // =============================================================================
 

@@ -13,6 +13,8 @@
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
+#include "types/messages/loramesher/join_request_message.hpp"
+#include "types/messages/loramesher/slot_request_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -1447,6 +1449,46 @@ TEST_F(ComprehensiveSlotAllocationTest,
     EXPECT_TRUE(result.IsSuccess());
 }
 
+TEST_F(ComprehensiveSlotAllocationTest, DataSlotBudgetIndependentOfNodeCap) {
+    // The data-slot budget (max_data_slots) governs slot admission independently
+    // of the node cap (max_network_nodes). With a generous node cap but a 6-slot
+    // budget and 2 data slots per node, only 3 nodes' worth of slots may be
+    // admitted regardless of how many nodes the node cap alone would permit.
+    NetworkConfig cfg;
+    cfg.node_address = test_node_address_;
+    cfg.max_network_nodes = 50;  // node cap is not the limiter here
+    cfg.max_data_slots = 6;      // budget allows 3 nodes * 2 slots
+    cfg.default_data_slots = 2;
+    ASSERT_TRUE(network_service_->Configure(cfg).IsSuccess());
+
+    network_service_->SetState(ProtocolState::NETWORK_MANAGER);
+    network_service_->SetNetworkManager(test_node_address_);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+
+    // Attempt to admit 6 nodes, each requesting 2 data slots. Apply each join
+    // immediately so the committed budget gates subsequent admissions.
+    for (int i = 0; i < 6; ++i) {
+        AddressType addr = static_cast<AddressType>(0x2001 + i);
+        auto msg_opt = JoinRequestMessage::Create(test_node_address_, addr,
+                                                  /*battery_level=*/100,
+                                                  /*requested_slots=*/2);
+        ASSERT_TRUE(msg_opt.has_value());
+        BaseMessage base = msg_opt->ToBaseMessage();
+        EXPECT_TRUE(
+            network_service_->ProcessReceivedMessage(base, 0).IsSuccess());
+        network_service_->ApplyPendingJoin();
+    }
+
+    // Total admitted data slots must be clamped to the 6-slot budget, not the
+    // 50-node cap (which would admit all 6 nodes = 12 slots).
+    uint16_t total_allocated = 0;
+    for (const auto& node : routing_table->GetNodes()) {
+        total_allocated += node.GetAllocatedDataSlots();
+    }
+    EXPECT_EQ(total_allocated, 6u);
+}
+
 TEST_F(ComprehensiveSlotAllocationTest,
        ProcessReceivedMessageSlotAllocationReturnsSuccess) {
     // SLOT_ALLOCATION handler is currently a no-op stub → returns success
@@ -1689,6 +1731,55 @@ TEST_F(ComprehensiveSlotAllocationTest,
     Result result = network_service_->StartJoining(0x1001, 5000);
     EXPECT_FALSE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+}
+
+// =============================================================================
+// Slot request grant: updates data slots, preserves capabilities
+// =============================================================================
+
+/**
+ * @brief A SLOT_REQUEST grant must increase the requesting node's allocated
+ *        data slots without overwriting its advertised capabilities.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       ProcessSlotRequestGrantsSlotsWithoutClobberingCapabilities) {
+    constexpr AddressType kRequester = 0x2000;
+    constexpr uint8_t kCustomCapability = 0x04;
+    constexpr uint8_t kRequestedSlots = 2;
+
+    // We are the network manager handling the request.
+    network_service_->SetState(ProtocolState::NETWORK_MANAGER);
+    network_service_->SetNetworkManager(test_node_address_);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    uint32_t now = GetRTOS().getTickCount();
+
+    // Local node plus a direct-neighbor requester that already advertises a
+    // custom capability and holds no data slots yet.
+    routing_table->UpdateRoute(test_node_address_, test_node_address_, 0, 100,
+                               0, 0, now);
+    routing_table->UpdateRoute(kRequester, kRequester, 1, 100, 0,
+                               kCustomCapability, now);
+
+    auto request = SlotRequestMessage::Create(test_node_address_, kRequester,
+                                              kRequestedSlots);
+    ASSERT_TRUE(request.has_value());
+    BaseMessage base = request->ToBaseMessage();
+
+    Result result = network_service_->ProcessSlotRequest(base, now);
+    ASSERT_TRUE(result.IsSuccess()) << result.GetErrorMessage();
+
+    bool found = false;
+    for (const auto& node : network_service_->GetNetworkNodesCopy()) {
+        if (node.routing_entry.destination == kRequester) {
+            found = true;
+            EXPECT_EQ(node.routing_entry.capabilities, kCustomCapability)
+                << "Slot grant must not overwrite node capabilities";
+            EXPECT_GT(node.routing_entry.allocated_data_slots, 0)
+                << "Slot grant must update allocated data slots";
+        }
+    }
+    EXPECT_TRUE(found) << "Requesting node missing from routing table";
 }
 
 }  // namespace test

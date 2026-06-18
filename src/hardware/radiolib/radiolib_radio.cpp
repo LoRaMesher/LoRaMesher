@@ -7,6 +7,7 @@
 #include "radiolib_modules/radio_lib_code_errors.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
+#include "utils/lora_airtime.hpp"
 #include "utils/task_monitor.hpp"
 
 #ifdef DEBUG
@@ -14,7 +15,9 @@
 #endif  // DEBUG
 
 #include "radiolib_modules/sx1262.hpp"
+#include "radiolib_modules/sx1268.hpp"
 #include "radiolib_modules/sx1276.hpp"
+#include "radiolib_modules/sx1278.hpp"
 
 namespace loramesher {
 namespace radio {
@@ -125,7 +128,48 @@ Result RadioLibRadio::Begin(const RadioConfig& config) {
     // touches SPI during sleep (avoids accidental SX1262 wake-ups).
     RefreshToACache();
 
+    CheckTimeOnAirConsistency();
+
     return Result::Success();
+}
+
+void RadioLibRadio::CheckTimeOnAirConsistency() const {
+    // TODO: airtime::CalculateTimeOnAirMs() now computes the time-on-air
+    // independently of the driver. Make it the single source of truth and
+    // retire the driver's getTimeOnAir() path so toa_cache_ms_ holds our own
+    // calculation, collapsing the double calculation into one.
+    const bool ldro = airtime::ShouldEnableLdro(
+        current_config_.getSpreadingFactor(), current_config_.getBandwidth());
+
+    // Compare the driver's time-on-air against the Semtech reference at a few
+    // payload sizes. A driver that reports a shorter airtime than the
+    // LDRO-correct reference desynchronizes the TDMA slot timing.
+    static constexpr uint8_t kProbeSizes[] = {16, 32, 48};
+    for (uint8_t size : kProbeSizes) {
+        uint32_t measured = toa_cache_ms_[size];
+        if (measured == 0) {
+            continue;
+        }
+        uint32_t expected = airtime::CalculateTimeOnAirMs(
+            current_config_.getSpreadingFactor(),
+            current_config_.getBandwidth(), current_config_.getCodingRate(),
+            size, current_config_.getPreambleLength(), current_config_.getCRC(),
+            /*explicit_header=*/true, ldro);
+        if (expected == 0) {
+            continue;
+        }
+
+        // Tolerate sub-symbol rounding differences; a stale LDRO state shifts
+        // the airtime by a whole code block (well above this threshold).
+        uint32_t allowed = expected / 20;  // 5%
+        if (measured + allowed < expected) {
+            LOG_WARNING(
+                "Time-on-air looks wrong for %u bytes (LDRO mismatch?): "
+                "driver=%u ms expected>=%u ms (SF%u BW%.0f)",
+                size, measured, expected, current_config_.getSpreadingFactor(),
+                current_config_.getBandwidth());
+        }
+    }
 }
 
 Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
@@ -433,9 +477,21 @@ bool RadioLibRadio::CreateRadioModule(RadioType type) {
                 cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO
+        case RadioType::kSx1278:
+#ifdef LORAMESHER_BUILD_ARDUINO
+            current_module_ = std::make_unique<LoraMesherSX1278>(
+                cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
+            break;
+#endif  // LORAMESHER_BUILD_ARDUINO
         case RadioType::kSx1262:
 #ifdef LORAMESHER_BUILD_ARDUINO
             current_module_ = std::make_unique<LoraMesherSX1262>(
+                cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
+            break;
+#endif  // LORAMESHER_BUILD_ARDUINO
+        case RadioType::kSx1268:
+#ifdef LORAMESHER_BUILD_ARDUINO
+            current_module_ = std::make_unique<LoraMesherSX1268>(
                 cs_pin_, di0_pin_, rst_pin_, busy_pin_, spi_);
             break;
 #endif  // LORAMESHER_BUILD_ARDUINO

@@ -133,6 +133,9 @@ TEST_F(LoRaMeshConfigTest, GettersSetters) {
     config_.setMaxNetworkNodes(20);
     EXPECT_EQ(config_.getMaxNetworkNodes(), 20u);
 
+    config_.setMaxDataSlots(30);
+    EXPECT_EQ(config_.getMaxDataSlots(), 30u);
+
     config_.setGuardTime(100);
     EXPECT_EQ(config_.getGuardTime(), 100u);
 }
@@ -270,6 +273,7 @@ TEST_F(LoRaMeshConfigTest, ValidateDefaultValues) {
     EXPECT_EQ(cfg.getMaxPacketSize(), 255u);
     EXPECT_EQ(cfg.getDefaultDataSlots(), 1u);
     EXPECT_EQ(cfg.getMaxNetworkNodes(), 50u);
+    EXPECT_EQ(cfg.getMaxDataSlots(), 50u);
     EXPECT_EQ(cfg.getGuardTime(), 50u);
     EXPECT_NEAR(cfg.getTargetDutyCycle(), 0.01f, 0.001f);
     EXPECT_NEAR(cfg.getMinSleepFraction(), 0.30f, 0.001f);

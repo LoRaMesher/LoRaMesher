@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 
+#include "config/task_config.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "lora_mesh/services/message_queue_service.hpp"
 #include "lora_mesh/services/network_service.hpp"
@@ -517,6 +518,9 @@ class LoRaMeshProtocol : public Protocol {
     // Subslot scheduling state
     bool in_subslotted_slot_ =
         false;  ///< True during subslotted slots (radio stays in RX)
+    bool in_rx_slot_ =
+        false;  ///< True during RX listening slots (CONTROL_RX/RX/SYNC_BEACON_RX);
+                ///< radio stays in RX for the whole slot to catch every sender
     uint32_t current_slot_arrival_time_ms_ =
         0;  ///< GetTimeInSlot() at slot boundary (from SlotTransitionData)
 
@@ -525,7 +529,12 @@ class LoRaMeshProtocol : public Protocol {
     std::atomic<NodeRole> pending_role_{NodeRole::AUTO};
 
     // Constants
-    static constexpr uint32_t TASK_PRIORITY = 3;
+    // Kept below the radio-event (15) and superframe (14) tasks so radio I/O
+    // and slot timing still preempt routing work, but above app/MQTT tasks so
+    // the protocol task is not starved (which delays reception handling and
+    // per-slot radio arming).
+    static constexpr uint32_t TASK_PRIORITY =
+        config::TaskPriorities::kNormalPriority;
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
         16;  ///< Protocol notification queue size

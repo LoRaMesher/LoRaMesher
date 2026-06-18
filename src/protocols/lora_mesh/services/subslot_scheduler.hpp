@@ -80,11 +80,18 @@ class SubslotScheduler {
      * @param node_identifier Node-specific value used for subslot assignment:
      *        - HOP_BASED: hop count to network manager
      *        - ADDRESS_MODULO: node address
+     * @param toa_ms Time-on-air of the message to transmit. When > 0, the
+     *        number of subslots is reduced so each subslot can hold one
+     *        transmission (guard + ToA); at high spreading factors, where one
+     *        message fills most of the slot, this collapses to a single
+     *        subslot (transmit at slot start). When 0, the configured
+     *        num_subslots is used (ToA unknown).
      * @return SubslotTiming Computed timing (check is_valid before use)
      */
     static SubslotTiming ComputeTiming(uint32_t slot_duration_ms,
                                        const SubslotConfig& config,
-                                       uint16_t node_identifier);
+                                       uint16_t node_identifier,
+                                       uint32_t toa_ms = 0);
 
     /**
      * @brief Validate that a subslot configuration is feasible for a slot

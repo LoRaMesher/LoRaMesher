@@ -155,9 +155,27 @@ size_t NetworkService::RemoveInactiveNodes() {
 
     uint32_t current_time = GetRTOS().getTickCount();
 
-    // Delegate to routing table implementation
+    // Scale aging timeouts to the rotation period so a node whose
+    // route appears in a sliced broadcast every ceil(N/k) superframes
+    // is not pruned by a single missed cycle. Margin = 2 full rotations.
+    const size_t rotation_steps = ComputeRotationSteps();
+    const uint32_t superframe_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration()
+                            : 1000;
+    const uint32_t rotation_period_ms =
+        static_cast<uint32_t>(rotation_steps) * superframe_ms;
+
+    const uint32_t scaled_route_timeout =
+        std::max<uint32_t>(config_.route_timeout_ms, 2u * rotation_period_ms);
+    const uint32_t node_grace_ms =
+        (config_.node_timeout_ms > config_.route_timeout_ms)
+            ? (config_.node_timeout_ms - config_.route_timeout_ms)
+            : 0u;
+    const uint32_t scaled_node_timeout = std::max<uint32_t>(
+        config_.node_timeout_ms, scaled_route_timeout + node_grace_ms);
+
     size_t nodes_removed = routing_table_->RemoveInactiveNodes(
-        current_time, config_.route_timeout_ms, config_.node_timeout_ms);
+        current_time, scaled_route_timeout, scaled_node_timeout);
 
     // Update topology if any nodes were removed
     if (nodes_removed > 0) {
@@ -225,11 +243,21 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     LOG_DEBUG("Remote link quality from 0x%04X for us (0x%04X): %d", source,
               node_address_, local_link_quality);
 
+    // When the table fits in a single broadcast (no slicing), every broadcast
+    // lists all the peer's receptions, so a single absence is definitive and
+    // the link is judged unidirectional immediately. When the table is sliced,
+    // our entry only appears once per rotation, so tolerate its absence for two
+    // full rotations before judging — mirroring the 2x rotation margin used for
+    // route aging in RemoveInactiveNodes() and keeping the timescales aligned.
+    const size_t rotation_steps = ComputeRotationSteps();
+    const uint8_t remote_absent_threshold = static_cast<uint8_t>(
+        rotation_steps <= 1 ? 1u : std::min<size_t>(255u, 2u * rotation_steps));
+
     // Delegate routing table processing to the routing table implementation
     bool routes_updated = routing_table_->ProcessRoutingTableMessage(
         source, entries, reception_timestamp, local_link_quality,
         config_.max_hops, source_capabilities, source_allocated_data_slots,
-        rssi, snr);
+        rssi, snr, remote_absent_threshold);
 
     routing_changed |= routes_updated;
 
@@ -685,13 +713,39 @@ uint8_t NetworkService::CalculateLinkQuality(AddressType node_address) const {
     return routing_table_->GetLinkQuality(node_address);
 }
 
+size_t NetworkService::ComputeBroadcastSliceCapacity() const {
+    constexpr size_t header_overhead =
+        BaseHeader::Size() + RoutingTableHeader::RoutingTableFieldsSize();
+    if (config_.max_packet_size <= header_overhead) {
+        return 0;
+    }
+    const size_t cap =
+        (config_.max_packet_size - header_overhead) / RoutingTableEntry::Size();
+    return std::min<size_t>(cap, RoutingTableMessage::kMaxRoutingEntries);
+}
+
+size_t NetworkService::ComputeRotationSteps() const {
+    const size_t k = ComputeBroadcastSliceCapacity();
+    const size_t n = routing_table_->GetSize();
+    return (k == 0 || n == 0) ? 1 : (n + k - 1) / k;
+}
+
 std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     AddressType destination) {
     std::lock_guard<std::mutex> lock(network_mutex_);
 
-    // Get routing entries from routing table (excludes own address)
+    // Slice the routing table to fit within the current per-frame entry
+    // budget. The routing table owns the rotation cursor.
+    const size_t slice_capacity = ComputeBroadcastSliceCapacity();
+    if (slice_capacity == 0) {
+        LOG_ERROR(
+            "max_packet_size %u cannot carry a routing fragment "
+            "(header overhead exceeds frame)",
+            config_.max_packet_size);
+        return nullptr;
+    }
     std::vector<RoutingTableEntry> entries =
-        routing_table_->GetRoutingEntries(node_address_);
+        routing_table_->GetNextBroadcastSlice(node_address_, slice_capacity);
 
     // Increment table version
     table_version_ = (table_version_ + 1) % 256;
@@ -771,6 +825,7 @@ Result NetworkService::CreateNetwork() {
     // NETWORK_MANAGER from boot (never went through StartElectionBackoff).
     election_priority_ = ComputeElectionPriority();
     surrendered_in_election_ = false;
+    surrender_discovery_retries_ = 0;
 
     // Generate stable network_id_ if not already set (e.g. from a prior beacon)
     if (network_id_ == 0) {
@@ -1056,24 +1111,12 @@ uint8_t NetworkService::CalculateComprehensiveLinkQuality(
 }
 
 uint32_t NetworkService::CalculateTimeOnAir(uint8_t message_size) const {
-    // Check cache first
-    auto cache_it = toa_cache_.find(message_size);
-    if (cache_it != toa_cache_.end()) {
-        return cache_it->second;
-    }
-
-    uint32_t toa;
     if (!hardware_manager_) {
         // Fallback to rough estimate: 10ms per byte
-        toa = message_size * 10;
-    } else {
-        toa = hardware_manager_->getTimeOnAir(message_size);
+        return message_size * 10;
     }
-
-    // Cache the result
-    toa_cache_[message_size] = toa;
-
-    return toa;
+    // getTimeOnAir() is already an O(1), SPI-free lookup in the hardware layer.
+    return hardware_manager_->getTimeOnAir(message_size);
 }
 
 uint32_t NetworkService::CalculateNMTxTimeMs(uint8_t rt_node_count,
@@ -1473,6 +1516,10 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
         // Move to normal operation first so UpdateNetworkNode allows adding local node
         SetState(ProtocolState::NORMAL_OPERATION);
 
+        // Joining a network completes any pending surrender (merge succeeded).
+        surrendered_in_election_ = false;
+        surrender_discovery_retries_ = 0;
+
         // Add ourselves to the network nodes so we get TX and CONTROL_TX slots
         UpdateNetworkNode(node_address_, 100, false, allocated_slots);
         LOG_INFO("Added local node 0x%04X to network for slot allocation",
@@ -1735,6 +1782,23 @@ Result NetworkService::SendData(AddressType destination,
                       "Cannot send data outside normal operation");
     }
 
+    // Enforce the per-packet MTU for the active radio settings. The slot is
+    // sized to ToA(max_packet_size); a larger packet could never be
+    // transmitted and would otherwise be re-queued every superframe forever.
+    const size_t data_header_overhead =
+        BaseHeader::Size() + DataHeader::DataFieldsSize();
+    if (data.size() + data_header_overhead > config_.max_packet_size) {
+        size_t mtu = (config_.max_packet_size > data_header_overhead)
+                         ? config_.max_packet_size - data_header_overhead
+                         : 0;
+        LOG_WARNING(
+            "DATA payload %zu B exceeds MTU %zu B (max_packet_size=%u); "
+            "rejected",
+            data.size(), mtu, static_cast<unsigned>(config_.max_packet_size));
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Payload exceeds max packet size for current SF");
+    }
+
     // Find the next hop to the destination
     AddressType next_hop = FindNextHop(destination);
 
@@ -1940,13 +2004,15 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
     }
 
     // Determine allocation
-    uint8_t available_slots =
-        config_.max_network_nodes - GetAllocatedDataSlots();
+    uint8_t available_slots = config_.max_data_slots - GetAllocatedDataSlots();
     uint8_t allocated_slots = std::min(requested_slots, available_slots);
 
     if (allocated_slots > 0) {
-        // Update node with new allocation
-        UpdateNetworkNode(source, 100, false, 0, allocated_slots);
+        // Update the node's data-slot allocation, carrying its existing
+        // capabilities through unchanged.
+        uint8_t existing_capabilities = GetNodeCapabilities(source);
+        UpdateNetworkNode(source, 100, false, allocated_slots,
+                          existing_capabilities);
 
         // Defer slot table rebuild to next superframe boundary.
         // Non-NM nodes learn the new table only via the next SyncBeacon anyway,
@@ -2598,31 +2664,46 @@ Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
     uint32_t current_time = GetRTOS().getTickCount();
     uint32_t end_time = discovery_start_time_ + timeout_ms;
 
-    // NETWORK_MANAGER-role nodes that surrendered in an election enter
-    // DISCOVERY to listen for the winner's beacon. If the winner is alive,
-    // the beacon triggers JOINING before the timeout. If the winner is dead
-    // (no beacon received), clear the surrender flag and restart election
-    // via FAULT_RECOVERY so the node can create its own network.
-    if (node_role_ == NodeRole::NETWORK_MANAGER && surrendered_in_election_) {
-        if (current_time >= end_time) {
-            LOG_INFO(
-                "Discovery timeout after surrender — clearing flag and "
-                "entering FAULT_RECOVERY for fresh election");
-            surrendered_in_election_ = false;
-            SetState(ProtocolState::FAULT_RECOVERY);
-            StartElectionBackoff();
-        }
+    // Still discovering - this will be called again
+    if (current_time < end_time) {
         return Result::Success();
     }
 
-    // Check if discovery timeout has elapsed (AUTO and unsurrendered NM roles)
-    if (current_time >= end_time) {
-        LOG_INFO("Discovery timeout - creating new network");
+    // A node that surrendered to a higher-priority NM stays committed to
+    // merging: it keeps listening for the winner across several discovery
+    // windows instead of re-forming its own network on the first timeout.
+    // Cross-network detection and the join handshake can take several
+    // superframes to phase-align, so a single timeout is not proof the winner
+    // is gone. Only after the winner stays silent through the whole window do
+    // we abandon the surrender and let the node re-elect / re-create.
+    if (surrendered_in_election_) {
+        if (surrender_discovery_retries_ < kMaxSurrenderDiscoveryRetries) {
+            surrender_discovery_retries_++;
+            LOG_INFO(
+                "Surrendered to a higher-priority NM — re-arming discovery to "
+                "keep merging (window %d/%d)",
+                surrender_discovery_retries_, kMaxSurrenderDiscoveryRetries);
+            discovery_start_time_ = current_time;
+            SetDiscoverySlots();
+            return Result::Success();
+        }
+
+        LOG_INFO(
+            "Winner silent through the full merge window — abandoning "
+            "surrender");
+        surrendered_in_election_ = false;
+        surrender_discovery_retries_ = 0;
+        if (node_role_ == NodeRole::NETWORK_MANAGER) {
+            SetState(ProtocolState::FAULT_RECOVERY);
+            StartElectionBackoff();
+            return Result::Success();
+        }
         return CreateNetwork();
     }
 
-    // Still discovering - this will be called again
-    return Result::Success();
+    // Not surrendered: discovery timed out with no network to join — create one.
+    LOG_INFO("Discovery timeout - creating new network");
+    return CreateNetwork();
 }
 
 Result NetworkService::PerformJoining(uint32_t timeout_ms) {
@@ -2730,10 +2811,10 @@ std::pair<bool, uint8_t> NetworkService::ShouldAcceptJoin(
     // Check available slots accounting for pending joins
     uint8_t allocated_data_slots = GetAllocatedDataSlots();
     uint8_t total_committed =
-        (allocated_data_slots + pending_slot_count > config_.max_network_nodes)
-            ? config_.max_network_nodes
+        (allocated_data_slots + pending_slot_count > config_.max_data_slots)
+            ? config_.max_data_slots
             : allocated_data_slots + pending_slot_count;
-    uint8_t available_slots = config_.max_network_nodes - total_committed;
+    uint8_t available_slots = config_.max_data_slots - total_committed;
     if (available_slots == 0) {
         LOG_WARNING("No slots available, rejecting node 0x%04X", node_address);
         return {false, 0};

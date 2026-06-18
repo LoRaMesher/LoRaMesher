@@ -61,6 +61,7 @@ class INetworkService {
         uint8_t max_hops = 5;                 ///< Maximum hops for routing
         uint8_t max_packet_size = 255;        ///< Maximum packet size
         uint8_t max_network_nodes = 50;       ///< Maximum network nodes
+        uint8_t max_data_slots = 50;          ///< Maximum total data slots
         uint8_t default_data_slots = 1;       ///< Default data slots to request
         uint8_t default_control_slots = 1;    ///< Default control slots
         uint8_t default_discovery_slots = 1;  ///< Default discovery slots

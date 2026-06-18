@@ -241,20 +241,21 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     config_ = config;
     pending_role_.store(config.getNodeRole(), std::memory_order_release);
 
-    // Apply SF-derived max_packet_size default based on live radio settings.
-    // If the user explicitly set max_packet_size above the SF-safe cap, keep
-    // their value and warn so slot-duration inflation is traceable.
+    // Cap max_packet_size to the physical SF-safe limit for the live radio
+    // settings. A value above the cap (or the 255 default) is clamped so it
+    // can never produce a slot duration the radio cannot transmit within.
     if (hardware_) {
         uint8_t sf = hardware_->getSpreadingFactor();
         float bw_khz = hardware_->getBandwidth();
+        uint8_t requested = config_.getMaxPacketSize();
+        bool user_set = config_.IsMaxPacketSizeUserSet();
         uint8_t sf_safe = config_.ApplySfDerivedDefaults(sf, bw_khz);
-        if (config_.IsMaxPacketSizeUserSet() &&
-            config_.getMaxPacketSize() > sf_safe) {
+        if (user_set && requested > sf_safe) {
             LOG_WARNING(
-                "max_packet_size %u exceeds SF%u/BW%.0fkHz recommended cap %u; "
-                "slot duration will be inflated",
-                static_cast<unsigned>(config_.getMaxPacketSize()),
-                static_cast<unsigned>(sf), static_cast<double>(bw_khz),
+                "max_packet_size %u exceeds SF%u/BW%.0fkHz physical cap %u; "
+                "clamped to %u",
+                static_cast<unsigned>(requested), static_cast<unsigned>(sf),
+                static_cast<double>(bw_khz), static_cast<unsigned>(sf_safe),
                 static_cast<unsigned>(sf_safe));
         }
     }
@@ -926,15 +927,18 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp, event->getRssi(),
                         event->getSnr());
-                    // During subslotted slots, stay in RX to catch more
-                    // transmissions from other subslots
-                    if (in_subslotted_slot_) {
+                    // Stay in RX for the rest of any listening window (a
+                    // subslotted slot or an RX/CONTROL_RX/SYNC_BEACON_RX slot)
+                    // so a later transmission in the same slot is still caught.
+                    // Sleeping after the first packet drops any neighbour whose
+                    // packet arrives later in the window.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
-                                "Failed to set radio to receive in "
-                                "subslotted slot: %s",
+                                "Failed to keep radio in receive during "
+                                "listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -948,15 +952,15 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
-                    // After TX in subslotted slots, return to RX to catch
-                    // transmissions from later subslots
-                    if (in_subslotted_slot_) {
+                    // After TX in a listening window (subslotted or RX slot),
+                    // return to RX to catch later transmissions in the slot.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
                                 "Failed to set radio to receive after TX "
-                                "in subslotted slot: %s",
+                                "in listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -983,8 +987,9 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
 
 void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
                                         bool new_superframe) {
-    // Reset subslotted slot flag at every slot transition
+    // Reset per-slot radio-window flags at every slot transition
     in_subslotted_slot_ = false;
+    in_rx_slot_ = false;
 
     // Finalize NM election once counter-claim window has closed
     if (network_service_->GetState() ==
@@ -1068,12 +1073,12 @@ bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
     uint32_t time_in_slot = superframe_service_->GetTimeInSlot();
     uint32_t slot_duration = superframe_service_->GetSlotDuration();
 
-    // Guard against RadioLib overflow or SPI errors returning absurd values
+    // A packet whose airtime alone exceeds the slot can never fit; skip the
+    // TX rather than transmit and overrun into the following slot.
     if (toa_ms > slot_duration) {
-        LOG_ERROR(
-            "ToA sanity failed: %u ms for %u bytes (slot=%u). Using fallback.",
-            toa_ms, message_size, slot_duration);
-        toa_ms = static_cast<uint32_t>(message_size) * 10;
+        LOG_ERROR("ToA %u ms for %u bytes exceeds slot %u ms; skipping TX",
+                  toa_ms, message_size, slot_duration);
+        return false;
     }
 
     uint32_t needed =
@@ -1125,9 +1130,10 @@ Result LoRaMeshProtocol::TrySendSubslottedMessage(
         return Result::Success();
 
     uint8_t msg_size = static_cast<uint8_t>(message->GetTotalSize());
+    uint32_t msg_toa_ms = hardware_->getTimeOnAir(msg_size);
 
     auto subslot_timing = lora_mesh::SubslotScheduler::ComputeTiming(
-        superframe_service_->GetSlotDuration(), config, identifier);
+        superframe_service_->GetSlotDuration(), config, identifier, msg_toa_ms);
 
     bool use_subslot = false;
     if (subslot_timing.is_valid) {
@@ -1293,6 +1299,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 LOG_ERROR("Failed to set radio to receive: %s",
                           result.GetErrorMessage().c_str());
             }
+            // An RX slot is a listening window that may carry more than one
+            // transmission (timing jitter can defer a neighbour's packet into
+            // this slot). Keep the radio in RX for the whole slot instead of
+            // sleeping after the first packet.
+            in_rx_slot_ = true;
             break;
 
         case SlotAllocation::SlotType::SLEEP:
@@ -1367,7 +1378,9 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
     service_config.network_config.guard_time_ms = config.getGuardTime();
 
     // Message queue configuration
@@ -1397,7 +1410,9 @@ LoRaMeshProtocol::CreateServiceConfigForTest(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
 
     // Message queue configuration
     service_config.message_queue_size = 10;

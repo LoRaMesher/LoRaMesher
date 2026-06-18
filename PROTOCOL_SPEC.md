@@ -26,6 +26,7 @@ This document provides the complete technical specification for the LoRaMesher p
    - 4.3 [Route Aging](#43-route-aging)
    - 4.4 [Network Topology Examples](#44-network-topology-examples-and-routing-behavior)
    - 4.5 [Routing Table Architecture](#45-routing-table-architecture)
+   - 4.6 [Routing Table Broadcast Slicing](#46-routing-table-broadcast-slicing)
 5. [Network Synchronization (TDMA)](#5-network-synchronization-tdma)
    - 5.1 [Superframe Structure](#51-superframe-structure)
    - 5.2 [Timing Parameters](#52-timing-parameters)
@@ -884,6 +885,8 @@ Topology: Node1 ← → Node2 (bidirectional)
 5. No loop formed: stale information cannot propagate
 ```
 
+**Sticky Capabilities Across Re-learn**: The routing table keeps a small fixed-capacity memory of the last-known non-zero capabilities for the closest capability-bearing nodes, independent of their route entries (no runtime allocation; when full, the farthest remembered node is evicted in favour of a closer one). When a node is aged out (see §4.3) and later re-learned from a relay whose rotating slice has not yet refreshed the capability bit (entry advertises `capabilities = 0`), the re-added route restores its remembered capabilities instead of reverting to unknown. A fresh non-zero advertisement always overrides the remembered value (last-non-zero wins; bits are not OR-latched), so a node can still legitimately drop a capability via the authoritative next-hop path.
+
 **Route Poisoning**:
 
 ### 4.3 Route Aging
@@ -914,8 +917,20 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 ```
 
 **Configuration Parameters**:
-- `route_timeout_ms`: Default 180,000 ms (3 minutes) - marks routes inactive
-- `node_timeout_ms`: Configurable - removes nodes entirely after extended inactivity
+- `route_timeout_ms`: Default 60,000 ms (1 minute) — marks routes inactive
+- `node_timeout_ms`: Configurable — removes nodes entirely after extended inactivity
+
+**Rotation-Aware Timeout Scaling**: When broadcast slicing is active (see §4.6), `NetworkService` scales the timeouts passed to `RemoveInactiveNodes()` so the aging window spans at least two full rotations. The configured value is the floor; small networks see no change.
+
+```
+rotation_period_ms     = ceil(N / slice_capacity) * superframe_ms
+scaled_route_timeout   = max(route_timeout_ms, 2 * rotation_period_ms)
+scaled_node_timeout    = max(node_timeout_ms,
+                             scaled_route_timeout +
+                             (node_timeout_ms - route_timeout_ms))
+```
+
+Here `N` is the current routing-table size. Dead routes are still pruned, on a timescale matched to the rotation period — at SF7–SF9 the scaling is a no-op, at SF12 it stretches with the active set.
 
 **EWMA Link Quality Tracking**:
 
@@ -1266,6 +1281,23 @@ float CalculateRouteScore(const Route& route) {
 **Performance**: Optimized data structures and thread-safe operations
 **Testability**: Interface abstraction enables comprehensive unit testing
 **Future-Proofing**: Infrastructure prepared for sophisticated routing enhancements
+
+### 4.6 Routing Table Broadcast Slicing
+
+When the active routing table cannot fit in a single radio frame, the sender broadcasts one slice per superframe and rotates a cursor across slices. Each `ROUTE_TABLE` message remains self-contained: it carries the full headers, a valid `next_hop` per entry, and the current `table_version`. Receivers merge incremental slices into their routing tables with the same per-entry split-horizon guard described in §4.2 — slicing introduces no new loop window.
+
+The slice capacity is derived from the configured PHY cap:
+
+```
+slice_capacity = (max_packet_size − BaseHeader::Size() − RoutingTableHeader::RoutingTableFieldsSize())
+                  / RoutingTableEntry::Size()
+```
+
+clamped to `RoutingTableMessage::kMaxRoutingEntries = 24`. At SF12/BW125 (`max_packet_size = 51`) this yields 3 entries per broadcast; at SF7–SF9 the entire table fits in one slice and the cursor never advances past zero, so behavior is unchanged.
+
+The slice helper, `GetNextBroadcastSlice(exclude_address, max_entries)`, filters out the sender's own address and inactive entries, then partitions the remaining routes into a **priority** set (entries whose `capabilities` bitmap is non-zero, e.g. gateways) and a **normal** set. Priority entries are emitted in every slice so capability-bearing routes reach far nodes without waiting for a full rotation; the normal set rotates through the remaining per-slice budget via a contiguous-window cursor.
+
+To prevent priority entries from starving the rotation, at least one slot per slice is reserved for the normal set whenever it is non-empty (priority reservation is capped at `max_entries − 1`). When priority entries exceed their reservation they rotate through a second cursor. Both cursors (`next_broadcast_offset_` for normal, `next_priority_offset_` for priority) live on `DistanceVectorRoutingTable` and reset to 0 on `Clear()`. Because the two sets are disjoint, a destination never appears twice in one slice.
 
 ---
 
@@ -2603,6 +2635,8 @@ The LoRa PHY ceiling is 255 bytes. LoRaMesher additionally selects an **SF-deriv
 **Override semantics:** when `LoRaMeshProtocolConfig::setMaxPacketSize()` is called, the user's value is preserved. If that value exceeds the SF-derived cap, `LoRaMeshProtocol::Configure()` logs a warning; the value is not rejected. Values set via the `LoRaMeshProtocolConfig` constructor default arguments do **not** mark the value as user-set and are replaced by the SF-derived default when `ApplySfDerivedDefaults()` runs inside `Configure()`.
 
 **Frame overheads (unchanged):** BaseHeader is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific) and always fit regardless of SF. DATA/DATA_BROADCAST messages carry an additional 4-byte DataHeader, so the maximum data payload for a given SF is `max_packet_size - 6 (BaseHeader) - 4 (DataHeader)`. Example: at SF10/BW125 the data payload is capped at 41 bytes.
+
+**Routing fragmentation at high SF:** at SF10–SF12 the per-frame entry budget is smaller than `kMaxRoutingEntries = 24` (≈ 3 entries at SF12/BW125), so the routing layer fragments the table across superframes — see §4.6.
 
 ---
 
