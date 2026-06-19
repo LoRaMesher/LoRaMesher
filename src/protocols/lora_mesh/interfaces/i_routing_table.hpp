@@ -241,8 +241,19 @@ class IRoutingTable {
     // Configuration and callbacks
 
     /**
+     * @brief Enable or disable capability/data-slot fields in RTENTRY log lines.
+     *
+     * Off by default. When enabled, RTENTRY lines carry `cap=0x.. slots=..` so
+     * external tools can reconstruct gateway roles and per-node slot
+     * allocations from a capture. Default implementation is a no-op.
+     *
+     * @param enable Whether to include the extra fields
+     */
+    virtual void SetLogRoutingCapabilities(bool enable) { (void)enable; }
+
+    /**
      * @brief Set the route update callback
-     * 
+     *
      * @param callback Callback function to notify of route changes
      */
     virtual void SetRouteUpdateCallback(RouteUpdateCallback callback) = 0;

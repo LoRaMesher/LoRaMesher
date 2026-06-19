@@ -97,6 +97,28 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     // Configuration and callbacks
 
+    void SetLogRoutingCapabilities(bool enable) override;
+
+    /**
+     * @brief Whether RTENTRY log lines currently include capability/slot fields.
+     */
+    bool IsLoggingCapabilities() const { return log_capabilities_; }
+
+    /**
+     * @brief Format a single RTENTRY log line for a route entry.
+     *
+     * When @p include_caps is true the line carries the node's capabilities and
+     * allocated data slots (`cap=0x.. slots=..`), which tools can parse to
+     * reconstruct gateway roles and per-node slot allocations.
+     *
+     * @param node The route entry to format
+     * @param include_caps Whether to append capability/slot fields
+     * @return std::string The formatted RTENTRY line
+     */
+    static std::string FormatRouteEntry(
+        const types::protocols::lora_mesh::NetworkNodeRoute& node,
+        bool include_caps);
+
     void SetRouteUpdateCallback(RouteUpdateCallback callback) override;
 
     void SetMaxNodes(size_t max_nodes) override;
@@ -240,6 +262,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
         nodes_;                           ///< Routing table
     size_t max_nodes_;                    ///< Maximum number of nodes
     RouteUpdateCallback route_callback_;  ///< Route update callback
+    /// When true, RTENTRY log lines include capabilities and data-slot fields.
+    bool log_capabilities_ = false;
 
     // Statistics
     mutable uint32_t lookup_count_;       ///< Number of route lookups

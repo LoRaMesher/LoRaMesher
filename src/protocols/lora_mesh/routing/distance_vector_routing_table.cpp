@@ -4,8 +4,10 @@
  */
 
 #include "distance_vector_routing_table.hpp"
+#include <cstdio>
 #include <numeric>
 #include <sstream>
+#include <string>
 
 namespace loramesher {
 namespace protocols {
@@ -1236,13 +1238,38 @@ void DistanceVectorRoutingTable::NotifyRouteUpdate(bool route_added,
     }
 }
 
+void DistanceVectorRoutingTable::SetLogRoutingCapabilities(bool enable) {
+    log_capabilities_ = enable;
+}
+
+std::string DistanceVectorRoutingTable::FormatRouteEntry(
+    const types::protocols::lora_mesh::NetworkNodeRoute& node,
+    bool include_caps) {
+    char buf[160];
+    if (include_caps) {
+        std::snprintf(
+            buf, sizeof(buf),
+            "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d "
+            "cap=0x%02X slots=%d",
+            node.routing_entry.destination, node.next_hop,
+            node.routing_entry.hop_count, node.routing_entry.link_quality,
+            node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0,
+            node.routing_entry.capabilities,
+            node.routing_entry.allocated_data_slots);
+    } else {
+        std::snprintf(
+            buf, sizeof(buf),
+            "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d",
+            node.routing_entry.destination, node.next_hop,
+            node.routing_entry.hop_count, node.routing_entry.link_quality,
+            node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0);
+    }
+    return std::string(buf);
+}
+
 void DistanceVectorRoutingTable::LogRouteEntry(
     const types::protocols::lora_mesh::NetworkNodeRoute& node) {
-    LOG_DEBUG(
-        "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d",
-        node.routing_entry.destination, node.next_hop,
-        node.routing_entry.hop_count, node.routing_entry.link_quality,
-        node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0);
+    LOG_DEBUG("%s", FormatRouteEntry(node, log_capabilities_).c_str());
 }
 
 }  // namespace lora_mesh

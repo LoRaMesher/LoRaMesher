@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 
@@ -2127,6 +2129,42 @@ TEST_F(RoutingTableUnitTest,
               NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality);
     EXPECT_LT(it->routing_entry.link_quality,
               NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
+// =============================================================================
+// RTENTRY capability-logging enrichment (gated, default off)
+// =============================================================================
+
+/**
+ * @brief RTENTRY log line includes cap=/slots= only when capability logging is
+ * enabled. The planner's seed-from-log path relies on this gated enrichment to
+ * auto-extract gateway role and per-node data slots from a capture.
+ */
+TEST_F(RoutingTableUnitTest, FormatRouteEntryCapabilitiesGated) {
+    NetworkNodeRoute node(kNeighbor1, kLocalAddress, /*hops=*/2, kGoodQuality,
+                          kCurrentTime);
+    node.routing_entry.capabilities = 0x01;
+    node.routing_entry.allocated_data_slots = 3;
+
+    std::string without = DistanceVectorRoutingTable::FormatRouteEntry(
+        node, /*include_caps=*/false);
+    EXPECT_NE(without.find("RTENTRY dest="), std::string::npos);
+    EXPECT_EQ(without.find("cap="), std::string::npos);
+    EXPECT_EQ(without.find("slots="), std::string::npos);
+
+    std::string with = DistanceVectorRoutingTable::FormatRouteEntry(
+        node, /*include_caps=*/true);
+    EXPECT_NE(with.find("cap=0x01"), std::string::npos);
+    EXPECT_NE(with.find("slots=3"), std::string::npos);
+}
+
+/**
+ * @brief Capability logging defaults to off and is toggled by the setter.
+ */
+TEST_F(RoutingTableUnitTest, CapabilityLoggingDefaultsOff) {
+    EXPECT_FALSE(routing_table_->IsLoggingCapabilities());
+    routing_table_->SetLogRoutingCapabilities(true);
+    EXPECT_TRUE(routing_table_->IsLoggingCapabilities());
 }
 
 }  // namespace test

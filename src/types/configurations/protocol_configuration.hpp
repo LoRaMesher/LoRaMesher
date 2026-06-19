@@ -433,6 +433,20 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         min_sleep_fraction_ = std::clamp(fraction, 0.0f, 0.9f);
     }
 
+    /**
+     * @brief Whether RTENTRY log lines include capability/data-slot fields.
+     *
+     * Off by default. When enabled, RTENTRY DEBUG lines carry
+     * `cap=0x.. slots=..` so external tools (e.g. the network planner) can
+     * reconstruct gateway roles and per-node data-slot allocations from a log.
+     */
+    bool getLogRoutingCapabilities() const { return log_routing_capabilities_; }
+
+    /** @brief Enable/disable RTENTRY capability/data-slot logging. */
+    void setLogRoutingCapabilities(bool enable) {
+        log_routing_capabilities_ = enable;
+    }
+
     /** @brief Get the churn margin (absolute extra slots, default 2) */
     uint8_t getChurnMarginSlots() const { return churn_margin_slots_; }
 
@@ -653,6 +667,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         0.30f;  ///< Minimum fraction of superframe as sleep
     uint8_t churn_margin_slots_ =
         2;  ///< Absolute extra slots reserved by NM to absorb routing churn
+    /// When true, RTENTRY log lines include capability/data-slot fields.
+    bool log_routing_capabilities_ = false;
     float link_quality_ewma_alpha_ =
         0.30f;  ///< EWMA smoothing factor for link quality
     uint8_t consecutive_missed_for_inactivation_ =

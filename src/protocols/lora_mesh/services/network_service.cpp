@@ -686,6 +686,10 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     config_ = config;
     node_address_ = config.node_address;
     node_role_ = config.node_role;
+    if (routing_table_) {
+        routing_table_->SetLogRoutingCapabilities(
+            config.log_routing_capabilities);
+    }
     target_duty_cycle_ = config.target_duty_cycle;
     min_sleep_fraction_ = config.min_sleep_fraction;
     churn_margin_slots_ = config.churn_margin_slots;

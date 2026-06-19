@@ -274,6 +274,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     net_config.target_duty_cycle = config.getTargetDutyCycle();
     net_config.min_sleep_fraction = config.getMinSleepFraction();
     net_config.churn_margin_slots = config.getChurnMarginSlots();
+    net_config.log_routing_capabilities = config.getLogRoutingCapabilities();
     net_config.link_quality_ewma_alpha = config.getLinkQualityEwmaAlpha();
     net_config.consecutive_missed_for_inactivation =
         config.getConsecutiveMissedForInactivation();
@@ -1382,6 +1383,8 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
         config.getMaxNetworkNodes();
     service_config.network_config.max_data_slots = config.getMaxDataSlots();
     service_config.network_config.guard_time_ms = config.getGuardTime();
+    service_config.network_config.log_routing_capabilities =
+        config.getLogRoutingCapabilities();
 
     // Message queue configuration
     service_config.message_queue_size = 10;

@@ -91,6 +91,9 @@ class INetworkService {
         // Node role configuration
         NodeRole node_role =
             NodeRole::AUTO;  ///< Node role for network formation
+
+        /// When true, RTENTRY log lines include capability/data-slot fields.
+        bool log_routing_capabilities = false;
     };
 
     // Node management methods
