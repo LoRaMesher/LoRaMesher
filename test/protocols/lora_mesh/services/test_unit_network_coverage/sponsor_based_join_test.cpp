@@ -117,7 +117,7 @@ TEST_F(SponsorBasedJoinTest, SponsorAddressInJoinRequest) {
     const AddressType expected_sponsor = 0x2002;
 
     auto join_request = JoinRequestMessage::Create(
-        manager_address, 0x1001, 75, requested_slots, {}, 0, expected_sponsor);
+        manager_address, 0x1001, requested_slots, {}, 0, expected_sponsor);
 
     // Then: Join request should include sponsor address
     ASSERT_TRUE(join_request.has_value()) << "Failed to create join request";
@@ -135,7 +135,7 @@ TEST_F(SponsorBasedJoinTest, SponsorRecognizesJoinRequest) {
         0x2002;  // Matches sponsor_node_ address
 
     auto join_request = JoinRequestMessage::Create(
-        manager_address, joining_address, 75, 3, {}, 0, sponsor_address);
+        manager_address, joining_address, 3, {}, 0, sponsor_address);
 
     ASSERT_TRUE(join_request.has_value()) << "Failed to create join request";
     BaseMessage message = join_request->ToBaseMessage();
@@ -227,7 +227,7 @@ TEST_F(SponsorBasedJoinTest, SponsorSelectionResetOnFreshDiscovery) {
 TEST_F(SponsorBasedJoinTest, LegacyJoinRequestCompatibility) {
     // Given: A join request without sponsor address (sponsor_address = 0)
     auto legacy_join_request = JoinRequestMessage::Create(
-        0x1000, 0x1001, 75, 3, {}, 0, 0);  // No sponsor address
+        0x1000, 0x1001, 3, {}, 0, 0);  // No sponsor address
 
     ASSERT_TRUE(legacy_join_request.has_value())
         << "Failed to create legacy join request";
@@ -342,7 +342,7 @@ TEST_F(SponsorBasedJoinTest, RetryLaterScenario) {
 TEST_F(SponsorBasedJoinTest, MalformedSponsorAddress) {
     // Given: A join request with invalid sponsor address (non-existent node)
     auto malformed_request = JoinRequestMessage::Create(
-        0x1000, 0x1001, 75, 3, {}, 0, 0x9999);  // Non-existent sponsor
+        0x1000, 0x1001, 3, {}, 0, 0x9999);  // Non-existent sponsor
 
     ASSERT_TRUE(malformed_request.has_value())
         << "Failed to create malformed request";
@@ -386,7 +386,7 @@ TEST_F(SponsorBasedJoinTest, ConcurrentJoinRequests) {
 
     for (auto node_addr : joining_nodes) {
         auto join_request = JoinRequestMessage::Create(
-            0x1000, node_addr, 75, 3, {}, 0, 0x2002);  // Same sponsor for all
+            0x1000, node_addr, 3, {}, 0, 0x2002);  // Same sponsor for all
 
         ASSERT_TRUE(join_request.has_value())
             << "Failed to create join request for node " << node_addr;
@@ -414,8 +414,8 @@ TEST_F(SponsorBasedJoinTest, SponsorAddressBoundaryValues) {
 
     for (auto sponsor_addr : test_addresses) {
         // Given: Join request with boundary value sponsor address
-        auto join_request = JoinRequestMessage::Create(0x1000, 0x1001, 75, 3,
-                                                       {}, 0, sponsor_addr);
+        auto join_request =
+            JoinRequestMessage::Create(0x1000, 0x1001, 3, {}, 0, sponsor_addr);
 
         // Then: Message creation should succeed
         ASSERT_TRUE(join_request.has_value())
@@ -435,7 +435,7 @@ TEST_F(SponsorBasedJoinTest, DirectJoinWithoutSyncBeacon) {
 
     // When: Join request is created without sponsor selection
     auto direct_join_request = JoinRequestMessage::Create(
-        0x1000, 0x1001, 75, 3, {}, 0, 0);  // No sponsor (direct join)
+        0x1000, 0x1001, 3, {}, 0, 0);  // No sponsor (direct join)
 
     ASSERT_TRUE(direct_join_request.has_value())
         << "Failed to create direct join request";

@@ -118,30 +118,26 @@ class NetworkNodeRoute {
      * @brief Complete constructor with all node fields
      *
      * @param addr Node address
-     * @param battery Battery level (0-100%)
      * @param time Current timestamp
      * @param is_manager Whether this is a network manager
      * @param caps Node capabilities bitmap
      * @param slots Number of allocated slots
      */
-    NetworkNodeRoute(AddressType addr, uint8_t battery, uint32_t time,
-                     bool is_manager = false, uint8_t caps = 0,
-                     uint8_t slots = 0);
+    NetworkNodeRoute(AddressType addr, uint32_t time, bool is_manager,
+                     uint8_t caps = 0, uint8_t slots = 0);
 
     /**
      * @brief Complete constructor with all node fields and hop count
      *
      * @param addr Node address
-     * @param battery Battery level (0-100%)
      * @param time Current timestamp
      * @param is_manager Whether this is a network manager
      * @param caps Node capabilities bitmap
      * @param slots Number of allocated slots
      * @param hops Hop count to destination
      */
-    NetworkNodeRoute(AddressType addr, uint8_t battery, uint32_t time,
-                     bool is_manager, uint8_t caps, uint8_t slots,
-                     uint8_t hops);
+    NetworkNodeRoute(AddressType addr, uint32_t time, bool is_manager,
+                     uint8_t caps, uint8_t slots, uint8_t hops);
 
     /**
      * @brief Constructor with routing information
@@ -219,16 +215,15 @@ class NetworkNodeRoute {
 
     /**
      * @brief Update node information
-     * 
-     * @param battery Battery level (0-100%)
+     *
      * @param is_manager Whether node is network manager
      * @param caps Capabilities bitmap
      * @param data_slots Allocated data slots
      * @param current_time Current timestamp
      * @return bool True if significant updates were made
      */
-    bool UpdateNodeInfo(uint8_t battery, bool is_manager, uint8_t caps,
-                        uint8_t data_slots, uint32_t current_time);
+    bool UpdateNodeInfo(bool is_manager, uint8_t caps, uint8_t data_slots,
+                        uint32_t current_time);
 
     /**
      * @brief Update routing information
@@ -253,16 +248,6 @@ class NetworkNodeRoute {
     bool UpdateFromRoutingTableEntry(const RoutingTableEntry& entry,
                                      AddressType next_hop,
                                      uint32_t current_time);
-
-    /**
-     * @brief Update battery level
-     * 
-     * @param new_battery New battery level (0-100%)
-     * @param current_time Current timestamp
-     * 
-     * @return bool True if battery level changed
-     */
-    bool UpdateBatteryLevel(uint8_t new_battery, uint32_t current_time);
 
     /**
      * @brief Update allocated slots for this node
@@ -350,7 +335,6 @@ class NetworkNodeRoute {
      */
     static constexpr size_t SerializedSize() {
         return sizeof(AddressType) +  // Address
-               sizeof(uint8_t) +      // Battery level
                sizeof(uint32_t) +     // Last seen
                sizeof(uint8_t) +      // Is network manager (as uint8_t)
                sizeof(AddressType) +  // Next hop
@@ -379,7 +363,6 @@ class NetworkNodeRoute {
     RoutingTableEntry routing_entry;  ///< Routing entry for this node
 
     // Node status information
-    uint8_t battery_level = 100;      ///< Battery level (0-100%)
     uint32_t last_seen = 0;           ///< Last time node was seen
     bool is_network_manager = false;  ///< Whether node is network manager
 

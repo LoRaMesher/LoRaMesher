@@ -102,14 +102,12 @@ class INetworkService {
      * @brief Update node information in the network
      * 
      * @param node_address Node address
-     * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether node is network manager
      * @param allocated_data_slots Allocated slots for node
      * @param capabilities Node capabilities bitmap
      * @return bool True if node was added or significantly updated
      */
     virtual bool UpdateNetworkNode(AddressType node_address,
-                                   uint8_t battery_level,
                                    bool is_network_manager,
                                    uint8_t allocated_data_slots,
                                    uint8_t capabilities = 0) = 0;

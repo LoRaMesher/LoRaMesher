@@ -58,9 +58,9 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     bool AddNode(
         const types::protocols::lora_mesh::NetworkNodeRoute& node) override;
 
-    bool UpdateNode(AddressType node_address, uint8_t battery_level,
-                    bool is_network_manager, uint8_t allocated_data_slots,
-                    uint8_t capabilities, uint32_t current_time) override;
+    bool UpdateNode(AddressType node_address, bool is_network_manager,
+                    uint8_t allocated_data_slots, uint8_t capabilities,
+                    uint32_t current_time) override;
 
     bool RemoveNode(AddressType address) override;
 

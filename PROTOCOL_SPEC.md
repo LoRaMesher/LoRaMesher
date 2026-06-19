@@ -331,8 +331,7 @@ struct JoinRequestHeader {
     MessageType type = JOIN_REQUEST; // Message type 0x42 (1 byte)
     uint8_t payload_size;           // Size of join request payload (1 byte)
 
-    // Join request specific fields (7 bytes)
-    uint8_t battery_level;          // Battery level 0-100% (1 byte)
+    // Join request specific fields (6 bytes)
     uint8_t requested_slots;        // Number of data slots requested (1 byte)
     AddressType next_hop;           // Next hop for message forwarding (2 bytes)
     AddressType sponsor_address;    // Sponsor node address (0 = no sponsor) (2 bytes)
@@ -543,11 +542,10 @@ struct SyncBeaconHeader {
 NM_CLAIM = 0x47,  // Broadcast during NM election to claim the Network Manager role
 ```
 
-**NM_CLAIM payload** (5 bytes after BaseHeader):
+**NM_CLAIM payload** (4 bytes after BaseHeader):
 ```cpp
 struct NMClaimPayload {
     uint8_t  election_priority;    // lower = higher priority
-    uint8_t  battery_level;        // 0–100 %
     uint8_t  network_node_count;   // nodes claimant knows
     uint16_t network_id;           // stable network identifier
 };
@@ -1190,9 +1188,9 @@ public:
 
     // Network node management
     virtual bool AddNode(const NetworkNodeRoute& node) = 0;
-    virtual bool UpdateNode(AddressType node_address, uint8_t battery_level,
-                          bool is_network_manager, uint8_t allocated_data_slots,
-                          uint8_t capabilities, uint32_t current_time) = 0;
+    virtual bool UpdateNode(AddressType node_address, bool is_network_manager,
+                          uint8_t allocated_data_slots, uint8_t capabilities,
+                          uint32_t current_time) = 0;
 
     // Route table exchange
     virtual std::vector<RoutingTableEntry> GetRoutingEntries(AddressType exclude_address) const = 0;
@@ -2602,12 +2600,12 @@ The base header structure used by all messages:
 | Message Type | Additional Fields | Total Size |
 |--------------|-------------------|------------|
 | SYNC_BEACON | network_id(2), total_slots(1), slot_duration_ms(2), network_manager(2), hop_count(1), propagation_delay_ms(4), max_hops(1), node_count(1) | 20 bytes |
-| JOIN_REQUEST | battery_level(1), requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 13 bytes |
+| JOIN_REQUEST | requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 12 bytes |
 | JOIN_RESPONSE | network_id(2), allocated_slots(1), status(1), next_hop(2), target_address(2), control_slot_index(1) | 15 bytes |
 | ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(10 each) | 12+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
-| NM_CLAIM | election_priority(1), battery_level(1), network_node_count(1), network_id(2) | 11 bytes |
+| NM_CLAIM | election_priority(1), network_node_count(1), network_id(2) | 10 bytes |
 | SLOT_REQUEST | requested_slots(1) | 7 bytes |
 | SLOT_ALLOCATION | network_id(2), allocated_slots(1), total_nodes(1) | 10 bytes |
 
@@ -3064,7 +3062,7 @@ This specification has been synchronized with the actual codebase as of version 
 
 **v1.6 Changelog**:
 - **NM_ELECTION state** (Section 2.2): New state added; node broadcasts NM_CLAIM and waits for counter-claims before calling `CreateNetwork()`.
-- **NM_CLAIM message** (Section 3.2.5): `NM_CLAIM = 0x47` implemented with 5-byte payload carrying `election_priority`, `battery_level`, `network_node_count`, and `network_id`.
+- **NM_CLAIM message** (Section 3.2.5): `NM_CLAIM = 0x47` implemented with 4-byte payload carrying `election_priority`, `network_node_count`, and `network_id`.
 - **Network Manager election algorithm** (Section 5.9): Full staggered-backoff election with weighted priority (role + address component). Replaces the "planned but not implemented" placeholder.
 
 **v1.5 Changelog**:

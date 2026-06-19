@@ -99,14 +99,12 @@ class NetworkService : public INetworkService {
      * Handles network manager updates and triggers superframe changes if needed.
      * 
      * @param node_address Node address to update
-     * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether this node is the network manager
      * @param allocated_data_slots Allocated data slots for this node
      * @param capabilities Node capabilities bitmap, if 0, get the previous value
      * @return bool True if node was added or significantly updated
      */
-    bool UpdateNetworkNode(AddressType node_address, uint8_t battery_level,
-                           bool is_network_manager,
+    bool UpdateNetworkNode(AddressType node_address, bool is_network_manager,
                            uint8_t allocated_data_slots,
                            uint8_t capabilities = 0) override;
 

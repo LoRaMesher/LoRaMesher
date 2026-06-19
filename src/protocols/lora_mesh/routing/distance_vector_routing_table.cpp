@@ -256,9 +256,11 @@ bool DistanceVectorRoutingTable::AddNode(
     }
 }
 
-bool DistanceVectorRoutingTable::UpdateNode(
-    AddressType node_address, uint8_t battery_level, bool is_network_manager,
-    uint8_t allocated_data_slots, uint8_t capabilities, uint32_t current_time) {
+bool DistanceVectorRoutingTable::UpdateNode(AddressType node_address,
+                                            bool is_network_manager,
+                                            uint8_t allocated_data_slots,
+                                            uint8_t capabilities,
+                                            uint32_t current_time) {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
     // Don't add self-entries via this method
@@ -269,9 +271,9 @@ bool DistanceVectorRoutingTable::UpdateNode(
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end()) {
         // Update existing node
-        bool changed = node_it->UpdateNodeInfo(
-            battery_level, is_network_manager, capabilities,
-            allocated_data_slots, current_time);
+        bool changed =
+            node_it->UpdateNodeInfo(is_network_manager, capabilities,
+                                    allocated_data_slots, current_time);
 
         LOG_DEBUG("Updated node 0x%04X in routing table (caps=0x%02X)",
                   node_address, capabilities);
@@ -288,8 +290,8 @@ bool DistanceVectorRoutingTable::UpdateNode(
 
         // Create new node with NetworkNodeRoute
         types::protocols::lora_mesh::NetworkNodeRoute new_node(
-            node_address, battery_level, current_time, is_network_manager,
-            capabilities, allocated_data_slots);
+            node_address, current_time, is_network_manager, capabilities,
+            allocated_data_slots);
 
         // For new nodes, assume they're direct neighbors initially
         new_node.next_hop = node_address;
@@ -869,9 +871,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
 
         if (!WouldExceedLimit()) {  // Check again after potential removal
             types::protocols::lora_mesh::NetworkNodeRoute new_node(
-                source_address, 100,
-                reception_timestamp  // Assume 100% battery for new nodes
-            );
+                source_address, reception_timestamp);
             new_node.next_hop = source_address;
             new_node.routing_entry.hop_count = 1;
             new_node.routing_entry.link_quality = local_link_quality;

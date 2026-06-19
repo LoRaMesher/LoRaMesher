@@ -23,7 +23,6 @@ class NetworkNodeRouteTest : public ::testing::Test {
         // Create a sample network node for testing
         node_ =
             NetworkNodeRoute(0x1234,  // address
-                             75,      // battery_level
                              5000,    // last_seen
                              false,   // is_network_manager
                              0x05,    // capabilities (ROUTER | BATTERY_POWERED)
@@ -52,7 +51,6 @@ TEST_F(NetworkNodeRouteTest, DefaultConstructor) {
 
     // Default values should be zero/false
     EXPECT_EQ(default_node.routing_entry.destination, 0);
-    EXPECT_EQ(default_node.battery_level, 100);
     EXPECT_EQ(default_node.last_seen, 0);
     EXPECT_FALSE(default_node.is_network_manager);
     EXPECT_EQ(default_node.routing_entry.capabilities, 0);
@@ -64,7 +62,6 @@ TEST_F(NetworkNodeRouteTest, DefaultConstructor) {
  */
 TEST_F(NetworkNodeRouteTest, ParameterizedConstructor) {
     EXPECT_EQ(node_.routing_entry.destination, 0x1234);
-    EXPECT_EQ(node_.battery_level, 75);
     EXPECT_EQ(node_.last_seen, 5000);
     EXPECT_FALSE(node_.is_network_manager);
     EXPECT_EQ(node_.routing_entry.capabilities,
@@ -76,10 +73,9 @@ TEST_F(NetworkNodeRouteTest, ParameterizedConstructor) {
  * @brief Test constructor with minimal parameters
  */
 TEST_F(NetworkNodeRouteTest, MinimalConstructor) {
-    NetworkNodeRoute minimal_node(0x5678, 90, 10000);
+    NetworkNodeRoute minimal_node(0x5678, 10000, false);
 
     EXPECT_EQ(minimal_node.routing_entry.destination, 0x5678);
-    EXPECT_EQ(minimal_node.battery_level, 90);
     EXPECT_EQ(minimal_node.last_seen, 10000);
     EXPECT_FALSE(minimal_node.is_network_manager);          // Default value
     EXPECT_EQ(minimal_node.routing_entry.capabilities, 0);  // Default value
@@ -114,40 +110,6 @@ TEST_F(NetworkNodeRouteTest, UpdateLastSeen) {
     // Update with earlier time (should still update)
     node_.UpdateLastSeen(7000);
     EXPECT_EQ(node_.last_seen, 7000);
-}
-
-/**
- * @brief Test UpdateBatteryLevel
- */
-TEST_F(NetworkNodeRouteTest, UpdateBatteryLevel) {
-    uint32_t current_time = 6000;
-
-    // Valid battery level update
-    bool changed = node_.UpdateBatteryLevel(85, current_time);
-    EXPECT_TRUE(changed);
-    EXPECT_EQ(node_.battery_level, 85);
-    EXPECT_EQ(node_.last_seen, current_time);
-
-    // Same battery level (no change)
-    changed = node_.UpdateBatteryLevel(85, current_time + 1000);
-    EXPECT_FALSE(changed);
-    EXPECT_EQ(node_.battery_level, 85);
-    EXPECT_EQ(node_.last_seen, current_time);  // Should not update time
-
-    // Invalid battery level (> 100)
-    changed = node_.UpdateBatteryLevel(150, current_time + 2000);
-    EXPECT_FALSE(changed);
-    EXPECT_EQ(node_.battery_level, 85);        // Should remain unchanged
-    EXPECT_EQ(node_.last_seen, current_time);  // Should not update time
-
-    // Edge cases: 0 and 100
-    changed = node_.UpdateBatteryLevel(0, current_time + 3000);
-    EXPECT_TRUE(changed);
-    EXPECT_EQ(node_.battery_level, 0);
-
-    changed = node_.UpdateBatteryLevel(100, current_time + 4000);
-    EXPECT_TRUE(changed);
-    EXPECT_EQ(node_.battery_level, 100);
 }
 
 /**
@@ -189,7 +151,7 @@ TEST_F(NetworkNodeRouteTest, HasCapability) {
     EXPECT_FALSE(node_.HasCapability(SENSOR_NODE));
 
     // Test with all capabilities
-    NetworkNodeRoute full_node(0x9999, 100, 1000, true, 0xFF, 5);
+    NetworkNodeRoute full_node(0x9999, 1000, true, 0xFF, 5);
     for (uint8_t cap = 1; cap != 0; cap <<= 1) {
         EXPECT_TRUE(full_node.HasCapability(cap));
     }
@@ -215,7 +177,6 @@ TEST_F(NetworkNodeRouteTest, SerializationDeserialization) {
     // Compare original and deserialized nodes
     EXPECT_EQ(node_.routing_entry.destination,
               deserialized_node->routing_entry.destination);
-    EXPECT_EQ(node_.battery_level, deserialized_node->battery_level);
     EXPECT_EQ(node_.last_seen, deserialized_node->last_seen);
     EXPECT_EQ(node_.is_network_manager, deserialized_node->is_network_manager);
 }
@@ -236,9 +197,9 @@ TEST_F(NetworkNodeRouteTest, DeserializationWithInsufficientData) {
  * @brief Test equality operators
  */
 TEST_F(NetworkNodeRouteTest, EqualityOperators) {
-    NetworkNodeRoute equal_node(0x1234, 90, 8000, true, 0x10,
+    NetworkNodeRoute equal_node(0x1234, 8000, true, 0x10,
                                 2);  // Same address
-    NetworkNodeRoute different_node(0x5678, 75, 5000, false, 0x05,
+    NetworkNodeRoute different_node(0x5678, 5000, false, 0x05,
                                     3);  // Different address
 
     // Equality is based on address only
@@ -253,8 +214,8 @@ TEST_F(NetworkNodeRouteTest, EqualityOperators) {
  * @brief Test less than operator for sorting
  */
 TEST_F(NetworkNodeRouteTest, LessThanOperator) {
-    NetworkNodeRoute smaller_node(0x1000, 50, 1000);
-    NetworkNodeRoute larger_node(0x2000, 50, 1000);
+    NetworkNodeRoute smaller_node(0x1000, 1000);
+    NetworkNodeRoute larger_node(0x2000, 1000);
 
     EXPECT_TRUE(smaller_node < node_);   // 0x1000 < 0x1234
     EXPECT_FALSE(node_ < smaller_node);  // 0x1234 > 0x1000
@@ -281,9 +242,9 @@ TEST_F(NetworkNodeRouteTest, SerializedSize) {
  */
 TEST_F(NetworkNodeRouteTest, SortingNodes) {
     std::vector<NetworkNodeRoute> nodes;
-    nodes.emplace_back(0x3333, 50, 1000);
-    nodes.emplace_back(0x1111, 75, 2000);
-    nodes.emplace_back(0x2222, 90, 3000);
+    nodes.emplace_back(0x3333, 1000u);
+    nodes.emplace_back(0x1111, 2000u);
+    nodes.emplace_back(0x2222, 3000u);
 
     // Sort nodes by address
     std::sort(nodes.begin(), nodes.end());
@@ -297,9 +258,9 @@ TEST_F(NetworkNodeRouteTest, SortingNodes) {
  * @brief Test network manager nodes
  */
 TEST_F(NetworkNodeRouteTest, NetworkManagerNodes) {
-    NetworkNodeRoute manager(0x1000, 100, 1000, true,
-                             GATEWAY | TIME_SYNC_SOURCE, 10);
-    NetworkNodeRoute regular(0x2000, 80, 1000, false, ROUTER | SENSOR_NODE, 3);
+    NetworkNodeRoute manager(0x1000, 1000, true, GATEWAY | TIME_SYNC_SOURCE,
+                             10);
+    NetworkNodeRoute regular(0x2000, 1000, false, ROUTER | SENSOR_NODE, 3);
 
     EXPECT_TRUE(manager.is_network_manager);
     EXPECT_FALSE(regular.is_network_manager);
@@ -318,7 +279,7 @@ TEST_F(NetworkNodeRouteTest, CapabilityCombinations) {
     // Test various common capability combinations
 
     // Gateway node
-    NetworkNodeRoute gateway(0x1000, 100, 1000, true,
+    NetworkNodeRoute gateway(0x1000, 1000, true,
                              GATEWAY | ROUTER | HIGH_BANDWIDTH, 5);
     EXPECT_TRUE(gateway.HasCapability(GATEWAY));
     EXPECT_TRUE(gateway.HasCapability(ROUTER));
@@ -326,15 +287,14 @@ TEST_F(NetworkNodeRouteTest, CapabilityCombinations) {
     EXPECT_FALSE(gateway.HasCapability(BATTERY_POWERED));
 
     // Sensor node
-    NetworkNodeRoute sensor(0x2000, 60, 1000, false,
-                            SENSOR_NODE | BATTERY_POWERED, 1);
+    NetworkNodeRoute sensor(0x2000, 1000, false, SENSOR_NODE | BATTERY_POWERED,
+                            1);
     EXPECT_TRUE(sensor.HasCapability(SENSOR_NODE));
     EXPECT_TRUE(sensor.HasCapability(BATTERY_POWERED));
     EXPECT_FALSE(sensor.HasCapability(ROUTER));
 
     // Mobile router
-    NetworkNodeRoute mobile(0x3000, 45, 1000, false, ROUTER | BATTERY_POWERED,
-                            2);
+    NetworkNodeRoute mobile(0x3000, 1000, false, ROUTER | BATTERY_POWERED, 2);
     EXPECT_TRUE(mobile.HasCapability(ROUTER));
     EXPECT_TRUE(mobile.HasCapability(BATTERY_POWERED));
     EXPECT_FALSE(mobile.HasCapability(GATEWAY));
@@ -345,7 +305,7 @@ TEST_F(NetworkNodeRouteTest, CapabilityCombinations) {
  */
 TEST_F(NetworkNodeRouteTest, TimeOperations) {
     uint32_t base_time = 10000;
-    NetworkNodeRoute time_node(0x1000, 80, base_time);
+    NetworkNodeRoute time_node(0x1000, base_time);
 
     // Test various time updates and expiration checks
     time_node.UpdateLastSeen(base_time + 1000);
@@ -355,9 +315,9 @@ TEST_F(NetworkNodeRouteTest, TimeOperations) {
     EXPECT_FALSE(time_node.IsExpired(base_time + 1500, 1000));  // Not expired
     EXPECT_TRUE(time_node.IsExpired(base_time + 2500, 1000));   // Expired
 
-    // Test battery level update also updates time
+    // Test that a later UpdateLastSeen advances time
     uint32_t old_time = time_node.last_seen;
-    time_node.UpdateBatteryLevel(90, base_time + 3000);
+    time_node.UpdateLastSeen(base_time + 3000);
     EXPECT_EQ(time_node.last_seen, base_time + 3000);
     EXPECT_GT(time_node.last_seen, old_time);
 }
@@ -371,7 +331,7 @@ TEST_F(NetworkNodeRouteTest, ConstructorAddrTime) {
 }
 
 TEST_F(NetworkNodeRouteTest, ConstructorWithHops) {
-    NetworkNodeRoute node(0x1234, 90, 5000, false, 0x03, 4, 2);
+    NetworkNodeRoute node(0x1234, 5000, false, 0x03, 4, 2);
     EXPECT_EQ(node.routing_entry.destination, 0x1234);
     EXPECT_EQ(node.routing_entry.hop_count, 2);
     EXPECT_EQ(node.next_hop, 0x1234);  // default: node itself
@@ -392,15 +352,15 @@ TEST_F(NetworkNodeRouteTest, ConstructorRoutingInfo) {
 
 TEST_F(NetworkNodeRouteTest, IsDirectNeighbor) {
     // hop_count=1 and is_active=true → direct neighbor
-    NetworkNodeRoute neighbor(0x5678, 80, 1000, false, 0, 0, 1);
+    NetworkNodeRoute neighbor(0x5678, 1000, false, 0, 0, 1);
     EXPECT_TRUE(neighbor.IsDirectNeighbor());
 
     // hop_count=2 → not direct
-    NetworkNodeRoute remote(0x5679, 80, 1000, false, 0, 0, 2);
+    NetworkNodeRoute remote(0x5679, 1000, false, 0, 0, 2);
     EXPECT_FALSE(remote.IsDirectNeighbor());
 
     // hop_count=1 but inactive
-    NetworkNodeRoute inactive(0x567A, 80, 1000, false, 0, 0, 1);
+    NetworkNodeRoute inactive(0x567A, 1000, false, 0, 0, 1);
     inactive.is_active = false;
     EXPECT_FALSE(inactive.IsDirectNeighbor());
 }
@@ -469,9 +429,8 @@ TEST_F(NetworkNodeRouteTest, IsBetterRouteByHopsTiebreaker) {
 // ---- UpdateNodeInfo ----
 
 TEST_F(NetworkNodeRouteTest, UpdateNodeInfoChanges) {
-    bool changed = node_.UpdateNodeInfo(90, true, 0xFF, 8, 6000);
+    bool changed = node_.UpdateNodeInfo(true, 0xFF, 8, 6000);
     EXPECT_TRUE(changed);
-    EXPECT_EQ(node_.battery_level, 90);
     EXPECT_TRUE(node_.is_network_manager);
     EXPECT_EQ(node_.routing_entry.capabilities, 0xFF);
     EXPECT_EQ(node_.routing_entry.allocated_data_slots, 8);
@@ -480,15 +439,15 @@ TEST_F(NetworkNodeRouteTest, UpdateNodeInfoChanges) {
 
 TEST_F(NetworkNodeRouteTest, UpdateNodeInfoNoChanges) {
     // Set same values
-    bool changed = node_.UpdateNodeInfo(75, false, 0x05, 3, 6000);
-    // Battery 75 == current, manager false == current, caps 0x05 == current, slots 3 == current
+    bool changed = node_.UpdateNodeInfo(false, 0x05, 3, 6000);
+    // manager false == current, caps 0x05 == current, slots 3 == current
     EXPECT_FALSE(changed);
     EXPECT_EQ(node_.last_seen, 6000u);  // Time still updated
 }
 
 TEST_F(NetworkNodeRouteTest, UpdateNodeInfoZeroSlots) {
     // slots=0 should not update allocated_data_slots
-    node_.UpdateNodeInfo(75, false, 0x05, 0, 6000);
+    node_.UpdateNodeInfo(false, 0x05, 0, 6000);
     EXPECT_EQ(node_.routing_entry.allocated_data_slots, 3);  // Unchanged
 }
 

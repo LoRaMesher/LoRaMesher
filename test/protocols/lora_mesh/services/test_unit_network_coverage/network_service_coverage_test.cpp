@@ -72,7 +72,7 @@ class NetworkServiceCoverageTest : public ::testing::Test {
     // Helper to build a minimal BaseMessage from an NMClaimMessage
     BaseMessage MakeNMClaim(AddressType src, uint8_t priority,
                             uint16_t net_id = 0x1234) {
-        auto claim = NMClaimMessage::Create(src, priority, 100, 1, net_id);
+        auto claim = NMClaimMessage::Create(src, priority, 1, net_id);
         EXPECT_TRUE(claim.has_value());
         return claim->ToBaseMessage();
     }
@@ -425,7 +425,6 @@ TEST_F(NetworkServiceCoverageTest,
     auto join_req =
         JoinRequestMessage::Create(kNMAddress,    // destination: NM
                                    kOtherNode,    // source: joining node
-                                   100,           // battery
                                    2,             // requested slots
                                    {},            // additional info
                                    kNodeAddress,  // next_hop: us
@@ -600,7 +599,7 @@ TEST_F(NetworkServiceCoverageTest, ProcessJoinRequestWhenNotNMAndNotSponsor) {
     auto join_req =
         JoinRequestMessage::Create(kNMAddress,  // destination: NM
                                    kOtherNode,  // source: other node
-                                   100, 2, {},
+                                   2, {},
                                    kNMAddress,  // next_hop: NM (not us)
                                    kNMAddress   // sponsor: NM (not us)
         );
@@ -954,7 +953,6 @@ TEST_F(NetworkServiceCoverageTest,
     //   sponsor     = kNodeAddress (us, so "we are the sponsor" branch fires)
     auto join_req = JoinRequestMessage::Create(kNMAddress,  // dest: NM
                                                kOtherNode,  // src: joining node
-                                               80,          // battery
                                                2,           // requested_slots
                                                {},          // additional_info
                                                kNodeAddress,  // next_hop: us
@@ -985,7 +983,6 @@ TEST_F(NetworkServiceCoverageTest,
     auto join_req = JoinRequestMessage::Create(
         kNMAddress,  // dest
         kOtherNode,  // src
-        80,          // battery
         2,           // slots
         {},
         kNodeAddress,  // next_hop: us
@@ -1022,7 +1019,6 @@ TEST_F(NetworkServiceCoverageTest, ForwardJoinRequestNoRouteToNMUsesDirect) {
     // Create join request where we are the sponsor
     auto join_req = JoinRequestMessage::Create(kNMAddress,  // dest
                                                kOtherNode,  // src
-                                               80,          // battery
                                                2,           // slots
                                                {},
                                                kNodeAddress,  // next_hop: us
@@ -1370,7 +1366,6 @@ TEST_F(NetworkServiceCoverageTest, ProcessJoinRequestAsNMAcceptsDirectJoin) {
     auto join_req =
         JoinRequestMessage::Create(kNodeAddress,  // dest: us (the NM)
                                    kOtherNode,    // src: joining node
-                                   80,            // battery level
                                    2,             // requested slots
                                    {},            // additional info
                                    0,             // next_hop: direct

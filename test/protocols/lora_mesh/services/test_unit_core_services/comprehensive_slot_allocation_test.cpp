@@ -1060,7 +1060,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
     // election_priority_ defaults to 0xFF — any claim with priority < 0xFF wins
     network_service_->SetState(ProtocolState::NETWORK_MANAGER);
 
-    auto claim = NMClaimMessage::Create(0x2000, /*priority=*/1, 100, 3, 0xBEEF);
+    auto claim = NMClaimMessage::Create(0x2000, /*priority=*/1, 3, 0xBEEF);
     ASSERT_TRUE(claim.has_value());
     BaseMessage base = claim->ToBaseMessage();
 
@@ -1076,8 +1076,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
     // election_priority_ = 0xFF; claim with 0xFF is not strictly less → we win
     network_service_->SetState(ProtocolState::NETWORK_MANAGER);
 
-    auto claim =
-        NMClaimMessage::Create(0x2000, /*priority=*/0xFF, 100, 3, 0xBEEF);
+    auto claim = NMClaimMessage::Create(0x2000, /*priority=*/0xFF, 3, 0xBEEF);
     ASSERT_TRUE(claim.has_value());
     BaseMessage base = claim->ToBaseMessage();
 
@@ -1092,7 +1091,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
        ProcessNMClaimInNormalOperationReturnsSuccess) {
     network_service_->SetState(ProtocolState::NORMAL_OPERATION);
 
-    auto claim = NMClaimMessage::Create(0x2000, 10, 100, 3, 0xBEEF);
+    auto claim = NMClaimMessage::Create(0x2000, 10, 3, 0xBEEF);
     ASSERT_TRUE(claim.has_value());
     BaseMessage base = claim->ToBaseMessage();
 
@@ -1471,7 +1470,6 @@ TEST_F(ComprehensiveSlotAllocationTest, DataSlotBudgetIndependentOfNodeCap) {
     for (int i = 0; i < 6; ++i) {
         AddressType addr = static_cast<AddressType>(0x2001 + i);
         auto msg_opt = JoinRequestMessage::Create(test_node_address_, addr,
-                                                  /*battery_level=*/100,
                                                   /*requested_slots=*/2);
         ASSERT_TRUE(msg_opt.has_value());
         BaseMessage base = msg_opt->ToBaseMessage();

@@ -95,15 +95,13 @@ class IRoutingTable {
      * @brief Update existing node information
      * 
      * @param node_address Node address to update
-     * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether node is network manager
      * @param allocated_data_slots Number of allocated data slots
      * @param capabilities Node capability flags
      * @param current_time Current timestamp
      * @return bool True if the node was updated
      */
-    virtual bool UpdateNode(AddressType node_address, uint8_t battery_level,
-                            bool is_network_manager,
+    virtual bool UpdateNode(AddressType node_address, bool is_network_manager,
                             uint8_t allocated_data_slots, uint8_t capabilities,
                             uint32_t current_time) = 0;
 

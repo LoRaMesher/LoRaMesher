@@ -157,7 +157,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimNMStateYields) {
               INetworkService::ProtocolState::NETWORK_MANAGER);
 
     // Send claim with priority 0 (highest) — forces svc2 to yield
-    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 100, 2, 0xBEEF);
+    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 2, 0xBEEF);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -177,7 +177,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimNMStateWins) {
               INetworkService::ProtocolState::NETWORK_MANAGER);
 
     // Claim with worst priority (0xFF) — we win and stay NM
-    auto claim_opt = NMClaimMessage::Create(0x2001, 0xFF, 100, 2, 0xBEEF);
+    auto claim_opt = NMClaimMessage::Create(0x2001, 0xFF, 2, 0xBEEF);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -197,7 +197,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimFaultRecoveryYields) {
     ASSERT_TRUE(service_->IsElectionPending());
 
     // Higher-priority claimant → we yield
-    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 100, 3, 0xABCD);
+    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 3, 0xABCD);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -222,7 +222,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimFaultRecoveryWins) {
     ASSERT_TRUE(svc->IsElectionPending());
 
     // Worse priority claimant → we win and keep election
-    auto claim_opt = NMClaimMessage::Create(0x9999, 0xFF, 100, 3, 0xABCD);
+    auto claim_opt = NMClaimMessage::Create(0x9999, 0xFF, 3, 0xABCD);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -239,7 +239,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimNMElectionYields) {
     service_->SetState(INetworkService::ProtocolState::NM_ELECTION);
     service_->StartElectionBackoff();
 
-    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 100, 5, 0x5678);
+    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 5, 0x5678);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 

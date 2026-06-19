@@ -73,7 +73,6 @@ NetworkService::NetworkService(
 }
 
 bool NetworkService::UpdateNetworkNode(AddressType node_address,
-                                       uint8_t battery_level,
                                        bool is_network_manager,
                                        uint8_t allocated_data_slots,
                                        uint8_t capabilities) {
@@ -86,15 +85,15 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
     uint32_t current_time = GetRTOS().getTickCount();
 
     // Try to update existing node first
-    bool changed = routing_table_->UpdateNode(
-        node_address, battery_level, is_network_manager, allocated_data_slots,
-        capabilities, current_time);
+    bool changed = routing_table_->UpdateNode(node_address, is_network_manager,
+                                              allocated_data_slots,
+                                              capabilities, current_time);
 
     if (changed) {
         LOG_INFO(
-            "Node 0x%04X updated: battery=%d, manager=%d, "
+            "Node 0x%04X updated: manager=%d, "
             "capabilities=0x%02X, data_slots=%d",
-            node_address, battery_level, is_network_manager, capabilities,
+            node_address, is_network_manager, capabilities,
             allocated_data_slots);
 
         slot_table_dirty_ = true;
@@ -662,10 +661,10 @@ void NetworkService::SetNetworkManager(AddressType manager_address) {
         for (const auto& node : nodes) {
             bool is_manager =
                 (node.routing_entry.destination == manager_address);
-            routing_table_->UpdateNode(
-                node.routing_entry.destination, node.battery_level, is_manager,
-                node.GetAllocatedDataSlots(), node.routing_entry.capabilities,
-                current_time);
+            routing_table_->UpdateNode(node.routing_entry.destination,
+                                       is_manager, node.GetAllocatedDataSlots(),
+                                       node.routing_entry.capabilities,
+                                       current_time);
         }
     }
 }
@@ -1199,13 +1198,10 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
         }
     }
 
-    // Battery level (default to 100%)
-    uint8_t battery_level = 100;
-
     // Create join request message with selected sponsor
     auto join_request = JoinRequestMessage::Create(
-        manager_address, node_address_, battery_level, requested_slots, {},
-        selected_sponsor_, selected_sponsor_);
+        manager_address, node_address_, requested_slots, {}, selected_sponsor_,
+        selected_sponsor_);
 
     if (!join_request) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -1280,12 +1276,11 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     // sponsor_address = sponsor_address == node_address_ ? 0 : sponsor_address;
 
     // Now we're the network manager, process the join request
-    auto battery_level = join_request_opt->GetBatteryLevel();
     auto requested_slots = join_request_opt->GetRequestedSlots();
     auto hop_count = join_request_opt->GetHopCount();
 
-    LOG_INFO("Join request from 0x%04X: battery=%d%%, slots=%d, hops=%d",
-             source, battery_level, requested_slots, hop_count);
+    LOG_INFO("Join request from 0x%04X: slots=%d, hops=%d", source,
+             requested_slots, hop_count);
 
     // Check for duplicate from same source
     for (const auto& pending : pending_joins_) {
@@ -1432,7 +1427,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     // Add the joining node to the network immediately so it appears in network views
     // The full slot allocation will be handled at the superframe boundary
     bool node_updated =
-        UpdateNetworkNode(source, battery_level, false, allocated_slots,
+        UpdateNetworkNode(source, false, allocated_slots,
                           0);  // capabilities will be set from routing table
     if (node_updated) {
         LOG_INFO("Joining node 0x%04X updated to network manager's node list",
@@ -1525,7 +1520,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
         surrender_discovery_retries_ = 0;
 
         // Add ourselves to the network nodes so we get TX and CONTROL_TX slots
-        UpdateNetworkNode(node_address_, 100, false, allocated_slots);
+        UpdateNetworkNode(node_address_, false, allocated_slots);
         LOG_INFO("Added local node 0x%04X to network for slot allocation",
                  node_address_);
 
@@ -2015,7 +2010,7 @@ Result NetworkService::ProcessSlotRequest(const BaseMessage& message,
         // Update the node's data-slot allocation, carrying its existing
         // capabilities through unchanged.
         uint8_t existing_capabilities = GetNodeCapabilities(source);
-        UpdateNetworkNode(source, 100, false, allocated_slots,
+        UpdateNetworkNode(source, false, allocated_slots,
                           existing_capabilities);
 
         // Defer slot table rebuild to next superframe boundary.
@@ -2111,8 +2106,7 @@ Result NetworkService::UpdateSlotTable() {
                                   });
 
     if (!self_found) {
-        NetworkNodeRoute self_node(node_address_, 0, 0, false,
-                                   local_capabilities_,
+        NetworkNodeRoute self_node(node_address_, 0, false, local_capabilities_,
                                    local_allocated_data_slots_, 0);
         self_node.is_active = true;
         self_node.is_network_manager = (network_manager_ == node_address_);
@@ -3123,7 +3117,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         }
         // Add the source as a direct neighbor, but only mark as NM if it actually is
         bool is_network_manager = (source == network_manager);
-        UpdateNetworkNode(source, 100, is_network_manager,
+        UpdateNetworkNode(source, is_network_manager,
                           config_.default_data_slots);
 
         // CRITICAL FIX: Perform timing synchronization BEFORE transitioning to JOINING
@@ -3552,9 +3546,8 @@ Result NetworkService::ForwardJoinRequest(
         join_request.GetDestination(),
         join_request
             .GetSource(),  // Preserve original source for end-to-end tracking
-        join_request.GetBatteryLevel(), join_request.GetRequestedSlots(),
-        {},        // No additional info
-        next_hop,  // Set next hop for routing
+        join_request.GetRequestedSlots(), {},  // No additional info
+        next_hop,                              // Set next hop for routing
         join_request.GetHeader()
             .GetSponsorAddress(),       // Preserve sponsor address
         join_request.GetHopCount() + 1  // Increment hop count for forwarding
@@ -3894,7 +3887,6 @@ Result NetworkService::SendNMClaim() {
     uint8_t node_count =
         static_cast<uint8_t>(routing_table_->GetSize() + 1);  // +1 for self
     auto claim_opt = NMClaimMessage::Create(node_address_, election_priority_,
-                                            100,  // battery (simplified)
                                             node_count, network_id_);
     if (!claim_opt) {
         LOG_ERROR("Failed to create NM_CLAIM message");

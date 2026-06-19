@@ -1054,8 +1054,8 @@ TEST_F(RoutingTableUnitTest, AddNodeUpdatesExistingNode) {
 }
 
 TEST_F(RoutingTableUnitTest, UpdateNodeSelfAddressReturnsFalse) {
-    bool result = routing_table_->UpdateNode(kLocalAddress, 100, false, 0, 0,
-                                             kCurrentTime);
+    bool result =
+        routing_table_->UpdateNode(kLocalAddress, false, 0, 0, kCurrentTime);
     EXPECT_FALSE(result);
     EXPECT_FALSE(routing_table_->IsNodePresent(kLocalAddress));
 }
@@ -1064,7 +1064,7 @@ TEST_F(RoutingTableUnitTest, UpdateNodeExistingNode) {
     AddDirectNeighbor(kNeighbor1);
 
     bool result =
-        routing_table_->UpdateNode(kNeighbor1, 80, true, 2, 0x05, kCurrentTime);
+        routing_table_->UpdateNode(kNeighbor1, true, 2, 0x05, kCurrentTime);
     EXPECT_TRUE(result);
 
     const auto& nodes = routing_table_->GetNodes();
@@ -1077,8 +1077,8 @@ TEST_F(RoutingTableUnitTest, UpdateNodeExistingNode) {
 }
 
 TEST_F(RoutingTableUnitTest, UpdateNodeNewNodeAddsAsDirectNeighbor) {
-    bool result = routing_table_->UpdateNode(kRemoteNode, 100, false, 1, 0x03,
-                                             kCurrentTime);
+    bool result =
+        routing_table_->UpdateNode(kRemoteNode, false, 1, 0x03, kCurrentTime);
     EXPECT_TRUE(result);
     EXPECT_TRUE(routing_table_->IsNodePresent(kRemoteNode));
 
