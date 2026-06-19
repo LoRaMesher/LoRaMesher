@@ -178,6 +178,7 @@ class NMMergeTests : public RoutingTestFixture {
  * - Final state: NM_A is NETWORK_MANAGER, others are NORMAL_OPERATION
  */
 TEST_F(NMMergeTests, BasicNetworkMerge) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // --- Network A: NM_A (address 0x0001) + NodeA ---
     auto& nm_a = CreateNode("NM_A", 0x0001, NodeRole::NETWORK_MANAGER);
     auto& node_a = CreateNode("NodeA", 0x0002, NodeRole::NODE_ONLY);
@@ -314,6 +315,7 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
  * - All nodes end up under NM_A after merge
  */
 TEST_F(NMMergeTests, AutoRoleNMYieldsToConfiguredNM) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // NM_A: configured NETWORK_MANAGER role, higher address
     // NM_A priority = 0 + (0x02>>1) = 1
     auto& nm_a = CreateNode("NM_A", 0x0002, NodeRole::NETWORK_MANAGER);

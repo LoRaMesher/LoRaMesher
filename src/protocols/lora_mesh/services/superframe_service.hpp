@@ -77,6 +77,19 @@ class SuperframeService : public ISuperframeService {
      */
     Result DoNotUpdateStartTimeOnNewSuperframe() override;
 
+    /**
+     * @brief Reset the timing reference so the next StartSuperframe() begins a
+     *        fresh epoch.
+     *
+     * Clears the synchronized state and the "do not update start time" flag set
+     * during a previous synchronization, so a service that is stopped and later
+     * restarted re-establishes its own superframe start time instead of reusing
+     * a stale one. Must be called while the service is stopped.
+     *
+     * @return Result Success if the operation completed successfully
+     */
+    Result ResetForRestart();
+
     bool IsSynchronized() const override;
 
     bool IsRunning() const { return is_running_; }

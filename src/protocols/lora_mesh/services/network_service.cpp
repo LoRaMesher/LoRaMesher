@@ -2918,7 +2918,14 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
             const auto& sb = nm_beacon_opt.value();
             uint16_t bid = sb.GetNetworkId();
             if (network_id_ != 0 && bid != 0 && bid != network_id_) {
-                HandleForeignBeacon(sb);
+                if (kNetworkMergeEnabled) {
+                    HandleForeignBeacon(sb);
+                } else {
+                    LOG_DEBUG(
+                        "Foreign network 0x%04X detected (ours: 0x%04X); merge "
+                        "disabled — see docs/todo_network_merge.md",
+                        bid, network_id_);
+                }
             }
         }
         return Result::Success();

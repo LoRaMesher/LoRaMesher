@@ -224,6 +224,21 @@ Result SuperframeService::DoNotUpdateStartTimeOnNewSuperframe() {
     return Result::Success();
 }
 
+Result SuperframeService::ResetForRestart() {
+    if (is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot reset timing while superframe is running");
+    }
+
+    update_start_time_in_new_superframe = true;
+    superframe_start_time_ = 0;
+    is_synchronized_ = false;
+    last_slot_ = 0xFFFF;
+    superframes_completed_ = 0;
+
+    return Result::Success();
+}
+
 bool SuperframeService::IsSynchronized() const {
     if (!is_running_) {
         return false;

@@ -1306,6 +1306,7 @@ TEST_F(NetworkServiceCoverageTest, GetMaxHopsWithStaleEntriesSkipsInactive) {
 
 TEST_F(NetworkServiceCoverageTest,
        ProcessForeignSyncBeaconAsNMTriggersNMClaim) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // Start the superframe so CreateNetwork succeeds.
     ASSERT_TRUE(superframe_->StartSuperframe());
 
