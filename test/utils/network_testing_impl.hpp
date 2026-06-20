@@ -527,6 +527,27 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Get the number of messages dropped at a specific destination
+     *        because their on-air windows collided with another transmission.
+     *
+     * @param address Destination node address
+     * @return Count of collision drops at that node
+     */
+    uint32_t GetCollisionCount(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+        auto it = collided_by_dest_.find(address);
+        return (it == collided_by_dest_.end()) ? 0u : it->second;
+    }
+
+    /**
+     * @brief Reset the per-destination collision counter for a node.
+     */
+    void ResetCollisionCount(uint32_t address) {
+        std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+        collided_by_dest_[address] = 0;
+    }
+
+    /**
      * @brief Get a node's current radio state (test introspection)
      *
      * @param address Node address
@@ -605,6 +626,9 @@ class VirtualNetwork {
     std::map<uint32_t, uint32_t>
         received_by_dest_;  ///< Accepted deliveries per destination
     mutable std::mutex received_by_dest_mutex_;
+    std::map<uint32_t, uint32_t>
+        collided_by_dest_;  ///< Collision drops per destination
+    mutable std::mutex collided_by_dest_mutex_;
 
     /**
      * @brief Get delay between two nodes
@@ -730,6 +754,8 @@ class VirtualNetwork {
                     "[COLLISION] Dropping message from 0x%04X to 0x%04X due to "
                     "collision",
                     messages[i].source, messages[i].destination);
+                std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+                collided_by_dest_[messages[i].destination]++;
             }
         }
 

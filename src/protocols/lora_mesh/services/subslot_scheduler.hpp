@@ -27,7 +27,9 @@ namespace lora_mesh {
 enum class SubslotAssignment : uint8_t {
     HOP_BASED,       ///< subslot = hop_count (sync beacon forwarding)
     ADDRESS_MODULO,  ///< subslot = address % num_subslots (discovery)
-    RANDOM  ///< caller provides random value; subslot = value % num_subslots
+    RANDOM,  ///< caller provides random value; subslot = value % num_subslots
+    ADDRESS_HASH  ///< caller mixes address with a per-superframe term; subslot =
+                  ///< mix(address, superframe) % num_subslots
 };
 
 /**
@@ -119,6 +121,23 @@ class SubslotScheduler {
      */
     static bool IsSubslottedSlotType(
         types::protocols::lora_mesh::SlotAllocation::SlotType slot_type);
+
+    /**
+     * @brief Mix a node address with a superframe counter into a subslot
+     *        identifier for the ADDRESS_HASH strategy.
+     *
+     * Uses a nonlinear avalanche mix so that the result depends on the full
+     * address rather than only its residue modulo the subslot count. A linear
+     * combination would keep two addresses congruent modulo n congruent in the
+     * output as well, so they would still share a subslot every superframe; the
+     * avalanche mix makes congruent addresses diverge across superframes while
+     * remaining fully deterministic.
+     *
+     * @param address Node address
+     * @param frame Superframe counter
+     * @return Identifier to reduce modulo the subslot count
+     */
+    static uint16_t MixAddressFrame(uint16_t address, uint32_t frame);
 };
 
 }  // namespace lora_mesh

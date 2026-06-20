@@ -111,7 +111,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
     TestNode& CreateNode(const std::string& name, AddressType address,
                          NodeRole node_role = NodeRole::AUTO,
                          const PinConfig& pin_config = PinConfig(),
-                         const RadioConfig& radio_config = RadioConfig()) {
+                         const RadioConfig& radio_config = RadioConfig(),
+                         const std::function<void(LoRaMeshProtocolConfig&)>&
+                             config_customizer = nullptr) {
         // Create a node with unique address and pin configuration
         auto node = std::make_shared<TestNode>();
         node->name = name;
@@ -200,6 +202,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
         config.setNodeRole(node_role);
         config.setTargetDutyCycle(
             1.0f);  // Tests: no duty-cycle-driven slot inflation
+        if (config_customizer) {
+            config_customizer(config);
+        }
         result = node->protocol->Configure(config);
         if (!result) {
             std::cerr << "Failed to configure protocol for " << name << ": "

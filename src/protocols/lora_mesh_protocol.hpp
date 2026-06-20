@@ -493,6 +493,13 @@ class LoRaMeshProtocol : public Protocol {
         types::protocols::lora_mesh::SlotAllocation::SlotType slot_type,
         const lora_mesh::SubslotConfig& config, uint16_t identifier);
 
+    /// Selects the subslot identifier for a given assignment strategy:
+    /// ADDRESS_MODULO uses the node address, RANDOM a hardware-random value,
+    /// and ADDRESS_HASH a nonlinear mix of the node address with the current
+    /// superframe counter so that addresses congruent modulo the subslot count
+    /// diverge across superframes instead of colliding every frame.
+    uint16_t ComputeSubslotIdentifier(const lora_mesh::SubslotConfig& config);
+
     // Services
     std::shared_ptr<lora_mesh::MessageQueueService> message_queue_service_;
     std::shared_ptr<lora_mesh::SuperframeService> superframe_service_;

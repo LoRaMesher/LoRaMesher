@@ -1123,6 +1123,24 @@ Result LoRaMeshProtocol::TrySendGuardedMessage(
     return hardware_->SendMessage(*message);
 }
 
+uint16_t LoRaMeshProtocol::ComputeSubslotIdentifier(
+    const lora_mesh::SubslotConfig& config) {
+    switch (config.strategy) {
+        case lora_mesh::SubslotAssignment::RANDOM:
+            return static_cast<uint16_t>(GetRTOS().GetRandom());
+        case lora_mesh::SubslotAssignment::ADDRESS_HASH: {
+            uint32_t frame =
+                superframe_service_->GetSuperframeStats().superframes_completed;
+            return lora_mesh::SubslotScheduler::MixAddressFrame(node_address_,
+                                                                frame);
+        }
+        case lora_mesh::SubslotAssignment::HOP_BASED:
+        case lora_mesh::SubslotAssignment::ADDRESS_MODULO:
+        default:
+            return node_address_;
+    }
+}
+
 Result LoRaMeshProtocol::TrySendSubslottedMessage(
     SlotAllocation::SlotType slot_type, const lora_mesh::SubslotConfig& config,
     uint16_t identifier) {
@@ -1222,13 +1240,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             }
             in_subslotted_slot_ = true;
 
-            uint16_t identifier = node_address_;
-            if (config_.getDiscoverySubslotConfig().strategy ==
-                lora_mesh::SubslotAssignment::RANDOM) {
-                identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
-            }
+            const auto& discovery_subslot_config =
+                config_.getDiscoverySubslotConfig();
             result = TrySendSubslottedMessage(
-                slot_type, config_.getDiscoverySubslotConfig(), identifier);
+                slot_type, discovery_subslot_config,
+                ComputeSubslotIdentifier(discovery_subslot_config));
             if (!result) {
                 LOG_ERROR("Failed to send discovery message: %s",
                           result.GetErrorMessage().c_str());
@@ -1256,9 +1272,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                         result.GetErrorMessage().c_str());
                 }
                 in_subslotted_slot_ = true;
+                const auto& sync_subslot_config =
+                    config_.getSyncBeaconSubslotConfig();
                 result = TrySendSubslottedMessage(
-                    slot_type, config_.getSyncBeaconSubslotConfig(),
-                    node_address_);
+                    slot_type, sync_subslot_config,
+                    ComputeSubslotIdentifier(sync_subslot_config));
             }
             if (!result) {
                 LOG_ERROR("Failed to send sync beacon: %s",
@@ -1277,14 +1295,12 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
             // Fallback TX: join responses are queued as DISCOVERY_TX but the
             // joining node has no DISCOVERY_TX slot yet.
-            uint16_t identifier = node_address_;
-            if (config_.getDiscoverySubslotConfig().strategy ==
-                lora_mesh::SubslotAssignment::RANDOM) {
-                identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
-            }
+            const auto& discovery_subslot_config =
+                config_.getDiscoverySubslotConfig();
             result = TrySendSubslottedMessage(
                 SlotAllocation::SlotType::DISCOVERY_TX,
-                config_.getDiscoverySubslotConfig(), identifier);
+                discovery_subslot_config,
+                ComputeSubslotIdentifier(discovery_subslot_config));
             if (!result) {
                 LOG_ERROR("Failed to send discovery fallback TX: %s",
                           result.GetErrorMessage().c_str());

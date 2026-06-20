@@ -160,6 +160,16 @@ bool SubslotScheduler::IsSubslottedSlotType(
            slot_type == SlotType::DISCOVERY_RX;
 }
 
+uint16_t SubslotScheduler::MixAddressFrame(uint16_t address, uint32_t frame) {
+    uint32_t h = static_cast<uint32_t>(address) * 2654435761u + frame;
+    h ^= h >> 16;
+    h *= 0x7feb352du;
+    h ^= h >> 15;
+    h *= 0x846ca68bu;
+    h ^= h >> 16;
+    return static_cast<uint16_t>(h);
+}
+
 }  // namespace lora_mesh
 }  // namespace protocols
 }  // namespace loramesher

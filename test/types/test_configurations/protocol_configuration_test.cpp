@@ -427,7 +427,7 @@ TEST_F(LoRaMeshConfigTest, GetSyncBeaconSubslotConfigDefault) {
     const auto& cfg = config_.getSyncBeaconSubslotConfig();
     EXPECT_EQ(cfg.num_subslots, 5u);
     EXPECT_EQ(cfg.strategy,
-              protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
+              protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH);
 }
 
 TEST_F(LoRaMeshConfigTest, SetSyncBeaconSubslotConfig) {

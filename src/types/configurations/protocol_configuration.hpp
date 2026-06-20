@@ -680,10 +680,13 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     power::WakeUpCallback wake_up_callback_ = nullptr;
     uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
 
-    /// Subslot config for sync beacon TX slots (ADDRESS_MODULO by default)
+    /// Subslot config for sync beacon TX slots (ADDRESS_HASH by default).
+    /// A deterministic per-superframe hash of the address reshuffles same-hop
+    /// forwarders each superframe, so two forwarders whose addresses are
+    /// congruent modulo the subslot count do not collide every superframe.
     protocols::lora_mesh::SubslotConfig sync_beacon_subslot_config_{
         5, guard_time_ms_,
-        protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
+        protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH};
 
     /// Subslot config for discovery RX/TX slots (RANDOM for Slotted ALOHA)
     protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
