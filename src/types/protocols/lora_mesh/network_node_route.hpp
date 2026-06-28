@@ -47,7 +47,11 @@ class NetworkNodeRoute {
             kProvisionalQuality;       ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
         uint8_t inactive_probe_count =
-            0;                        ///< Superframes probed since inactivation
+            0;  ///< Superframes probed since inactivation
+        AddressType pending_switch_next_hop =
+            0;  ///< Candidate next hop accumulating route-switch evidence
+        uint8_t pending_switch_count =
+            0;  ///< Consecutive cheaper adverts from the candidate next hop
         uint8_t ewma_alpha = 77;      ///< EWMA alpha fixed-point (0.30 * 256)
         float last_rssi = 0.0f;       ///< Last RSSI from direct reception (dBm)
         float last_snr = 0.0f;        ///< Last SNR from direct reception (dB)

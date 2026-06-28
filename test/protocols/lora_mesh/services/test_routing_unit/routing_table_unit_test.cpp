@@ -231,6 +231,95 @@ TEST_F(RoutingTableUnitTest, BetterQualityPreferredWhenSameHops) {
 }
 
 // =============================================================================
+// Route-switch hysteresis (flap damping for longer-path switches)
+// =============================================================================
+
+// Helpers in these tests use UpdateRoute directly so the stored route cost is
+// deterministic. With both candidate next-hops added as direct neighbors their
+// comprehensive link quality is the default-cap (128), so the route cost is
+// driven by the advertised hop count and per-route quality argument. The
+// incumbent quality kMarginalQuality (80) is usable (>= kReactivationQuality
+// threshold 64) so hysteresis applies, yet the cheaper 3-hop candidate
+// (cost 1536) still beats it (2-hop cost 1638) — modelling the marginal,
+// usable-but-noisy link that drives real route flapping.
+static constexpr uint8_t kMarginalQuality = 80;
+
+TEST_F(RoutingTableUnitTest, LongerRouteSwitchHeldOnSingleAdvert) {
+    // Active 2-hop route via Neighbor1 with marginal (but usable) quality.
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kMarginalQuality, 0,
+                                0, kCurrentTime);
+    ASSERT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1);
+
+    // A single 3-hop advert via Neighbor2 that is cheaper by cost (longer path,
+    // better link). Without hysteresis this switches immediately; with
+    // hysteresis the incumbent is held pending sustained evidence.
+    routing_table_->UpdateRoute(kNeighbor2, kRemoteNode, 3, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    EXPECT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1)
+        << "Single cheaper longer-path advert must not flip an active route";
+}
+
+TEST_F(RoutingTableUnitTest, LongerRouteSwitchesAfterSustainedEvidence) {
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kMarginalQuality, 0,
+                                0, kCurrentTime);
+    ASSERT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1);
+
+    // Sustained cheaper 3-hop adverts from the same candidate, with no
+    // incumbent refresh in between, must eventually switch.
+    for (int i = 0; i < 5; i++) {
+        routing_table_->UpdateRoute(kNeighbor2, kRemoteNode, 3, kGoodQuality, 0,
+                                    0, kCurrentTime);
+    }
+
+    EXPECT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor2)
+        << "Sustained cheaper longer-path adverts should switch the route";
+}
+
+TEST_F(RoutingTableUnitTest, IncumbentRefreshResetsSwitchEvidence) {
+    // This reproduces the oscillation scenario: a cheaper longer-path candidate
+    // advertises every superframe, but so does the incumbent. The incumbent
+    // refresh must reset the switch evidence so the route never flaps.
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2, kMarginalQuality, 0,
+                                0, kCurrentTime);
+    ASSERT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1);
+
+    for (int i = 0; i < 10; i++) {
+        // Candidate longer path (cheaper) advertises...
+        routing_table_->UpdateRoute(kNeighbor2, kRemoteNode, 3, kGoodQuality, 0,
+                                    0, kCurrentTime);
+        // ...then the incumbent refreshes, resetting accumulated evidence.
+        routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 2,
+                                    kMarginalQuality, 0, 0, kCurrentTime);
+    }
+
+    EXPECT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1)
+        << "Alternating candidate/incumbent adverts must not flap the route";
+}
+
+TEST_F(RoutingTableUnitTest, ShorterRouteSwitchesImmediatelyDespiteHysteresis) {
+    // Hysteresis must only damp switches to LONGER paths. A shorter path is a
+    // genuine improvement and must be adopted immediately.
+    AddDirectNeighbor(kNeighbor1);
+    AddDirectNeighbor(kNeighbor2);
+    routing_table_->UpdateRoute(kNeighbor1, kRemoteNode, 3, kGoodQuality, 0, 0,
+                                kCurrentTime);
+    ASSERT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1);
+
+    routing_table_->UpdateRoute(kNeighbor2, kRemoteNode, 2, kGoodQuality, 0, 0,
+                                kCurrentTime);
+
+    EXPECT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor2)
+        << "A shorter route must switch immediately, no hysteresis";
+}
+
+// =============================================================================
 // ProcessRoutingTableMessage Tests
 // =============================================================================
 

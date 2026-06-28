@@ -110,6 +110,19 @@ graph TB
     style N5 fill:#99ccff
 ```
 
+#### 1.2.1 Address Space
+
+The 16-bit `AddressType` is partitioned:
+
+| Range | Meaning |
+|-------|---------|
+| `0x0000` | Reserved / invalid |
+| `0x0001 – 0x7FFF` | Unicast node addresses |
+| `0x8000 – 0xFFFE` | Group / multicast addresses |
+| `0xFFFF` | Broadcast |
+
+Node addresses are generated into the unicast range so a node never self-assigns a group or broadcast address. Group membership is local state and is not propagated across the mesh.
+
 ### 1.3 Protocol Stack
 
 ```mermaid
@@ -277,10 +290,13 @@ enum class MessageType : uint8_t {
 
     // Complete message types with categories + subtypes
     // Data messages (0x1x)
-    DATA = 0x11,         // 0001 0001: Regular data message
+    DATA = 0x11,           // 0001 0001: Regular data message
+    DATA_BROADCAST = 0x12, // 0001 0010: Network-wide broadcast
+    DATA_RELIABLE = 0x13,  // 0001 0011: Acknowledged (reliable) data message
+    DATA_GROUP = 0x14,     // 0001 0100: Group (multicast) data message
 
     // Control messages (0x2x)
-    ACK = 0x21,          // 0010 0001: Acknowledgment (reserved, not currently used)
+    ACK = 0x21,          // 0010 0001: Acknowledgment of a reliable/group message
     PING = 0x23,         // 0010 0011: Ping request
     PONG = 0x24,         // 0010 0100: Pong response
 
@@ -558,10 +574,13 @@ See Section 5.9 for the full election algorithm.
 // Implemented data messages
 DATA = 0x11,            // Regular data message (point-to-point)
 DATA_BROADCAST = 0x12,  // Network-wide broadcast (TTL-based flooding)
-
-// Reserved for future implementation (see Section 10):
-// DATA_MULTICAST = 0x13,  // Group communication
+DATA_RELIABLE = 0x13,   // Acknowledged data message (point-to-point)
+DATA_GROUP = 0x14,      // Group multicast (TTL-based flooding, member-gated)
 ```
+
+`DATA`, `DATA_RELIABLE`, and `ACK` share the DataHeader wire format and the
+same next-hop forwarding path. `DATA_BROADCAST` and `DATA_GROUP` share the flood
+forwarding path.
 
 **DATA Message Wire Format** (10 bytes header + payload):
 ```
@@ -605,6 +624,66 @@ User payload: up to 251 bytes
 - TTL prevents infinite forwarding loops during routing convergence
 - Sequence number + de-duplication cache detects messages already seen
 - Own messages heard back are silently dropped (source == self check)
+
+**DATA_RELIABLE Message Wire Format** (DataHeader + 4-byte timestamp prefix):
+```
+BaseHeader (6 bytes):
+  destination     (2 bytes) - Final destination address
+  source          (2 bytes) - Original sender address
+  type            = 0x13
+  payload_size    (1 byte)  - Size of extension + timestamp + user data
+
+DataHeader Extension (4 bytes): next_hop, ttl, seq_num (as DATA)
+
+Reliable framing prefix (4 bytes):
+  send_timestamp  (4 bytes) - Sender tick count, echoed in the ACK for RTT
+
+User payload: up to 247 bytes (255 - 4 extension - 4 timestamp)
+```
+
+**DATA_GROUP Message Wire Format** (flood with group destination):
+```
+BaseHeader (6 bytes):
+  destination     (2 bytes) - Group address (0x8000-0xFFFE)
+  source          (2 bytes) - Original sender address
+  type            = 0x14
+  payload_size    (1 byte)  - Size of extension + user data
+
+Extension (5 bytes):
+  next_hop        = 0xFFFF (flood, received by all neighbors)
+  ttl             (1 byte)  - Time-to-live (decremented at each hop)
+  flags           (1 byte)  - bit0 = request_acks
+  seq_num         (1 byte)  - Per-source sequence number for de-duplication
+
+User payload: up to 250 bytes (255 - 5 extension); when request_acks is set,
+the payload begins with the same 4-byte send-timestamp prefix as DATA_RELIABLE.
+```
+
+**ACK Message Wire Format** (DataHeader + 6-byte ACK payload):
+```
+BaseHeader (6 bytes):
+  destination     (2 bytes) - Original message's source (routed unicast)
+  source          (2 bytes) - Acknowledging node
+  type            = 0x21
+  payload_size    (1 byte)
+
+DataHeader Extension (4 bytes): next_hop, ttl, seq_num
+
+ACK payload (6 bytes):
+  acked_seq       (1 byte)  - seq_num of the message being acknowledged
+  flags           (1 byte)  - bit0 = was_group
+  echo_timestamp  (4 bytes) - Timestamp echoed from the acked message, for RTT
+```
+
+**Reliable Delivery Behavior** (DATA_RELIABLE):
+- The sender tracks the message and retransmits up to `max_retries` times until an ACK arrives; the retransmit timeout is estimated as `(2 × hop_count + 1) × superframe`.
+- The final destination auto-generates an ACK on every reception (idempotent, so a retransmit after a lost ACK is still acknowledged) but delivers to the application exactly once.
+- The sender computes RTT from the echoed timestamp and reports a per-message outcome (delivered with RTT, or failed after exhausting retries).
+- ACKs are unicast back to the source over the normal routing table and are not entered into the data de-duplication cache.
+
+**Group Delivery Behavior** (DATA_GROUP):
+- Flooded like DATA_BROADCAST but carries a group address; every node relays (subject to TTL), and a node delivers to the application only if it is a member of the group.
+- With `request_acks`, each delivering member unicasts an ACK (`was_group=1`) back to the source; the source reports each distinct responder and a window-closed outcome with the responder count.
 
 ### 3.3 Message Serialization
 
@@ -1213,7 +1292,11 @@ public:
 
 **Route Selection Logic**:
 
-The routing table selects the active route with the lowest ETX-inspired cost (`hop_count × 65536 / link_quality`), with hop count as tie-breaker. The network service layer then validates the result:
+The routing table selects the active route with the lowest ETX-inspired cost (`hop_count × 65536 / link_quality`), with hop count as tie-breaker.
+
+**Longer-path switch hysteresis**: replacing an active route that still has a usable link (`link_quality ≥ 64`) with a cheaper route through a *different* next_hop that has *more* hops is damped. The candidate must beat the active route's cost by a margin (≥64) for two consecutive adverts from the same next_hop, and any refresh of the incumbent route clears that accumulated evidence. Switches to a shorter or equal-length path, and switches away from a below-usable incumbent (`link_quality < 64`, e.g. a dead or unidirectional link), apply immediately. This keeps a marginal but working route stable when its quality estimate oscillates across the ETX cost boundary, instead of re-pointing every advert. It complements the route re-activation hysteresis in Section 4.3.
+
+The network service layer then validates the selected route:
 
 1. **TDMA check** (`IsTDMANeighbor`): the next_hop must have an allocated RX slot in the local TDMA schedule. Nodes overheard from outside the network (no slot allocated) are skipped — they are replaced by the best TDMA-valid alternative unconditionally.
 2. **Bidirectional check** (`HasUnidirectionalRisk`): if the next_hop is a confirmed-unidirectional neighbour (received ≥2 routing messages from them, but their routing table never lists us — `remote_link_quality == 0`), its ETX cost is multiplied by a penalty factor (×4) rather than being excluded outright. This tolerates a transient false-positive unidirectional flag when the direct link is still objectively the best option.
@@ -2605,11 +2688,14 @@ The base header structure used by all messages:
 | ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(10 each) | 12+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
+| DATA_RELIABLE | next_hop(2), ttl(1), seq_num(1), send_timestamp(4) + payload | 14+ bytes |
+| DATA_GROUP | next_hop=0xFFFF(2), ttl(1), flags(1), seq_num(1) + payload | 11+ bytes |
+| ACK | next_hop(2), ttl(1), seq_num(1), acked_seq(1), flags(1), echo_timestamp(4) | 16 bytes |
 | NM_CLAIM | election_priority(1), network_node_count(1), network_id(2) | 10 bytes |
 | SLOT_REQUEST | requested_slots(1) | 7 bytes |
 | SLOT_ALLOCATION | network_id(2), allocated_slots(1), total_nodes(1) | 10 bytes |
 
-> **Note**: The BaseHeader is 6 bytes (dest, src, type, payload_size). TTL and Sequence Number are implemented in the DataHeader extension (for DATA and DATA_BROADCAST messages) for loop prevention and de-duplication. Flags and Checksum fields are not implemented.
+> **Note**: The BaseHeader is 6 bytes (dest, src, type, payload_size). TTL and Sequence Number are implemented in the DataHeader extension (for DATA, DATA_RELIABLE, ACK, and — as a flood variant — DATA_BROADCAST/DATA_GROUP) for loop prevention and de-duplication. DATA_RELIABLE and ACK carry a 4-byte timestamp for RTT measurement. Flags and Checksum fields are not implemented.
 
 ### 7.4 Maximum Frame Sizes
 
@@ -2632,7 +2718,7 @@ The LoRa PHY ceiling is 255 bytes. LoRaMesher additionally selects an **SF-deriv
 
 **Override semantics:** when `LoRaMeshProtocolConfig::setMaxPacketSize()` is called, the user's value is preserved. If that value exceeds the SF-derived cap, `LoRaMeshProtocol::Configure()` logs a warning; the value is not rejected. Values set via the `LoRaMeshProtocolConfig` constructor default arguments do **not** mark the value as user-set and are replaced by the SF-derived default when `ApplySfDerivedDefaults()` runs inside `Configure()`.
 
-**Frame overheads (unchanged):** BaseHeader is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific) and always fit regardless of SF. DATA/DATA_BROADCAST messages carry an additional 4-byte DataHeader, so the maximum data payload for a given SF is `max_packet_size - 6 (BaseHeader) - 4 (DataHeader)`. Example: at SF10/BW125 the data payload is capped at 41 bytes.
+**Frame overheads (unchanged):** BaseHeader is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific) and always fit regardless of SF. DATA/DATA_BROADCAST messages carry an additional 4-byte DataHeader, so the maximum data payload for a given SF is `max_packet_size - 6 (BaseHeader) - 4 (DataHeader)`. Example: at SF10/BW125 the data payload is capped at 41 bytes. DATA_RELIABLE and acknowledged DATA_GROUP carry an extra 4-byte timestamp (reducing the payload cap by 4); DATA_GROUP uses a 5-byte extension (one extra flags byte versus broadcast).
 
 **Routing fragmentation at high SF:** at SF10–SF12 the per-frame entry budget is smaller than `kMaxRoutingEntries = 24` (≈ 3 entries at SF12/BW125), so the routing layer fragments the table across superframes — see §4.6.
 
@@ -2895,7 +2981,11 @@ This section documents message types and protocols that are specified but not ye
 - API: `LoraMesher::SendBroadcast(std::span<const uint8_t>)`
 - See Section 3.2.6 for wire format details
 
-**DATA_MULTICAST (0x13)** — **Planned**: Group-based messaging where messages are delivered to a subset of nodes subscribed to a multicast group. Requires a group membership protocol (join/leave groups) not yet designed.
+**DATA_RELIABLE (0x13)** — **Implemented**: Acknowledged point-to-point delivery with bounded retransmission and a per-message outcome (delivered with RTT, or failed). See Section 3.2.6.
+
+**DATA_GROUP (0x14) / ACK (0x21)** — **Implemented**: Group multicast via member-gated flooding with local (per-node) group membership (`JoinGroup`/`LeaveGroup`), plus library-generated ACKs for reliable unicast and per-recipient group acknowledgement. See Sections 1.2.1 and 3.2.6.
+
+**Routed (non-flood) multicast and mesh-wide membership propagation** — **Planned**: the current group implementation floods and keeps membership local. Propagating group membership across the mesh (e.g. via routing-table or a dedicated membership message) would enable routed multicast and guaranteed delivery to a known member set.
 
 #### 10.6.2 HELLO Message Protocol
 ```cpp
@@ -2972,7 +3062,7 @@ uint32_t sync_tolerance_ms;    // Acceptable sync drift (ms) — not yet impleme
 
 #### 10.6.6 Frame Header Extensions
 
-TTL and sequence number are now implemented in the DataHeader extension (see Section 3.2.6) for DATA and DATA_BROADCAST messages. Remaining planned additions to the BaseHeader:
+TTL and sequence number are now implemented in the DataHeader extension (see Section 3.2.6) for DATA, DATA_RELIABLE, DATA_GROUP, DATA_BROADCAST, and ACK messages. Remaining planned additions to the BaseHeader:
 
 ```cpp
 // Remaining planned fields
@@ -3042,6 +3132,8 @@ The LoRaMesher protocol provides a robust, scalable solution for LoRa mesh netwo
 - **Multi-Hop Synchronization**: Hop-layered sync beacon forwarding with propagation delay compensation
 - **Sponsor-Based Joining**: Nodes beyond Network Manager range can join via intermediate sponsor nodes
 - **Broadcast Messaging**: TTL-based flooding with de-duplication for network-wide data delivery
+- **Reliable Delivery**: Acknowledged point-to-point delivery with bounded retransmission and per-message delivery/RTT outcomes
+- **Group Multicast**: Member-gated flooding with local group membership and optional per-recipient acknowledgement
 - **Loop Prevention**: TTL and sequence numbers in data messages prevent routing loops
 
 ### Technical Specifications

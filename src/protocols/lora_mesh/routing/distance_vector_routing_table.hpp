@@ -200,6 +200,48 @@ class DistanceVectorRoutingTable : public IRoutingTable {
         const types::protocols::lora_mesh::NetworkNodeRoute& potential) const;
 
     /**
+     * @brief Decide whether an active route should switch to a new next hop
+     *
+     * Applies flap-damping hysteresis to switches that move to a LONGER path
+     * (more hops). Such switches must be cheaper by at least kRouteSwitchMargin
+     * and sustained over kRouteSwitchHysteresis consecutive adverts from the
+     * same candidate next hop; an intervening refresh of the incumbent route
+     * clears the accumulated evidence. Switches to a shorter or equal-length
+     * path keep the immediate IsBetterRoute decision. Mutates the pending-switch
+     * bookkeeping on @p current.
+     *
+     * @param current Current active route (pending-switch state is updated)
+     * @param potential Candidate route from an incoming advert
+     * @return bool True if the route should switch to potential now
+     */
+    bool ShouldSwitchActiveRoute(
+        types::protocols::lora_mesh::NetworkNodeRoute& current,
+        const types::protocols::lora_mesh::NetworkNodeRoute& potential);
+
+    /**
+     * @brief Apply a candidate route to an existing routing-table entry
+     *
+     * Shared decision logic for both UpdateRoute() and
+     * ProcessRoutingTableMessage(): chooses whether to switch the active route
+     * (with longer-path switch hysteresis), reactivates an inactive route under
+     * its own consecutive-reception hysteresis, propagates data-slot and
+     * capability updates, and refreshes liveness. Does not handle insertion of
+     * a brand-new node.
+     *
+     * @param node_it Iterator to the existing entry (must be valid)
+     * @param potential Candidate route (destination, next hop, hops, quality)
+     * @param allocated_data_slots Advertised data slots for the destination
+     * @param capabilities Advertised capability bitmap (0 = unknown)
+     * @param time Reception timestamp
+     * @return bool True if the routing table changed
+     */
+    bool ApplyCandidateRoute(
+        std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::iterator
+            node_it,
+        const types::protocols::lora_mesh::NetworkNodeRoute& potential,
+        uint8_t allocated_data_slots, uint8_t capabilities, uint32_t time);
+
+    /**
      * @brief Notify callback of route changes
      * 
      * @param route_added True if route was added/updated
@@ -253,6 +295,12 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     static constexpr uint8_t kMaxInactiveProbes = 32;
     /// Minimum quality to re-activate a probing neighbor (~25% PDR)
     static constexpr uint8_t kReactivationQualityThreshold = 64;
+    /// ETX-cost deadband: a longer-path alternative must beat the active
+    /// route's cost by at least this margin before it is a switch candidate.
+    static constexpr uint16_t kRouteSwitchMargin = 64;
+    /// Consecutive cheaper-by-margin adverts from the same candidate next hop
+    /// required before switching an active route to a longer path.
+    static constexpr uint8_t kRouteSwitchHysteresis = 2;
 
     // Member variables
 
