@@ -630,6 +630,31 @@ TEST_F(NetworkNodeRouteTest, LinkQualityUpdateRemote) {
     EXPECT_EQ(stats.remote_link_quality, 180);
 }
 
+TEST_F(NetworkNodeRouteTest, UpdateRemoteQualitySmoothsUpwardSpikesSlowly) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.UpdateRemoteQuality(80);  // cold start adopts directly
+    EXPECT_EQ(stats.remote_link_quality, 80);
+
+    // A single optimistic slice must not jump the estimate near the spike —
+    // this is what prevents a marginal link from momentarily out-ranking a
+    // stable longer path and flapping the route.
+    stats.UpdateRemoteQuality(200);
+    EXPECT_GT(stats.remote_link_quality, 80);
+    EXPECT_LT(stats.remote_link_quality, 130)
+        << "upward spike must be smoothed slowly, not adopted instantly";
+}
+
+TEST_F(NetworkNodeRouteTest, UpdateRemoteQualityDropsQuickly) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    stats.UpdateRemoteQuality(200);  // cold start
+    EXPECT_EQ(stats.remote_link_quality, 200);
+
+    // Genuine degradation must drop fast so a worsening link reroutes promptly.
+    stats.UpdateRemoteQuality(40);
+    EXPECT_LT(stats.remote_link_quality, 100)
+        << "downward move must be adopted quickly";
+}
+
 // ---- ExpectRoutingMessage / ReceivedRoutingMessage ----
 
 TEST_F(NetworkNodeRouteTest, ExpectRoutingMessage) {

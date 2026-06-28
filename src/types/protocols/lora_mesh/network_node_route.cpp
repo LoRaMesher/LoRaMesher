@@ -104,9 +104,22 @@ void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(uint32_t current_time,
 void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(
     uint8_t quality, uint8_t absent_threshold) {
     if (quality > 0) {
-        // Peer's current slice lists us as a reception: refresh and reset the
-        // absence streak.
-        remote_link_quality = quality;
+        // Peer's current slice lists us as a reception. Smooth the value with
+        // an asymmetric EWMA: rise slowly so a single optimistic slice cannot
+        // spike the cost across a route-selection boundary (flap source); fall
+        // quickly so genuine degradation still reroutes promptly.
+        if (remote_link_quality == 0) {
+            remote_link_quality = quality;
+        } else {
+            uint16_t alpha = (quality >= remote_link_quality)
+                                 ? kRemoteUpAlpha
+                                 : kRemoteDownAlpha;
+            uint32_t blended =
+                (static_cast<uint32_t>(alpha) * quality +
+                 static_cast<uint32_t>(256 - alpha) * remote_link_quality) /
+                256;
+            remote_link_quality = static_cast<uint8_t>(blended);
+        }
         remote_absent_streak = 0;
         return;
     }

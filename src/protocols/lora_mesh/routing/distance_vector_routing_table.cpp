@@ -85,12 +85,97 @@ bool DistanceVectorRoutingTable::UpdateRoute(
     // Find or create node
     auto node_it = GetNode(destination);
     if (node_it != nodes_.end()) {
-        // Update existing node via the shared candidate-route decision logic.
+        // Update existing node if route is better
         types::protocols::lora_mesh::NetworkNodeRoute potential_route(
             destination, source, hop_count, actual_link_quality, current_time);
-        route_changed =
-            ApplyCandidateRoute(node_it, potential_route, allocated_data_slots,
-                                capabilities, current_time);
+
+        bool should_update;
+        if (!node_it->is_active) {
+            // For inactive routes: only accept if not degrading hop count.
+            // IsBetterRoute has active-beats-inactive semantics so it always
+            // returns true here — use hop count directly instead.
+            should_update = (hop_count <= node_it->routing_entry.hop_count);
+        } else {
+            should_update = IsBetterRoute(*node_it, potential_route);
+        }
+        if (!node_it->is_active && !should_update) {
+            // Hysteresis: require multiple consecutive receptions before re-activation
+            node_it->link_stats.recovery_counter++;
+            node_it->last_seen = current_time;
+            if (node_it->link_stats.recovery_counter >=
+                reactivation_threshold_) {
+                // Check if the old next_hop is still active. If not, accept
+                // the new (worse-hops) route since the old one is broken.
+                auto old_hop_it = GetNode(node_it->next_hop);
+                bool old_hop_alive =
+                    old_hop_it != nodes_.end() && old_hop_it->is_active;
+                if (!old_hop_alive && source != node_it->next_hop) {
+                    node_it->UpdateRouteInfo(source, hop_count,
+                                             actual_link_quality, current_time);
+                } else {
+                    node_it->is_active = true;
+                }
+                node_it->link_stats.recovery_counter = 0;
+                node_it->link_stats.inactive_probe_count = 0;
+                route_changed = true;
+                NotifyRouteUpdate(true, destination, node_it->next_hop,
+                                  node_it->routing_entry.hop_count);
+                LogRouteEntry(*node_it);
+            }
+        } else if (should_update) {
+            route_changed = node_it->UpdateRouteInfo(
+                source, hop_count, actual_link_quality, current_time);
+
+            if (allocated_data_slots !=
+                node_it->routing_entry.allocated_data_slots) {
+                node_it->routing_entry.allocated_data_slots =
+                    allocated_data_slots;
+                route_changed = true;
+            }
+
+            // Update capabilities ONLY if the source is our next hop to this destination
+            // Exception: Always accept if current capabilities are unknown (0x00)
+            bool should_update_capabilities = false;
+
+            if (node_it->routing_entry.capabilities == 0 && capabilities != 0) {
+                // Current unknown - accept any non-zero value
+                should_update_capabilities = true;
+            } else if (node_it->next_hop == source && capabilities != 0 &&
+                       capabilities != node_it->routing_entry.capabilities) {
+                // Trust capabilities only from our next hop to this destination
+                should_update_capabilities = true;
+            }
+
+            if (should_update_capabilities) {
+                LOG_DEBUG(
+                    "Updating capabilities for 0x%04X: 0x%02X → 0x%02X "
+                    "(via next hop 0x%04X)",
+                    destination, node_it->routing_entry.capabilities,
+                    capabilities, source);
+                node_it->routing_entry.capabilities = capabilities;
+                RememberCapabilities(destination, capabilities, hop_count);
+                route_changed = true;
+            }
+
+            if (route_changed) {
+                NotifyRouteUpdate(true, destination, source, hop_count);
+                LogRouteEntry(*node_it);
+            }
+        } else if (node_it->is_active) {
+            // Route cost unchanged but node is still reachable — refresh timestamp
+            node_it->last_seen = current_time;
+        }
+
+        // Capability propagation: update even when route cost hasn't
+        // changed, so a late-arriving GATEWAY flag isn't lost
+        if (node_it->is_active && capabilities != 0 &&
+            capabilities != node_it->routing_entry.capabilities &&
+            (node_it->routing_entry.capabilities == 0 ||
+             node_it->next_hop == source)) {
+            node_it->routing_entry.capabilities = capabilities;
+            RememberCapabilities(destination, capabilities, hop_count);
+            route_changed = true;
+        }
     } else {
         // Add new node
         if (WouldExceedLimit()) {
@@ -856,15 +941,119 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Check if this node already exists
         auto node_it = GetNode(dest);
         if (node_it != nodes_.end()) {
-            // Apply via the shared candidate-route decision logic.
+            // Check if this is a better route
             types::protocols::lora_mesh::NetworkNodeRoute potential_route(
                 dest, source_address, hop_count_via_source, actual_link_quality,
                 reception_timestamp);
-            if (ApplyCandidateRoute(node_it, potential_route,
-                                    entry.allocated_data_slots,
-                                    entry.capabilities, reception_timestamp)) {
+
+            bool should_update;
+            if (!node_it->is_active) {
+                // For inactive routes: only accept if not degrading hop count.
+                // IsBetterRoute has active-beats-inactive semantics so it
+                // always returns true here — use hop count directly instead.
+                should_update =
+                    (hop_count_via_source <= node_it->routing_entry.hop_count);
+            } else {
+                should_update = IsBetterRoute(*node_it, potential_route);
+            }
+
+            if (!node_it->is_active && !should_update) {
+                // Hysteresis: require multiple consecutive receptions
+                node_it->link_stats.recovery_counter++;
+                node_it->last_seen = reception_timestamp;
+                if (node_it->link_stats.recovery_counter >=
+                    reactivation_threshold_) {
+                    // Check if old next_hop is still active. If broken,
+                    // accept the new route even though it has worse hops.
+                    auto old_hop_it = GetNode(node_it->next_hop);
+                    bool old_hop_alive =
+                        old_hop_it != nodes_.end() && old_hop_it->is_active;
+                    if (!old_hop_alive && source_address != node_it->next_hop) {
+                        LOG_DEBUG(
+                            "Demote 0x%04X hop=%d via 0x%04X -> hop=%d via "
+                            "0x%04X (relay advertisement, old hop dead)",
+                            dest, node_it->routing_entry.hop_count,
+                            node_it->next_hop, hop_count_via_source,
+                            source_address);
+                        node_it->UpdateRouteInfo(
+                            source_address, hop_count_via_source,
+                            actual_link_quality, reception_timestamp);
+                    } else {
+                        node_it->is_active = true;
+                    }
+                    node_it->link_stats.recovery_counter = 0;
+                    node_it->link_stats.inactive_probe_count = 0;
+                    routing_changed = true;
+                    NotifyRouteUpdate(true, dest, node_it->next_hop,
+                                      node_it->routing_entry.hop_count);
+                    LogRouteEntry(*node_it);
+                }
+            } else if (should_update) {
+                // Update the existing route
+                bool changed = node_it->UpdateRouteInfo(
+                    source_address, hop_count_via_source, actual_link_quality,
+                    reception_timestamp);
+
+                // Update allocated data slots if available
+                if (entry.allocated_data_slots !=
+                    node_it->routing_entry.allocated_data_slots) {
+                    node_it->routing_entry.allocated_data_slots =
+                        entry.allocated_data_slots;
+                    changed = true;
+                }
+
+                // Update capabilities ONLY if the message source is our next hop to this node
+                // This ensures we only trust information from the optimal path
+                // Exception: Always accept if current capabilities are unknown (0x00)
+                bool should_update_capabilities = false;
+
+                if (node_it->routing_entry.capabilities == 0 &&
+                    entry.capabilities != 0) {
+                    // Current unknown - accept any non-zero value from any source
+                    should_update_capabilities = true;
+                } else if (node_it->next_hop == source_address &&
+                           entry.capabilities != 0 &&
+                           entry.capabilities !=
+                               node_it->routing_entry.capabilities) {
+                    // Trust capabilities only from our next hop to this destination
+                    should_update_capabilities = true;
+                }
+
+                if (should_update_capabilities) {
+                    LOG_DEBUG(
+                        "Updating capabilities for 0x%04X: 0x%02X → 0x%02X "
+                        "(via next hop 0x%04X)",
+                        dest, node_it->routing_entry.capabilities,
+                        entry.capabilities, source_address);
+                    node_it->routing_entry.capabilities = entry.capabilities;
+                    RememberCapabilities(dest, entry.capabilities,
+                                         hop_count_via_source);
+                    changed = true;
+                }
+
+                if (changed) {
+                    routing_changed = true;
+                    NotifyRouteUpdate(true, dest, source_address,
+                                      hop_count_via_source);
+                    LogRouteEntry(*node_it);
+                }
+            }
+
+            // Capability propagation: update even when route cost hasn't
+            // changed, so a late-arriving GATEWAY flag isn't lost
+            if (node_it->is_active && entry.capabilities != 0 &&
+                entry.capabilities != node_it->routing_entry.capabilities &&
+                (node_it->routing_entry.capabilities == 0 ||
+                 node_it->next_hop == source_address)) {
+                node_it->routing_entry.capabilities = entry.capabilities;
+                RememberCapabilities(dest, entry.capabilities,
+                                     hop_count_via_source);
                 routing_changed = true;
             }
+
+            // Always refresh last_seen — receiving routing info about this
+            // node proves it's still alive in the network
+            node_it->UpdateLastSeen(reception_timestamp);
         } else {
             // Add new node
             if (WouldExceedLimit()) {
@@ -1038,161 +1227,6 @@ bool DistanceVectorRoutingTable::IsBetterRoute(
     const types::protocols::lora_mesh::NetworkNodeRoute& potential) const {
 
     return potential.IsBetterRouteThan(current);
-}
-
-bool DistanceVectorRoutingTable::ShouldSwitchActiveRoute(
-    types::protocols::lora_mesh::NetworkNodeRoute& current,
-    const types::protocols::lora_mesh::NetworkNodeRoute& potential) {
-    using NetworkNodeRoute = types::protocols::lora_mesh::NetworkNodeRoute;
-
-    // Switches to a shorter or equal-length path are genuine improvements and
-    // keep the immediate decision. Any such advert also clears pending
-    // longer-path evidence (e.g. the incumbent refreshing itself).
-    if (potential.routing_entry.hop_count <= current.routing_entry.hop_count) {
-        current.link_stats.pending_switch_next_hop = 0;
-        current.link_stats.pending_switch_count = 0;
-        return IsBetterRoute(current, potential);
-    }
-
-    // Hysteresis only protects a still-usable incumbent. If the active route is
-    // already below usable quality (e.g. a dead or unidirectional link), yield
-    // to any better route immediately rather than damping the switch.
-    if (current.routing_entry.link_quality < kReactivationQualityThreshold) {
-        current.link_stats.pending_switch_next_hop = 0;
-        current.link_stats.pending_switch_count = 0;
-        return IsBetterRoute(current, potential);
-    }
-
-    // Longer path over a usable incumbent: damp transient cost crossings.
-    // Require a clear cost margin and sustained evidence from the same
-    // candidate before switching.
-    uint16_t current_cost = NetworkNodeRoute::CalculateRouteCost(
-        current.routing_entry.hop_count, current.routing_entry.link_quality);
-    uint16_t potential_cost = NetworkNodeRoute::CalculateRouteCost(
-        potential.routing_entry.hop_count,
-        potential.routing_entry.link_quality);
-
-    if (potential_cost + kRouteSwitchMargin >= current_cost) {
-        current.link_stats.pending_switch_next_hop = 0;
-        current.link_stats.pending_switch_count = 0;
-        return false;
-    }
-
-    if (current.link_stats.pending_switch_next_hop == potential.next_hop) {
-        current.link_stats.pending_switch_count++;
-    } else {
-        current.link_stats.pending_switch_next_hop = potential.next_hop;
-        current.link_stats.pending_switch_count = 1;
-    }
-
-    if (current.link_stats.pending_switch_count >= kRouteSwitchHysteresis) {
-        current.link_stats.pending_switch_next_hop = 0;
-        current.link_stats.pending_switch_count = 0;
-        return true;
-    }
-    return false;
-}
-
-bool DistanceVectorRoutingTable::ApplyCandidateRoute(
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::iterator
-        node_it,
-    const types::protocols::lora_mesh::NetworkNodeRoute& potential,
-    uint8_t allocated_data_slots, uint8_t capabilities, uint32_t time) {
-    const AddressType dest = node_it->routing_entry.destination;
-    const AddressType source = potential.next_hop;
-    const uint8_t hop_count = potential.routing_entry.hop_count;
-    const uint8_t link_quality = potential.routing_entry.link_quality;
-
-    bool routing_changed = false;
-
-    bool should_update;
-    if (!node_it->is_active) {
-        // For inactive routes: only accept if not degrading hop count.
-        // IsBetterRoute has active-beats-inactive semantics so it always
-        // returns true here — use hop count directly instead.
-        should_update = (hop_count <= node_it->routing_entry.hop_count);
-    } else {
-        should_update = ShouldSwitchActiveRoute(*node_it, potential);
-    }
-
-    if (!node_it->is_active && !should_update) {
-        // Hysteresis: require multiple consecutive receptions before
-        // re-activation.
-        node_it->link_stats.recovery_counter++;
-        if (node_it->link_stats.recovery_counter >= reactivation_threshold_) {
-            // Check if old next_hop is still active. If broken, accept the new
-            // route even though it has worse hops.
-            auto old_hop_it = GetNode(node_it->next_hop);
-            bool old_hop_alive =
-                old_hop_it != nodes_.end() && old_hop_it->is_active;
-            if (!old_hop_alive && source != node_it->next_hop) {
-                LOG_DEBUG(
-                    "Demote 0x%04X hop=%d via 0x%04X -> hop=%d via 0x%04X "
-                    "(relay advertisement, old hop dead)",
-                    dest, node_it->routing_entry.hop_count, node_it->next_hop,
-                    hop_count, source);
-                node_it->UpdateRouteInfo(source, hop_count, link_quality, time);
-            } else {
-                node_it->is_active = true;
-            }
-            node_it->link_stats.recovery_counter = 0;
-            node_it->link_stats.inactive_probe_count = 0;
-            routing_changed = true;
-            NotifyRouteUpdate(true, dest, node_it->next_hop,
-                              node_it->routing_entry.hop_count);
-            LogRouteEntry(*node_it);
-        }
-    } else if (should_update) {
-        bool changed =
-            node_it->UpdateRouteInfo(source, hop_count, link_quality, time);
-
-        if (allocated_data_slots !=
-            node_it->routing_entry.allocated_data_slots) {
-            node_it->routing_entry.allocated_data_slots = allocated_data_slots;
-            changed = true;
-        }
-
-        // Update capabilities ONLY if the source is our next hop to this
-        // destination. Exception: always accept if current is unknown (0x00).
-        bool should_update_capabilities = false;
-        if (node_it->routing_entry.capabilities == 0 && capabilities != 0) {
-            should_update_capabilities = true;
-        } else if (node_it->next_hop == source && capabilities != 0 &&
-                   capabilities != node_it->routing_entry.capabilities) {
-            should_update_capabilities = true;
-        }
-        if (should_update_capabilities) {
-            LOG_DEBUG(
-                "Updating capabilities for 0x%04X: 0x%02X → 0x%02X "
-                "(via next hop 0x%04X)",
-                dest, node_it->routing_entry.capabilities, capabilities,
-                source);
-            node_it->routing_entry.capabilities = capabilities;
-            RememberCapabilities(dest, capabilities, hop_count);
-            changed = true;
-        }
-
-        if (changed) {
-            routing_changed = true;
-            NotifyRouteUpdate(true, dest, source, hop_count);
-            LogRouteEntry(*node_it);
-        }
-    }
-
-    // Capability propagation: update even when route cost hasn't changed, so a
-    // late-arriving GATEWAY flag isn't lost.
-    if (node_it->is_active && capabilities != 0 &&
-        capabilities != node_it->routing_entry.capabilities &&
-        (node_it->routing_entry.capabilities == 0 ||
-         node_it->next_hop == source)) {
-        node_it->routing_entry.capabilities = capabilities;
-        RememberCapabilities(dest, capabilities, hop_count);
-        routing_changed = true;
-    }
-
-    // Liveness: receiving an advert about this node proves it is still alive.
-    node_it->UpdateLastSeen(time);
-    return routing_changed;
 }
 
 void DistanceVectorRoutingTable::NotifyRouteUpdate(bool route_added,

@@ -861,6 +861,8 @@ if (messages_expected >= 3) {
 return local_quality;  // Not enough data yet
 ```
 
+`remote_link_quality` (the peer's reported reception of us) is updated in `UpdateRemoteQuality` with an asymmetric EWMA: it **rises slowly** (α≈0.20) and **falls quickly** (α≈0.75). The peer's value is its sliding-window PDR, which moves in ~16-unit quanta and is sampled sparsely as rotating routing-table slices, so a single optimistic slice would otherwise spike the bidirectional cost across a route-selection boundary and flap the route on a marginal asymmetric link. Slow rise suppresses those spikes; fast fall keeps genuine degradation responsive so a worsening link still reroutes promptly. The absent-slice handling (holding the value until a full rotation cycle confirms unidirectionality) is unchanged.
+
 When `localLinkQuality == 0` (peer doesn't list us), the unidirectional link detection mechanism in Section 4.3 applies. After confirmation (3+ expected messages with no remote acknowledgment), quality is set to **1** (minimum) — a link that cannot carry unicast data has maximum ETX cost (65535). This causes the ETX cost comparison in the direct neighbor section to yield to indirect routes found by the entries loop, allowing the network to route around the broken link.
 
 **Route Comparison** (Weighted Cost Metric):
@@ -1292,11 +1294,7 @@ public:
 
 **Route Selection Logic**:
 
-The routing table selects the active route with the lowest ETX-inspired cost (`hop_count × 65536 / link_quality`), with hop count as tie-breaker.
-
-**Longer-path switch hysteresis**: replacing an active route that still has a usable link (`link_quality ≥ 64`) with a cheaper route through a *different* next_hop that has *more* hops is damped. The candidate must beat the active route's cost by a margin (≥64) for two consecutive adverts from the same next_hop, and any refresh of the incumbent route clears that accumulated evidence. Switches to a shorter or equal-length path, and switches away from a below-usable incumbent (`link_quality < 64`, e.g. a dead or unidirectional link), apply immediately. This keeps a marginal but working route stable when its quality estimate oscillates across the ETX cost boundary, instead of re-pointing every advert. It complements the route re-activation hysteresis in Section 4.3.
-
-The network service layer then validates the selected route:
+The routing table selects the active route with the lowest ETX-inspired cost (`hop_count × 65536 / link_quality`), with hop count as tie-breaker. The network service layer then validates the result:
 
 1. **TDMA check** (`IsTDMANeighbor`): the next_hop must have an allocated RX slot in the local TDMA schedule. Nodes overheard from outside the network (no slot allocated) are skipped — they are replaced by the best TDMA-valid alternative unconditionally.
 2. **Bidirectional check** (`HasUnidirectionalRisk`): if the next_hop is a confirmed-unidirectional neighbour (received ≥2 routing messages from them, but their routing table never lists us — `remote_link_quality == 0`), its ETX cost is multiplied by a penalty factor (×4) rather than being excluded outright. This tolerates a transient false-positive unidirectional flag when the direct link is still objectively the best option.

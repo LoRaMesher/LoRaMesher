@@ -35,6 +35,14 @@ class NetworkNodeRoute {
         static constexpr uint32_t kMinSamplesForQuality = 3;
         /// Quality reported below the sample threshold (~ETX 1024)
         static constexpr uint8_t kProvisionalQuality = 64;
+        /// Asymmetric EWMA for remote (peer-reported) quality, fixed-point /256.
+        /// Slow rise suppresses optimistic single-slice spikes (the peer's
+        /// sliding-window PDR jumps in ~16-unit quanta and is sampled sparsely
+        /// due to slice rotation), so a marginal asymmetric link cannot
+        /// momentarily out-rank a stable longer path. Fast fall keeps genuine
+        /// degradation responsive so a worsening link still reroutes promptly.
+        static constexpr uint16_t kRemoteUpAlpha = 51;     ///< ~0.20
+        static constexpr uint16_t kRemoteDownAlpha = 192;  ///< ~0.75
 
         uint32_t messages_expected = 0;   ///< Expected messages count
         uint32_t messages_received = 0;   ///< Received messages count
@@ -47,11 +55,7 @@ class NetworkNodeRoute {
             kProvisionalQuality;       ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
         uint8_t inactive_probe_count =
-            0;  ///< Superframes probed since inactivation
-        AddressType pending_switch_next_hop =
-            0;  ///< Candidate next hop accumulating route-switch evidence
-        uint8_t pending_switch_count =
-            0;  ///< Consecutive cheaper adverts from the candidate next hop
+            0;                        ///< Superframes probed since inactivation
         uint8_t ewma_alpha = 77;      ///< EWMA alpha fixed-point (0.30 * 256)
         float last_rssi = 0.0f;       ///< Last RSSI from direct reception (dBm)
         float last_snr = 0.0f;        ///< Last SNR from direct reception (dB)
