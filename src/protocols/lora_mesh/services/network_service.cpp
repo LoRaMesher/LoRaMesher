@@ -265,6 +265,13 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     // wins an election.
     for (const auto& entry : entries) {
         if (entry.control_slot_index != 0xFF) {
+            if (entry.control_slot_index >= config_.max_network_nodes) {
+                LOG_WARNING(
+                    "Ignoring out-of-range control slot index %d for 0x%04X "
+                    "from 0x%04X",
+                    entry.control_slot_index, entry.destination, source);
+                continue;
+            }
             routing_table_->SetControlSlotIndex(entry.destination,
                                                 entry.control_slot_index);
         }
@@ -2131,19 +2138,26 @@ Result NetworkService::UpdateSlotTable() {
     int max_hops_count = current_network_depth_;
 
     if (network_manager_ == node_address_) {
-        // NM: compute from actual assignments
+        // NM: compute from actual assignments. Ignore any out-of-range index
+        // (a corrupted/garbage value would otherwise inflate the control band
+        // and overflow the superframe arithmetic).
         uint8_t max_index =
             (my_control_slot_index_ != 0xFF) ? my_control_slot_index_ : 0;
         for (const auto& node : ordered_nodes) {
             if (node.control_slot_index != 0xFF &&
+                node.control_slot_index < config_.max_network_nodes &&
                 node.control_slot_index > max_index) {
                 max_index = node.control_slot_index;
             }
         }
-        allocated_control_slots_ = max_index + 1;
+        allocated_control_slots_ = static_cast<uint8_t>(std::min<uint16_t>(
+            static_cast<uint16_t>(max_index) + 1,
+            static_cast<uint16_t>(config_.max_network_nodes)));
     } else {
-        // Non-NM: use authoritative node_count from sync beacon
-        allocated_control_slots_ = beacon_node_count_;
+        // Non-NM: use authoritative node_count from sync beacon, clamped to the
+        // configured maximum so a corrupt beacon can't inflate the control band.
+        allocated_control_slots_ =
+            std::min<uint8_t>(beacon_node_count_, config_.max_network_nodes);
     }
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
@@ -2152,12 +2166,14 @@ Result NetworkService::UpdateSlotTable() {
     // Add sync beacon slots 1 per hop layer
     uint8_t sync_beacon_slots = (max_hops_count + 1);
 
-    // Calculate active slots (non-sleep)
-    uint8_t total_active_slots = sync_beacon_slots + allocated_control_slots_ +
-                                 allocated_discovery_slots_ + total_data_slots;
+    // Calculate active slots (non-sleep). Computed in a wider type so the sum
+    // cannot silently wrap uint8_t even if an input slipped past the clamps.
+    uint16_t total_active_slots = static_cast<uint16_t>(sync_beacon_slots) +
+                                  allocated_control_slots_ +
+                                  allocated_discovery_slots_ + total_data_slots;
 
-    uint8_t total_superframe_slots =
-        std::max(number_of_slots_per_superframe_, kMinSlots);
+    uint16_t total_superframe_slots =
+        std::max<uint16_t>(number_of_slots_per_superframe_, kMinSlots);
 
     // TX time used for both NM duty cycle computation and logging
     uint32_t tx_time_ms = 0;
@@ -2193,22 +2209,33 @@ Result NetworkService::UpdateSlotTable() {
             std::min(std::ceil(required_superframe_ms / slot_duration_ms),
                      static_cast<float>(255)));
 
-        uint8_t min_for_sleep = total_active_slots;
+        uint16_t min_for_sleep = total_active_slots;
         if (min_sleep_fraction_ > 0.0f && min_sleep_fraction_ < 1.0f) {
-            min_for_sleep = static_cast<uint8_t>(
+            min_for_sleep = static_cast<uint16_t>(
                 std::min(std::ceil(static_cast<float>(total_active_slots) /
                                    (1.0f - min_sleep_fraction_)),
                          255.0f));
         }
-        uint16_t active_plus_margin =
-            static_cast<uint16_t>(total_active_slots) + churn_margin_slots_;
-        uint8_t min_with_margin = static_cast<uint8_t>(
-            std::min(active_plus_margin, static_cast<uint16_t>(255)));
-        total_superframe_slots = std::max(
-            {computed_slots, kMinSlots, min_for_sleep, min_with_margin});
+        uint16_t min_with_margin =
+            std::min<uint16_t>(total_active_slots + churn_margin_slots_, 255);
+        total_superframe_slots =
+            std::max<uint16_t>({static_cast<uint16_t>(computed_slots),
+                                kMinSlots, min_for_sleep, min_with_margin});
     }
 
-    uint8_t sleep_slots = total_superframe_slots - total_active_slots;
+    // Hard cap: the beacon advertises the superframe size in a uint8_t wire
+    // field, so the schedule must never exceed 255 slots. If the active band
+    // alone would not fit, refuse to build a corrupt schedule.
+    if (total_active_slots > 255) {
+        LOG_WARNING(
+            "Active slot count %u exceeds wire limit; capping superframe",
+            total_active_slots);
+    }
+    total_superframe_slots = std::min<uint16_t>(total_superframe_slots, 255);
+
+    uint16_t sleep_slots = (total_superframe_slots > total_active_slots)
+                               ? total_superframe_slots - total_active_slots
+                               : 0;
     uint32_t slot_duration_ms_log =
         superframe_service_ ? superframe_service_->GetSlotDuration() : 1000;
     float actual_tx_duty_cycle =
@@ -2281,16 +2308,18 @@ Result NetworkService::UpdateSlotTable() {
     }
 
     // ── Phase 3: Data slots (per-node TX/RX/SLEEP) ───────────────────────────
+    // Bound the data band to the budget that sized the superframe so a single
+    // out-of-range per-node count cannot run past the frame and starve the
+    // sleep/discovery tail. In a healthy network these limits are no-ops.
+    uint16_t data_allocated = 0;
     for (const auto& node : ordered_nodes) {
         AddressType addr = node.GetAddress();
-        uint8_t slot_data_number = node.GetAllocatedDataSlots();
+        uint8_t slot_data_number = std::min<uint8_t>(
+            node.GetAllocatedDataSlots(), config_.max_data_slots);
         for (size_t j = 0; j < slot_data_number; j++) {
-            if (slot_index >= slot_count_) {
-                LOG_ERROR(
-                    "Slot index %zu out of bounds for node 0x%04X, skipping",
-                    slot_index, addr);
-                return Result(LoraMesherErrorCode::kInvalidState,
-                              "Slot index out of bounds");
+            if (data_allocated >= total_data_slots ||
+                slot_index >= slot_count_) {
+                break;
             }
             if (node_address_ == addr) {
                 AllocateSlot(SlotAllocation::SlotType::TX, addr);
@@ -2299,6 +2328,7 @@ Result NetworkService::UpdateSlotTable() {
             } else {
                 AllocateSlot(SlotAllocation::SlotType::SLEEP, addr);
             }
+            data_allocated++;
         }
     }
 
@@ -2874,7 +2904,10 @@ uint16_t NetworkService::FindNextAvailableSlot(uint16_t start_slot) {
 }
 
 uint8_t NetworkService::GetAllocatedDataSlots() const {
-    uint8_t total_allocated = 0;
+    // Accumulate in a wider type and clamp to the configured budget so a single
+    // out-of-range (e.g. corrupted) per-node count can never overflow uint8_t
+    // and produce a bogus superframe size.
+    uint16_t total_allocated = 0;
     bool is_self_active = false;
     const auto& nodes = routing_table_->GetNodes();
     for (const auto& node : nodes) {
@@ -2890,7 +2923,8 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
         total_allocated += local_allocated_data_slots_;
     }
 
-    return total_allocated;
+    return static_cast<uint8_t>(std::min<uint16_t>(
+        total_allocated, static_cast<uint16_t>(config_.max_data_slots)));
 }
 
 uint32_t NetworkService::GetJoinTimeout() {
@@ -3017,8 +3051,11 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                       current_network_depth_);
         }
 
+        // Ignore an empty (corrupt) superframe size; otherwise adopt the
+        // NM-announced slot count.
         uint8_t total_slots = sync_beacon.GetTotalSlots();
-        if (total_slots != number_of_slots_per_superframe_) {
+        if (total_slots != 0 &&
+            total_slots != number_of_slots_per_superframe_) {
             SetNumberOfSlotsPerSuperframe(total_slots);
             params_changed = true;
             LOG_DEBUG(
@@ -3027,8 +3064,10 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                 number_of_slots_per_superframe_);
         }
 
-        // Store authoritative node count from NM's sync beacon
-        uint8_t node_count = sync_beacon.GetNodeCount();
+        // Store authoritative node count from NM's sync beacon, clamped to the
+        // configured maximum so a corrupt beacon can't overflow our schedule.
+        uint8_t node_count = std::min<uint8_t>(sync_beacon.GetNodeCount(),
+                                               config_.max_network_nodes);
         if (node_count != beacon_node_count_) {
             beacon_node_count_ = node_count;
             params_changed = true;

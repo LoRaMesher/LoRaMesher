@@ -14,6 +14,8 @@
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
+#include "types/messages/loramesher/routing_table_entry.hpp"
+#include "types/messages/loramesher/routing_table_message.hpp"
 #include "types/messages/loramesher/slot_request_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
@@ -1778,6 +1780,122 @@ TEST_F(ComprehensiveSlotAllocationTest,
         }
     }
     EXPECT_TRUE(found) << "Requesting node missing from routing table";
+}
+
+// =================== POISONED SLOT-VALUE ROBUSTNESS TESTS ===================
+//
+// A single out-of-range control_slot_index / allocated_data_slots ingested from
+// the radio must never overflow the superframe arithmetic and produce a corrupt
+// schedule that the Network Manager then broadcasts to the whole network.
+// config in the fixture: max_network_nodes = 10, max_data_slots = 50 (default).
+
+/**
+ * @brief NM must build a valid, bounded superframe even when a routing entry
+ *        carries a garbage control_slot_index and allocated_data_slots count.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       NMSurvivesPoisonedControlSlotAndDataSlots) {
+    const AddressType nm = test_node_address_;
+    const AddressType victim = 0x1001;
+
+    SetupNetworkTopology(nm, ProtocolState::NETWORK_MANAGER, nm,
+                         {{victim, 1}, {0x1002, 1}, {0x1003, 2}}, 3);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    uint32_t now = GetRTOS().getTickCount();
+
+    // Poison: out-of-range control slot index + absurd per-node data-slot count.
+    routing_table->SetControlSlotIndex(victim, 247);
+    routing_table->UpdateRoute(nm, victim, 1, 100, 200, 0, now);
+
+    Result result = network_service_->UpdateSlotTable();
+    ASSERT_TRUE(result.IsSuccess())
+        << "UpdateSlotTable must survive poisoned values: "
+        << result.GetErrorMessage();
+
+    const auto& slot_table = network_service_->GetSlotTable();
+    EXPECT_GT(slot_table.size(), 0u);
+    EXPECT_LE(slot_table.size(), 255u)
+        << "Superframe must fit the uint8 beacon wire field";
+
+    size_t control_slots =
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_TX) +
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_RX);
+    EXPECT_LE(control_slots, 10u)
+        << "Control slots must stay bounded by max_network_nodes";
+
+    EXPECT_GT(CountSlotsOfType(SlotAllocation::SlotType::DISCOVERY_RX), 0u)
+        << "Discovery tail must survive";
+
+    // The poisoned control index must not have been retained.
+    auto node = routing_table->GetNode(victim);
+    ASSERT_NE(node, routing_table->GetNodes().end());
+    EXPECT_NE(node->control_slot_index, 247)
+        << "Out-of-range control slot index must be rejected";
+}
+
+/**
+ * @brief NM must reject an out-of-range control_slot_index advertised in a
+ *        routing table message received over the radio.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       NMRejectsOutOfRangeControlSlotFromRoutingMessage) {
+    const AddressType nm = test_node_address_;
+    const AddressType peer = 0x1001;
+    const AddressType faraway = 0x1002;
+
+    SetupNetworkTopology(nm, ProtocolState::NETWORK_MANAGER, nm, {{peer, 1}},
+                         3);
+
+    // Routing table message from `peer` advertising a garbage control_slot_index
+    // for `faraway` (2 hops away via peer).
+    std::vector<RoutingTableEntry> entries;
+    entries.emplace_back(faraway, /*hops=*/2, /*quality=*/200, /*data_slots=*/1,
+                         /*caps=*/0, /*control_slot_index=*/247);
+    auto msg =
+        RoutingTableMessage::Create(0xFFFF, peer, nm, /*version=*/1, entries);
+    ASSERT_TRUE(msg.has_value());
+    BaseMessage base = msg->ToBaseMessage();
+
+    uint32_t now = GetRTOS().getTickCount();
+    Result r = network_service_->ProcessRoutingTableMessage(base, now);
+    ASSERT_TRUE(r.IsSuccess()) << r.GetErrorMessage();
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    auto node = routing_table->GetNode(faraway);
+    if (node != routing_table->GetNodes().end()) {
+        EXPECT_NE(node->control_slot_index, 247)
+            << "Out-of-range control slot index from radio must not be stored";
+    }
+}
+
+/**
+ * @brief A follower must clamp an absurd node count / slot count adopted from a
+ *        corrupt sync beacon instead of overflowing its own slot table.
+ */
+TEST_F(ComprehensiveSlotAllocationTest, FollowerClampsBadBeaconNodeCount) {
+    const AddressType nm = 0x1001;
+
+    SetupNetworkTopology(test_node_address_, ProtocolState::NORMAL_OPERATION,
+                         nm, {{nm, 1}, {0x1002, 1}}, 3);
+
+    // Simulate having adopted a corrupt beacon.
+    network_service_->SetBeaconNodeCount(248);
+    network_service_->SetNumberOfSlotsPerSuperframe(233);
+
+    Result result = network_service_->UpdateSlotTable();
+    ASSERT_TRUE(result.IsSuccess())
+        << "Follower must survive a corrupt beacon: "
+        << result.GetErrorMessage();
+
+    const auto& slot_table = network_service_->GetSlotTable();
+    EXPECT_LE(slot_table.size(), 255u);
+
+    size_t control_slots =
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_TX) +
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_RX);
+    EXPECT_LE(control_slots, 10u)
+        << "Follower control slots must stay bounded by max_network_nodes";
 }
 
 }  // namespace test
