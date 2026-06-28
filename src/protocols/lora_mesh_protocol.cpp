@@ -444,6 +444,9 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
     switch (message.GetType()) {
         case MessageType::DATA:
         case MessageType::DATA_BROADCAST:
+        case MessageType::DATA_RELIABLE:
+        case MessageType::DATA_GROUP:
+        case MessageType::ACK:
             slot_type = SlotAllocation::SlotType::TX;
             break;
         case MessageType::ROUTE_TABLE:
@@ -491,6 +494,76 @@ Result LoRaMeshProtocol::SendBroadcast(std::span<const uint8_t> data) {
     }
 
     return network_service_->SendBroadcast(data);
+}
+
+reliability::MessageId LoRaMeshProtocol::SendReliable(
+    AddressType destination, const std::vector<uint8_t>& data,
+    uint8_t max_retries, uint32_t timeout_ms) {
+    if (!network_service_) {
+        return {0, 0};
+    }
+    return network_service_->SendReliable(destination, data, max_retries,
+                                          timeout_ms);
+}
+
+Result LoRaMeshProtocol::SendGroup(AddressType group,
+                                   std::span<const uint8_t> data) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->SendGroup(group, data);
+}
+
+reliability::MessageId LoRaMeshProtocol::SendGroupReliable(
+    AddressType group, std::span<const uint8_t> data, uint8_t max_retries,
+    uint32_t window_ms) {
+    if (!network_service_) {
+        return {0, 0};
+    }
+    return network_service_->SendGroupReliable(group, data, max_retries,
+                                               window_ms);
+}
+
+Result LoRaMeshProtocol::JoinGroup(AddressType group) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->JoinGroup(group);
+}
+
+Result LoRaMeshProtocol::LeaveGroup(AddressType group) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->LeaveGroup(group);
+}
+
+bool LoRaMeshProtocol::IsMemberOfGroup(AddressType group) const {
+    return network_service_ && network_service_->IsMemberOfGroup(group);
+}
+
+std::vector<AddressType> LoRaMeshProtocol::GetGroups() const {
+    if (!network_service_) {
+        return {};
+    }
+    return network_service_->GetGroups();
+}
+
+void LoRaMeshProtocol::SetDeliveryCallback(
+    reliability::DeliveryCallback callback) {
+    if (network_service_) {
+        network_service_->SetDeliveryCallback(std::move(callback));
+    }
+}
+
+void LoRaMeshProtocol::SetDataReceivedExCallback(
+    lora_mesh::NetworkService::DataReceivedExCallback callback) {
+    if (network_service_) {
+        network_service_->SetDataReceivedExCallback(std::move(callback));
+    }
 }
 
 Result LoRaMeshProtocol::Pause() {
@@ -896,6 +969,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
             }
         }
+
+        // Advance reliable-delivery retransmission timers (≤100 ms cadence).
+        protocol->network_service_->ProcessReliableTimers();
 
         // Yield to other tasks for responsive shutdown
         rtos.YieldTask();

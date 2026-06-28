@@ -17,7 +17,14 @@ DataMessage::DataMessage(const DataHeader& header,
 
 std::optional<DataMessage> DataMessage::Create(
     AddressType dest, AddressType src, AddressType next_hop,
-    const std::vector<uint8_t>& payload, uint8_t ttl, uint8_t seq_num) {
+    const std::vector<uint8_t>& payload, uint8_t ttl, uint8_t seq_num,
+    MessageType type) {
+
+    if (!DataHeader::IsDataHeaderType(type)) {
+        LOG_ERROR("Invalid data-family message type: %d",
+                  static_cast<int>(type));
+        return std::nullopt;
+    }
 
     // Validate payload size
     if (payload.size() >
@@ -28,9 +35,13 @@ std::optional<DataMessage> DataMessage::Create(
     }
 
     // Create the header with the data information
-    DataHeader header(dest, src, next_hop, payload.size(), ttl, seq_num);
+    DataHeader header(dest, src, next_hop, payload.size(), ttl, seq_num, type);
 
     return DataMessage(header, payload);
+}
+
+MessageType DataMessage::GetType() const {
+    return header_.GetType();
 }
 
 std::optional<DataMessage> DataMessage::CreateForwarded(
@@ -42,7 +53,8 @@ std::optional<DataMessage> DataMessage::CreateForwarded(
 
     return DataMessage::Create(original.GetDestination(), original.GetSource(),
                                new_next_hop, original.GetPayload(),
-                               original.GetTTL() - 1, original.GetSeqNum());
+                               original.GetTTL() - 1, original.GetSeqNum(),
+                               original.GetType());
 }
 
 std::optional<DataMessage> DataMessage::CreateFromSerialized(
@@ -82,7 +94,7 @@ std::optional<DataMessage> DataMessage::CreateFromSerialized(
 
 std::optional<DataMessage> DataMessage::CreateFromBaseMessage(
     const BaseMessage& message) {
-    if (message.GetType() != MessageType::DATA) {
+    if (!DataHeader::IsDataHeaderType(message.GetType())) {
         LOG_ERROR("Invalid message type for DataMessage: %d",
                   static_cast<int>(message.GetType()));
         return std::nullopt;
@@ -113,7 +125,7 @@ std::optional<DataMessage> DataMessage::CreateFromBaseMessage(
     }
 
     DataHeader header(message.GetDestination(), message.GetSource(), *next_hop,
-                      user_payload.size(), *ttl, *seq_num);
+                      user_payload.size(), *ttl, *seq_num, message.GetType());
 
     return DataMessage(header, user_payload);
 }
@@ -177,7 +189,7 @@ BaseMessage DataMessage::ToBaseMessage() const {
 
     // Create the base message with the correct type and our payload
     return BaseMessage(
-        header_.GetDestination(), header_.GetSource(), MessageType::DATA,
+        header_.GetDestination(), header_.GetSource(), header_.GetType(),
         std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
 }
 

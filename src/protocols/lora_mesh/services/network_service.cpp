@@ -42,7 +42,11 @@ NetworkService::NetworkService(
       last_sync_time_(0),
       table_version_(0),
       discovery_start_time_(0),
-      joining_start_time_(0) {
+      joining_start_time_(0),
+      reliable_(BuildReliableHost(),
+                [this](const reliability::DeliveryResult& result) {
+                    OnReliableOutcome(result);
+                }) {
 
     if (!message_queue_service_) {
         LOG_ERROR("Message queue service is required");
@@ -614,10 +618,21 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
             return ProcessNMClaim(message);
 
         case MessageType::DATA:
-            return ProcessDataMessage(message, reception_timestamp);
+            return ProcessDataMessage(message, reception_timestamp,
+                                      /*reliable=*/false);
+
+        case MessageType::DATA_RELIABLE:
+            return ProcessDataMessage(message, reception_timestamp,
+                                      /*reliable=*/true);
+
+        case MessageType::ACK:
+            return ProcessAckMessage(message);
 
         case MessageType::DATA_BROADCAST:
             return ProcessBroadcastMessage(message, reception_timestamp);
+
+        case MessageType::DATA_GROUP:
+            return ProcessGroupMessage(message, reception_timestamp);
 
         default:
             LOG_WARNING("Unknown message type: %d",
@@ -1647,7 +1662,8 @@ Result NetworkService::SendJoinResponse(AddressType dest,
 // Data message implementations
 
 Result NetworkService::ProcessDataMessage(const BaseMessage& message,
-                                          uint32_t /* reception_timestamp */) {
+                                          uint32_t /* reception_timestamp */,
+                                          bool reliable) {
     // Deserialize the data message
     auto data_msg_opt = DataMessage::CreateFromBaseMessage(message);
     if (!data_msg_opt) {
@@ -1665,9 +1681,9 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
 
     LOG_DEBUG(
         "DATA message: src=0x%04X, dest=0x%04X, next_hop=0x%04X, "
-        "my_addr=0x%04X, ttl=%u, seq=%u, payload_size=%zu",
+        "my_addr=0x%04X, ttl=%u, seq=%u, payload_size=%zu, reliable=%d",
         original_src, final_dest, next_hop, node_address_, ttl, seq_num,
-        data_msg.GetPayload().size());
+        data_msg.GetPayload().size(), reliable);
 
     // Ignore our own messages heard back
     if (original_src == node_address_) {
@@ -1675,53 +1691,71 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
         return Result::Success();
     }
 
-    // De-duplication check (prevents loops)
-    if (IsMessageDuplicate(original_src, seq_num)) {
-        LOG_DEBUG("Dropping duplicate DATA from 0x%04X seq=%u", original_src,
-                  seq_num);
-        return Result::Success();
-    }
-
-    // Check if we are the intended next hop (before caching — overheard
-    // packets must not poison the dedup table or legitimate forwarded
-    // copies addressed to us will be falsely dropped)
+    // Link-layer filter: only act on packets for which we are the next hop.
+    // Overheard packets must not poison the dedup table.
     if (next_hop != node_address_) {
         LOG_DEBUG("DATA not for this node (next_hop=0x%04X), ignoring",
                   next_hop);
         return Result::Success();
     }
 
-    AddToMessageCache(original_src, seq_num);
+    const bool duplicate = IsMessageDuplicate(original_src, seq_num);
 
-    // We are the next hop - check if we are also the final destination
     if (final_dest == node_address_) {
-        // Deliver to application layer
+        // The reliable payload carries a 4-byte send-timestamp prefix used for
+        // RTT. The auto-ACK is emitted on EVERY reception (idempotent): if an
+        // earlier ACK was lost and the sender retransmitted, the duplicate must
+        // still be acknowledged, even though it is delivered to the app once.
+        std::span<const uint8_t> payload = data_msg.GetPayload();
+        if (reliable) {
+            // Reliable framing prefix is a 4-byte send-timestamp.
+            uint32_t echo_ts = 0;
+            if (payload.size() >= reliability::kReliableTimestampSize) {
+                utils::ByteDeserializer deserializer(payload);
+                auto ts = deserializer.ReadUint32();
+                if (ts) {
+                    echo_ts = *ts;
+                }
+                payload = payload.subspan(reliability::kReliableTimestampSize);
+            }
+            EnqueueAck(original_src, seq_num, /*was_group=*/false, echo_ts);
+        }
+
+        if (duplicate) {
+            LOG_DEBUG("Duplicate DATA from 0x%04X seq=%u already delivered",
+                      original_src, seq_num);
+            return Result::Success();
+        }
+
+        AddToMessageCache(original_src, seq_num);
+
         LOG_INFO(
             "DATA reached final destination: src=0x%04X, dest=0x%04X, seq=%u, "
             "payload_size=%zu",
-            original_src, final_dest, seq_num, data_msg.GetPayload().size());
+            original_src, final_dest, seq_num, payload.size());
 
-        if (data_received_callback_) {
-            data_received_callback_(original_src, data_msg.GetPayload());
-            LOG_DEBUG("DATA delivered to application layer");
-        } else {
-            LOG_WARNING("No data callback registered - DATA dropped");
-        }
-    } else {
-        // TTL check before forwarding
-        if (ttl <= 1) {
-            LOG_WARNING(
-                "DATA TTL expired: src=0x%04X, dest=0x%04X, seq=%u, dropping",
-                original_src, final_dest, seq_num);
-            return Result::Success();
-        }
-        // Forward to next hop toward final destination
-        LOG_INFO("Forwarding DATA: src=0x%04X, dest=0x%04X, seq=%u, ttl=%u",
-                 original_src, final_dest, seq_num, ttl);
-        return ForwardDataMessage(data_msg);
+        DeliverToApp(original_src, seq_num, HopsFromTtl(ttl), payload);
+        return Result::Success();
     }
 
-    return Result::Success();
+    // Not the final destination: forward toward it.
+    if (duplicate) {
+        LOG_DEBUG("Dropping duplicate DATA from 0x%04X seq=%u", original_src,
+                  seq_num);
+        return Result::Success();
+    }
+
+    AddToMessageCache(original_src, seq_num);
+
+    if (ttl <= 1) {
+        LOG_WARNING(
+            "DATA TTL expired: src=0x%04X, dest=0x%04X, seq=%u, dropping",
+            original_src, final_dest, seq_num);
+        return Result::Success();
+    }
+    LOG_INFO("Forwarding DATA: src=0x%04X, dest=0x%04X, seq=%u, ttl=%u",
+             original_src, final_dest, seq_num, ttl);
+    return ForwardDataMessage(data_msg);
 }
 
 Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
@@ -1850,6 +1884,569 @@ Result NetworkService::SendData(AddressType destination,
     return Result::Success();
 }
 
+// Reliable delivery implementations
+
+reliability::Host NetworkService::BuildReliableHost() {
+    reliability::Host host;
+    host.send_attempt = [this](const reliability::MessageId& id,
+                               std::span<const uint8_t> payload) {
+        return SendReliableAttempt(id, payload);
+    };
+    host.now_ms = []() {
+        return GetRTOS().getTickCount();
+    };
+    return host;
+}
+
+AddressType NetworkService::LookupReliableDest(uint8_t seq) const {
+    for (const auto& entry : reliable_dest_) {
+        if (entry.valid && entry.seq == seq) {
+            return entry.dest;
+        }
+    }
+    return 0;
+}
+
+void NetworkService::RecordReliableDest(uint8_t seq, AddressType dest) {
+    for (auto& entry : reliable_dest_) {
+        if (!entry.valid) {
+            entry = {true, seq, dest};
+            return;
+        }
+    }
+    LOG_WARNING("Reliable destination table full; seq=%u not recorded", seq);
+}
+
+void NetworkService::ClearReliableDest(uint8_t seq) {
+    for (auto& entry : reliable_dest_) {
+        if (entry.valid && entry.seq == seq) {
+            entry.valid = false;
+            return;
+        }
+    }
+}
+
+uint32_t NetworkService::ComputeReliableTimeout(AddressType dest) const {
+    uint8_t hops = 1;
+    if (routing_table_) {
+        auto it = routing_table_->GetNode(dest);
+        if (it != routing_table_->GetNodes().end() &&
+            it->routing_entry.hop_count > 0) {
+            hops = it->routing_entry.hop_count;
+        }
+    }
+
+    uint32_t superframe_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
+    if (superframe_ms == 0) {
+        superframe_ms = 1000;
+    }
+
+    // Round trip ≈ 2 hops, plus one superframe of slot-phase guard.
+    uint32_t timeout = (2u * hops + 1u) * superframe_ms;
+    constexpr uint32_t kTimeoutFloorMs = 500;
+    return timeout < kTimeoutFloorMs ? kTimeoutFloorMs : timeout;
+}
+
+Result NetworkService::SendReliableAttempt(const reliability::MessageId& id,
+                                           std::span<const uint8_t> payload) {
+    AddressType dest = LookupReliableDest(id.seq);
+    if (dest == 0) {
+        LOG_ERROR("No destination recorded for reliable seq=%u", id.seq);
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "No destination for reliable attempt");
+    }
+
+    uint8_t ttl =
+        (config_.max_hops > 0)
+            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
+            : kDefaultTTL;
+
+    // Build wire payload: [send_timestamp:4][application payload]
+    uint32_t timestamp = GetRTOS().getTickCount();
+    std::vector<uint8_t> wire(reliability::kReliableTimestampSize +
+                              payload.size());
+    utils::ByteSerializer serializer(wire.data(), wire.size());
+    serializer.WriteUint32(timestamp);
+    if (!payload.empty()) {
+        serializer.WriteBytes(payload.data(), payload.size());
+    }
+
+    std::unique_ptr<BaseMessage> base_msg;
+    if (IsGroupAddress(dest)) {
+        auto group_msg =
+            GroupMessage::Create(dest, node_address_, ttl,
+                                 GroupMessage::kFlagRequestAcks, id.seq, wire);
+        if (!group_msg) {
+            return Result(LoraMesherErrorCode::kMemoryError,
+                          "Failed to create reliable group message");
+        }
+        base_msg = std::make_unique<BaseMessage>(group_msg->ToBaseMessage());
+    } else {
+        AddressType next_hop = FindNextHop(dest);
+        if (next_hop == 0) {
+            next_hop = dest;
+        }
+        auto data_msg =
+            DataMessage::Create(dest, node_address_, next_hop, wire, ttl,
+                                id.seq, MessageType::DATA_RELIABLE);
+        if (!data_msg) {
+            return Result(LoraMesherErrorCode::kMemoryError,
+                          "Failed to create reliable data message");
+        }
+        base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
+    }
+
+    return message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+}
+
+reliability::MessageId NetworkService::SendReliable(
+    AddressType destination, const std::vector<uint8_t>& data,
+    uint8_t max_retries, uint32_t timeout_override_ms) {
+    constexpr reliability::MessageId kInvalidId{0, 0};
+
+    if (destination == node_address_) {
+        LOG_WARNING("Cannot send reliable data to self");
+        return kInvalidId;
+    }
+
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Cannot send reliable data in state %d",
+                    static_cast<int>(state_));
+        return kInvalidId;
+    }
+
+    const size_t overhead = BaseHeader::Size() + DataHeader::DataFieldsSize() +
+                            reliability::kReliableTimestampSize;
+    if (data.size() + overhead > config_.max_packet_size ||
+        data.size() > reliability::ReliableDelivery::MaxReliablePayload()) {
+        LOG_WARNING("Reliable payload %zu B exceeds capacity", data.size());
+        return kInvalidId;
+    }
+
+    message_seq_++;
+    uint8_t seq = message_seq_;
+
+    // Prevent self-receive if we hear our own message.
+    AddToMessageCache(node_address_, seq);
+    RecordReliableDest(seq, destination);
+
+    reliability::MessageId id{node_address_, seq};
+    reliability::Policy policy;
+    policy.timeout_ms = timeout_override_ms != 0
+                            ? timeout_override_ms
+                            : ComputeReliableTimeout(destination);
+    policy.max_retries = max_retries;
+    policy.collect_multiple = false;
+
+    Result result = reliable_.Track(
+        id, std::span<const uint8_t>(data.data(), data.size()), policy);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to track reliable message seq=%u: %s", seq,
+                  result.GetErrorMessage().c_str());
+        ClearReliableDest(seq);
+        return kInvalidId;
+    }
+
+    LOG_INFO("Sending reliable DATA to 0x%04X (seq=%u, timeout=%u, retries=%u)",
+             destination, seq, policy.timeout_ms, max_retries);
+    return id;
+}
+
+void NetworkService::SetDeliveryCallback(
+    reliability::DeliveryCallback callback) {
+    delivery_callback_ = std::move(callback);
+}
+
+void NetworkService::SetDataReceivedExCallback(
+    DataReceivedExCallback callback) {
+    data_received_ex_callback_ = std::move(callback);
+}
+
+uint8_t NetworkService::HopsFromTtl(uint8_t remaining_ttl) const {
+    uint8_t initial_ttl =
+        (config_.max_hops > 0)
+            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
+            : kDefaultTTL;
+    // hops travelled = forwards + 1; forwards = initial - remaining.
+    if (initial_ttl >= remaining_ttl) {
+        return static_cast<uint8_t>(initial_ttl - remaining_ttl + 1);
+    }
+    return 1;
+}
+
+void NetworkService::DeliverToApp(AddressType source, uint8_t seq, uint8_t hops,
+                                  std::span<const uint8_t> payload) {
+    std::vector<uint8_t> data(payload.begin(), payload.end());
+    if (data_received_callback_) {
+        data_received_callback_(source, data);
+    }
+    if (data_received_ex_callback_) {
+        data_received_ex_callback_(source, {source, seq}, hops, data);
+    }
+}
+
+void NetworkService::ProcessReliableTimers() {
+    reliable_.Tick();
+    CloseExpiredGroupWindows();
+}
+
+void NetworkService::CloseExpiredGroupWindows() {
+    uint32_t now = GetRTOS().getTickCount();
+    for (auto& window : group_windows_) {
+        if (window.valid && now >= window.deadline_ms) {
+            window.valid = false;
+            reliable_.CloseGroup({node_address_, window.seq});
+        }
+    }
+}
+
+void NetworkService::OnReliableOutcome(
+    const reliability::DeliveryResult& result) {
+    const bool is_group = IsGroupAddress(LookupReliableDest(result.id.seq));
+
+    switch (result.outcome) {
+        case reliability::Outcome::Delivered:
+            // A unicast entry is erased on first ACK; a group window stays open
+            // until it is explicitly closed, so keep its destination mapping.
+            if (!is_group) {
+                ClearReliableDest(result.id.seq);
+            }
+            break;
+        case reliability::Outcome::Failed:
+        case reliability::Outcome::GroupWindowClosed:
+            ClearReliableDest(result.id.seq);
+            break;
+    }
+
+    if (delivery_callback_) {
+        delivery_callback_(result);
+    }
+}
+
+void NetworkService::EnqueueAck(AddressType dest, uint8_t acked_seq,
+                                bool was_group, uint32_t echo_ts) {
+    AddressType next_hop = FindNextHop(dest);
+    if (next_hop == 0) {
+        next_hop = dest;
+    }
+
+    uint8_t ttl =
+        (config_.max_hops > 0)
+            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
+            : kDefaultTTL;
+
+    AckPayload ack;
+    ack.acked_seq = acked_seq;
+    ack.flags = was_group ? AckPayload::kFlagWasGroup : 0;
+    ack.echo_timestamp = echo_ts;
+    auto ack_bytes = ack.Serialize();
+    std::vector<uint8_t> payload(ack_bytes.begin(), ack_bytes.end());
+
+    // ACKs are not de-duplicated and are matched by acked_seq in the payload,
+    // so the message seq_num is unused; keep it at 0.
+    auto ack_msg = DataMessage::Create(dest, node_address_, next_hop, payload,
+                                       ttl, /*seq_num=*/0, MessageType::ACK);
+    if (!ack_msg) {
+        LOG_ERROR("Failed to create ACK for 0x%04X seq=%u", dest, acked_seq);
+        return;
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(ack_msg->ToBaseMessage());
+    Result queue_result = message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue ACK for 0x%04X: %s", dest,
+                  queue_result.GetErrorMessage().c_str());
+    }
+}
+
+Result NetworkService::ProcessAckMessage(const BaseMessage& message) {
+    auto ack_msg_opt = DataMessage::CreateFromBaseMessage(message);
+    if (!ack_msg_opt) {
+        LOG_ERROR("Failed to deserialize ACK message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize ACK message");
+    }
+
+    const DataMessage& ack_msg = *ack_msg_opt;
+    AddressType next_hop = ack_msg.GetNextHop();
+    AddressType final_dest = ack_msg.GetDestination();
+    AddressType acker = ack_msg.GetSource();
+    uint8_t ttl = ack_msg.GetTTL();
+
+    if (acker == node_address_) {
+        return Result::Success();
+    }
+
+    // Link-layer filter: only act on ACKs for which we are the next hop.
+    if (next_hop != node_address_) {
+        return Result::Success();
+    }
+
+    if (final_dest == node_address_) {
+        auto ack = AckPayload::Deserialize(ack_msg.GetPayload());
+        if (!ack) {
+            LOG_ERROR("Malformed ACK payload from 0x%04X", acker);
+            return Result(LoraMesherErrorCode::kSerializationError,
+                          "Malformed ACK payload");
+        }
+        reliability::MessageId id{node_address_, ack->acked_seq};
+        bool matched = reliable_.OnAck(id, acker, ack->echo_timestamp);
+        LOG_DEBUG("ACK from 0x%04X for seq=%u matched=%d", acker,
+                  ack->acked_seq, matched);
+        return Result::Success();
+    }
+
+    // Forward the ACK toward the original sender.
+    if (ttl <= 1) {
+        LOG_WARNING("ACK TTL expired toward 0x%04X, dropping", final_dest);
+        return Result::Success();
+    }
+    return ForwardDataMessage(ack_msg);
+}
+
+// Group (multicast) implementations
+
+Result NetworkService::JoinGroup(AddressType group) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Address is not a group address");
+    }
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    for (uint8_t i = 0; i < group_count_; ++i) {
+        if (groups_[i] == group) {
+            return Result::Success();
+        }
+    }
+    if (group_count_ >= kMaxGroups) {
+        return Result(LoraMesherErrorCode::kBufferOverflow,
+                      "Group membership table is full");
+    }
+    groups_[group_count_++] = group;
+    LOG_INFO("Joined group 0x%04X", group);
+    return Result::Success();
+}
+
+Result NetworkService::LeaveGroup(AddressType group) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Address is not a group address");
+    }
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    for (uint8_t i = 0; i < group_count_; ++i) {
+        if (groups_[i] == group) {
+            groups_[i] = groups_[group_count_ - 1];
+            group_count_--;
+            LOG_INFO("Left group 0x%04X", group);
+            return Result::Success();
+        }
+    }
+    return Result::Success();
+}
+
+bool NetworkService::IsMemberOfGroup(AddressType group) const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    for (uint8_t i = 0; i < group_count_; ++i) {
+        if (groups_[i] == group) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<AddressType> NetworkService::GetGroups() const {
+    std::lock_guard<std::mutex> lock(network_mutex_);
+    return std::vector<AddressType>(groups_.begin(),
+                                    groups_.begin() + group_count_);
+}
+
+Result NetworkService::SendGroup(AddressType group,
+                                 std::span<const uint8_t> data) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Destination is not a group address");
+    }
+
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Cannot send group data in state %d",
+                    static_cast<int>(state_));
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot send group data outside normal operation");
+    }
+
+    if (data.size() + BaseHeader::Size() + GroupMessage::kGroupFieldsSize >
+        config_.max_packet_size) {
+        LOG_WARNING("Group payload %zu B exceeds MTU", data.size());
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Group payload exceeds max packet size");
+    }
+
+    message_seq_++;
+    uint8_t seq = message_seq_;
+    uint8_t ttl =
+        (config_.max_hops > 0)
+            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
+            : kDefaultTTL;
+
+    AddToMessageCache(node_address_, seq);
+
+    auto group_msg = GroupMessage::Create(group, node_address_, ttl,
+                                          /*flags=*/0, seq, data);
+    if (!group_msg) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create group message");
+    }
+
+    LOG_INFO("Sending GROUP to 0x%04X (ttl=%u, seq=%u, payload_size=%zu)",
+             group, ttl, seq, data.size());
+
+    auto base_msg = std::make_unique<BaseMessage>(group_msg->ToBaseMessage());
+    return message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+}
+
+reliability::MessageId NetworkService::SendGroupReliable(
+    AddressType group, std::span<const uint8_t> data, uint8_t max_retries,
+    uint32_t window_ms) {
+    constexpr reliability::MessageId kInvalidId{0, 0};
+
+    if (!IsGroupAddress(group)) {
+        LOG_WARNING("SendGroupReliable destination 0x%04X is not a group",
+                    group);
+        return kInvalidId;
+    }
+
+    if (state_ != ProtocolState::NORMAL_OPERATION &&
+        state_ != ProtocolState::NETWORK_MANAGER) {
+        LOG_WARNING("Cannot send reliable group data in state %d",
+                    static_cast<int>(state_));
+        return kInvalidId;
+    }
+
+    const size_t overhead = BaseHeader::Size() +
+                            GroupMessage::kGroupFieldsSize +
+                            reliability::kReliableTimestampSize;
+    if (data.size() + overhead > config_.max_packet_size ||
+        data.size() > reliability::ReliableDelivery::MaxReliablePayload()) {
+        LOG_WARNING("Reliable group payload %zu B exceeds capacity",
+                    data.size());
+        return kInvalidId;
+    }
+
+    message_seq_++;
+    uint8_t seq = message_seq_;
+
+    AddToMessageCache(node_address_, seq);
+    // A group destination tells the send_attempt closure to build a flooded
+    // group message (with the request-acks flag) rather than a unicast.
+    RecordReliableDest(seq, group);
+
+    reliability::MessageId id{node_address_, seq};
+    reliability::Policy policy;
+    policy.timeout_ms = window_ms;
+    policy.max_retries = max_retries;
+    policy.collect_multiple = true;
+
+    Result result = reliable_.Track(id, data, policy);
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to track reliable group seq=%u: %s", seq,
+                  result.GetErrorMessage().c_str());
+        ClearReliableDest(seq);
+        return kInvalidId;
+    }
+
+    // Register the acknowledgement-collection window.
+    uint32_t deadline = GetRTOS().getTickCount() + window_ms;
+    for (auto& window : group_windows_) {
+        if (!window.valid) {
+            window = {true, seq, deadline};
+            break;
+        }
+    }
+
+    LOG_INFO("Sending reliable GROUP to 0x%04X (seq=%u, window=%u)", group, seq,
+             window_ms);
+    return id;
+}
+
+Result NetworkService::ProcessGroupMessage(const BaseMessage& message,
+                                           uint32_t /* reception_timestamp */) {
+    auto group_msg_opt = GroupMessage::CreateFromBaseMessage(message);
+    if (!group_msg_opt) {
+        LOG_ERROR("Failed to deserialize group message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize group message");
+    }
+
+    const GroupMessage& group_msg = *group_msg_opt;
+    AddressType source = group_msg.GetSource();
+    AddressType group = group_msg.GetGroup();
+    uint8_t seq_num = group_msg.GetSeqNum();
+    uint8_t ttl = group_msg.GetTTL();
+
+    // Ignore our own group messages heard back
+    if (source == node_address_) {
+        return Result::Success();
+    }
+
+    // De-duplication prevents flood loops and duplicate delivery
+    if (IsMessageDuplicate(source, seq_num)) {
+        LOG_DEBUG("Dropping duplicate GROUP from 0x%04X seq=%u", source,
+                  seq_num);
+        return Result::Success();
+    }
+
+    AddToMessageCache(source, seq_num);
+
+    const bool member = IsMemberOfGroup(group);
+    std::span<const uint8_t> payload = group_msg.GetPayload();
+
+    if (group_msg.RequestAcks()) {
+        // The reliable group framing prefixes a 4-byte send-timestamp.
+        uint32_t echo_ts = 0;
+        if (payload.size() >= reliability::kReliableTimestampSize) {
+            utils::ByteDeserializer deserializer(payload);
+            auto ts = deserializer.ReadUint32();
+            if (ts) {
+                echo_ts = *ts;
+            }
+            payload = payload.subspan(reliability::kReliableTimestampSize);
+        }
+        if (member) {
+            EnqueueAck(source, seq_num, /*was_group=*/true, echo_ts);
+        }
+    }
+
+    if (member) {
+        LOG_INFO("GROUP 0x%04X delivered from 0x%04X (seq=%u)", group, source,
+                 seq_num);
+        DeliverToApp(source, seq_num, HopsFromTtl(ttl), payload);
+    }
+
+    // Relay the flood regardless of local membership
+    if (ttl > 1) {
+        return ForwardGroupMessage(group_msg);
+    }
+
+    return Result::Success();
+}
+
+Result NetworkService::ForwardGroupMessage(const GroupMessage& original) {
+    auto forwarded = GroupMessage::CreateForwarded(original);
+    if (!forwarded) {
+        LOG_WARNING("GROUP TTL expired during forwarding, dropping");
+        return Result::Success();
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
+    return message_queue_service_->AddMessageToQueue(
+        SlotAllocation::SlotType::TX, std::move(base_msg));
+}
+
 // Broadcast message implementations
 
 Result NetworkService::ProcessBroadcastMessage(
@@ -1885,11 +2482,7 @@ Result NetworkService::ProcessBroadcastMessage(
     LOG_INFO("BROADCAST from 0x%04X (ttl=%u, seq=%u), payload_size=%zu", source,
              ttl, seq_num, bcast.GetPayload().size());
 
-    if (data_received_callback_) {
-        data_received_callback_(source, bcast.GetPayload());
-    } else {
-        LOG_WARNING("No data callback registered - broadcast dropped");
-    }
+    DeliverToApp(source, seq_num, HopsFromTtl(ttl), bcast.GetPayload());
 
     // Forward if TTL allows
     if (ttl > 1) {

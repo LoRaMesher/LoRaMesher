@@ -20,6 +20,7 @@
 #include "mocks/mock_radio_test_helpers.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh_protocol.hpp"
+#include "protocols/reliability/reliable_delivery.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/radio/radio_state.hpp"
 #include "utils/file_log_handler.hpp"
@@ -45,6 +46,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         std::shared_ptr<hardware::HardwareManager> hardware_manager;
         std::unique_ptr<protocols::LoRaMeshProtocol> protocol;
         std::vector<BaseMessage> received_messages;
+        std::vector<protocols::reliability::DeliveryResult> delivery_outcomes;
         radio::test::MockRadio* mock_radio;
     };
 
@@ -224,6 +226,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
                 if (msg_opt.has_value()) {
                     node_ptr->received_messages.push_back(msg_opt.value());
                 }
+            });
+
+        // Record reliable-delivery outcomes for assertions
+        node->protocol->GetNetworkServiceForTest()->SetDeliveryCallback(
+            [node_ptr = node.get()](
+                const protocols::reliability::DeliveryResult& result) {
+                node_ptr->delivery_outcomes.push_back(result);
             });
 
         // Restore test thread address

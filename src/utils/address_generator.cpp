@@ -40,7 +40,9 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
         LOG_INFO("Generating address from %s", last_generation_source_);
         AddressType address = static_cast<AddressType>(
             (static_cast<uint16_t>(hardware_id[4]) << 8) | hardware_id[5]);
-        if (config.avoid_reserved_addresses) {
+        if (config.restrict_to_unicast_range) {
+            address = FoldToUnicastRange(address);
+        } else if (config.avoid_reserved_addresses) {
             if (address == 0x0000) {
                 address = 0x0001;
                 LOG_DEBUG("Avoided reserved address 0x0000, using 0x0001");
@@ -49,7 +51,8 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
                 LOG_DEBUG("Avoided reserved address 0xFFFF, using 0xFFFE");
             }
         }
-        if (!IsValidAddress(address, config.avoid_reserved_addresses)) {
+        if (!IsValidAddress(address, config.avoid_reserved_addresses,
+                            config.restrict_to_unicast_range)) {
             LOG_WARNING(
                 "Legacy formula produced invalid address 0x%04X, using "
                 "fallback",
@@ -78,8 +81,10 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
         "0x%04X)",
         address, crc_hash, fnv_hash);
 
-    // Handle reserved addresses
-    if (config.avoid_reserved_addresses) {
+    // Handle reserved and group-range addresses
+    if (config.restrict_to_unicast_range) {
+        address = FoldToUnicastRange(address);
+    } else if (config.avoid_reserved_addresses) {
         if (address == 0x0000) {
             address = 0x0001;  // Use first valid address
             LOG_DEBUG("Avoided reserved address 0x0000, using 0x0001");
@@ -89,7 +94,8 @@ AddressType AddressGenerator::GenerateFromHardwareId(const uint8_t* hardware_id,
         }
     }
 
-    if (!IsValidAddress(address, config.avoid_reserved_addresses)) {
+    if (!IsValidAddress(address, config.avoid_reserved_addresses,
+                        config.restrict_to_unicast_range)) {
         LOG_WARNING("Generated invalid address 0x%04X, using fallback",
                     address);
         return GenerateFallback(config);
@@ -118,8 +124,12 @@ AddressType AddressGenerator::GenerateFallback(const Config& config) {
 
     do {
         address = static_cast<AddressType>(dis(gen) & config.address_mask);
+        if (config.restrict_to_unicast_range) {
+            address = FoldToUnicastRange(address);
+        }
         attempts++;
-    } while (!IsValidAddress(address, config.avoid_reserved_addresses) &&
+    } while (!IsValidAddress(address, config.avoid_reserved_addresses,
+                             config.restrict_to_unicast_range) &&
              attempts < max_attempts);
 
     if (attempts >= max_attempts) {
@@ -133,8 +143,8 @@ AddressType AddressGenerator::GenerateFallback(const Config& config) {
     return address;
 }
 
-bool AddressGenerator::IsValidAddress(AddressType address,
-                                      bool avoid_reserved) {
+bool AddressGenerator::IsValidAddress(AddressType address, bool avoid_reserved,
+                                      bool restrict_to_unicast) {
     if (avoid_reserved) {
         // Check for reserved addresses
         if (address == 0x0000 || address == 0xFFFF) {
@@ -142,10 +152,20 @@ bool AddressGenerator::IsValidAddress(AddressType address,
         }
     }
 
-    // Additional validation could be added here
-    // (e.g., check against known problematic address ranges)
+    if (restrict_to_unicast && IsGroupAddress(address)) {
+        return false;
+    }
 
     return true;
+}
+
+AddressType AddressGenerator::FoldToUnicastRange(AddressType address) {
+    // Clear the high bit so any group-range address maps into [0x0000, 0x7FFF].
+    address &= 0x7FFF;
+    if (address == 0x0000) {
+        address = 0x0001;
+    }
+    return address;
 }
 
 const char* AddressGenerator::GetLastGenerationSource() {

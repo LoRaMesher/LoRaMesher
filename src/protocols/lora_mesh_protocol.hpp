@@ -135,6 +135,48 @@ class LoRaMeshProtocol : public Protocol {
     Result SendBroadcast(std::span<const uint8_t> data);
 
     /**
+     * @brief Send user data with acknowledged (reliable) delivery
+     * @return Assigned message id, or {0,0} on failure
+     */
+    reliability::MessageId SendReliable(AddressType destination,
+                                        const std::vector<uint8_t>& data,
+                                        uint8_t max_retries,
+                                        uint32_t timeout_ms = 0);
+
+    /**
+     * @brief Send data to a group via membership-gated flooding
+     */
+    Result SendGroup(AddressType group, std::span<const uint8_t> data);
+
+    /**
+     * @brief Send data to a group collecting per-recipient acknowledgements
+     * @return Assigned message id, or {0,0} on failure
+     */
+    reliability::MessageId SendGroupReliable(AddressType group,
+                                             std::span<const uint8_t> data,
+                                             uint8_t max_retries,
+                                             uint32_t window_ms);
+
+    /** @brief Join a logical group (local membership) */
+    Result JoinGroup(AddressType group);
+
+    /** @brief Leave a logical group */
+    Result LeaveGroup(AddressType group);
+
+    /** @brief Whether this node is a member of the given group */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /** @brief Get the groups this node belongs to */
+    std::vector<AddressType> GetGroups() const;
+
+    /** @brief Register the reliable-delivery outcome callback */
+    void SetDeliveryCallback(reliability::DeliveryCallback callback);
+
+    /** @brief Register the inbound callback reporting id and hop count */
+    void SetDataReceivedExCallback(
+        lora_mesh::NetworkService::DataReceivedExCallback callback);
+
+    /**
      * @brief Pause all protocol services
      * 
      * @return Result Success or error details

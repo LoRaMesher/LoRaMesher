@@ -20,6 +20,27 @@ pio test -e test_native -v
 - Use `-f {test_name}` to filter a function.
 - Use `--list-tests` to get the tests names.
 
+#### Fast iteration on a single test (avoid re-running a whole slow suite)
+
+`pio test -f <suite>` runs *every* test in the matched suite, and some integration
+suites (e.g. `protocols/lora_mesh/services/test_routing`) take a very long time
+(multi-hop formation tests can be ~150s each). To iterate on one or a few tests,
+build the suite binary once, then run it directly with a GoogleTest filter:
+
+```bash
+# Build only (no test run); recompiles changed files + links the binary
+pio test -e test_native -f "protocols/lora_mesh/services/test_routing" --without-testing
+
+# Run just the test(s) you want (seconds–minutes each)
+.pio/build/test_native/program --gtest_filter='GroupAckTests.*'
+```
+
+- `-f` matches the suite *path* (see `--list-tests`); `--gtest_filter` matches
+  GoogleTest names. The binary is at `.pio/build/test_native/program`.
+- Do NOT edit source while a build is running — the binary becomes inconsistent.
+- Capture binary output directly to a file (`> log 2>&1`); piping to `grep`
+  block-buffers and loses output if the run is killed/timed out.
+
 ### ESP32 Compilation Check
 
 ```bash

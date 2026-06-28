@@ -96,6 +96,8 @@ TEST_F(AddressGeneratorTest, LegacyMacFormulaUsesBytes4And5) {
     AddressGenerator::Config config;
     config.use_legacy_mac_formula = true;
     config.avoid_reserved_addresses = true;
+    // Disable unicast-range restriction to verify the raw legacy formula output.
+    config.restrict_to_unicast_range = false;
 
     AddressType addr =
         AddressGenerator::GenerateFromHardwareId(kValidId6, 6, config);
@@ -132,11 +134,74 @@ TEST_F(AddressGeneratorTest, LegacyFormulaAvoidsReservedFFFF) {
     AddressGenerator::Config config;
     config.use_legacy_mac_formula = true;
     config.avoid_reserved_addresses = true;
+    // Disable unicast-range restriction to verify the avoid-reserved remap.
+    config.restrict_to_unicast_range = false;
 
     // bytes 4+5 = 0xFFFF → should be remapped to 0xFFFE
     AddressType addr =
         AddressGenerator::GenerateFromHardwareId(kIdProducesFFFF, 6, config);
     EXPECT_EQ(addr, 0xFFFE);
+}
+
+// ---- Address space partition helpers ----
+
+TEST_F(AddressGeneratorTest, AddressSpacePartitionBoundaries) {
+    EXPECT_FALSE(IsUnicastAddress(0x0000));
+    EXPECT_FALSE(IsGroupAddress(0x0000));
+
+    EXPECT_TRUE(IsUnicastAddress(0x0001));
+    EXPECT_TRUE(IsUnicastAddress(0x7FFF));
+    EXPECT_FALSE(IsGroupAddress(0x7FFF));
+
+    EXPECT_TRUE(IsGroupAddress(0x8000));
+    EXPECT_TRUE(IsGroupAddress(0xFFFE));
+    EXPECT_FALSE(IsUnicastAddress(0x8000));
+
+    EXPECT_FALSE(IsGroupAddress(0xFFFF));
+    EXPECT_FALSE(IsUnicastAddress(0xFFFF));
+}
+
+// ---- Unicast-range restriction (default) ----
+
+TEST_F(AddressGeneratorTest, LegacyFormulaRestrictsToUnicastRangeByDefault) {
+    AddressGenerator::Config config;
+    config.use_legacy_mac_formula = true;
+    // Default config restricts node addresses to the unicast range.
+
+    // kValidId6 → raw legacy 0xABCD which lies in the group range; the
+    // generator must fold it back into the unicast range 0x0001-0x7FFF.
+    AddressType addr =
+        AddressGenerator::GenerateFromHardwareId(kValidId6, 6, config);
+    EXPECT_TRUE(IsUnicastAddress(addr))
+        << "Generated 0x" << std::hex << addr << " is not a unicast address";
+    EXPECT_FALSE(IsGroupAddress(addr));
+}
+
+TEST_F(AddressGeneratorTest, HashFormulaRestrictsToUnicastRangeByDefault) {
+    AddressGenerator::Config config;
+    config.use_legacy_mac_formula = false;
+
+    static constexpr uint8_t id_group[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+    AddressType addr =
+        AddressGenerator::GenerateFromHardwareId(id_group, 6, config);
+    EXPECT_TRUE(IsUnicastAddress(addr));
+}
+
+TEST_F(AddressGeneratorTest, FallbackRestrictsToUnicastRangeByDefault) {
+    AddressGenerator::Config config;
+    for (int i = 0; i < 10; ++i) {
+        AddressType addr = AddressGenerator::GenerateFallback(config);
+        EXPECT_TRUE(IsUnicastAddress(addr))
+            << "Fallback produced non-unicast 0x" << std::hex << addr;
+    }
+}
+
+TEST_F(AddressGeneratorTest, IsValidAddressRejectsGroupRangeWhenRestricted) {
+    EXPECT_FALSE(AddressGenerator::IsValidAddress(0x8000, true, true));
+    EXPECT_FALSE(AddressGenerator::IsValidAddress(0xC000, true, true));
+    EXPECT_TRUE(AddressGenerator::IsValidAddress(0x7FFF, true, true));
+    // Without restriction, group-range addresses remain valid.
+    EXPECT_TRUE(AddressGenerator::IsValidAddress(0x8000, true, false));
 }
 
 // ---- Hash-based generation (legacy disabled) ----

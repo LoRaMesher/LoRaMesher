@@ -15,9 +15,12 @@
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
+#include "protocols/reliability/reliable_delivery.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
 #include "types/messages/loramesher/broadcast_message.hpp"
 #include "types/messages/loramesher/data_message.hpp"
+#include "types/messages/loramesher/group_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
@@ -547,10 +550,24 @@ class NetworkService : public INetworkService {
      *
      * @param message Data message to process
      * @param reception_timestamp When the message was received
+     * @param reliable Whether this is a reliable (acknowledged) data message
      * @return Result Success or error
      */
     Result ProcessDataMessage(const BaseMessage& message,
-                              uint32_t reception_timestamp);
+                              uint32_t reception_timestamp,
+                              bool reliable = false);
+
+    /**
+     * @brief Process a received acknowledgement message
+     *
+     * Matches the acknowledgement against the reliable-delivery component when
+     * this node is the final destination, or forwards it toward the original
+     * sender otherwise.
+     *
+     * @param message Acknowledgement message to process
+     * @return Result Success or error
+     */
+    Result ProcessAckMessage(const BaseMessage& message);
 
     /**
      * @brief Forward a data message to the next hop
@@ -574,6 +591,65 @@ class NetworkService : public INetworkService {
      * @return Result Success or error (e.g., no route found)
      */
     Result SendData(AddressType destination, const std::vector<uint8_t>& data);
+
+    // Reliable delivery methods
+
+    /**
+     * @brief Send user data with acknowledged (reliable) delivery
+     *
+     * Transmits the data as a reliable DATA message and tracks it in the
+     * reliable-delivery component, retransmitting up to max_retries times until
+     * an acknowledgement arrives. The registered delivery callback fires with
+     * the terminal outcome (Delivered or Failed).
+     *
+     * @param destination Final destination address
+     * @param data User data payload
+     * @param max_retries Maximum retransmissions after the first attempt
+     * @param timeout_override_ms If non-zero, overrides the computed timeout
+     * @return reliability::MessageId Assigned id, or {0,0} if the send failed
+     */
+    reliability::MessageId SendReliable(AddressType destination,
+                                        const std::vector<uint8_t>& data,
+                                        uint8_t max_retries,
+                                        uint32_t timeout_override_ms = 0);
+
+    /**
+     * @brief Register the callback fired on reliable-delivery outcomes
+     *
+     * @param callback Callback invoked with each delivery outcome
+     */
+    void SetDeliveryCallback(reliability::DeliveryCallback callback);
+
+    /**
+     * @brief Inbound data callback carrying message id and hop count
+     */
+    using DataReceivedExCallback =
+        std::function<void(AddressType source, reliability::MessageId id,
+                           uint8_t hops, const std::vector<uint8_t>& data)>;
+
+    /**
+     * @brief Register an inbound callback that also reports id and hop count
+     *
+     * The legacy SetDataReceivedCallback continues to work; both fire.
+     *
+     * @param callback Callback invoked on application delivery
+     */
+    void SetDataReceivedExCallback(DataReceivedExCallback callback);
+
+    /**
+     * @brief Advance reliable-delivery retransmission timers
+     *
+     * Called from the protocol task's periodic tick; retransmits or fails out
+     * expired entries.
+     */
+    void ProcessReliableTimers();
+
+    /**
+     * @brief Number of reliable messages currently awaiting acknowledgement
+     *
+     * @return size_t Pending reliable-delivery entries
+     */
+    size_t GetReliablePendingCount() const { return reliable_.PendingCount(); }
 
     // Broadcast message methods
 
@@ -599,6 +675,87 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result SendBroadcast(std::span<const uint8_t> data);
+
+    // Group (multicast) methods
+
+    /**
+     * @brief Join a logical group (local membership only)
+     *
+     * @param group Group address (must satisfy IsGroupAddress)
+     * @return Result Success, or kInvalidArgument / kBufferFull
+     */
+    Result JoinGroup(AddressType group);
+
+    /**
+     * @brief Leave a logical group
+     *
+     * @param group Group address
+     * @return Result Success or kInvalidArgument
+     */
+    Result LeaveGroup(AddressType group);
+
+    /**
+     * @brief Whether this node is a member of the given group
+     *
+     * @param group Group address
+     * @return bool True if a member
+     */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /**
+     * @brief Get the set of groups this node belongs to
+     *
+     * @return std::vector<AddressType> Member groups
+     */
+    std::vector<AddressType> GetGroups() const;
+
+    /**
+     * @brief Send data to a group via membership-gated flooding
+     *
+     * @param group Destination group address
+     * @param data User data payload
+     * @return Result Success or error
+     */
+    Result SendGroup(AddressType group, std::span<const uint8_t> data);
+
+    /**
+     * @brief Send data to a group and collect per-recipient acknowledgements
+     *
+     * Floods the group like SendGroup, but requests an acknowledgement from each
+     * member. The delivery callback fires Delivered once per distinct responder,
+     * then GroupWindowClosed with the responder count when window_ms elapses.
+     *
+     * @param group Destination group address
+     * @param data User data payload
+     * @param max_retries Reserved for whole-group rebroadcast (currently unused)
+     * @param window_ms Acknowledgement-collection window duration
+     * @return reliability::MessageId Assigned id, or {0,0} if the send failed
+     */
+    reliability::MessageId SendGroupReliable(AddressType group,
+                                             std::span<const uint8_t> data,
+                                             uint8_t max_retries,
+                                             uint32_t window_ms);
+
+    /**
+     * @brief Process a received group message
+     *
+     * Relays the message (subject to TTL) and delivers it to the application
+     * layer only when this node is a member of the destination group.
+     *
+     * @param message Group message to process
+     * @param reception_timestamp When the message was received
+     * @return Result Success or error
+     */
+    Result ProcessGroupMessage(const BaseMessage& message,
+                               uint32_t reception_timestamp);
+
+    /**
+     * @brief Forward a group message with decremented TTL
+     *
+     * @param original The original group message to forward
+     * @return Result Success or error
+     */
+    Result ForwardGroupMessage(const GroupMessage& original);
 
     // Multi-hop synchronization beacon processing
 
@@ -1285,6 +1442,69 @@ class NetworkService : public INetworkService {
     // Slot table dirty flag — set when any input to UpdateSlotTable() changes.
     // Only read/written on the protocol task, no synchronization needed.
     bool slot_table_dirty_ = true;
+
+    // Reliable delivery
+    reliability::ReliableDelivery reliable_;
+    reliability::DeliveryCallback delivery_callback_;
+    DataReceivedExCallback data_received_ex_callback_;
+
+    /// Deliver a received payload to both the legacy and extended callbacks.
+    void DeliverToApp(AddressType source, uint8_t seq, uint8_t hops,
+                      std::span<const uint8_t> payload);
+
+    /// Estimate hops travelled from a message's remaining TTL.
+    uint8_t HopsFromTtl(uint8_t remaining_ttl) const;
+
+    /// Shadow table mapping an in-flight reliable seq to its destination, so the
+    /// send_attempt closure can rebuild the message (the component is
+    /// destination-agnostic). Sized to the component's pending capacity.
+    struct ReliableDest {
+        bool valid = false;
+        uint8_t seq = 0;
+        AddressType dest = 0;
+    };
+
+    std::array<ReliableDest, reliability::ReliableDelivery::kMaxPending>
+        reliable_dest_{};
+
+    /// Build the host closures bound to this service for the reliable component.
+    reliability::Host BuildReliableHost();
+
+    /// Transmit one attempt of a tracked reliable message (send_attempt body).
+    Result SendReliableAttempt(const reliability::MessageId& id,
+                               std::span<const uint8_t> payload);
+
+    /// Translate a component outcome into the public delivery callback.
+    void OnReliableOutcome(const reliability::DeliveryResult& result);
+
+    /// Enqueue an acknowledgement back toward the original sender.
+    void EnqueueAck(AddressType dest, uint8_t acked_seq, bool was_group,
+                    uint32_t echo_ts);
+
+    /// Estimate a retransmit timeout from hop count and superframe duration.
+    uint32_t ComputeReliableTimeout(AddressType dest) const;
+
+    AddressType LookupReliableDest(uint8_t seq) const;
+    void RecordReliableDest(uint8_t seq, AddressType dest);
+    void ClearReliableDest(uint8_t seq);
+
+    // Group (multicast) membership — fixed-capacity, local-only state
+    static constexpr size_t kMaxGroups = 8;
+    std::array<AddressType, kMaxGroups> groups_{};
+    uint8_t group_count_ = 0;
+
+    // Open acknowledgement-collection windows for reliable group sends
+    struct GroupWindow {
+        bool valid = false;
+        uint8_t seq = 0;
+        uint32_t deadline_ms = 0;
+    };
+
+    std::array<GroupWindow, reliability::ReliableDelivery::kMaxPending>
+        group_windows_{};
+
+    /// Close any acknowledgement-collection windows whose deadline has passed.
+    void CloseExpiredGroupWindows();
 
     // Thread safety
     mutable std::mutex network_mutex_;
