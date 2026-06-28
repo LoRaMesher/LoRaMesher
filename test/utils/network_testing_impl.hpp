@@ -570,6 +570,10 @@ class VirtualNetwork {
         std::map<uint32_t, bool> active_links;
         std::map<uint32_t, uint32_t> link_delays;
         std::map<uint32_t, float> link_loss_rates;
+        /// Per-destination transmit counter driving the deterministic
+        /// error-diffusion drop pattern. Owned by this (source) node's TX
+        /// thread, so it needs no synchronization.
+        std::map<uint32_t, uint32_t> link_tx_counts;
         RadioConfig radio_config;
     };
 
@@ -617,8 +621,6 @@ class VirtualNetwork {
     uint32_t current_time_;
     float packet_loss_rate_;
     std::mt19937 rng_;
-    std::mt19937 link_loss_rng_{
-        42};  ///< Fixed seed for deterministic per-link loss
     std::atomic<uint32_t> dropped_message_count_{0};
     std::map<uint32_t, uint32_t>
         dropped_by_dest_;  ///< Drops per destination (radio not receiving)
@@ -650,6 +652,13 @@ class VirtualNetwork {
 
     /**
      * @brief Check if packet should be dropped based on per-link loss rate
+     *
+     * Deterministic error-diffusion: for loss rate r, drops a packet whenever
+     * the running drop quota floor(n*r) crosses the next integer, so the
+     * long-run drop fraction is exactly r with an evenly spaced pattern. The
+     * per-link counter is owned by the source node's transmit thread, so the
+     * decision is independent of thread scheduling and free of the shared-RNG
+     * data race the previous probabilistic implementation had.
      */
     bool ShouldDropPacketForLink(uint32_t from_addr, uint32_t to_addr) {
         auto it = nodes_.find(from_addr);
@@ -661,8 +670,10 @@ class VirtualNetwork {
             return false;
         if (loss_it->second >= 1.0f)
             return true;
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-        return dist(link_loss_rng_) < loss_it->second;
+        uint32_t n = ++it->second.link_tx_counts[to_addr];
+        double r = loss_it->second;
+        return static_cast<uint64_t>(n * r) >
+               static_cast<uint64_t>((n - 1) * r);
     }
 
     /**
