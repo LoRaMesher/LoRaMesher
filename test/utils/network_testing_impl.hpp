@@ -653,12 +653,15 @@ class VirtualNetwork {
     /**
      * @brief Check if packet should be dropped based on per-link loss rate
      *
-     * Deterministic error-diffusion: for loss rate r, drops a packet whenever
-     * the running drop quota floor(n*r) crosses the next integer, so the
-     * long-run drop fraction is exactly r with an evenly spaced pattern. The
-     * per-link counter is owned by the source node's transmit thread, so the
-     * decision is independent of thread scheduling and free of the shared-RNG
-     * data race the previous probabilistic implementation had.
+     * Deterministic but decorrelated drop decision: the per-(link, packet
+     * index) tuple is avalanche-hashed to a pseudo-random value and compared
+     * against the loss rate. This keeps the long-run fraction at r while
+     * avoiding a regular pattern that would resonate with periodic traffic — a
+     * fixed-phase drop sequence can otherwise always coincide with a node's
+     * once-per-superframe routing broadcast, starving a neighbour of route
+     * updates. The per-link counter is owned by the source node's transmit
+     * thread, so the decision is independent of thread scheduling and free of
+     * the shared-RNG data race the previous probabilistic implementation had.
      */
     bool ShouldDropPacketForLink(uint32_t from_addr, uint32_t to_addr) {
         auto it = nodes_.find(from_addr);
@@ -670,10 +673,14 @@ class VirtualNetwork {
             return false;
         if (loss_it->second >= 1.0f)
             return true;
-        uint32_t n = ++it->second.link_tx_counts[to_addr];
-        double r = loss_it->second;
-        return static_cast<uint64_t>(n * r) >
-               static_cast<uint64_t>((n - 1) * r);
+        uint32_t n = it->second.link_tx_counts[to_addr]++;
+        uint32_t h = from_addr * 0x9E3779B1u ^ (to_addr * 0x85EBCA77u) ^
+                     (n * 0xC2B2AE3Du);
+        h ^= h >> 15;
+        h *= 0x2545F491u;
+        h ^= h >> 13;
+        return (h & 0xFFFFFFu) <
+               static_cast<uint32_t>(loss_it->second * 16777216.0f);
     }
 
     /**

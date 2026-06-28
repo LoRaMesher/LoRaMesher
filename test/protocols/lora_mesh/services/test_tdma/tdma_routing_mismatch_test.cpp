@@ -216,14 +216,26 @@ TEST_F(TDMARoutingMismatchTests, StaleRouteThroughUnidirectionalNeighbor) {
     // cannot send unicast data to Broadcaster.
     SetDirectionalLink(edge1, broadcaster, false);
 
-    // With proactive degradation in FindNextHop: the first DATA attempt
-    // to Broadcaster fails TDMA check → route quality degraded to 1 →
-    // entries loop from NM overwrites on next superframe. Fast convergence.
-    bool route_switched =
-        AdvanceTime(superframe_ms * 15, superframe_ms * 15, step_ms, 0, [&]() {
-            AddressType nh = GetNextHop(edge1, target.address);
-            return nh != broadcaster.address && nh != 0;
-        });
+    // A node actively using the route keeps sending data, which drives
+    // proactive TDMA degradation: each DATA attempt to the (now unreachable)
+    // Broadcaster fails the next-hop TDMA check and degrades that route, so the
+    // entries loop from NM can win without waiting for the full reception-window
+    // drain. Send one probe per superframe and stop as soon as the route moves.
+    bool route_switched = false;
+    int switch_superframe = -1;
+    for (int sf = 0; sf < 20 && !route_switched; sf++) {
+        std::vector<uint8_t> probe = {0xCC, static_cast<uint8_t>(sf)};
+        SendMessage(edge1, target, probe);
+        route_switched =
+            AdvanceTime(superframe_ms, superframe_ms, step_ms, 0, [&]() {
+                AddressType cur = GetNextHop(edge1, target.address);
+                return cur != broadcaster.address && cur != 0;
+            });
+        if (route_switched)
+            switch_superframe = sf;
+    }
+    std::cout << "Route switched at superframe " << switch_superframe
+              << " (of 20 budget)" << std::endl;
 
     std::cout << "=== After unidirectional detection ===" << std::endl;
     AddressType nh = GetNextHop(edge1, target.address);
