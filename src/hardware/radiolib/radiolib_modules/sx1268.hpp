@@ -5,153 +5,27 @@
 
 #ifdef LORAMESHER_BUILD_ARDUINO
 
-#include <memory>
-
-#include "RadioLib.h"
-
-#include "types/radio/radio.hpp"
+#include "radiolib_module_base.hpp"
 
 namespace loramesher {
 namespace radio {
 
 /**
- * @brief Implementation of IRadio interface for SX1268 using RadioLib
+ * @brief IRadio implementation for the Semtech SX1268 (SX126x family)
  *
- * This class provides a concrete implementation of the IRadio interface
- * specifically for the SX1268 radio module using the RadioLib library.
- * The SX1268 is part of the SX126x family featuring lower power consumption
- * and up to +22 dBm TX power.
+ * Functionally identical control flow to the SX1262; differs only in the
+ * RadioLib driver type and recommended current-limit profile. All behavior
+ * lives in RadioLibSx126xModule / RadioLibModuleBase.
  *
- * @note This implementation is designed for use with RadioLib and requires
- * proper SPI configuration. The SX1268 requires a BUSY pin in addition to
- * CS, IRQ (DIO1), and RESET pins.
- *
- * @see IRadio
- * @see RadioLib::SX1268
+ * @see RadioLibModuleBase
  */
-class LoraMesherSX1268 : public IRadio {
+class LoraMesherSX1268 final : public RadioLibSx126xModule<SX1268> {
    public:
-    /**
-     * @brief Construct a new LoraMesher SX1268 radio instance
-     *
-     * @param cs_pin SPI Chip Select pin number
-     * @param irq_pin Interrupt Request pin number (DIO1)
-     * @param reset_pin Reset pin number
-     * @param busy_pin Busy state pin number (required for SX1268)
-     * @param spi SPI bus instance to use for communication
-     */
     LoraMesherSX1268(int8_t cs_pin, int8_t irq_pin, int8_t reset_pin,
                      int8_t busy_pin, SPIClass& spi)
-        : cs_pin_(cs_pin),
-          irq_pin_(irq_pin),
-          reset_pin_(reset_pin),
-          busy_pin_(busy_pin),
-          spi_(spi) {}
-
-    LoraMesherSX1268(const LoraMesherSX1268&) = delete;
-    LoraMesherSX1268& operator=(const LoraMesherSX1268&) = delete;
-    LoraMesherSX1268(LoraMesherSX1268&&) = default;
-    LoraMesherSX1268& operator=(LoraMesherSX1268&&) = delete;
-    ~LoraMesherSX1268() override = default;
-
-    Result Begin(const RadioConfig& config) override;
-    Result Send(const uint8_t* data, size_t len) override;
-    Result StartReceive() override;
-    Result Sleep() override;
-    Result Standby() override;
-    Result setFrequency(float frequency) override;
-    Result setSpreadingFactor(uint8_t sf) override;
-    Result setBandwidth(float bandwidth) override;
-    Result setCodingRate(uint8_t coding_rate) override;
-    Result setPower(int8_t power) override;
-    Result setSyncWord(uint8_t sync_word) override;
-    Result setCRC(bool enable) override;
-    Result setPreambleLength(uint16_t length) override;
-    Result setActionReceive(void (*callback)(void)) override;
-    Result ClearActionReceive() override;
-    float getRSSI() override;
-    float getSNR() override;
-    uint8_t getPacketLength() override;
-    uint32_t getTimeOnAir(uint8_t length) override;
-    Result readData(uint8_t* data, size_t len) override;
-    Result setCurrentLimit(float current_limit_ma) override;
-
-    // Not supported functions
-
-    Result Configure(const RadioConfig& config) override {
-        (void)config;
-        throw std::runtime_error("Configure not supported in LoraMesherSX1268");
-    }
-
-    Result setActionReceive(
-        std::function<void(std::unique_ptr<RadioEvent>)> callback) {
-        (void)callback;
-        throw std::runtime_error(
-            "setActionReceive not supported in LoraMesherSX1268");
-    }
-
-    float getLastPacketRSSI() override {
-        throw std::runtime_error(
-            "getLastPacketRSSI not supported in LoraMesherSX1268");
-    }
-
-    float getLastPacketSNR() override {
-        throw std::runtime_error(
-            "getLastPacketSNR not supported in LoraMesherSX1268");
-    }
-
-    bool IsTransmitting() override {
-        throw std::runtime_error(
-            "IsTransmitting not supported in LoraMesherSX1268");
-    }
-
-    float getFrequency() override {
-        throw std::runtime_error(
-            "getFrequency not supported in LoraMesherSX1268");
-    }
-
-    uint8_t getSpreadingFactor() override {
-        throw std::runtime_error(
-            "getSpreadingFactor not supported in LoraMesherSX1268");
-    }
-
-    float getBandwidth() override {
-        throw std::runtime_error(
-            "getBandwidth not supported in LoraMesherSX1268");
-    }
-
-    uint8_t getCodingRate() override {
-        throw std::runtime_error(
-            "getCodingRate not supported in LoraMesherSX1268");
-    }
-
-    uint8_t getPower() override {
-        throw std::runtime_error("getPower not supported in LoraMesherSX1268");
-    }
-
-    Result setState(RadioState state) override {
-        (void)state;
-        throw std::runtime_error("setState not supported in LoraMesherSX1268");
-    }
-
-    RadioState getState() override {
-        throw std::runtime_error("getState not supported in LoraMesherSX1268");
-    }
-
-   private:
-    Result InitializeHardware();
-
-    const int8_t cs_pin_;
-    const int8_t irq_pin_;
-    const int8_t reset_pin_;
-    const int8_t busy_pin_;
-    SPIClass& spi_;  ///< SPI bus instance
-
-    std::unique_ptr<Module> hal_module_;
-    std::unique_ptr<SX1268> radio_module_;
-
-    bool initialized_ = false;
-    bool auto_current_limit_ = true;
+        : RadioLibSx126xModule<SX1268>(cs_pin, irq_pin, reset_pin, busy_pin,
+                                       spi, RadioType::kSx1268,
+                                       "LoraMesherSX1268") {}
 };
 
 }  // namespace radio
