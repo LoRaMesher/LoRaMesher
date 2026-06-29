@@ -15,6 +15,7 @@ source (`wc`/`grep`/`diff`).
 | [04-hardware-radio-modules.md](04-hardware-radio-modules.md) | The verified duplicate radio drivers and the template-base design |
 | [05-memory-model.md](05-memory-model.md) | End-to-end per-message RAM trace and the copy-chain elimination |
 | [06-refactor-roadmap.md](06-refactor-roadmap.md) | The sequenced, test-first execution plan with per-phase gates |
+| [07-decisions-and-extraction-spec.md](07-decisions-and-extraction-spec.md) | Log of every non-trivial decision made + the vetted, ready-to-execute spec for the remaining extractions |
 
 ## TL;DR
 
