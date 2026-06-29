@@ -127,6 +127,123 @@ void ReliableMessaging::ClearReliableDest(uint8_t seq) {
     }
 }
 
+// --- Group send / receive ---
+
+Result ReliableMessaging::SendGroup(AddressType group,
+                                    std::span<const uint8_t> data) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Destination is not a group address");
+    }
+
+    if (!host_.in_operational_state()) {
+        LOG_WARNING("Cannot send group data in current state");
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot send group data outside normal operation");
+    }
+
+    if (data.size() + BaseHeader::Size() + GroupMessage::kGroupFieldsSize >
+        host_.max_packet_size()) {
+        LOG_WARNING("Group payload %zu B exceeds MTU", data.size());
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Group payload exceeds max packet size");
+    }
+
+    uint8_t seq = host_.next_seq();
+    uint8_t ttl =
+        (host_.max_hops() > 0)
+            ? static_cast<uint8_t>(std::min(2u * host_.max_hops(), 255u))
+            : kDefaultTTL;
+
+    host_.record_in_cache(host_.node_address, seq);
+
+    auto group_msg = GroupMessage::Create(group, host_.node_address, ttl,
+                                          /*flags=*/0, seq, data);
+    if (!group_msg) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create group message");
+    }
+
+    LOG_INFO("Sending GROUP to 0x%04X (ttl=%u, seq=%u, payload_size=%zu)",
+             group, ttl, seq, data.size());
+
+    auto base_msg = std::make_unique<BaseMessage>(group_msg->ToBaseMessage());
+    return host_.enqueue(SlotType::TX, std::move(base_msg));
+}
+
+Result ReliableMessaging::ProcessGroupMessage(
+    const BaseMessage& message, uint32_t /* reception_timestamp */) {
+    auto group_msg_opt = GroupMessage::CreateFromBaseMessage(message);
+    if (!group_msg_opt) {
+        LOG_ERROR("Failed to deserialize group message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize group message");
+    }
+
+    const GroupMessage& group_msg = *group_msg_opt;
+    AddressType source = group_msg.GetSource();
+    AddressType group = group_msg.GetGroup();
+    uint8_t seq_num = group_msg.GetSeqNum();
+    uint8_t ttl = group_msg.GetTTL();
+
+    // Ignore our own group messages heard back
+    if (source == host_.node_address) {
+        return Result::Success();
+    }
+
+    // De-duplication prevents flood loops and duplicate delivery
+    if (host_.is_duplicate(source, seq_num)) {
+        LOG_DEBUG("Dropping duplicate GROUP from 0x%04X seq=%u", source,
+                  seq_num);
+        return Result::Success();
+    }
+
+    host_.record_in_cache(source, seq_num);
+
+    const bool member = IsMemberOfGroup(group);
+    std::span<const uint8_t> payload = group_msg.GetPayload();
+
+    if (group_msg.RequestAcks()) {
+        // The reliable group framing prefixes a 4-byte send-timestamp.
+        uint32_t echo_ts = 0;
+        if (payload.size() >= reliability::kReliableTimestampSize) {
+            utils::ByteDeserializer deserializer(payload);
+            auto ts = deserializer.ReadUint32();
+            if (ts) {
+                echo_ts = *ts;
+            }
+            payload = payload.subspan(reliability::kReliableTimestampSize);
+        }
+        if (member) {
+            EnqueueAck(source, seq_num, /*was_group=*/true, echo_ts);
+        }
+    }
+
+    if (member) {
+        LOG_INFO("GROUP 0x%04X delivered from 0x%04X (seq=%u)", group, source,
+                 seq_num);
+        host_.deliver_to_app(source, seq_num, ttl, payload);
+    }
+
+    // Relay the flood regardless of local membership
+    if (ttl > 1) {
+        return ForwardGroupMessage(group_msg);
+    }
+
+    return Result::Success();
+}
+
+Result ReliableMessaging::ForwardGroupMessage(const GroupMessage& original) {
+    auto forwarded = GroupMessage::CreateForwarded(original);
+    if (!forwarded) {
+        LOG_WARNING("GROUP TTL expired during forwarding, dropping");
+        return Result::Success();
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
+    return host_.enqueue(SlotType::TX, std::move(base_msg));
+}
+
 // --- Reliable unicast/group delivery ---
 
 uint32_t ReliableMessaging::ComputeReliableTimeout(AddressType dest) const {

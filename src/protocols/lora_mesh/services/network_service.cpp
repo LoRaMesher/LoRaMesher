@@ -92,6 +92,14 @@ NetworkService::NetworkService(
     reliable_host.record_in_cache = [this](AddressType src, uint8_t seq) {
         AddToMessageCache(src, seq);
     };
+    reliable_host.is_duplicate = [this](AddressType src, uint8_t seq) {
+        return IsMessageDuplicate(src, seq);
+    };
+    reliable_host.deliver_to_app = [this](AddressType src, uint8_t seq,
+                                          uint8_t ttl,
+                                          std::span<const uint8_t> payload) {
+        DeliverToApp(src, seq, HopsFromTtl(ttl), payload);
+    };
     reliable_host.in_operational_state = [this]() {
         return state_ == ProtocolState::NORMAL_OPERATION ||
                state_ == ProtocolState::NETWORK_MANAGER;
@@ -679,7 +687,8 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
             return ProcessBroadcastMessage(message, reception_timestamp);
 
         case MessageType::DATA_GROUP:
-            return ProcessGroupMessage(message, reception_timestamp);
+            return reliable_messaging_->ProcessGroupMessage(
+                message, reception_timestamp);
 
         default:
             LOG_WARNING("Unknown message type: %d",
@@ -1977,46 +1986,7 @@ std::vector<AddressType> NetworkService::GetGroups() const {
 
 Result NetworkService::SendGroup(AddressType group,
                                  std::span<const uint8_t> data) {
-    if (!IsGroupAddress(group)) {
-        return Result(LoraMesherErrorCode::kInvalidArgument,
-                      "Destination is not a group address");
-    }
-
-    if (state_ != ProtocolState::NORMAL_OPERATION &&
-        state_ != ProtocolState::NETWORK_MANAGER) {
-        LOG_WARNING("Cannot send group data in state %d",
-                    static_cast<int>(state_));
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "Cannot send group data outside normal operation");
-    }
-
-    if (data.size() + BaseHeader::Size() + GroupMessage::kGroupFieldsSize >
-        config_.max_packet_size) {
-        LOG_WARNING("Group payload %zu B exceeds MTU", data.size());
-        return Result(LoraMesherErrorCode::kInvalidParameter,
-                      "Group payload exceeds max packet size");
-    }
-
-    message_seq_++;
-    uint8_t seq = message_seq_;
-    uint8_t ttl =
-        (config_.max_hops > 0)
-            ? static_cast<uint8_t>(std::min(2u * config_.max_hops, 255u))
-            : kDefaultTTL;
-
-    AddToMessageCache(node_address_, seq);
-
-    auto group_msg = GroupMessage::Create(group, node_address_, ttl,
-                                          /*flags=*/0, seq, data);
-    if (!group_msg) {
-        return Result(LoraMesherErrorCode::kMemoryError,
-                      "Failed to create group message");
-    }
-
-    LOG_INFO("Sending GROUP to 0x%04X (ttl=%u, seq=%u, payload_size=%zu)",
-             group, ttl, seq, data.size());
-
-    return EnqueueForTransmission(SlotAllocation::SlotType::TX, *group_msg);
+    return reliable_messaging_->SendGroup(group, data);
 }
 
 reliability::MessageId NetworkService::SendGroupReliable(
@@ -2024,79 +1994,6 @@ reliability::MessageId NetworkService::SendGroupReliable(
     uint32_t window_ms) {
     return reliable_messaging_->SendGroupReliable(group, data, max_retries,
                                                   window_ms);
-}
-
-Result NetworkService::ProcessGroupMessage(const BaseMessage& message,
-                                           uint32_t /* reception_timestamp */) {
-    auto group_msg_opt = GroupMessage::CreateFromBaseMessage(message);
-    if (!group_msg_opt) {
-        LOG_ERROR("Failed to deserialize group message");
-        return Result(LoraMesherErrorCode::kSerializationError,
-                      "Failed to deserialize group message");
-    }
-
-    const GroupMessage& group_msg = *group_msg_opt;
-    AddressType source = group_msg.GetSource();
-    AddressType group = group_msg.GetGroup();
-    uint8_t seq_num = group_msg.GetSeqNum();
-    uint8_t ttl = group_msg.GetTTL();
-
-    // Ignore our own group messages heard back
-    if (source == node_address_) {
-        return Result::Success();
-    }
-
-    // De-duplication prevents flood loops and duplicate delivery
-    if (IsMessageDuplicate(source, seq_num)) {
-        LOG_DEBUG("Dropping duplicate GROUP from 0x%04X seq=%u", source,
-                  seq_num);
-        return Result::Success();
-    }
-
-    AddToMessageCache(source, seq_num);
-
-    const bool member = IsMemberOfGroup(group);
-    std::span<const uint8_t> payload = group_msg.GetPayload();
-
-    if (group_msg.RequestAcks()) {
-        // The reliable group framing prefixes a 4-byte send-timestamp.
-        uint32_t echo_ts = 0;
-        if (payload.size() >= reliability::kReliableTimestampSize) {
-            utils::ByteDeserializer deserializer(payload);
-            auto ts = deserializer.ReadUint32();
-            if (ts) {
-                echo_ts = *ts;
-            }
-            payload = payload.subspan(reliability::kReliableTimestampSize);
-        }
-        if (member) {
-            reliable_messaging_->EnqueueAck(source, seq_num,
-                                            /*was_group=*/true, echo_ts);
-        }
-    }
-
-    if (member) {
-        LOG_INFO("GROUP 0x%04X delivered from 0x%04X (seq=%u)", group, source,
-                 seq_num);
-        DeliverToApp(source, seq_num, HopsFromTtl(ttl), payload);
-    }
-
-    // Relay the flood regardless of local membership
-    if (ttl > 1) {
-        return ForwardGroupMessage(group_msg);
-    }
-
-    return Result::Success();
-}
-
-Result NetworkService::ForwardGroupMessage(const GroupMessage& original) {
-    auto forwarded = GroupMessage::CreateForwarded(original);
-    if (!forwarded) {
-        LOG_WARNING("GROUP TTL expired during forwarding, dropping");
-        return Result::Success();
-    }
-
-    return EnqueueForTransmission(SlotAllocation::SlotType::TX, *forwarded);
 }
 
 // Broadcast message implementations

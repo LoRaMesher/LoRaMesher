@@ -739,27 +739,6 @@ class NetworkService : public INetworkService {
                                              uint8_t max_retries,
                                              uint32_t window_ms);
 
-    /**
-     * @brief Process a received group message
-     *
-     * Relays the message (subject to TTL) and delivers it to the application
-     * layer only when this node is a member of the destination group.
-     *
-     * @param message Group message to process
-     * @param reception_timestamp When the message was received
-     * @return Result Success or error
-     */
-    Result ProcessGroupMessage(const BaseMessage& message,
-                               uint32_t reception_timestamp);
-
-    /**
-     * @brief Forward a group message with decremented TTL
-     *
-     * @param original The original group message to forward
-     * @return Result Success or error
-     */
-    Result ForwardGroupMessage(const GroupMessage& original);
-
     // Multi-hop synchronization beacon processing
 
     /**

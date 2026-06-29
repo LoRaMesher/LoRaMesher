@@ -29,6 +29,7 @@
 #include "types/messages/base_header.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/messages/loramesher/data_message.hpp"
+#include "types/messages/loramesher/group_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -64,6 +65,13 @@ class ReliableMessaging {
         std::function<uint8_t()> next_seq;
         /// Record (source, seq) in the de-duplication cache.
         std::function<void(AddressType, uint8_t)> record_in_cache;
+        /// True if (source, seq) was already seen (de-duplication).
+        std::function<bool(AddressType, uint8_t)> is_duplicate;
+        /// Deliver a received payload to the app. The component passes the
+        /// message's remaining TTL; the coordinator converts it to a hop count.
+        std::function<void(AddressType src, uint8_t seq, uint8_t ttl,
+                           std::span<const uint8_t> payload)>
+            deliver_to_app;
         /// True when the protocol is in NORMAL_OPERATION or NETWORK_MANAGER.
         std::function<bool()> in_operational_state;
         std::function<uint8_t()> max_hops;  ///< Configured max hop count
@@ -87,6 +95,15 @@ class ReliableMessaging {
     AddressType LookupReliableDest(uint8_t seq) const;
     void RecordReliableDest(uint8_t seq, AddressType dest);
     void ClearReliableDest(uint8_t seq);
+
+    // --- Group send / receive ---
+
+    /// Send a best-effort (non-reliable) group multicast message.
+    Result SendGroup(AddressType group, std::span<const uint8_t> data);
+
+    /// Process an inbound group message: dedup, deliver to members, relay flood.
+    Result ProcessGroupMessage(const BaseMessage& message,
+                               uint32_t reception_timestamp);
 
     // --- Reliable unicast/group delivery ---
 
@@ -122,6 +139,7 @@ class ReliableMessaging {
     size_t GetReliablePendingCount() const;
 
    private:
+    Result ForwardGroupMessage(const GroupMessage& original);
     Result SendReliableAttempt(const reliability::MessageId& id,
                                std::span<const uint8_t> payload);
     void OnReliableOutcome(const reliability::DeliveryResult& result);
