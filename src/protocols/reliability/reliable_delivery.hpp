@@ -39,7 +39,9 @@ struct MessageId {
         return (static_cast<uint32_t>(source) << 8) | seq;
     }
 
-    bool operator==(const MessageId& other) const = default;
+    bool operator==(const MessageId& other) const {
+        return source == other.source && seq == other.seq;
+    }
 };
 
 /// Terminal result of a tracked message.
