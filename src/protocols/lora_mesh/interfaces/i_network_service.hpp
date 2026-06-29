@@ -11,6 +11,7 @@
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
+#include "types/protocols/lora_mesh/protocol_state.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -25,16 +26,11 @@ class INetworkService {
 
     /**
      * @brief Protocol state enumeration
+     *
+     * Defined in types/protocols/lora_mesh/protocol_state.hpp; re-exported here
+     * so existing INetworkService::ProtocolState references keep resolving.
      */
-    enum class ProtocolState {
-        INITIALIZING,      ///< Protocol is initializing
-        DISCOVERY,         ///< Looking for existing network
-        JOINING,           ///< Attempting to join network
-        NORMAL_OPERATION,  ///< Normal network operation
-        NETWORK_MANAGER,   ///< Acting as network manager
-        FAULT_RECOVERY,    ///< Attempting to recover from fault
-        NM_ELECTION        ///< Running for NM role after fault recovery backoff
-    };
+    using ProtocolState = types::protocols::lora_mesh::ProtocolState;
 
     /**
      * @brief Callback for route update notifications

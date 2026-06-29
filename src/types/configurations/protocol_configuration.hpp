@@ -8,10 +8,10 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include "protocols/lora_mesh/services/subslot_scheduler.hpp"
 #include "types/configurations/radio_configuration.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/power/power_types.hpp"
+#include "types/protocols/lora_mesh/subslot_config.hpp"
 #include "types/protocols/protocol.hpp"
 
 namespace loramesher {
@@ -557,8 +557,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      *
      * @return const SubslotConfig& Sync beacon subslot configuration
      */
-    const protocols::lora_mesh::SubslotConfig& getSyncBeaconSubslotConfig()
-        const {
+    const types::protocols::lora_mesh::SubslotConfig&
+    getSyncBeaconSubslotConfig() const {
         return sync_beacon_subslot_config_;
     }
 
@@ -568,7 +568,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param config Subslot configuration
      */
     void setSyncBeaconSubslotConfig(
-        const protocols::lora_mesh::SubslotConfig& config) {
+        const types::protocols::lora_mesh::SubslotConfig& config) {
         sync_beacon_subslot_config_ = config;
     }
 
@@ -577,8 +577,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      *
      * @return const SubslotConfig& Discovery subslot configuration
      */
-    const protocols::lora_mesh::SubslotConfig& getDiscoverySubslotConfig()
-        const {
+    const types::protocols::lora_mesh::SubslotConfig&
+    getDiscoverySubslotConfig() const {
         return discovery_subslot_config_;
     }
 
@@ -588,7 +588,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param config Subslot configuration
      */
     void setDiscoverySubslotConfig(
-        const protocols::lora_mesh::SubslotConfig& config) {
+        const types::protocols::lora_mesh::SubslotConfig& config) {
         discovery_subslot_config_ = config;
     }
 
@@ -684,13 +684,14 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     /// A deterministic per-superframe hash of the address reshuffles same-hop
     /// forwarders each superframe, so two forwarders whose addresses are
     /// congruent modulo the subslot count do not collide every superframe.
-    protocols::lora_mesh::SubslotConfig sync_beacon_subslot_config_{
+    types::protocols::lora_mesh::SubslotConfig sync_beacon_subslot_config_{
         5, guard_time_ms_,
-        protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH};
+        types::protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH};
 
     /// Subslot config for discovery RX/TX slots (RANDOM for Slotted ALOHA)
-    protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
-        5, guard_time_ms_, protocols::lora_mesh::SubslotAssignment::RANDOM};
+    types::protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
+        5, guard_time_ms_,
+        types::protocols::lora_mesh::SubslotAssignment::RANDOM};
 };
 
 /**
