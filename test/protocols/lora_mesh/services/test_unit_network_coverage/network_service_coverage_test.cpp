@@ -272,8 +272,7 @@ TEST_F(NetworkServiceCoverageTest, ForwardSyncBeaconAtMaxHopsReturnsError) {
 }
 
 // ============================================================================
-// LinkQualityMetrics::CalculateCombinedQuality — lines 851-863
-// Exercise via CalculateLinkQuality (public) which calls routing table
+// CalculateLinkQuality (public) — delegates to the routing table
 // ============================================================================
 
 TEST_F(NetworkServiceCoverageTest,

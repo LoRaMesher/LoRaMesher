@@ -1092,30 +1092,6 @@ class NetworkService : public INetworkService {
     bool UpdateNetworkTopology(bool notify_superframe = true);
 
     /**
-     * @brief Advanced link quality metrics structure
-     */
-    struct LinkQualityMetrics {
-        uint8_t reception_ratio;  ///< Message reception ratio (0-255)
-        uint8_t signal_strength;  ///< Signal strength (0-255)
-        uint8_t stability;        ///< Link stability metric (0-255)
-
-        /**
-         * @brief Calculate combined quality from all metrics
-         * 
-         * @return uint8_t Combined quality (0-255)
-         */
-        uint8_t CalculateCombinedQuality() const;
-    };
-
-    /**
-     * @brief Calculate comprehensive link quality using multiple metrics
-     * 
-     * @param node_address Address of node to evaluate
-     * @return uint8_t Comprehensive link quality (0-255)
-     */
-    uint8_t CalculateComprehensiveLinkQuality(AddressType node_address);
-
-    /**
      * @brief Calculate Time-on-Air for a message
      * 
      * @param message_size Size of the message in bytes

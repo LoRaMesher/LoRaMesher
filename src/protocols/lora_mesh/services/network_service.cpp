@@ -1115,26 +1115,6 @@ bool NetworkService::UpdateNetworkTopology(bool /* notify_superframe */) {
     return true;
 }
 
-uint8_t NetworkService::LinkQualityMetrics::CalculateCombinedQuality() const {
-    // Weighted average of metrics
-    constexpr uint16_t RECEPTION_WEIGHT = 50;  // 50%
-    constexpr uint16_t SIGNAL_WEIGHT = 30;     // 30%
-    constexpr uint16_t STABILITY_WEIGHT = 20;  // 20%
-
-    uint16_t combined =
-        (reception_ratio * RECEPTION_WEIGHT + signal_strength * SIGNAL_WEIGHT +
-         stability * STABILITY_WEIGHT) /
-        100;
-
-    return static_cast<uint8_t>(std::min(combined, static_cast<uint16_t>(255)));
-}
-
-uint8_t NetworkService::CalculateComprehensiveLinkQuality(
-    AddressType node_address) {
-    // Delegate to routing table for link quality calculation
-    return routing_table_->GetLinkQuality(node_address);
-}
-
 uint32_t NetworkService::CalculateTimeOnAir(uint8_t message_size) const {
     if (!hardware_manager_) {
         // Fallback to rough estimate: 10ms per byte
