@@ -18,6 +18,7 @@
 #include <mutex>
 #include <vector>
 
+#include "protocols/reliability/reliable_delivery.hpp"
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
 
@@ -48,10 +49,31 @@ class ReliableMessaging {
     /// @return the list of groups this node currently belongs to.
     std::vector<AddressType> GetGroups() const;
 
+    /// @return the destination recorded for an in-flight reliable @p seq, or 0.
+    AddressType LookupReliableDest(uint8_t seq) const;
+
+    /// Record the destination for an in-flight reliable @p seq.
+    void RecordReliableDest(uint8_t seq, AddressType dest);
+
+    /// Forget the destination recorded for a completed reliable @p seq.
+    void ClearReliableDest(uint8_t seq);
+
    private:
     static constexpr size_t kMaxGroups = 8;
     std::array<AddressType, kMaxGroups> groups_{};
     uint8_t group_count_ = 0;
+
+    /// Shadow table mapping an in-flight reliable seq to its destination, so the
+    /// send_attempt closure can rebuild the message (the reliability component
+    /// is destination-agnostic). Sized to the component's pending capacity.
+    struct ReliableDest {
+        bool valid = false;
+        uint8_t seq = 0;
+        AddressType dest = 0;
+    };
+
+    std::array<ReliableDest, reliability::ReliableDelivery::kMaxPending>
+        reliable_dest_{};
 
     std::mutex& mutex_;  ///< Coordinator mutex (not owned)
 };

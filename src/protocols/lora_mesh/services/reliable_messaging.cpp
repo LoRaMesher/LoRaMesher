@@ -66,6 +66,34 @@ std::vector<AddressType> ReliableMessaging::GetGroups() const {
                                     groups_.begin() + group_count_);
 }
 
+AddressType ReliableMessaging::LookupReliableDest(uint8_t seq) const {
+    for (const auto& entry : reliable_dest_) {
+        if (entry.valid && entry.seq == seq) {
+            return entry.dest;
+        }
+    }
+    return 0;
+}
+
+void ReliableMessaging::RecordReliableDest(uint8_t seq, AddressType dest) {
+    for (auto& entry : reliable_dest_) {
+        if (!entry.valid) {
+            entry = {true, seq, dest};
+            return;
+        }
+    }
+    LOG_WARNING("Reliable destination table full; seq=%u not recorded", seq);
+}
+
+void ReliableMessaging::ClearReliableDest(uint8_t seq) {
+    for (auto& entry : reliable_dest_) {
+        if (entry.valid && entry.seq == seq) {
+            entry.valid = false;
+            return;
+        }
+    }
+}
+
 }  // namespace lora_mesh
 }  // namespace protocols
 }  // namespace loramesher

@@ -1873,34 +1873,6 @@ reliability::Host NetworkService::BuildReliableHost() {
     return host;
 }
 
-AddressType NetworkService::LookupReliableDest(uint8_t seq) const {
-    for (const auto& entry : reliable_dest_) {
-        if (entry.valid && entry.seq == seq) {
-            return entry.dest;
-        }
-    }
-    return 0;
-}
-
-void NetworkService::RecordReliableDest(uint8_t seq, AddressType dest) {
-    for (auto& entry : reliable_dest_) {
-        if (!entry.valid) {
-            entry = {true, seq, dest};
-            return;
-        }
-    }
-    LOG_WARNING("Reliable destination table full; seq=%u not recorded", seq);
-}
-
-void NetworkService::ClearReliableDest(uint8_t seq) {
-    for (auto& entry : reliable_dest_) {
-        if (entry.valid && entry.seq == seq) {
-            entry.valid = false;
-            return;
-        }
-    }
-}
-
 uint32_t NetworkService::ComputeReliableTimeout(AddressType dest) const {
     uint8_t hops = 1;
     if (routing_table_) {
@@ -1925,7 +1897,7 @@ uint32_t NetworkService::ComputeReliableTimeout(AddressType dest) const {
 
 Result NetworkService::SendReliableAttempt(const reliability::MessageId& id,
                                            std::span<const uint8_t> payload) {
-    AddressType dest = LookupReliableDest(id.seq);
+    AddressType dest = reliable_messaging_->LookupReliableDest(id.seq);
     if (dest == 0) {
         LOG_ERROR("No destination recorded for reliable seq=%u", id.seq);
         return Result(LoraMesherErrorCode::kInvalidState,
@@ -2006,7 +1978,7 @@ reliability::MessageId NetworkService::SendReliable(
 
     // Prevent self-receive if we hear our own message.
     AddToMessageCache(node_address_, seq);
-    RecordReliableDest(seq, destination);
+    reliable_messaging_->RecordReliableDest(seq, destination);
 
     reliability::MessageId id{node_address_, seq};
     reliability::Policy policy;
@@ -2021,7 +1993,7 @@ reliability::MessageId NetworkService::SendReliable(
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable message seq=%u: %s", seq,
                   result.GetErrorMessage().c_str());
-        ClearReliableDest(seq);
+        reliable_messaging_->ClearReliableDest(seq);
         return kInvalidId;
     }
 
@@ -2080,19 +2052,20 @@ void NetworkService::CloseExpiredGroupWindows() {
 
 void NetworkService::OnReliableOutcome(
     const reliability::DeliveryResult& result) {
-    const bool is_group = IsGroupAddress(LookupReliableDest(result.id.seq));
+    const bool is_group =
+        IsGroupAddress(reliable_messaging_->LookupReliableDest(result.id.seq));
 
     switch (result.outcome) {
         case reliability::Outcome::Delivered:
             // A unicast entry is erased on first ACK; a group window stays open
             // until it is explicitly closed, so keep its destination mapping.
             if (!is_group) {
-                ClearReliableDest(result.id.seq);
+                reliable_messaging_->ClearReliableDest(result.id.seq);
             }
             break;
         case reliability::Outcome::Failed:
         case reliability::Outcome::GroupWindowClosed:
-            ClearReliableDest(result.id.seq);
+            reliable_messaging_->ClearReliableDest(result.id.seq);
             break;
     }
 
@@ -2278,7 +2251,7 @@ reliability::MessageId NetworkService::SendGroupReliable(
     AddToMessageCache(node_address_, seq);
     // A group destination tells the send_attempt closure to build a flooded
     // group message (with the request-acks flag) rather than a unicast.
-    RecordReliableDest(seq, group);
+    reliable_messaging_->RecordReliableDest(seq, group);
 
     reliability::MessageId id{node_address_, seq};
     reliability::Policy policy;
@@ -2290,7 +2263,7 @@ reliability::MessageId NetworkService::SendGroupReliable(
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable group seq=%u: %s", seq,
                   result.GetErrorMessage().c_str());
-        ClearReliableDest(seq);
+        reliable_messaging_->ClearReliableDest(seq);
         return kInvalidId;
     }
 

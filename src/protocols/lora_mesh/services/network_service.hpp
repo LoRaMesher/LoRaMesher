@@ -1452,18 +1452,6 @@ class NetworkService : public INetworkService {
     /// Estimate hops travelled from a message's remaining TTL.
     uint8_t HopsFromTtl(uint8_t remaining_ttl) const;
 
-    /// Shadow table mapping an in-flight reliable seq to its destination, so the
-    /// send_attempt closure can rebuild the message (the component is
-    /// destination-agnostic). Sized to the component's pending capacity.
-    struct ReliableDest {
-        bool valid = false;
-        uint8_t seq = 0;
-        AddressType dest = 0;
-    };
-
-    std::array<ReliableDest, reliability::ReliableDelivery::kMaxPending>
-        reliable_dest_{};
-
     /// Build the host closures bound to this service for the reliable component.
     reliability::Host BuildReliableHost();
 
@@ -1480,10 +1468,6 @@ class NetworkService : public INetworkService {
 
     /// Estimate a retransmit timeout from hop count and superframe duration.
     uint32_t ComputeReliableTimeout(AddressType dest) const;
-
-    AddressType LookupReliableDest(uint8_t seq) const;
-    void RecordReliableDest(uint8_t seq, AddressType dest);
-    void ClearReliableDest(uint8_t seq);
 
     /// Group multicast + reliable-delivery glue extracted from this coordinator.
     /// Currently owns local group membership; reliable send/ACK paths to follow.
