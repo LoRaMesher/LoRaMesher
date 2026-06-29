@@ -12,6 +12,7 @@
 #include "types/messages/base_header.hpp"
 #include "types/messages/base_message.hpp"
 #include "utils/byte_operations.h"
+#include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {

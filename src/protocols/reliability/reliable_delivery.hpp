@@ -14,11 +14,11 @@
 #include <array>
 #include <cstdint>
 #include <functional>
-#include <span>
 
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/messages/loramesher/data_header.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {

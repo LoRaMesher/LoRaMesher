@@ -14,11 +14,12 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
-#include <span>
 
 #include "utils/byte_operations.h"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 
