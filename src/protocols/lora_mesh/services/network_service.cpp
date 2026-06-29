@@ -1210,10 +1210,8 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
                       "Failed to create join request message");
     }
 
-    auto base_msg =
-        std::make_unique<BaseMessage>(join_request->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    Result queue_result = EnqueueForTransmission(
+        SlotAllocation::SlotType::DISCOVERY_TX, *join_request);
     if (!queue_result) {
         LOG_ERROR("Failed to queue join request: %s",
                   queue_result.GetErrorMessage().c_str());
@@ -1606,10 +1604,8 @@ Result NetworkService::SendJoinResponse(AddressType dest,
                       "Failed to create join response");
     }
 
-    auto base_msg =
-        std::make_unique<BaseMessage>(join_response->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::DISCOVERY_TX, std::move(base_msg));
+    Result queue_result = EnqueueForTransmission(
+        SlotAllocation::SlotType::DISCOVERY_TX, *join_response);
     if (!queue_result) {
         LOG_ERROR("Failed to queue join response: %s",
                   queue_result.GetErrorMessage().c_str());
@@ -1772,10 +1768,8 @@ Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {
         original_msg.GetDestination(), original_msg.GetSource(), new_next_hop,
         forwarded_msg->GetTTL());
 
-    auto base_msg =
-        std::make_unique<BaseMessage>(forwarded_msg->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    Result queue_result =
+        EnqueueForTransmission(SlotAllocation::SlotType::TX, *forwarded_msg);
     if (!queue_result) {
         LOG_ERROR("Failed to queue forwarded DATA: %s",
                   queue_result.GetErrorMessage().c_str());
@@ -1852,9 +1846,8 @@ Result NetworkService::SendData(AddressType destination,
         "Sending DATA to 0x%04X via 0x%04X (ttl=%u, seq=%u), payload_size=%zu",
         destination, next_hop, ttl, message_seq_, data.size());
 
-    auto base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    Result queue_result =
+        EnqueueForTransmission(SlotAllocation::SlotType::TX, *data_msg);
     if (!queue_result) {
         LOG_ERROR("Failed to queue DATA for 0x%04X: %s", destination,
                   queue_result.GetErrorMessage().c_str());
@@ -2134,9 +2127,8 @@ void NetworkService::EnqueueAck(AddressType dest, uint8_t acked_seq,
         return;
     }
 
-    auto base_msg = std::make_unique<BaseMessage>(ack_msg->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    Result queue_result =
+        EnqueueForTransmission(SlotAllocation::SlotType::TX, *ack_msg);
     if (!queue_result) {
         LOG_ERROR("Failed to queue ACK for 0x%04X: %s", dest,
                   queue_result.GetErrorMessage().c_str());
@@ -2284,9 +2276,7 @@ Result NetworkService::SendGroup(AddressType group,
     LOG_INFO("Sending GROUP to 0x%04X (ttl=%u, seq=%u, payload_size=%zu)",
              group, ttl, seq, data.size());
 
-    auto base_msg = std::make_unique<BaseMessage>(group_msg->ToBaseMessage());
-    return message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    return EnqueueForTransmission(SlotAllocation::SlotType::TX, *group_msg);
 }
 
 reliability::MessageId NetworkService::SendGroupReliable(
@@ -2422,9 +2412,7 @@ Result NetworkService::ForwardGroupMessage(const GroupMessage& original) {
         return Result::Success();
     }
 
-    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
-    return message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    return EnqueueForTransmission(SlotAllocation::SlotType::TX, *forwarded);
 }
 
 // Broadcast message implementations
@@ -2502,9 +2490,8 @@ Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
     LOG_INFO("Sending BROADCAST (ttl=%u, seq=%u), payload_size=%zu", ttl,
              message_seq_, data.size());
 
-    auto base_msg = std::make_unique<BaseMessage>(bcast->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    Result queue_result =
+        EnqueueForTransmission(SlotAllocation::SlotType::TX, *bcast);
     if (!queue_result) {
         LOG_ERROR("Failed to queue BROADCAST: %s",
                   queue_result.GetErrorMessage().c_str());
@@ -2541,9 +2528,8 @@ Result NetworkService::ForwardBroadcastMessage(
               original.GetSource(), original.GetTTL(), forwarded->GetTTL(),
               original.GetSeqNum());
 
-    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::TX, std::move(base_msg));
+    Result queue_result =
+        EnqueueForTransmission(SlotAllocation::SlotType::TX, *forwarded);
     if (!queue_result) {
         LOG_ERROR("Failed to queue forwarded BROADCAST: %s",
                   queue_result.GetErrorMessage().c_str());
@@ -2656,10 +2642,8 @@ Result NetworkService::SendSlotRequest(uint8_t num_slots) {
                       "Failed to create slot request");
     }
 
-    auto base_msg =
-        std::make_unique<BaseMessage>(slot_request->ToBaseMessage());
-    Result queue_result = message_queue_service_->AddMessageToQueue(
-        SlotAllocation::SlotType::CONTROL_TX, std::move(base_msg));
+    Result queue_result = EnqueueForTransmission(
+        SlotAllocation::SlotType::CONTROL_TX, *slot_request);
     if (!queue_result) {
         LOG_ERROR("Failed to queue slot request: %s",
                   queue_result.GetErrorMessage().c_str());

@@ -1297,6 +1297,26 @@ class NetworkService : public INetworkService {
      */
     bool IsTDMANeighbor(AddressType address) const;
 
+    /**
+     * @brief Serialize a typed message into a BaseMessage and enqueue it for TX
+     *
+     * Centralizes the repeated make_unique<BaseMessage>(msg.ToBaseMessage())
+     * plus AddMessageToQueue boilerplate shared by every send/forward path.
+     *
+     * @tparam MessageT Any message type exposing ToBaseMessage()
+     * @param slot_type Transmit slot to enqueue into
+     * @param message Typed message to serialize and send
+     * @return Result of the enqueue operation
+     */
+    template <typename MessageT>
+    Result EnqueueForTransmission(
+        types::protocols::lora_mesh::SlotAllocation::SlotType slot_type,
+        const MessageT& message) {
+        auto base_msg = std::make_unique<BaseMessage>(message.ToBaseMessage());
+        return message_queue_service_->AddMessageToQueue(slot_type,
+                                                         std::move(base_msg));
+    }
+
     // Member variables
     AddressType node_address_;  ///< Local node address
     std::shared_ptr<IMessageQueueService> message_queue_service_;
