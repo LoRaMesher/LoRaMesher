@@ -21,7 +21,14 @@ jobs:
     - name: Build ESP32 Example
       run: |
         cd examples/simple_example
+        # Build the example against THIS checked-out branch, not a pinned
+        # GitHub ref. The first sed points lib_deps at the repo via a local
+        # symlink; the second drops the hard-coded GitHub dependency (which
+        # lives on the indented continuation line and would otherwise be pulled
+        # alongside the symlink, so CI would compile new_loramesher instead of
+        # the code under test).
         sed -i 's|lib_deps =.*|lib_deps = symlink://../../|' platformio.ini
+        sed -i '\|https://github.com/LoRaMesher/LoRaMesher|d' platformio.ini
         pio run -e ttgo-lora32-v1
 
   build:
