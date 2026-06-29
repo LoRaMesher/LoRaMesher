@@ -109,7 +109,17 @@ ReliableMessaging extraction — **ph.3a** (component scaffolding + group member
 **ph.3b** (the `reliable_dest_` shadow table). Both were the closure-free pieces; they prove
 the component wiring (owned `unique_ptr`, coordinator-mutex reference, GLOB-picked-up build).
 
-**Remaining for ReliableMessaging (ph.3c, the closure-wired core):** move `reliable_`
+**ph.3c DONE** (commits b1569ed, cc4b602): the closure-wired core is extracted —
+`ReliableMessaging` now owns the `reliability::ReliableDelivery` machine, ack windows, and the
+send/ACK/group-send logic, driven by a `Host` struct of ~12 closures. Validated by
+`test_unit_network_coverage` (115/116) + all 8 `GroupAckTests`. NetworkService 4713→4361 L.
+What still lives in NetworkService (the group *receive* path, entangled with the dedup cache +
+app-delivery callbacks — an optional follow-up): `SendGroup` (non-reliable), `ProcessGroupMessage`,
+`ForwardGroupMessage`, `DeliverToApp`, `HopsFromTtl`. **The biggest remaining reduction is
+`SlotScheduler` (ph.4).** The validation method is now proven cheap: build the slow suite once
+with `--without-testing`, then filter-run the relevant tests on the prebuilt binary.
+
+(Superseded note) The original ph.3c plan was to move `reliable_`
 (the ReliableDelivery member) + `BuildReliableHost`, `SendReliable`/`SendReliableAttempt`,
 `ProcessAckMessage`/`EnqueueAck`/`OnReliableOutcome`, `ComputeReliableTimeout`, `HopsFromTtl`,
 `DeliverToApp`, the group send/receive (`SendGroup`/`SendGroupReliable`/`ProcessGroupMessage`/
