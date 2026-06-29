@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <vector>
 
@@ -31,11 +32,22 @@ namespace lora_mesh {
  */
 class ReliableMessaging {
    public:
+    /// Routing hop-count to a destination (>= 1; 1 when unknown).
+    using HopsToDestFn = std::function<uint8_t(AddressType dest)>;
+    /// Current superframe duration in milliseconds (0 when unavailable).
+    using SuperframeDurationFn = std::function<uint32_t()>;
+
     /**
      * @param mutex Coordinator mutex guarding shared protocol state; locked by
      *              the public membership operations exactly as before.
+     * @param hops_to_dest Closure returning the routing hop-count to a node.
+     * @param superframe_duration Closure returning the superframe duration (ms).
      */
-    explicit ReliableMessaging(std::mutex& mutex);
+    ReliableMessaging(std::mutex& mutex, HopsToDestFn hops_to_dest,
+                      SuperframeDurationFn superframe_duration);
+
+    /// Estimate a retransmit timeout (ms) from hop count and superframe duration.
+    uint32_t ComputeReliableTimeout(AddressType dest) const;
 
     /// Join a multicast group. @return Success or an error for invalid/full.
     Result JoinGroup(AddressType group);
@@ -76,6 +88,8 @@ class ReliableMessaging {
         reliable_dest_{};
 
     std::mutex& mutex_;  ///< Coordinator mutex (not owned)
+    HopsToDestFn hops_to_dest_;
+    SuperframeDurationFn superframe_duration_;
 };
 
 }  // namespace lora_mesh

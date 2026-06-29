@@ -73,7 +73,23 @@ NetworkService::NetworkService(
     config_.node_address = node_address;
     node_address_ = node_address;
 
-    reliable_messaging_ = std::make_unique<ReliableMessaging>(network_mutex_);
+    reliable_messaging_ = std::make_unique<ReliableMessaging>(
+        network_mutex_,
+        [this](AddressType dest) -> uint8_t {
+            if (routing_table_) {
+                auto it = routing_table_->GetNode(dest);
+                if (it != routing_table_->GetNodes().end() &&
+                    it->routing_entry.hop_count > 0) {
+                    return it->routing_entry.hop_count;
+                }
+            }
+            return 1;
+        },
+        [this]() -> uint32_t {
+            return superframe_service_
+                       ? superframe_service_->GetSuperframeDuration()
+                       : 0;
+        });
 
     // slot_table_ is a fixed-size array; no reserve needed
 }
@@ -1873,28 +1889,6 @@ reliability::Host NetworkService::BuildReliableHost() {
     return host;
 }
 
-uint32_t NetworkService::ComputeReliableTimeout(AddressType dest) const {
-    uint8_t hops = 1;
-    if (routing_table_) {
-        auto it = routing_table_->GetNode(dest);
-        if (it != routing_table_->GetNodes().end() &&
-            it->routing_entry.hop_count > 0) {
-            hops = it->routing_entry.hop_count;
-        }
-    }
-
-    uint32_t superframe_ms =
-        superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
-    if (superframe_ms == 0) {
-        superframe_ms = 1000;
-    }
-
-    // Round trip ≈ 2 hops, plus one superframe of slot-phase guard.
-    uint32_t timeout = (2u * hops + 1u) * superframe_ms;
-    constexpr uint32_t kTimeoutFloorMs = 500;
-    return timeout < kTimeoutFloorMs ? kTimeoutFloorMs : timeout;
-}
-
 Result NetworkService::SendReliableAttempt(const reliability::MessageId& id,
                                            std::span<const uint8_t> payload) {
     AddressType dest = reliable_messaging_->LookupReliableDest(id.seq);
@@ -1982,9 +1976,10 @@ reliability::MessageId NetworkService::SendReliable(
 
     reliability::MessageId id{node_address_, seq};
     reliability::Policy policy;
-    policy.timeout_ms = timeout_override_ms != 0
-                            ? timeout_override_ms
-                            : ComputeReliableTimeout(destination);
+    policy.timeout_ms =
+        timeout_override_ms != 0
+            ? timeout_override_ms
+            : reliable_messaging_->ComputeReliableTimeout(destination);
     policy.max_retries = max_retries;
     policy.collect_multiple = false;
 

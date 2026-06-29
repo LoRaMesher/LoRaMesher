@@ -1466,9 +1466,6 @@ class NetworkService : public INetworkService {
     void EnqueueAck(AddressType dest, uint8_t acked_seq, bool was_group,
                     uint32_t echo_ts);
 
-    /// Estimate a retransmit timeout from hop count and superframe duration.
-    uint32_t ComputeReliableTimeout(AddressType dest) const;
-
     /// Group multicast + reliable-delivery glue extracted from this coordinator.
     /// Currently owns local group membership; reliable send/ACK paths to follow.
     std::unique_ptr<ReliableMessaging> reliable_messaging_;

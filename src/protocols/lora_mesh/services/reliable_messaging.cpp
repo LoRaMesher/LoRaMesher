@@ -11,7 +11,29 @@ namespace loramesher {
 namespace protocols {
 namespace lora_mesh {
 
-ReliableMessaging::ReliableMessaging(std::mutex& mutex) : mutex_(mutex) {}
+ReliableMessaging::ReliableMessaging(std::mutex& mutex,
+                                     HopsToDestFn hops_to_dest,
+                                     SuperframeDurationFn superframe_duration)
+    : mutex_(mutex),
+      hops_to_dest_(std::move(hops_to_dest)),
+      superframe_duration_(std::move(superframe_duration)) {}
+
+uint32_t ReliableMessaging::ComputeReliableTimeout(AddressType dest) const {
+    uint8_t hops = hops_to_dest_ ? hops_to_dest_(dest) : 1;
+    if (hops == 0) {
+        hops = 1;
+    }
+
+    uint32_t superframe_ms = superframe_duration_ ? superframe_duration_() : 0;
+    if (superframe_ms == 0) {
+        superframe_ms = 1000;
+    }
+
+    // Round trip ≈ 2 hops, plus one superframe of slot-phase guard.
+    uint32_t timeout = (2u * hops + 1u) * superframe_ms;
+    constexpr uint32_t kTimeoutFloorMs = 500;
+    return timeout < kTimeoutFloorMs ? kTimeoutFloorMs : timeout;
+}
 
 Result ReliableMessaging::JoinGroup(AddressType group) {
     if (!IsGroupAddress(group)) {
