@@ -104,7 +104,22 @@ owns the election timers/priority and **computes** role changes that the coordin
 ## Part E — Status snapshot (2026-06)
 
 Shipped on `refactor/architecture-review`: WS-0 (docs), WS-1 (radio), WS-2 (layering),
-WS-5 ph.1 (dead code), WS-5 ph.2 (EnqueueForTransmission). Pending: WS-5 ph.3–7 (per this
-spec), WS-3 (message-serialization CRTP), WS-4 (memory copy-chain — partly seeded by
-`EnqueueForTransmission`), WS-6 (interface segregation), and the deferred splits of
-`lora_mesh_protocol.cpp` / `protocol_configuration.hpp`.
+WS-5 ph.1 (dead code), WS-5 ph.2 (`EnqueueForTransmission`), and the first two steps of the
+ReliableMessaging extraction — **ph.3a** (component scaffolding + group membership) and
+**ph.3b** (the `reliable_dest_` shadow table). Both were the closure-free pieces; they prove
+the component wiring (owned `unique_ptr`, coordinator-mutex reference, GLOB-picked-up build).
+
+**Remaining for ReliableMessaging (ph.3c, the closure-wired core):** move `reliable_`
+(the ReliableDelivery member) + `BuildReliableHost`, `SendReliable`/`SendReliableAttempt`,
+`ProcessAckMessage`/`EnqueueAck`/`OnReliableOutcome`, `ComputeReliableTimeout`, `HopsFromTtl`,
+`DeliverToApp`, the group send/receive (`SendGroup`/`SendGroupReliable`/`ProcessGroupMessage`/
+`ForwardGroupMessage`), `group_windows_`/`CloseExpiredGroupWindows`, and the
+`delivery_callback_`/`data_received_ex_callback_`. This step wires the ~6 closures
+(`now_ms`, `send_attempt`, `enqueue_for_transmission`=`EnqueueForTransmission`, `find_next_hop`,
+`compute_timeout`, `deliver_to_app`, `next_seq`) per §D.1; it is the large, cohesive unit best
+done in one focused pass. Gate: `test_unit_network_coverage` + `group_ack_test` (run via
+`--gtest_filter` on the prebuilt routing binary — fast).
+
+Then WS-5 ph.4–7 (SlotScheduler → Sync/Join/NmElection), WS-3 (message CRTP), WS-4 (memory),
+WS-6 (interface segregation), and the deferred `lora_mesh_protocol.cpp` /
+`protocol_configuration.hpp` splits.
