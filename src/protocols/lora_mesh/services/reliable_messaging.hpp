@@ -1,14 +1,17 @@
 /**
  * @file reliable_messaging.hpp
- * @brief Group multicast + reliable-delivery glue extracted from NetworkService
+ * @brief Group multicast + reliable-delivery subsystem extracted from NetworkService
  *
- * Owns the local state and logic for group (multicast) membership and, in
- * later steps, end-to-end reliable unicast/group delivery. Constructed by and
- * owned by NetworkService, which delegates the corresponding public API to it.
+ * Owns the end-to-end reliable unicast/group delivery state machine
+ * (reliability::ReliableDelivery), the seq->destination shadow table, group
+ * (multicast) membership, and the acknowledgement-collection windows.
+ * Constructed and owned by NetworkService, which delegates the corresponding
+ * public API to it and supplies cross-cutting dependencies as Host closures.
  *
- * Threading: this component does not own a mutex. It locks the coordinator's
- * mutex (passed by reference) so its critical sections stay identical to the
- * pre-extraction behavior and no second lock is introduced.
+ * Threading: this component does not own a mutex. The membership operations
+ * lock the coordinator's mutex (passed by reference) exactly as before; the
+ * reliable/group paths run on the single protocol task like the rest of the
+ * coordinator.
  */
 
 #pragma once
@@ -16,19 +19,24 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <span>
 #include <vector>
 
 #include "protocols/reliability/reliable_delivery.hpp"
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
+#include "types/messages/base_message.hpp"
+#include "types/messages/loramesher/data_message.hpp"
+#include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
 namespace protocols {
 namespace lora_mesh {
 
 /**
- * @brief Group multicast and reliable-delivery glue for NetworkService
+ * @brief Group multicast and reliable-delivery subsystem for NetworkService
  */
 class ReliableMessaging {
    public:
@@ -38,46 +46,96 @@ class ReliableMessaging {
     using SuperframeDurationFn = std::function<uint32_t()>;
 
     /**
-     * @param mutex Coordinator mutex guarding shared protocol state; locked by
-     *              the public membership operations exactly as before.
-     * @param hops_to_dest Closure returning the routing hop-count to a node.
-     * @param superframe_duration Closure returning the superframe duration (ms).
+     * @brief Cross-cutting dependencies bound to the owning NetworkService
      */
-    ReliableMessaging(std::mutex& mutex, HopsToDestFn hops_to_dest,
-                      SuperframeDurationFn superframe_duration);
+    struct Host {
+        AddressType node_address = 0;      ///< Local node address
+        std::function<uint32_t()> now_ms;  ///< Monotonic millisecond clock
+        /// Serialize+enqueue a BaseMessage onto a TX slot queue.
+        std::function<Result(
+            types::protocols::lora_mesh::SlotAllocation::SlotType,
+            std::unique_ptr<BaseMessage>)>
+            enqueue;
+        /// Routing next-hop toward a destination (0 if none).
+        std::function<AddressType(AddressType)> find_next_hop;
+        /// Forward an ACK DataMessage toward its destination.
+        std::function<Result(const DataMessage&)> forward_data_message;
+        /// Allocate the next message sequence number.
+        std::function<uint8_t()> next_seq;
+        /// Record (source, seq) in the de-duplication cache.
+        std::function<void(AddressType, uint8_t)> record_in_cache;
+        /// True when the protocol is in NORMAL_OPERATION or NETWORK_MANAGER.
+        std::function<bool()> in_operational_state;
+        std::function<uint8_t()> max_hops;  ///< Configured max hop count
+        std::function<uint16_t()>
+            max_packet_size;        ///< Configured max packet size
+        HopsToDestFn hops_to_dest;  ///< Routing hop-count lookup
+        SuperframeDurationFn superframe_duration;  ///< Superframe duration (ms)
+    };
+
+    ReliableMessaging(std::mutex& mutex, Host host);
+
+    // --- Group (multicast) membership ---
+
+    Result JoinGroup(AddressType group);
+    Result LeaveGroup(AddressType group);
+    bool IsMemberOfGroup(AddressType group) const;
+    std::vector<AddressType> GetGroups() const;
+
+    // --- Reliable destination shadow table ---
+
+    AddressType LookupReliableDest(uint8_t seq) const;
+    void RecordReliableDest(uint8_t seq, AddressType dest);
+    void ClearReliableDest(uint8_t seq);
+
+    // --- Reliable unicast/group delivery ---
 
     /// Estimate a retransmit timeout (ms) from hop count and superframe duration.
     uint32_t ComputeReliableTimeout(AddressType dest) const;
 
-    /// Join a multicast group. @return Success or an error for invalid/full.
-    Result JoinGroup(AddressType group);
+    /// Track a reliable unicast send; returns the message id (or {0,0} on error).
+    reliability::MessageId SendReliable(AddressType destination,
+                                        const std::vector<uint8_t>& data,
+                                        uint8_t max_retries,
+                                        uint32_t timeout_override_ms);
 
-    /// Leave a multicast group. @return Success (idempotent).
-    Result LeaveGroup(AddressType group);
+    /// Track a reliable group send with an acknowledgement-collection window.
+    reliability::MessageId SendGroupReliable(AddressType group,
+                                             std::span<const uint8_t> data,
+                                             uint8_t max_retries,
+                                             uint32_t window_ms);
 
-    /// @return true if this node is a member of @p group.
-    bool IsMemberOfGroup(AddressType group) const;
+    /// Process an inbound ACK message (match, forward, or ignore).
+    Result ProcessAckMessage(const BaseMessage& message);
 
-    /// @return the list of groups this node currently belongs to.
-    std::vector<AddressType> GetGroups() const;
+    /// Enqueue an acknowledgement back toward the original sender.
+    void EnqueueAck(AddressType dest, uint8_t acked_seq, bool was_group,
+                    uint32_t echo_ts);
 
-    /// @return the destination recorded for an in-flight reliable @p seq, or 0.
-    AddressType LookupReliableDest(uint8_t seq) const;
+    /// Advance retransmission timers and close expired group windows.
+    void ProcessReliableTimers();
 
-    /// Record the destination for an in-flight reliable @p seq.
-    void RecordReliableDest(uint8_t seq, AddressType dest);
+    /// Register the delivery-outcome callback.
+    void SetDeliveryCallback(reliability::DeliveryCallback callback);
 
-    /// Forget the destination recorded for a completed reliable @p seq.
-    void ClearReliableDest(uint8_t seq);
+    /// @return number of reliable messages currently awaiting acknowledgement.
+    size_t GetReliablePendingCount() const;
 
    private:
+    Result SendReliableAttempt(const reliability::MessageId& id,
+                               std::span<const uint8_t> payload);
+    void OnReliableOutcome(const reliability::DeliveryResult& result);
+    void CloseExpiredGroupWindows();
+    reliability::Host BuildReliableHost();
+
+    static constexpr uint8_t kDefaultTTL = 10;
+
+    // Group membership
     static constexpr size_t kMaxGroups = 8;
     std::array<AddressType, kMaxGroups> groups_{};
     uint8_t group_count_ = 0;
 
-    /// Shadow table mapping an in-flight reliable seq to its destination, so the
-    /// send_attempt closure can rebuild the message (the reliability component
-    /// is destination-agnostic). Sized to the component's pending capacity.
+    // seq->destination shadow table
     struct ReliableDest {
         bool valid = false;
         uint8_t seq = 0;
@@ -87,9 +145,23 @@ class ReliableMessaging {
     std::array<ReliableDest, reliability::ReliableDelivery::kMaxPending>
         reliable_dest_{};
 
+    // Acknowledgement-collection windows for reliable group sends
+    struct GroupWindow {
+        bool valid = false;
+        uint8_t seq = 0;
+        uint32_t deadline_ms = 0;
+    };
+
+    std::array<GroupWindow, reliability::ReliableDelivery::kMaxPending>
+        group_windows_{};
+
+    reliability::DeliveryCallback delivery_callback_;
+
     std::mutex& mutex_;  ///< Coordinator mutex (not owned)
-    HopsToDestFn hops_to_dest_;
-    SuperframeDurationFn superframe_duration_;
+    Host host_;
+
+    // Constructed last: BuildReliableHost() reads host_, so host_ must precede.
+    reliability::ReliableDelivery reliable_;
 };
 
 }  // namespace lora_mesh

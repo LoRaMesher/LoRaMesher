@@ -650,7 +650,9 @@ class NetworkService : public INetworkService {
      *
      * @return size_t Pending reliable-delivery entries
      */
-    size_t GetReliablePendingCount() const { return reliable_.PendingCount(); }
+    size_t GetReliablePendingCount() const {
+        return reliable_messaging_->GetReliablePendingCount();
+    }
 
     // Broadcast message methods
 
@@ -1440,9 +1442,7 @@ class NetworkService : public INetworkService {
     // Only read/written on the protocol task, no synchronization needed.
     bool slot_table_dirty_ = true;
 
-    // Reliable delivery
-    reliability::ReliableDelivery reliable_;
-    reliability::DeliveryCallback delivery_callback_;
+    // Reliable delivery / group multicast subsystem
     DataReceivedExCallback data_received_ex_callback_;
 
     /// Deliver a received payload to both the legacy and extended callbacks.
@@ -1452,36 +1452,10 @@ class NetworkService : public INetworkService {
     /// Estimate hops travelled from a message's remaining TTL.
     uint8_t HopsFromTtl(uint8_t remaining_ttl) const;
 
-    /// Build the host closures bound to this service for the reliable component.
-    reliability::Host BuildReliableHost();
-
-    /// Transmit one attempt of a tracked reliable message (send_attempt body).
-    Result SendReliableAttempt(const reliability::MessageId& id,
-                               std::span<const uint8_t> payload);
-
-    /// Translate a component outcome into the public delivery callback.
-    void OnReliableOutcome(const reliability::DeliveryResult& result);
-
-    /// Enqueue an acknowledgement back toward the original sender.
-    void EnqueueAck(AddressType dest, uint8_t acked_seq, bool was_group,
-                    uint32_t echo_ts);
-
-    /// Group multicast + reliable-delivery glue extracted from this coordinator.
-    /// Currently owns local group membership; reliable send/ACK paths to follow.
+    /// Group multicast + reliable-delivery subsystem extracted from this
+    /// coordinator; owns the reliability state machine, shadow table, group
+    /// membership, and ack-collection windows.
     std::unique_ptr<ReliableMessaging> reliable_messaging_;
-
-    // Open acknowledgement-collection windows for reliable group sends
-    struct GroupWindow {
-        bool valid = false;
-        uint8_t seq = 0;
-        uint32_t deadline_ms = 0;
-    };
-
-    std::array<GroupWindow, reliability::ReliableDelivery::kMaxPending>
-        group_windows_{};
-
-    /// Close any acknowledgement-collection windows whose deadline has passed.
-    void CloseExpiredGroupWindows();
 
     // Thread safety
     mutable std::mutex network_mutex_;
