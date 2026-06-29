@@ -15,6 +15,7 @@
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
+#include "protocols/lora_mesh/services/reliable_messaging.hpp"
 #include "protocols/reliability/reliable_delivery.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
 #include "types/messages/loramesher/ack_payload.hpp"
@@ -1484,10 +1485,9 @@ class NetworkService : public INetworkService {
     void RecordReliableDest(uint8_t seq, AddressType dest);
     void ClearReliableDest(uint8_t seq);
 
-    // Group (multicast) membership — fixed-capacity, local-only state
-    static constexpr size_t kMaxGroups = 8;
-    std::array<AddressType, kMaxGroups> groups_{};
-    uint8_t group_count_ = 0;
+    /// Group multicast + reliable-delivery glue extracted from this coordinator.
+    /// Currently owns local group membership; reliable send/ACK paths to follow.
+    std::unique_ptr<ReliableMessaging> reliable_messaging_;
 
     // Open acknowledgement-collection windows for reliable group sends
     struct GroupWindow {

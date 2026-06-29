@@ -73,6 +73,8 @@ NetworkService::NetworkService(
     config_.node_address = node_address;
     node_address_ = node_address;
 
+    reliable_messaging_ = std::make_unique<ReliableMessaging>(network_mutex_);
+
     // slot_table_ is a fixed-size array; no reserve needed
 }
 
@@ -2183,56 +2185,19 @@ Result NetworkService::ProcessAckMessage(const BaseMessage& message) {
 // Group (multicast) implementations
 
 Result NetworkService::JoinGroup(AddressType group) {
-    if (!IsGroupAddress(group)) {
-        return Result(LoraMesherErrorCode::kInvalidArgument,
-                      "Address is not a group address");
-    }
-    std::lock_guard<std::mutex> lock(network_mutex_);
-    for (uint8_t i = 0; i < group_count_; ++i) {
-        if (groups_[i] == group) {
-            return Result::Success();
-        }
-    }
-    if (group_count_ >= kMaxGroups) {
-        return Result(LoraMesherErrorCode::kBufferOverflow,
-                      "Group membership table is full");
-    }
-    groups_[group_count_++] = group;
-    LOG_INFO("Joined group 0x%04X", group);
-    return Result::Success();
+    return reliable_messaging_->JoinGroup(group);
 }
 
 Result NetworkService::LeaveGroup(AddressType group) {
-    if (!IsGroupAddress(group)) {
-        return Result(LoraMesherErrorCode::kInvalidArgument,
-                      "Address is not a group address");
-    }
-    std::lock_guard<std::mutex> lock(network_mutex_);
-    for (uint8_t i = 0; i < group_count_; ++i) {
-        if (groups_[i] == group) {
-            groups_[i] = groups_[group_count_ - 1];
-            group_count_--;
-            LOG_INFO("Left group 0x%04X", group);
-            return Result::Success();
-        }
-    }
-    return Result::Success();
+    return reliable_messaging_->LeaveGroup(group);
 }
 
 bool NetworkService::IsMemberOfGroup(AddressType group) const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
-    for (uint8_t i = 0; i < group_count_; ++i) {
-        if (groups_[i] == group) {
-            return true;
-        }
-    }
-    return false;
+    return reliable_messaging_->IsMemberOfGroup(group);
 }
 
 std::vector<AddressType> NetworkService::GetGroups() const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
-    return std::vector<AddressType>(groups_.begin(),
-                                    groups_.begin() + group_count_);
+    return reliable_messaging_->GetGroups();
 }
 
 Result NetworkService::SendGroup(AddressType group,
