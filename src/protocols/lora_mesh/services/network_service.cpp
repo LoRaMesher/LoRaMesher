@@ -155,7 +155,7 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
             node_address, is_network_manager, capabilities,
             allocated_data_slots);
 
-        slot_table_dirty_ = true;
+        MarkSlotTableDirty();
 
         // If node became network manager, update network manager
         if (is_network_manager) {
@@ -239,7 +239,7 @@ size_t NetworkService::RemoveInactiveNodes() {
     if (nodes_removed > 0) {
         LOG_INFO("Removed %zu inactive nodes from routing table",
                  nodes_removed);
-        slot_table_dirty_ = true;
+        MarkSlotTableDirty();
         UpdateNetworkTopology();
     }
 
@@ -338,7 +338,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
 
     // Update network topology if needed
     if (routing_changed) {
-        slot_table_dirty_ = true;
+        MarkSlotTableDirty();
         UpdateNetworkTopology();
     }
 
@@ -536,7 +536,7 @@ void NetworkService::SetLocalAllocatedDataSlots(uint8_t data_slots) {
     }
 
     local_allocated_data_slots_ = data_slots;
-    slot_table_dirty_ = true;
+    MarkSlotTableDirty();
     LOG_INFO("Updated local node data slots to %d", data_slots);
 }
 
@@ -1557,7 +1557,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
     if (status == JoinResponseStatus::ACCEPTED) {
         // Store the assigned control slot index
         my_control_slot_index_ = join_response_opt->GetControlSlotIndex();
-        slot_table_dirty_ = true;
+        MarkSlotTableDirty();
         LOG_INFO("Received control slot index %d from NM",
                  my_control_slot_index_);
 
@@ -2237,6 +2237,17 @@ Result NetworkService::SendSlotRequest(uint8_t num_slots) {
 }
 
 Result NetworkService::UpdateSlotTable() {
+    return UpdateSlotTableIfDirty(true);
+}
+
+Result NetworkService::UpdateSlotTableIfDirty(bool force) {
+    if (!force && !slot_table_dirty_) {
+        return Result::Success();
+    }
+    return UpdateSlotTable_Impl();
+}
+
+Result NetworkService::UpdateSlotTable_Impl() {
     // Clear existing table
     slot_count_ = 0;
 
@@ -3214,7 +3225,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         }
 
         if (params_changed) {
-            slot_table_dirty_ = true;
+            MarkSlotTableDirty();
         }
     }
 
@@ -3311,12 +3322,12 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         return join_result;
     }
 
-    if (slot_table_dirty_) {
-        Result result = UpdateSlotTable();
-        if (!result.IsSuccess()) {
+    {
+        Result rebuild_result = UpdateSlotTableIfDirty(false);
+        if (!rebuild_result.IsSuccess()) {
             LOG_ERROR("Failed to update slot table: %s",
-                      result.GetErrorMessage().c_str());
-            return result;
+                      rebuild_result.GetErrorMessage().c_str());
+            return rebuild_result;
         }
     }
 
@@ -3389,7 +3400,7 @@ Result NetworkService::SendSyncBeacon() {
     }
 
     // Get actual total slots from the slot table
-    uint16_t total_slots = static_cast<uint16_t>(slot_count_);
+    uint16_t total_slots = static_cast<uint16_t>(GetSlotCount());
     if (total_slots == 0) {
         total_slots = 20;  // Fallback default
         LOG_WARNING("Slot table empty, using default total slots: %d",
@@ -3410,7 +3421,7 @@ Result NetworkService::SendSyncBeacon() {
             static_cast<uint8_t>(current_network_depth_),
             config_
                 .max_hops),  // Dynamic growth (depth+1) capped by configured limit
-        allocated_control_slots_);  // Authoritative node count for slot alignment
+        GetAllocatedControlSlots());  // Authoritative node count for slot alignment
 
     if (!sync_beacon_opt.has_value()) {
         LOG_ERROR("Failed to create sync beacon message");

@@ -1197,10 +1197,46 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Convert slot table to superframe format
-     * 
+     *
      * @return Result Success or error details
      */
     Result SlotTableToSuperframe();
+
+    // --- Slot-table accessor seam ------------------------------------------
+    // These wrap the slot-table state so it can later be owned by a dedicated
+    // SlotScheduler component without touching call sites.
+
+    /**
+     * @brief Mark the slot table dirty so the next rebuild regenerates it.
+     */
+    void MarkSlotTableDirty() { slot_table_dirty_ = true; }
+
+    /**
+     * @brief Rebuild the slot table when dirty, or unconditionally when forced.
+     *
+     * @param force Rebuild even if the dirty flag is clear.
+     * @return Result Success or error
+     */
+    Result UpdateSlotTableIfDirty(bool force);
+
+    /**
+     * @brief Rebuild the slot table from the current network role/topology.
+     *
+     * @return Result Success or error
+     */
+    Result UpdateSlotTable_Impl();
+
+    /**
+     * @brief Number of valid slots in the slot table.
+     */
+    uint16_t GetSlotCount() const { return slot_count_; }
+
+    /**
+     * @brief Number of control slots allocated in the slot table.
+     */
+    uint8_t GetAllocatedControlSlots() const {
+        return allocated_control_slots_;
+    }
 
     /**
      * @brief Set pre-send callback on a sync beacon message
