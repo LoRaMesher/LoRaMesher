@@ -17,6 +17,7 @@
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/reliable_messaging.hpp"
 #include "protocols/lora_mesh/services/slot_scheduler.hpp"
+#include "protocols/lora_mesh/services/sync_beacon_service.hpp"
 #include "protocols/reliability/reliable_delivery.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
 #include "types/messages/loramesher/ack_payload.hpp"
@@ -1213,16 +1214,9 @@ class NetworkService : public INetworkService {
     SlotScheduler::Context MakeSlotContext() const;
 
     /**
-     * @brief Set pre-send callback on a sync beacon message
-     *
-     * Attaches a callback that captures GetTimeSinceSuperframeStart() right
-     * before transmission and writes it into the beacon's propagation_delay
-     * field. Used for both original (NM) and forwarded sync beacons so the
-     * delay accurately includes any subslot wait time.
-     *
-     * @param base_msg The base message to attach the callback to
+     * @brief Build a read-only context snapshot for the sync-beacon service.
      */
-    void SetSyncBeaconPreSendCallback(BaseMessage& base_msg);
+    SyncBeaconService::Context MakeSyncContext() const;
 
     /**
      * @brief Handle a foreign-network sync beacon (NM state only)
@@ -1426,6 +1420,9 @@ class NetworkService : public INetworkService {
     /// TDMA slot-table scheduler; sole owner of the slot table and the
     /// slot-shaping operations extracted from this coordinator.
     std::unique_ptr<SlotScheduler> slot_scheduler_;
+
+    /// Sync-beacon transmit/forward path (build, forward, time-stamp beacons).
+    std::unique_ptr<SyncBeaconService> sync_beacon_service_;
 
     // Thread safety
     mutable std::mutex network_mutex_;
