@@ -16,6 +16,7 @@
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/reliable_messaging.hpp"
+#include "protocols/lora_mesh/services/slot_scheduler.hpp"
 #include "protocols/reliability/reliable_delivery.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
 #include "types/messages/loramesher/ack_payload.hpp"
@@ -53,8 +54,7 @@ static constexpr bool kNetworkMergeEnabled = false;
 /// worst-case TDMA phase-alignment + join handshake between two networks.
 static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
 
-static const uint8_t kExpandListeningThreshold =
-    2;  ///< Missed beacons before expanding all sync slots to RX
+// kExpandListeningThreshold is defined in slot_scheduler.hpp (included above).
 
 /// Minimum listen window before election fires (ms). 2 superframes @ 500ms ea.
 static constexpr uint32_t kElectionListenWindowMs = 5000;
@@ -62,7 +62,7 @@ static constexpr uint32_t kElectionListenWindowMs = 5000;
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
 
-static const uint8_t kMinSlots = 16;  ///< Minimum number of slots in superframe
+// kMinSlots is defined in slot_scheduler.hpp (included above).
 
 /**
  * @brief Unified implementation of network service
@@ -906,7 +906,7 @@ class NetworkService : public INetworkService {
      */
     std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const {
-        return {slot_table_.data(), slot_count_};
+        return slot_scheduler_->GetSlotTable();
     }
 
     // Discovery methods
@@ -1030,11 +1030,6 @@ class NetworkService : public INetworkService {
     Result ApplyRoleChange(NodeRole new_role) override;
 
    private:
-    /**
-     * @brief Log a compact grid visualization of the current slot table
-     */
-    void LogSlotTable() const;
-
     /**
      * @brief Get comprehensive link quality for a node
      *
@@ -1172,23 +1167,6 @@ class NetworkService : public INetworkService {
     bool ScheduleDiscoverySlotForwarding();
 
     /**
-     * @brief Allocate data slots based on routing information
-     * 
-     * @param is_network_manager Whether this node is network manager
-     * @param available_data_slots Number of available data slots
-     */
-    void AllocateDataSlotsBasedOnRouting(bool is_network_manager,
-                                         uint16_t available_data_slots);
-
-    /**
-     * @brief Find next available slot
-     * 
-     * @param start_slot Starting slot to search from
-     * @return uint16_t Next available slot or UINT16_MAX if none
-     */
-    uint16_t FindNextAvailableSlot(uint16_t start_slot);
-
-    /**
      * @brief Get number of allocated data slots
      * 
      * @return uint8_t Number of allocated slots
@@ -1202,14 +1180,12 @@ class NetworkService : public INetworkService {
      */
     Result SlotTableToSuperframe();
 
-    // --- Slot-table accessor seam ------------------------------------------
-    // These wrap the slot-table state so it can later be owned by a dedicated
-    // SlotScheduler component without touching call sites.
+    // --- Slot-table accessor seam (delegates to SlotScheduler) -------------
 
     /**
      * @brief Mark the slot table dirty so the next rebuild regenerates it.
      */
-    void MarkSlotTableDirty() { slot_table_dirty_ = true; }
+    void MarkSlotTableDirty() { slot_scheduler_->MarkDirty(); }
 
     /**
      * @brief Rebuild the slot table when dirty, or unconditionally when forced.
@@ -1220,23 +1196,21 @@ class NetworkService : public INetworkService {
     Result UpdateSlotTableIfDirty(bool force);
 
     /**
-     * @brief Rebuild the slot table from the current network role/topology.
-     *
-     * @return Result Success or error
-     */
-    Result UpdateSlotTable_Impl();
-
-    /**
      * @brief Number of valid slots in the slot table.
      */
-    uint16_t GetSlotCount() const { return slot_count_; }
+    uint16_t GetSlotCount() const { return slot_scheduler_->GetSlotCount(); }
 
     /**
      * @brief Number of control slots allocated in the slot table.
      */
     uint8_t GetAllocatedControlSlots() const {
-        return allocated_control_slots_;
+        return slot_scheduler_->GetAllocatedControlSlots();
     }
+
+    /**
+     * @brief Build a read-only context snapshot for the slot scheduler.
+     */
+    SlotScheduler::Context MakeSlotContext() const;
 
     /**
      * @brief Set pre-send callback on a sync beacon message
@@ -1306,16 +1280,6 @@ class NetworkService : public INetworkService {
     Result ForwardBroadcastMessage(const BroadcastMessage& original);
 
     /**
-     * @brief Check if an address has an allocated RX slot in the TDMA schedule
-     *
-     * Must be called while holding network_mutex_.
-     *
-     * @param address Node address to check
-     * @return true if we have an RX slot for this address
-     */
-    bool IsTDMANeighbor(AddressType address) const;
-
-    /**
      * @brief Serialize a typed message into a BaseMessage and enqueue it for TX
      *
      * Centralizes the repeated make_unique<BaseMessage>(msg.ToBaseMessage())
@@ -1344,11 +1308,6 @@ class NetworkService : public INetworkService {
     // Network state
     std::unique_ptr<IRoutingTable> routing_table_;
 
-    /// Fixed-size slot table — max 256 slots, no heap allocation
-    static constexpr size_t kMaxSlots = 256;
-    std::array<types::protocols::lora_mesh::SlotAllocation, kMaxSlots>
-        slot_table_{};
-    uint16_t slot_count_ = 0;  ///< Number of valid slots in slot_table_
     NetworkConfig config_;
     RouteUpdateCallback route_update_callback_;
     DataReceivedCallback data_received_callback_;
@@ -1364,10 +1323,6 @@ class NetworkService : public INetworkService {
     uint32_t joining_start_time_;
     AddressType selected_sponsor_ =
         0;  ///< Sponsor node selected during discovery (first sync beacon sender)
-    uint8_t allocated_control_slots_ =
-        ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
-    uint8_t allocated_discovery_slots_ =
-        ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
     // Superframe parameters
     uint8_t current_network_depth_ =
@@ -1453,10 +1408,6 @@ class NetworkService : public INetworkService {
     uint8_t message_seq_ =
         0;  ///< Per-node sequence counter (shared by unicast + broadcast)
 
-    // Slot table dirty flag — set when any input to UpdateSlotTable() changes.
-    // Only read/written on the protocol task, no synchronization needed.
-    bool slot_table_dirty_ = true;
-
     // Reliable delivery / group multicast subsystem
     DataReceivedExCallback data_received_ex_callback_;
 
@@ -1471,6 +1422,10 @@ class NetworkService : public INetworkService {
     /// coordinator; owns the reliability state machine, shadow table, group
     /// membership, and ack-collection windows.
     std::unique_ptr<ReliableMessaging> reliable_messaging_;
+
+    /// TDMA slot-table scheduler; sole owner of the slot table and the
+    /// slot-shaping operations extracted from this coordinator.
+    std::unique_ptr<SlotScheduler> slot_scheduler_;
 
     // Thread safety
     mutable std::mutex network_mutex_;
