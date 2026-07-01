@@ -119,6 +119,25 @@ app-delivery callbacks — an optional follow-up): `SendGroup` (non-reliable), `
 `SlotScheduler` (ph.4).** The validation method is now proven cheap: build the slow suite once
 with `--without-testing`, then filter-run the relevant tests on the prebuilt binary.
 
+**ph.4 (SlotScheduler) DONE** (commits `6f62561` accessor seam + `e0720eb` the move):
+`services/slot_scheduler.{hpp,cpp}` is now the sole owner of `slot_table_`, `slot_count_`,
+`slot_table_dirty_`, and `allocated_control/discovery_slots_`. It holds the moved
+`UpdateSlotTable` (decomposed into `BuildOrderedNodes`/`ComputeBandSizes`/`FillSlotTable`/
+`LogSlotTable` with the sizing arithmetic preserved), `SetDiscoverySlots`, `SetJoiningSlots`,
+`ExpandSyncBeaconListening`, `RestoreSyncBeaconTxSlot`, `ScheduleDiscoverySlotForwarding`, and
+`IsTDMANeighbor`. It reads coordinator state via a per-call `Context` snapshot
+(`NetworkService::MakeSlotContext`) and mutates nothing directly; six `Host` closures supply
+`get_routing_nodes`, `get_hop_distance_to_nm`, `get_allocated_data_slots`, `get_slot_duration`,
+`calculate_nm_tx_time`, and `notify_superframe`. Two refinements vs the §D.2 sketch, both
+justified by "sole owner of `slot_table_`": (1) no mutex is passed — every slot op runs on the
+protocol task and the old `GetSlotTable()` was already lock-free; (2) `GetHopDistanceToNM` and
+`GetAllocatedDataSlots` stay in `NetworkService` (they are routing-table queries, not slot-table
+state) and are injected as closures rather than moved. Dead `AllocateDataSlotsBasedOnRouting`
+and `FindNextAvailableSlot` were removed. `NetworkService` 4258→3718 L; new `test_unit_slot_scheduler`
+suite (6 tests). Slow gate green: `test_tdma` 4/4 (multi-hop), `test_routing`
+ThreeNodeChain + FourNodeLineTopology 2/2, `test_unit_network_coverage` 115/1-skip/0-fail, esp32
+reaches Linking. **NEXT = SyncBeaconService (ph.5)**, now a pure SlotScheduler client.
+
 (Superseded note) The original ph.3c plan was to move `reliable_`
 (the ReliableDelivery member) + `BuildReliableHost`, `SendReliable`/`SendReliableAttempt`,
 `ProcessAckMessage`/`EnqueueAck`/`OnReliableOutcome`, `ComputeReliableTimeout`, `HopsFromTtl`,
