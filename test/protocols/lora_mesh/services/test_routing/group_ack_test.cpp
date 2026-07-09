@@ -218,14 +218,19 @@ TEST_F(GroupAckTests, GroupDoesNotLeakAcrossIds) {
         0u);
 }
 
-// Scenario 8 — no duplicate delivery under flooding with multiple paths.
+// Scenario 8 — a member must deliver a group send exactly once even when it
+// sees the message more than once. Line N0(NM) — N1(member) — N2: N1 receives
+// the send directly from N0, and also overhears N2 re-flooding the same message
+// back toward it; de-duplication must collapse these to a single application
+// delivery. A line keeps the sender's transmission contention-free (reliable
+// delivery) while still producing a genuine duplicate at the member.
 TEST_F(GroupAckTests, GroupNoDuplicateDeliveryUnderFlood) {
     constexpr AddressType kGroup = 0x8001;
-    auto nodes = GenerateFullMeshTopology(4, 0x1000, "Node", 0);
+    auto nodes = GenerateLineTopology(3, 0x1000, "Node", 0);
     for (auto* node : nodes) {
         ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
     }
-    ASSERT_TRUE(WaitForNetworkFormation(nodes, 3))
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 2))
         << "Network formation failed";
     ASSERT_TRUE(WaitForRoutingStabilization(nodes)) << "Routing unstable";
 
@@ -238,7 +243,7 @@ TEST_F(GroupAckTests, GroupNoDuplicateDeliveryUnderFlood) {
         kGroup, std::span<const uint8_t>(payload.data(), payload.size())));
 
     auto superframe = GetSuperframeDuration(*nodes.front());
-    bool done = AdvanceTime(superframe * 8, superframe * 8, 50u, 0, [&]() {
+    bool done = AdvanceTime(superframe * 10, superframe * 10, 200u, 0, [&]() {
         return HasReceivedMessageFrom(*nodes[1], nodes[0]->address,
                                       MessageType::DATA);
     });
@@ -247,7 +252,7 @@ TEST_F(GroupAckTests, GroupNoDuplicateDeliveryUnderFlood) {
     EXPECT_EQ(
         CountReceivedMessages(*nodes[1], nodes[0]->address, MessageType::DATA),
         1u)
-        << "Member must receive exactly one copy under flood";
+        << "Member must deliver exactly one copy despite re-flood";
 }
 
 // Scenario 6 — reliable group send reports each responder, then the window

@@ -14,11 +14,11 @@
 #include <array>
 #include <cstdint>
 #include <functional>
-#include <span>
 
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/messages/loramesher/data_header.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -39,7 +39,9 @@ struct MessageId {
         return (static_cast<uint32_t>(source) << 8) | seq;
     }
 
-    bool operator==(const MessageId& other) const = default;
+    bool operator==(const MessageId& other) const {
+        return source == other.source && seq == other.seq;
+    }
 };
 
 /// Terminal result of a tracked message.
