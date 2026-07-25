@@ -307,8 +307,6 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRespectsMaxHops) {
 }
 
 TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRejectsHopCountOverflow) {
-    // A wire-supplied hop_count of 255 would wrap to 0 when incremented by
-    // one for the local hop, which must not bypass the max_hops filter.
     auto table = DistanceVectorRoutingTable(kLocalAddress);
 
     std::vector<RoutingTableEntry> entries;
@@ -317,9 +315,7 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRejectsHopCountOverflow) {
     table.ProcessRoutingTableMessage(kNeighbor1, entries, kCurrentTime,
                                      kGoodQuality, 5);  // max_hops = 5
 
-    // Remote node must NOT be added despite the arithmetic wraparound.
     EXPECT_FALSE(table.IsNodePresent(kRemoteNode));
-    // But source should still be added as direct neighbor.
     EXPECT_TRUE(table.IsNodePresent(kNeighbor1));
 }
 

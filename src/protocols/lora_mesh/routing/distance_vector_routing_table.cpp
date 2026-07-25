@@ -838,9 +838,6 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             continue;
         }
 
-        // Reject entries whose hop count would overflow uint8_t on the +1
-        // below; without this check the wraparound could produce a hop
-        // count smaller than max_hops and bypass the filtering entirely.
         if (entry.hop_count >= 255) {
             continue;
         }
