@@ -306,6 +306,19 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRespectsMaxHops) {
     EXPECT_TRUE(table.IsNodePresent(kNeighbor1));
 }
 
+TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRejectsHopCountOverflow) {
+    auto table = DistanceVectorRoutingTable(kLocalAddress);
+
+    std::vector<RoutingTableEntry> entries;
+    entries.push_back(CreateEntry(kRemoteNode, 255, kGoodQuality));
+
+    table.ProcessRoutingTableMessage(kNeighbor1, entries, kCurrentTime,
+                                     kGoodQuality, 5);  // max_hops = 5
+
+    EXPECT_FALSE(table.IsNodePresent(kRemoteNode));
+    EXPECT_TRUE(table.IsNodePresent(kNeighbor1));
+}
+
 // =============================================================================
 // Full Mesh Topology Tests (simulating the failing integration test)
 // =============================================================================

@@ -838,6 +838,10 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             continue;
         }
 
+        if (entry.hop_count >= 255) {
+            continue;
+        }
+
         // Calculate actual metrics through source
         uint8_t hop_count_via_source = entry.hop_count + 1;
         uint8_t actual_link_quality =
