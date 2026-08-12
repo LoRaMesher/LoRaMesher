@@ -96,6 +96,14 @@ class LoraMesherArduinoHal : public IHal {
                             pin_config_.getMosi(), /*ss=*/-1);
             }
             LM_SPI.begin();
+#elif defined(ARDUINO_ARCH_STM32)
+            // On STM32 custom pins are set via setSCLK/setMISO/setMOSI before begin()
+            if (pin_config_.HasCustomSpiPins()) {
+                LM_SPI.setSCLK(pin_config_.getSck());
+                LM_SPI.setMISO(pin_config_.getMiso());
+                LM_SPI.setMOSI(pin_config_.getMosi());
+            }
+            LM_SPI.begin();
 #else
             // On AVR and other fixed-pin platforms, pins are hardwired
             LM_SPI.begin();
@@ -138,6 +146,17 @@ class LoraMesherArduinoHal : public IHal {
         // Copy MAC to output buffer
         for (int i = 0; i < 6; i++) {
             id_buffer[i] = mac[i];
+        }
+        return true;
+
+#elif defined(ARDUINO_ARCH_STM32)
+        // STM32: 96-bit factory-programmed unique device ID at UID_BASE.
+        // Take the low 6 bytes; they feed a 16-bit address hash downstream.
+        const volatile uint32_t* uid =
+            reinterpret_cast<const volatile uint32_t*>(UID_BASE);
+        for (int i = 0; i < 6; i++) {
+            id_buffer[i] =
+                static_cast<uint8_t>((uid[i / 4] >> ((i % 4) * 8)) & 0xFF);
         }
         return true;
 

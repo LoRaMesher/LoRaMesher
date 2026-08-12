@@ -10,12 +10,19 @@
 #include <vector>
 
 #include "config/system_config.hpp"
+#include "os/freertos_includes.hpp"
 
 namespace loramesher {
 namespace os {
 
 #ifdef LORAMESHER_BUILD_ARDUINO
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32) || defined(ESP8266) || \
+    defined(ARDUINO_ARCH_ESP8266)
+// IRAM placement attribute for ISR-context code (ESP cores only).
 #define ISR_ATTR void ICACHE_RAM_ATTR
+#else
+#define ISR_ATTR void
+#endif
 #define MAX_DELAY portMAX_DELAY
 using TaskHandle_t = TaskHandle_t;
 using QueueHandle_t = QueueHandle_t;
