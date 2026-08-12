@@ -6,8 +6,8 @@
 #pragma once
 
 #include <algorithm>
-#include <mutex>
 #include <vector>
+#include "os/mutex.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
@@ -203,8 +203,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     // Member variables
 
-    AddressType node_address_;        ///< Local node address
-    mutable std::mutex table_mutex_;  ///< Thread safety mutex
+    AddressType node_address_;       ///< Local node address
+    mutable os::Mutex table_mutex_;  ///< Thread safety mutex
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
         nodes_;                           ///< Routing table
     size_t max_nodes_;                    ///< Maximum number of nodes

@@ -2,8 +2,8 @@
 
 #include <array>
 #include <memory>
-#include <mutex>
 #include <queue>
+#include "os/mutex.hpp"
 
 #include "config/system_config.hpp"
 
@@ -381,7 +381,7 @@ class RadioLibRadio : public IRadio {
     uint8_t rx_buffer_[kRxBufferSize]{};
 
     // Mutex for thread safety
-    std::mutex radio_mutex_;
+    os::Mutex radio_mutex_;
 
     AddressType local_address_{
         0};  ///< Local node address for task identification

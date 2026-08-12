@@ -117,7 +117,7 @@ class RTOSFreeRTOS : public RTOS {
             xQueueSendFromISR(queue, item, &xHigherPriorityTaskWoken);
 
         if (xHigherPriorityTaskWoken == pdTRUE) {
-            portYIELD_FROM_ISR();
+            LM_YIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
 
         return (result == pdPASS) ? QueueResult::kOk : QueueResult::kFull;
@@ -218,7 +218,7 @@ class RTOSFreeRTOS : public RTOS {
                                &xHigherPriorityTaskWoken);
 
         if (xHigherPriorityTaskWoken == pdTRUE)
-            portYIELD_FROM_ISR();
+            LM_YIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 
     QueueResult NotifyTask(TaskHandle_t task_handle, uint32_t value) override {
@@ -331,7 +331,7 @@ class RTOSFreeRTOS : public RTOS {
             xSemaphoreGiveFromISR(semaphore, &xHigherPriorityTaskWoken);
 
         if (xHigherPriorityTaskWoken == pdTRUE) {
-            portYIELD_FROM_ISR();
+            LM_YIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
 
         return result == pdPASS;

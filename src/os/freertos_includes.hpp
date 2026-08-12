@@ -17,14 +17,24 @@
 #if defined(ESP32) || defined(ARDUINO_ARCH_ESP32) || defined(ESP8266) || \
     defined(ARDUINO_ARCH_ESP8266)
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #elif __has_include(<STM32FreeRTOS.h>)
 #include <STM32FreeRTOS.h>
 #else
 #error \
     "LoRaMesher requires FreeRTOS. On non-ESP Arduino cores (e.g. STM32) install the STM32FreeRTOS library."
+#endif
+
+// portYIELD_FROM_ISR takes the "higher priority task woken" flag on the generic
+// FreeRTOS ports (e.g. ARM Cortex-M); the ESP32 (Xtensa) port takes no argument.
+// Normalize to a single call form across ports.
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32) || defined(ESP8266) || \
+    defined(ARDUINO_ARCH_ESP8266)
+#define LM_YIELD_FROM_ISR(woken) portYIELD_FROM_ISR()
+#else
+#define LM_YIELD_FROM_ISR(woken) portYIELD_FROM_ISR(woken)
 #endif
 
 #endif  // LORAMESHER_BUILD_ARDUINO

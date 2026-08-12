@@ -30,7 +30,7 @@ DistanceVectorRoutingTable::DistanceVectorRoutingTable(AddressType node_address,
 
 AddressType DistanceVectorRoutingTable::FindNextHop(
     AddressType destination) const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     lookup_count_++;
 
     // Self-addressed
@@ -65,7 +65,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
     AddressType source, AddressType destination, uint8_t hop_count,
     uint8_t link_quality, uint8_t allocated_data_slots, uint8_t capabilities,
     uint32_t current_time) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     update_count_++;
 
     // Get source link quality
@@ -214,7 +214,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
 bool DistanceVectorRoutingTable::AddNode(
     const types::protocols::lora_mesh::NetworkNodeRoute& node) {
 
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     // Allow adding local node for network manager or when it's needed for tests
     // We do track our own node in specific cases like when we're network manager
@@ -252,7 +252,7 @@ bool DistanceVectorRoutingTable::AddNode(
 bool DistanceVectorRoutingTable::UpdateNode(
     AddressType node_address, uint8_t battery_level, bool is_network_manager,
     uint8_t allocated_data_slots, uint8_t capabilities, uint32_t current_time) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     // Don't add self-entries via this method
     if (node_address == node_address_) {
@@ -296,7 +296,7 @@ bool DistanceVectorRoutingTable::UpdateNode(
 }
 
 bool DistanceVectorRoutingTable::RemoveNode(AddressType address) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     auto node_it = GetNode(address);
     if (node_it != nodes_.end()) {
@@ -314,7 +314,7 @@ bool DistanceVectorRoutingTable::RemoveNode(AddressType address) {
 
 bool DistanceVectorRoutingTable::RefreshRoute(AddressType destination,
                                               uint32_t current_time) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     auto node_it = GetNode(destination);
     if (node_it == nodes_.end() || !node_it->is_active) {
@@ -327,7 +327,7 @@ bool DistanceVectorRoutingTable::RefreshRoute(AddressType destination,
 size_t DistanceVectorRoutingTable::RemoveInactiveNodes(
     uint32_t current_time, uint32_t route_timeout_ms,
     uint32_t node_timeout_ms) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     size_t initial_size = nodes_.size();
     bool topology_changed = false;
@@ -369,7 +369,7 @@ size_t DistanceVectorRoutingTable::RemoveInactiveNodes(
 }
 
 bool DistanceVectorRoutingTable::IsNodePresent(AddressType address) const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     return GetNode(address) != nodes_.end();
 }
 
@@ -381,19 +381,19 @@ DistanceVectorRoutingTable::GetNodes() const {
 
 std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
 DistanceVectorRoutingTable::GetNodesCopy() const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     return nodes_;
 }
 
 size_t DistanceVectorRoutingTable::GetSize() const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     return nodes_.size();
 }
 
 std::vector<RoutingTableEntry> DistanceVectorRoutingTable::GetRoutingEntries(
     AddressType exclude_address) const {
 
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     std::vector<RoutingTableEntry> entries;
     entries.reserve(nodes_.size());
@@ -412,7 +412,7 @@ std::vector<RoutingTableEntry> DistanceVectorRoutingTable::GetRoutingEntries(
 
 uint8_t DistanceVectorRoutingTable::GetLinkQuality(
     AddressType node_address) const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end()) {
@@ -423,7 +423,7 @@ uint8_t DistanceVectorRoutingTable::GetLinkQuality(
 
 uint8_t DistanceVectorRoutingTable::GetDirectLinkQuality(
     AddressType node_address) const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end() && node_it->link_stats.messages_received > 0) {
@@ -438,7 +438,7 @@ uint8_t DistanceVectorRoutingTable::GetDirectLinkQuality(
 
 bool DistanceVectorRoutingTable::HasUnidirectionalRisk(
     AddressType node_address) const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     for (const auto& node : nodes_) {
         if (node.routing_entry.destination == node_address &&
             node.routing_entry.hop_count == 1 && node.is_active) {
@@ -451,7 +451,7 @@ bool DistanceVectorRoutingTable::HasUnidirectionalRisk(
 
 void DistanceVectorRoutingTable::DegradeRouteQuality(AddressType destination,
                                                      uint8_t quality) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     auto node_it = GetNode(destination);
     if (node_it != nodes_.end() &&
         node_it->routing_entry.link_quality > quality) {
@@ -461,12 +461,12 @@ void DistanceVectorRoutingTable::DegradeRouteQuality(AddressType destination,
 
 void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     RouteUpdateCallback callback) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     route_callback_ = callback;
 }
 
 void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     max_nodes_ = max_nodes;
 
     // If we now exceed the limit, remove oldest nodes
@@ -479,7 +479,7 @@ void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
 
 bool DistanceVectorRoutingTable::SetControlSlotIndex(
     AddressType node_address, uint8_t control_slot_index) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     auto it = GetNode(node_address);
     if (it == nodes_.end()) {
         return false;
@@ -489,7 +489,7 @@ bool DistanceVectorRoutingTable::SetControlSlotIndex(
 }
 
 void DistanceVectorRoutingTable::Clear() {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     // Notify of all route removals
     for (const auto& node : nodes_) {
@@ -505,7 +505,7 @@ void DistanceVectorRoutingTable::Clear() {
 }
 
 std::string DistanceVectorRoutingTable::GetStatistics() const {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     std::ostringstream oss;
     oss << "Routing Table Statistics (Node 0x" << std::hex << node_address_
@@ -528,7 +528,7 @@ std::string DistanceVectorRoutingTable::GetStatistics() const {
 void DistanceVectorRoutingTable::SetLinkQualityParams(
     uint8_t ewma_alpha_fixed, uint8_t inactivation_threshold,
     uint8_t reactivation_threshold) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     ewma_alpha_fixed_ = ewma_alpha_fixed;
     inactivation_threshold_ = inactivation_threshold;
     reactivation_threshold_ = reactivation_threshold;
@@ -540,7 +540,7 @@ void DistanceVectorRoutingTable::SetLinkQualityParams(
 }
 
 void DistanceVectorRoutingTable::UpdateLinkStatistics() {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
 
     for (auto& node : nodes_) {
         // Determine if this is an inactivated direct neighbor still being
@@ -652,7 +652,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     uint32_t reception_timestamp, uint8_t local_link_quality, uint8_t max_hops,
     uint8_t source_capabilities, uint8_t source_allocated_data_slots,
     float rssi, float snr) {
-    std::lock_guard<std::mutex> lock(table_mutex_);
+    os::LockGuard lock(table_mutex_);
     update_count_++;
 
     bool routing_changed = false;

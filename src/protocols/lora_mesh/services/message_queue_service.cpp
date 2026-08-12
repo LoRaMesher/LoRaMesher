@@ -31,7 +31,7 @@ Result MessageQueueService::AddMessageToQueue(
                       "Invalid slot type");
     }
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
     auto& queue = message_queues_[idx];
 
     if (max_queue_size_ > 0 && queue.size() >= max_queue_size_) {
@@ -65,7 +65,7 @@ std::unique_ptr<BaseMessage> MessageQueueService::ExtractMessageOfType(
         return nullptr;
     }
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
     auto& queue = message_queues_[idx];
 
     if (!queue.empty()) {
@@ -89,7 +89,7 @@ bool MessageQueueService::IsQueueEmpty(
         return true;
     }
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
     return message_queues_[idx].empty();
 }
 
@@ -101,12 +101,12 @@ size_t MessageQueueService::GetQueueSize(
         return 0;
     }
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
     return message_queues_[idx].size();
 }
 
 void MessageQueueService::ClearAllQueues() {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
 
     for (auto& queue : message_queues_) {
         queue.clear();
@@ -116,7 +116,7 @@ void MessageQueueService::ClearAllQueues() {
 }
 
 void MessageQueueService::SetMaxQueueSize(size_t max_size) {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
 
     max_queue_size_ = max_size;
 
@@ -146,13 +146,13 @@ void MessageQueueService::ClearQueue(
         return;
     }
 
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
     message_queues_[idx].clear();
     LOG_INFO("Queue for type %d cleared", static_cast<int>(type));
 }
 
 bool MessageQueueService::HasAnyMessages() const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
 
     for (const auto& queue : message_queues_) {
         if (!queue.empty()) {
@@ -164,7 +164,7 @@ bool MessageQueueService::HasAnyMessages() const {
 }
 
 size_t MessageQueueService::GetTotalMessageCount() const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
 
     size_t total = 0;
     for (const auto& queue : message_queues_) {
@@ -175,7 +175,7 @@ size_t MessageQueueService::GetTotalMessageCount() const {
 }
 
 bool MessageQueueService::HasMessage(MessageType type) const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
 
     for (const auto& queue : message_queues_) {
         for (const auto& message : queue) {
@@ -188,7 +188,7 @@ bool MessageQueueService::HasMessage(MessageType type) const {
 }
 
 bool MessageQueueService::RemoveMessage(MessageType type) {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
+    os::LockGuard lock(queue_mutex_);
     for (auto& queue : message_queues_) {
         auto it = std::find_if(queue.begin(), queue.end(),
                                [type](const std::unique_ptr<BaseMessage>& msg) {
