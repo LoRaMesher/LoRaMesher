@@ -8,9 +8,12 @@
 
 #ifdef LORAMESHER_BUILD_ARDUINO
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/task.h"
+#include "os/freertos_includes.hpp"
+
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+#include <esp_sleep.h>
+#include <esp_system.h>
+#endif
 
 #include "config/task_config.hpp"
 #include "os/rtos.hpp"
@@ -114,7 +117,7 @@ class RTOSFreeRTOS : public RTOS {
             xQueueSendFromISR(queue, item, &xHigherPriorityTaskWoken);
 
         if (xHigherPriorityTaskWoken == pdTRUE) {
-            portYIELD_FROM_ISR();
+            LM_YIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
 
         return (result == pdPASS) ? QueueResult::kOk : QueueResult::kFull;
@@ -147,10 +150,11 @@ class RTOSFreeRTOS : public RTOS {
     void delay(uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
     void LightSleep(uint32_t ms) override {
-#ifdef LORAMESHER_BUILD_ARDUINO
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
         esp_light_sleep_start();
 #else
+        // Non-ESP cores: fall back to a blocking delay (no low-power entry).
         delay(ms);
 #endif
     }
@@ -214,7 +218,7 @@ class RTOSFreeRTOS : public RTOS {
                                &xHigherPriorityTaskWoken);
 
         if (xHigherPriorityTaskWoken == pdTRUE)
-            portYIELD_FROM_ISR();
+            LM_YIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 
     QueueResult NotifyTask(TaskHandle_t task_handle, uint32_t value) override {
@@ -327,7 +331,7 @@ class RTOSFreeRTOS : public RTOS {
             xSemaphoreGiveFromISR(semaphore, &xHigherPriorityTaskWoken);
 
         if (xHigherPriorityTaskWoken == pdTRUE) {
-            portYIELD_FROM_ISR();
+            LM_YIELD_FROM_ISR(xHigherPriorityTaskWoken);
         }
 
         return result == pdPASS;
@@ -400,7 +404,19 @@ class RTOSFreeRTOS : public RTOS {
      */
     inline void YieldTask() override { taskYIELD(); }
 
-    uint32_t GetRandom() override { return esp_random(); }
+    uint32_t GetRandom() override {
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32)
+        return esp_random();
+#else
+        // Non-ESP cores: xorshift32 seeded once from the microsecond timer.
+        // Sufficient for backoff/jitter; not for cryptographic use.
+        static uint32_t state = static_cast<uint32_t>(micros()) | 1u;
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return state;
+#endif
+    }
 
     /**
      * @brief Set the node address for the current task

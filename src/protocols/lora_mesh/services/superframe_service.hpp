@@ -8,8 +8,8 @@
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <vector>
+#include "os/mutex.hpp"
 #include "os/rtos.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
@@ -419,7 +419,7 @@ class SuperframeService : public ISuperframeService {
     std::atomic<uint16_t> last_slot_;
     uint32_t service_start_time_;
     SuperframeCallback superframe_callback_;
-    mutable std::mutex callback_mutex_;
+    mutable os::Mutex callback_mutex_;
 
     // Task management
     uint32_t update_interval_ms_;

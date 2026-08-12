@@ -1,9 +1,9 @@
 // src/utilities/task_monitor.hpp
 #pragma once
 
-#include <mutex>
 #include <string>
 #include <vector>
+#include "os/mutex.hpp"
 
 #include "config/system_config.hpp"
 #include "config/task_config.hpp"
@@ -70,7 +70,7 @@ class TaskMonitor {
                                     uint32_t configured_bytes) {
 #ifdef LORAMESHER_BUILD_ARDUINO
         os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
-        std::lock_guard<std::mutex> lock(GetRegistry().mutex);
+        os::LockGuard lock(GetRegistry().mutex);
         GetRegistry().entries.push_back({handle, task_name, configured_bytes});
 #else
         (void)task_name;
@@ -87,7 +87,7 @@ class TaskMonitor {
      */
     static void PollAllAndWarn() {
 #ifdef LORAMESHER_BUILD_ARDUINO
-        std::lock_guard<std::mutex> lock(GetRegistry().mutex);
+        os::LockGuard lock(GetRegistry().mutex);
         for (const auto& reg : GetRegistry().entries) {
             UBaseType_t hwm_words = uxTaskGetStackHighWaterMark(reg.handle);
             uint32_t hwm_bytes = static_cast<uint32_t>(hwm_words) *
@@ -132,7 +132,7 @@ class TaskMonitor {
     }
 
     struct Registry {
-        std::mutex mutex;
+        os::Mutex mutex;
         std::vector<Registration> entries;
     };
 

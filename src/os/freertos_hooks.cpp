@@ -10,12 +10,12 @@
 
 #include "config/system_config.hpp"
 
-#ifdef LORAMESHER_BUILD_ARDUINO
+#if defined(LORAMESHER_BUILD_ARDUINO) && \
+    (defined(ESP32) || defined(ARDUINO_ARCH_ESP32))
 
 #include <stdlib.h>
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "os/freertos_includes.hpp"
 
 extern "C" {
 // ets_printf is in ROM, has no locking, and is safe to call from any
@@ -31,4 +31,4 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t xTask,
     abort();
 }
 
-#endif  // LORAMESHER_BUILD_ARDUINO
+#endif  // LORAMESHER_BUILD_ARDUINO && ESP32
