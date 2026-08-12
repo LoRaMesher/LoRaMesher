@@ -1,0 +1,55 @@
+#######################################
+# Syntax Coloring Map For LoRaMesher
+#######################################
+
+#######################################
+# Datatypes (KEYWORD1)
+#######################################
+
+LoraMesher	KEYWORD1
+Builder	KEYWORD1
+PinConfig	KEYWORD1
+RadioConfig	KEYWORD1
+LoRaMeshProtocolConfig	KEYWORD1
+PingPongProtocolConfig	KEYWORD1
+Result	KEYWORD1
+RouteEntry	KEYWORD1
+NetworkStatus	KEYWORD1
+AddressType	KEYWORD1
+RadioType	KEYWORD1
+NodeRole	KEYWORD1
+
+#######################################
+# Methods and Functions (KEYWORD2)
+#######################################
+
+Start	KEYWORD2
+Stop	KEYWORD2
+Send	KEYWORD2
+SendBroadcast	KEYWORD2
+SendMessage	KEYWORD2
+IsReadyToSend	KEYWORD2
+SetDataCallback	KEYWORD2
+GetRoutingTable	KEYWORD2
+GetNetworkStatus	KEYWORD2
+GetNodeAddress	KEYWORD2
+GetNodeRole	KEYWORD2
+SetNodeRole	KEYWORD2
+GetNodeCapabilities	KEYWORD2
+SetNodeCapabilities	KEYWORD2
+GetClosestGateway	KEYWORD2
+GetClosestNodeByCapability	KEYWORD2
+GetLoRaMeshProtocol	KEYWORD2
+GetPingPongProtocol	KEYWORD2
+GetSlotTable	KEYWORD2
+GetTxQueueSize	KEYWORD2
+GetRxQueueSize	KEYWORD2
+GenerateAddressFromHardware	KEYWORD2
+withRadioConfig	KEYWORD2
+withPinConfig	KEYWORD2
+withProtocolConfig	KEYWORD2
+withNodeAddress	KEYWORD2
+withNodeCapabilities	KEYWORD2
+withLoRaMeshProtocol	KEYWORD2
+withPingPongProtocol	KEYWORD2
+Build	KEYWORD2
