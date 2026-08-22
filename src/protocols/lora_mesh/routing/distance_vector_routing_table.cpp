@@ -4,8 +4,9 @@
  */
 
 #include "distance_vector_routing_table.hpp"
+#include <cstdio>
+#include <string>
 #include <numeric>
-#include <sstream>
 
 namespace loramesher {
 namespace protocols {
@@ -507,22 +508,30 @@ void DistanceVectorRoutingTable::Clear() {
 std::string DistanceVectorRoutingTable::GetStatistics() const {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
-    std::ostringstream oss;
-    oss << "Routing Table Statistics (Node 0x" << std::hex << node_address_
-        << "):\n";
-    oss << "  Nodes: " << nodes_.size() << "/" << max_nodes_ << "\n";
-    oss << "  Lookups: " << std::dec << lookup_count_ << "\n";
-    oss << "  Updates: " << update_count_ << "\n";
-    oss << "  Active routes: ";
-
     size_t active_routes = 0;
     for (const auto& node : nodes_) {
         if (node.is_active)
             active_routes++;
     }
-    oss << active_routes << "\n";
 
-    return oss.str();
+    // 89 bytes of literal text, one 32-bit value in hex (<= 8 chars) and four 32-bit decimal
+    // counts (<= 10 chars each) come to at most 147 characters plus the terminator, so this
+    // cannot truncate. Widened to unsigned long so the format specifiers hold on any target.
+    char buf[192];
+    snprintf(buf, sizeof(buf),
+             "Routing Table Statistics (Node 0x%lx):\n"
+             "  Nodes: %lu/%lu\n"
+             "  Lookups: %lu\n"
+             "  Updates: %lu\n"
+             "  Active routes: %lu\n",
+             static_cast<unsigned long>(node_address_),
+             static_cast<unsigned long>(nodes_.size()),
+             static_cast<unsigned long>(max_nodes_),
+             static_cast<unsigned long>(lookup_count_),
+             static_cast<unsigned long>(update_count_),
+             static_cast<unsigned long>(active_routes));
+
+    return std::string(buf);
 }
 
 void DistanceVectorRoutingTable::SetLinkQualityParams(

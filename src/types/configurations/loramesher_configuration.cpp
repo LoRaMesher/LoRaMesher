@@ -1,6 +1,7 @@
 #include "loramesher_configuration.hpp"
+#include <stdexcept>
+#include <string>
 
-#include <sstream>
 
 namespace loramesher {
 
@@ -59,20 +60,20 @@ bool Config::IsValid() const {
 }
 
 std::string Config::Validate() const {
-    std::stringstream errors;
+    std::string errors;
     if (!pinConfig_.IsValid()) {
-        errors << "Pin config errors: " << pinConfig_.Validate();
+        errors += "Pin config errors: " + pinConfig_.Validate();
     }
     if (!radioConfig_.IsValid()) {
-        errors << "Radio config errors: " << radioConfig_.Validate();
+        errors += "Radio config errors: " + radioConfig_.Validate();
     }
     if (!protocolConfig_.IsValid()) {
-        errors << "Protocol config errors: " << protocolConfig_.Validate();
+        errors += "Protocol config errors: " + protocolConfig_.Validate();
     }
     if (sleepDuration_ == 0) {
-        errors << "Invalid sleep duration. ";
+        errors += "Invalid sleep duration. ";
     }
-    return errors.str();
+    return errors;
 }
 
 }  // namespace loramesher
