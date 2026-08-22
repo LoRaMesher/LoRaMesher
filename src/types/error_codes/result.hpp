@@ -1,7 +1,6 @@
 // src/types/error_codes/result.hpp
 #pragma once
 
-#include <sstream>
 #include <string>
 #include <vector>
 #include "loramesher_error_codes.hpp"
@@ -100,14 +99,14 @@ class Result {
         if (!has_errors_) {
             return "Success";
         }
-        std::stringstream ss;
+        std::string combined;
         for (size_t i = 0; i < errors_.size(); ++i) {
             if (i > 0) {
-                ss << "\n";
+                combined += "\n";
             }
-            ss << errors_[i].message;
+            combined += errors_[i].message;
         }
-        return ss.str();
+        return combined;
     }
 
     /**

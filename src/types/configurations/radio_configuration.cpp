@@ -1,6 +1,7 @@
 #include "radio_configuration.hpp"
+#include <stdexcept>
+#include <string>
 
-#include <sstream>
 
 namespace loramesher {
 
@@ -191,25 +192,25 @@ bool RadioConfig::IsValid() const {
 }
 
 std::string RadioConfig::Validate() const {
-    std::stringstream errors;
+    std::string errors;
     if (frequency_ < kMinFrequency || frequency_ > kMaxFrequency) {
-        errors << "Frequency out of range. ";
+        errors += "Frequency out of range. ";
     }
     if (spreadingFactor_ < kMinSpreadingFactor ||
         spreadingFactor_ > kMaxSpreadingFactor) {
-        errors << "Invalid spreading factor. ";
+        errors += "Invalid spreading factor. ";
     }
     if (bandwidth_ <= 0) {
-        errors << "Invalid bandwidth. ";
+        errors += "Invalid bandwidth. ";
     }
     if (codingRate_ < 5 || codingRate_ > 8) {
-        errors << "Invalid coding rate. ";
+        errors += "Invalid coding rate. ";
     }
     if (power_ > 20) {
-        errors << "Power exceeds maximum. ";
+        errors += "Power exceeds maximum. ";
     }
 
-    return errors.str();
+    return errors;
 }
 
 }  // namespace loramesher

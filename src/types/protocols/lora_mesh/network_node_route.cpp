@@ -5,7 +5,6 @@
 
 #include "network_node_route.hpp"
 #include <algorithm>
-#include <sstream>
 
 namespace loramesher {
 namespace types {

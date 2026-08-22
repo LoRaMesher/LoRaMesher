@@ -1,6 +1,7 @@
 #include "pin_configuration.hpp"
+#include <stdexcept>
+#include <string>
 
-#include <sstream>
 
 namespace loramesher {
 
@@ -52,16 +53,16 @@ bool PinConfig::IsValid() const {
 }
 
 std::string PinConfig::Validate() const {
-    std::stringstream errors;
+    std::string errors;
     if (nss_ < 0)
-        errors << "Invalid NSS pin. ";
+        errors += "Invalid NSS pin. ";
     if (reset_ < 0)
-        errors << "Invalid Reset pin. ";
+        errors += "Invalid Reset pin. ";
     if (dio0_ < 0)
-        errors << "Invalid DIO0 pin. ";
+        errors += "Invalid DIO0 pin. ";
     if (dio1_ < 0)
-        errors << "Invalid DIO1 pin. ";
-    return errors.str();
+        errors += "Invalid DIO1 pin. ";
+    return errors;
 }
 
 }  // namespace loramesher
