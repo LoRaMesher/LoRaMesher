@@ -2,7 +2,6 @@
 #include <stdexcept>
 #include <string>
 
-
 namespace loramesher {
 
 // RadioConfig Implementation

@@ -5,8 +5,8 @@
 
 #include "distance_vector_routing_table.hpp"
 #include <cstdio>
-#include <string>
 #include <numeric>
+#include <string>
 
 namespace loramesher {
 namespace protocols {
