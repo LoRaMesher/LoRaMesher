@@ -404,9 +404,7 @@ NetworkStatus LoraMesher::GetNetworkStatus() const {
     status.current_slot = mesh_protocol->GetCurrentSlot();
     status.is_synchronized = mesh_protocol->IsSynchronized();
     status.connected_nodes = mesh_protocol->GetNetworkNodes().size();
-
-    // TODO: Add time_since_last_sync_ms when available in protocol
-    status.time_since_last_sync_ms = 0;
+    status.time_since_last_sync_ms = mesh_protocol->GetTimeSinceLastSync();
 
     return status;
 }

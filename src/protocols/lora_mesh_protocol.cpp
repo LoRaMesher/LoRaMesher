@@ -607,6 +607,11 @@ uint16_t LoRaMeshProtocol::GetCurrentSlot() const {
     return superframe_service_->GetCurrentSlot();
 }
 
+uint32_t LoRaMeshProtocol::GetTimeSinceLastSync() const {
+    if (!superframe_service_) return 0;
+    return superframe_service_->GetTimeSinceSuperframeStart();
+}
+
 uint32_t LoRaMeshProtocol::GetSlotDuration() const {
     return superframe_service_->GetSlotDuration();
 }

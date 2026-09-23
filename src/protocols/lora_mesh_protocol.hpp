@@ -206,6 +206,13 @@ class LoRaMeshProtocol : public Protocol {
     uint16_t GetCurrentSlot() const;
 
     /**
+     * @brief Get time since last superframe start
+     *
+     * @return uint32_t Time in ms
+     */
+    uint32_t GetTimeSinceLastSync() const;
+
+    /**
      * @brief Get the Slot duration in ms
      * 
      * @return uint32_t Slot duration in milliseconds
