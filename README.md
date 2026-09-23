@@ -34,6 +34,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Network Stress Test](#network-stress-test)
 - [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
+- [Upgrading from 1.x](#upgrading-from-1x)
 - [Citation](#citation)
 - [License](#license)
 
@@ -501,6 +502,19 @@ pio test -e test_native -v"
 ### Packet Types
 
 `SYNC_BEACON` · `ROUTING_TABLE` · `NM_CLAIM` · `JOIN_REQUEST` · `JOIN_RESPONSE` · `SLOT_ALLOCATION` · `DATA` · `DATA_BROADCAST` · `KEEP_ALIVE` · `FAULT_RECOVERY`
+
+---
+
+## Upgrading from 1.x
+
+Version 2.0.0 changes the on-air format, so **all nodes of a network must run the same major version**; 1.x and 2.x nodes cannot share a network.
+
+- `ROUTE_TABLE` headers carry the sender's control-slot index (header fields grow from 6 to 7 bytes).
+- TDMA data slots are assigned by control-slot index, so the schedule differs from 1.x.
+- Reliable data and reliable group payloads carry a 5-byte prefix (message sequence + timestamp) instead of 4 bytes; the maximum reliable application payload is 1 byte smaller.
+- `default_data_slots` now defaults to 2 and `max_data_slots` to 100; `default_data_slots` must be the same on every node.
+
+See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) for the wire formats.
 
 ---
 
