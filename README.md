@@ -31,6 +31,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Coverage](#profiling--code-coverage-llvm)
   - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
+  - [Network Stress Test](#network-stress-test)
 - [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
@@ -387,6 +388,42 @@ clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp  # sin
 ```
 
 Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others (see `.clang-tidy`).
+
+---
+
+### Network Stress Test
+
+`test/protocols/lora_mesh/services/test_network_stress/` runs a simulated multi-hop mesh under mixed traffic and reports delivery, latency, queue depth and TDMA schedule alignment.
+
+**Topology:** clusters of 5 nodes (one head + 4 leaves in a star) whose heads form a backbone line; the Network Manager is the centre head. **Traffic:** non-reliable leaf→head telemetry, reliable unicast across the backbone, and reliable group sends from the Network Manager.
+
+| Cell | Nodes | Worst-case hops | Asserts | Approx. run time |
+|------|-------|-----------------|---------|------------------|
+| `10n_uniform` | 10 | 3 | Pass/fail on 1-hop delivery, relay queue, TDMA alignment | ~1 min |
+| `25n_uniform` | 25 | 6 | TDMA alignment only (other metrics reported) | ~3–10 min |
+
+Build the suite once, then run a single cell directly (the full suite runs every cell):
+
+```bash
+# Build only (library + suite)
+pio test -e test_native -f "protocols/lora_mesh/services/test_network_stress" --without-testing
+
+# Run one cell, writing the (multi-MB, verbose) output to a file
+.pio/build/test_native/program --gtest_filter='*10n_uniform' > stress.log 2>&1
+
+# Extract the results
+grep -aE "STRESS SCORECARD|^(reliable|non-reliable|group|relay|collision|TDMA|superframe|VERDICT)|##METRICS##|##MISALIGNED##|  OK |FAILED" stress.log
+```
+
+**Reading the output:**
+
+- **Scorecard:** delivery ratio per traffic class, reliable RTT and one-way latency, relay TX-queue depth (max / mean of the final quarter; queue capacity is 10), link collision rate, TDMA misalignments (a count, 0 when every neighbour listens in every slot a node transmits), superframe length and convergence time, and a `HEALTHY` / `COLLAPSED` verdict.
+- `##METRICS## {...}`: the same values as one JSON line, for scripting.
+- `##DATA## N<i> | ...`: each node's data band after settling — `T` = own TX slot, `R<j>` = listening to node `j`.
+- `##ALLOC## N<i> ...`: per-node TX / RX / sleep slot counts and frame length.
+- `##MISALIGNED## slot <s>: ...`: a slot where a node transmits but a neighbour is not listening to it.
+
+**Tips:** always redirect to a file and search it with `grep -a` (the log contains colour codes); do not edit sources while a build is running; allow a long timeout for the 25-node cell.
 
 ---
 

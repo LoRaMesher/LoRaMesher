@@ -203,7 +203,7 @@ pio test -e test_native -f "protocols/lora_mesh/services/test_network_stress" --
 # Binary:
 .pio/build/test_native/program
 # Run specific cells (10n cells ~40-55s each; 25n cells ~9 min EACH):
-.pio/build/test_native/program --gtest_filter='*10n_flat:*10n_loadaware' > /tmp/run.log 2>&1
+.pio/build/test_native/program --gtest_filter='*10n_uniform' > /tmp/run.log 2>&1
 # Extract signal from the (huge, verbose) log:
 grep -aE "  OK |FAILED |STRESS SCORECARD|##METRICS##|##ALLOC## N" /tmp/run.log
 ```
