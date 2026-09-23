@@ -8,9 +8,9 @@
 #include <array>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <unordered_map>
 #include <vector>
+#include "os/mutex.hpp"
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
@@ -1255,7 +1255,7 @@ class NetworkService : public INetworkService {
     bool slot_table_dirty_ = true;
 
     // Thread safety
-    mutable std::mutex network_mutex_;
+    mutable os::Mutex network_mutex_;
 };
 
 }  // namespace lora_mesh
