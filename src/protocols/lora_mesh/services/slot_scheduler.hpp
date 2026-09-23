@@ -60,8 +60,6 @@ class SlotScheduler {
         uint8_t number_of_slots_per_superframe = 0;
         uint8_t beacon_node_count = 1;
         uint8_t my_control_slot_index = 0xFF;
-        uint8_t local_allocated_data_slots = 0;
-        uint8_t local_capabilities = 0;
         uint8_t no_received_sync_beacon_count = 0;
         uint8_t max_network_nodes = 0;
         uint8_t max_data_slots = 0;
@@ -79,8 +77,6 @@ class SlotScheduler {
         std::function<std::vector<NetworkNodeRoute>()> get_routing_nodes;
         /// This node's hop distance to the Network Manager (0 if NM).
         std::function<uint8_t()> get_hop_distance_to_nm;
-        /// Sum of active data-slot allocations (clamped to the budget).
-        std::function<uint8_t()> get_allocated_data_slots;
         /// Slot duration in ms (returns a sane fallback when unavailable).
         std::function<uint32_t()> get_slot_duration;
         /// Total NM TX time (ms) for the given control/data slot counts.
@@ -152,18 +148,25 @@ class SlotScheduler {
 
     Result UpdateSlotTable_Impl(const Context& ctx);
 
-    /// Gather all nodes (including self) and sort into deterministic TX order.
-    std::vector<NetworkNodeRoute> BuildOrderedNodes(const Context& ctx) const;
-
     /// Compute band sizes + superframe length; sets allocated_*_slots_ and
     /// slot_count_. Returns the derived plan used to fill the table.
-    SlotPlan ComputeBandSizes(
-        const Context& ctx, const std::vector<NetworkNodeRoute>& ordered_nodes);
+    SlotPlan ComputeBandSizes(const Context& ctx,
+                              const std::vector<NetworkNodeRoute>& nodes);
 
     /// Fill the slot table phases (sync / control / data / sleep / discovery).
     void FillSlotTable(const Context& ctx,
-                       const std::vector<NetworkNodeRoute>& ordered_nodes,
+                       const std::vector<NetworkNodeRoute>& nodes,
                        const SlotPlan& plan);
+
+    /**
+     * @brief Active direct neighbour holding @p control_index, or 0 if none.
+     *
+     * The Network Manager is treated as index 0 when its index is unknown.
+     * When several neighbours claim the index, the most recently seen wins.
+     */
+    static AddressType FindDataSlotOwner(
+        const Context& ctx, const std::vector<NetworkNodeRoute>& nodes,
+        uint8_t control_index);
 
     /// Emit a debug rendering of the current slot table.
     void LogSlotTable(const Context& ctx) const;

@@ -25,49 +25,9 @@ Result SlotScheduler::UpdateSlotTableIfDirty(const Context& ctx, bool force) {
     return UpdateSlotTable_Impl(ctx);
 }
 
-std::vector<SlotScheduler::NetworkNodeRoute> SlotScheduler::BuildOrderedNodes(
-    const Context& ctx) const {
-    // Get all nodes including self ordered.
-    std::vector<NetworkNodeRoute> ordered_nodes = host_.get_routing_nodes();
-
-    // Ensure self node is included for CONTROL_TX slot allocation
-    // (self may not be in routing table since we removed self-entries)
-    bool self_found =
-        std::any_of(ordered_nodes.begin(), ordered_nodes.end(),
-                    [&ctx](const NetworkNodeRoute& node) {
-                        return node.GetAddress() == ctx.node_address;
-                    });
-
-    if (!self_found) {
-        NetworkNodeRoute self_node(ctx.node_address, 0, false,
-                                   ctx.local_capabilities,
-                                   ctx.local_allocated_data_slots, 0);
-        self_node.is_active = true;
-        self_node.is_network_manager =
-            (ctx.network_manager == ctx.node_address);
-        ordered_nodes.push_back(self_node);
-    }
-
-    std::sort(ordered_nodes.begin(), ordered_nodes.end(),
-              [](const NetworkNodeRoute& a, const NetworkNodeRoute& b) {
-                  // Primary: Network Manager transmits first (has most complete routing info)
-                  if (a.is_network_manager != b.is_network_manager) {
-                      return a.is_network_manager > b.is_network_manager;
-                  }
-                  // Secondary: address-based deterministic ordering (same across all nodes)
-                  return a.routing_entry.destination <
-                         b.routing_entry.destination;
-              });
-
-    return ordered_nodes;
-}
-
 SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
-    const Context& ctx, const std::vector<NetworkNodeRoute>& ordered_nodes) {
+    const Context& ctx, const std::vector<NetworkNodeRoute>& nodes) {
     SlotPlan plan;
-
-    // Get the total data slots allocated (includes self's local_allocated_data_slots_)
-    plan.total_data_slots = host_.get_allocated_data_slots();
 
     // Use max_hops from received sync beacons
     int max_hops_count = ctx.current_network_depth;
@@ -78,7 +38,7 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
         // and overflow the superframe arithmetic).
         uint8_t max_index =
             (ctx.my_control_slot_index != 0xFF) ? ctx.my_control_slot_index : 0;
-        for (const auto& node : ordered_nodes) {
+        for (const auto& node : nodes) {
             if (node.control_slot_index != 0xFF &&
                 node.control_slot_index < ctx.max_network_nodes &&
                 node.control_slot_index > max_index) {
@@ -94,6 +54,13 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
         allocated_control_slots_ =
             std::min<uint8_t>(ctx.beacon_node_count, ctx.max_network_nodes);
     }
+
+    // Every control index owns default_data_slots consecutive data slots, so
+    // the data band size depends only on network-wide agreed values.
+    plan.total_data_slots = static_cast<uint8_t>(
+        std::min<uint16_t>(static_cast<uint16_t>(allocated_control_slots_) *
+                               ctx.default_data_slots,
+                           ctx.max_data_slots));
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
     allocated_discovery_slots_ = (max_hops_count + 1) * 2;
@@ -118,20 +85,9 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
         // Duty cycle applies only to TX time (not RX or sleep slots).
         // NM is the worst case: it transmits sync beacon + routing table + data.
 
-        // Find NM's own data slot allocation
-        // TODO: Find the grater node that contains the most allocated data slots. This will be the reference.
-        // Or do the duty cycle by device and calculate it someway?
-        uint8_t nm_data_slots = ctx.default_data_slots;
-        for (const auto& node : ordered_nodes) {
-            if (node.routing_entry.destination == ctx.node_address) {
-                nm_data_slots = node.routing_entry.allocated_data_slots;
-                break;
-            }
-        }
-
         // Calculate total NM TX time using Time-on-Air for each packet
-        plan.tx_time_ms =
-            host_.calculate_nm_tx_time(allocated_control_slots_, nm_data_slots);
+        plan.tx_time_ms = host_.calculate_nm_tx_time(allocated_control_slots_,
+                                                     ctx.default_data_slots);
 
         // Compute superframe size: total_tx_time / (slot_duration * duty_cycle)
         uint32_t slot_duration_ms = host_.get_slot_duration();
@@ -204,9 +160,36 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
     return plan;
 }
 
-void SlotScheduler::FillSlotTable(
-    const Context& ctx, const std::vector<NetworkNodeRoute>& ordered_nodes,
-    const SlotPlan& plan) {
+AddressType SlotScheduler::FindDataSlotOwner(
+    const Context& ctx, const std::vector<NetworkNodeRoute>& nodes,
+    uint8_t control_index) {
+    AddressType owner = 0;
+    uint32_t owner_last_seen = 0;
+    for (const auto& node : nodes) {
+        if (!node.IsDirectNeighbor()) {
+            continue;
+        }
+        uint8_t index = node.control_slot_index;
+        // The Network Manager always holds control index 0.
+        if (index == 0xFF && node.GetAddress() == ctx.network_manager) {
+            index = 0;
+        }
+        if (index != control_index) {
+            continue;
+        }
+        // Two neighbours can claim the same index while a freed index is
+        // being reassigned; the most recently heard one is the current owner.
+        if (owner == 0 || node.last_seen > owner_last_seen) {
+            owner = node.GetAddress();
+            owner_last_seen = node.last_seen;
+        }
+    }
+    return owner;
+}
+
+void SlotScheduler::FillSlotTable(const Context& ctx,
+                                  const std::vector<NetworkNodeRoute>& nodes,
+                                  const SlotPlan& plan) {
     // Single slot_index advances through all allocation phases
     size_t slot_index = 0;
     auto AllocateSlot = [&](SlotAllocation::SlotType type,
@@ -251,28 +234,23 @@ void SlotScheduler::FillSlotTable(
         }
     }
 
-    // ── Phase 3: Data slots (per-node TX/RX/SLEEP) ───────────────────────────
-    // Bound the data band to the budget that sized the superframe so a single
-    // out-of-range per-node count cannot run past the frame and starve the
-    // sleep/discovery tail. In a healthy network these limits are no-ops.
-    uint16_t data_allocated = 0;
-    for (const auto& node : ordered_nodes) {
-        AddressType addr = node.GetAddress();
-        uint8_t slot_data_number =
-            std::min<uint8_t>(node.GetAllocatedDataSlots(), ctx.max_data_slots);
-        for (size_t j = 0; j < slot_data_number; j++) {
-            if (data_allocated >= plan.total_data_slots ||
-                slot_index >= slot_count_) {
-                break;
-            }
-            if (ctx.node_address == addr) {
-                AllocateSlot(SlotAllocation::SlotType::TX, addr);
-            } else if (node.IsDirectNeighbor()) {
-                AllocateSlot(SlotAllocation::SlotType::RX, addr);
-            } else {
-                AllocateSlot(SlotAllocation::SlotType::SLEEP, addr);
-            }
-            data_allocated++;
+    // ── Phase 3: Data slots (control-index indexed TX/RX/SLEEP) ──────────────
+    // Data slot k belongs to control index k / default_data_slots, so every
+    // node derives the same owner for each slot regardless of which nodes its
+    // routing table knows.
+    for (uint16_t k = 0; k < plan.total_data_slots && slot_index < slot_count_;
+         k++) {
+        uint8_t control_index =
+            static_cast<uint8_t>(k / ctx.default_data_slots);
+        if (control_index == ctx.my_control_slot_index) {
+            AllocateSlot(SlotAllocation::SlotType::TX, ctx.node_address);
+            continue;
+        }
+        AddressType owner = FindDataSlotOwner(ctx, nodes, control_index);
+        if (owner != 0) {
+            AllocateSlot(SlotAllocation::SlotType::RX, owner);
+        } else {
+            AllocateSlot(SlotAllocation::SlotType::SLEEP, 0);
         }
     }
 
@@ -296,9 +274,9 @@ Result SlotScheduler::UpdateSlotTable_Impl(const Context& ctx) {
     // Clear existing table
     slot_count_ = 0;
 
-    std::vector<NetworkNodeRoute> ordered_nodes = BuildOrderedNodes(ctx);
-    SlotPlan plan = ComputeBandSizes(ctx, ordered_nodes);
-    FillSlotTable(ctx, ordered_nodes, plan);
+    const std::vector<NetworkNodeRoute> nodes = host_.get_routing_nodes();
+    SlotPlan plan = ComputeBandSizes(ctx, nodes);
+    FillSlotTable(ctx, nodes, plan);
 
     LogSlotTable(ctx);
 

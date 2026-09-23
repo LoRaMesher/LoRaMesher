@@ -135,9 +135,6 @@ NetworkService::NetworkService(
     slot_host.get_hop_distance_to_nm = [this]() {
         return GetHopDistanceToNM();
     };
-    slot_host.get_allocated_data_slots = [this]() {
-        return GetAllocatedDataSlots();
-    };
     slot_host.get_slot_duration = [this]() -> uint32_t {
         return superframe_service_ ? superframe_service_->GetSlotDuration()
                                    : 1000;
@@ -174,8 +171,6 @@ SlotScheduler::Context NetworkService::MakeSlotContext() const {
     ctx.number_of_slots_per_superframe = number_of_slots_per_superframe_;
     ctx.beacon_node_count = beacon_node_count_;
     ctx.my_control_slot_index = my_control_slot_index_;
-    ctx.local_allocated_data_slots = local_allocated_data_slots_;
-    ctx.local_capabilities = local_capabilities_;
     ctx.no_received_sync_beacon_count = no_received_sync_beacon_count_;
     ctx.max_network_nodes = config_.max_network_nodes;
     ctx.max_data_slots = config_.max_data_slots;
