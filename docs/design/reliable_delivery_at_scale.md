@@ -1,7 +1,20 @@
 # Reliable Delivery at Scale — Design Rationale
 
-Status: in progress (2026-09-23). Tracks TODO-014. To be folded into
-`PROTOCOL_SPEC.md` (§3.2.6 reliable framing, §7.2 sizes).
+Status: **implemented (2026-09-23)** — commit `54cf983`; PROTOCOL_SPEC §3.2.6
+and §7.2 updated. Tracks TODO-014.
+
+## Result (stress test, library adaptive timeout)
+
+| cell | reliable PDR | pending at end | relay queue final-q | retries dropped at relays |
+|------|------|------|------|------|
+| 10n before | 85.7% (12/14) | — | 2.0 | — |
+| 10n after  | 100% (14/14) | 0 | 1.7 | 0 |
+| 25n before | 0% (0/14) | — | 4.6 | 44+ |
+| 25n after  | 100% (14/14) | 0 | 2.5 | 0 |
+
+25n reliable RTT is long (p50 ≈ 1137 s ≈ 18 superframes for 10 hops) but
+bounded. Group ACK completeness is unchanged (~28% at 25n): the test's group
+window (4 superframes) is shorter than a 5-hop ACK return — tracked separately.
 
 ## Problem
 In the 25-node stress test (`test_network_stress`, 5 hops worst case, 62.5 s
