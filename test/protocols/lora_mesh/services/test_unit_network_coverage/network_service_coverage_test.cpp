@@ -1687,6 +1687,68 @@ TEST_F(NetworkServiceCoverageTest, SendDataRejectsPayloadAboveMtu) {
     EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 1u);
 }
 
+// ============================================================================
+// Routing-table header: sender's own control-slot index
+// ============================================================================
+
+namespace {
+
+BaseMessage MakeRoutingTable(AddressType src, AddressType nm,
+                             const std::vector<RoutingTableEntry>& entries,
+                             uint8_t source_control_slot_index) {
+    auto msg = RoutingTableMessage::Create(
+        0xFFFF, src, nm, /*version=*/1, entries, /*caps=*/0,
+        /*data_slots=*/2, source_control_slot_index);
+    EXPECT_TRUE(msg.has_value());
+    return msg->ToBaseMessage();
+}
+
+uint8_t ControlIndexOf(const NetworkService& service, AddressType address) {
+    for (const auto& node : service.GetNetworkNodes()) {
+        if (node.GetAddress() == address) {
+            return node.control_slot_index;
+        }
+    }
+    return 0xFE;  // not present
+}
+
+}  // namespace
+
+TEST_F(NetworkServiceCoverageTest,
+       NeighbourLearnsSenderControlIndexFromHeader) {
+    // No third party ever lists kOtherNode: its index comes only from its own
+    // routing-table header.
+    BaseMessage rt = MakeRoutingTable(kOtherNode, kNMAddress, {}, 3);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(rt, 100).IsSuccess());
+
+    EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 3u);
+}
+
+TEST_F(NetworkServiceCoverageTest, GossipDoesNotOverrideNeighbourSelfReport) {
+    BaseMessage own = MakeRoutingTable(kOtherNode, kNMAddress, {}, 3);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(own, 100).IsSuccess());
+
+    // Another neighbour relays a stale index for kOtherNode.
+    std::vector<RoutingTableEntry> relayed = {
+        RoutingTableEntry(kOtherNode, /*hops=*/1, /*quality=*/200,
+                          /*data_slots=*/2, /*caps=*/0, /*ctrl_slot_idx=*/5)};
+    BaseMessage gossip = MakeRoutingTable(kNMAddress, kNMAddress, relayed, 0);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(gossip, 200).IsSuccess());
+
+    EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 3u);
+    EXPECT_EQ(ControlIndexOf(*service_, kNMAddress), 0u);
+}
+
+TEST_F(NetworkServiceCoverageTest, UnassignedHeaderIndexKeepsGossipedIndex) {
+    std::vector<RoutingTableEntry> relayed = {
+        RoutingTableEntry(kOtherNode, 1, 200, 2, 0, /*ctrl_slot_idx=*/5)};
+    BaseMessage gossip = MakeRoutingTable(kNMAddress, kNMAddress, relayed, 0);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(gossip, 100).IsSuccess());
+
+    // kOtherNode reached only via kNMAddress (hop 2): gossip applies.
+    EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 5u);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

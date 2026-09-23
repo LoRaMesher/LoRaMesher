@@ -434,12 +434,13 @@ struct RoutingTableHeader {
     MessageType type = ROUTE_TABLE; // Message type 0x32 (1 byte)
     uint8_t payload_size;            // Size of routing entries payload (1 byte)
 
-    // Routing table specific fields (6 bytes)
+    // Routing table specific fields (7 bytes)
     AddressType network_manager;     // Network Manager address (2 bytes)
     uint8_t table_version;           // Version for change detection (1 byte)
     uint8_t entry_count;             // Number of entries in message (1 byte)
     uint8_t source_capabilities;     // Source node capability flags (1 byte)
     uint8_t source_allocated_slots;  // Source node's allocated data slots (1 byte)
+    uint8_t source_control_slot_index; // Source's own control slot, 0xFF=unassigned (1 byte)
 };
 
 struct RoutingTableEntry {
@@ -460,6 +461,12 @@ struct RoutingTableEntry {
 - **Bidirectional Link Quality**: Separate `link_quality` (route cost) and `reception_quality` (raw EWMA) fields prevent circular feedback in quality estimation
 - **Compact Format**: 10 bytes per route entry (max 24 entries per message)
 - **Loop Prevention**: `next_hop` field enables receiver-side split horizon on broadcast updates
+
+**Source control slot index**: `source_control_slot_index` carries the sender's
+own NM-assigned control slot index. Receivers store it on the sender's routing
+entry. For active direct neighbours this self-report takes precedence over the
+`control_slot_index` relayed in other nodes' entries, because the data band
+(§5.1) assigns a neighbour's data slots by that index.
 
 **Usage in Distance-Vector Protocol**:
 1. Each node broadcasts routing table during CONTROL_TX slots
@@ -1418,8 +1425,26 @@ The TDMA system organizes time into power-optimized superframes with multi-hop s
 `sync_beacon → control → data → sleep (elastic) → discovery (tail)`. Sleep
 shrinks to 0 if necessary to preserve the discovery tail. Discovery count
 is `(max_hops + 1) * 2`; sync count is `(max_hops + 1)`; control count
-equals the sync beacon's `node_count`; data count equals the sum of active
-routing-table entries' `allocated_data_slots`.
+equals the sync beacon's `node_count` (`N`); data count is
+`min(N × default_data_slots, max_data_slots)`.
+
+**Data band layout.** Data slot `k` of the band belongs to control slot index
+`c = k / default_data_slots`. Each node derives the same owner for every slot
+from network-wide values (its own index, `N`, `default_data_slots`), so the
+layout does not depend on which nodes its routing table contains:
+
+| Owner of index `c` | Slot type |
+|--------------------|-----------|
+| this node (`c == my_control_slot_index`) | TX |
+| an active direct neighbour | RX (that neighbour) |
+| anyone else, or unassigned | SLEEP |
+
+A direct neighbour's index comes from its routing-table header
+(`source_control_slot_index`, §3.2.3). The Network Manager holds index 0.
+When two neighbours claim the same index, the most recently heard one owns it.
+An index whose slots would exceed `max_data_slots` gets no data slots.
+`default_data_slots` (default 2) must be configured identically on every node;
+`max_data_slots` defaults to 100.
 
 ### 5.2 Timing Parameters
 
@@ -1603,7 +1628,7 @@ New nodes request slots during the join process:
 
 ```cpp
 struct SlotRequest {
-    uint8_t messageType;     // SLOT_REQUEST (0x23)
+    uint8_t messageType;     // SLOT_REQUEST (0x44)
     uint16_t nodeId;         // Requesting node
     uint8_t requestedSlots;  // Number of slots needed
     uint8_t priority;        // Request priority (0-255)
@@ -1957,14 +1982,14 @@ For N-node network (1 manager + N-1 regular nodes):
 Required Active Slots:
 - Beacon Slots = max_hops (hop-layered forwarding)
 - Control Slots = N (1 TX manager + N-1 RX nodes)
-- Data Slots = N × data_slots_per_node
+- Data Slots = min(N × default_data_slots, max_data_slots)
 - Discovery Slots = min(5, max(2, ceil(N/3)))
 - Total Active = Beacon + Control + Data + Discovery
 
 Power-Optimized Superframe (TX-time-based, configurable):
 - Target TX Duty Cycle   = configurable (default 1%, range 0.1%–100%)
 - Min Sleep Fraction     = configurable (default 30%, range 0%–90%)
-- NM TX Time = ToA(sync_beacon) + ToA(routing_table) + nm_data_slots × ToA(max_packet)
+- NM TX Time = ToA(sync_beacon) + ToA(routing_table) + default_data_slots × ToA(max_packet)
 - Minimum Total Slots (TX)    = ceil(NM_TX_time_ms / (slot_duration_ms × target_duty_cycle))
 - Minimum Total Slots (Sleep) = ceil(total_active_slots / (1 − min_sleep_fraction))
 - Superframe Size = max(Minimum Total Slots (TX), kMinSlots,
@@ -2683,7 +2708,7 @@ The base header structure used by all messages:
 | SYNC_BEACON | network_id(2), total_slots(1), slot_duration_ms(2), network_manager(2), hop_count(1), propagation_delay_ms(4), max_hops(1), node_count(1) | 20 bytes |
 | JOIN_REQUEST | requested_slots(1), next_hop(2), sponsor_address(2), hop_count(1) | 12 bytes |
 | JOIN_RESPONSE | network_id(2), allocated_slots(1), status(1), next_hop(2), target_address(2), control_slot_index(1) | 15 bytes |
-| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1) + entries(10 each) | 12+ bytes |
+| ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1), source_control_slot_index(1) + entries(10 each) | 13+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_RELIABLE | next_hop(2), ttl(1), seq_num(1), send_timestamp(4) + payload | 14+ bytes |

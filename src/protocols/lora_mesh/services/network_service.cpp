@@ -330,6 +330,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     uint8_t source_capabilities = routing_msg.GetSourceCapabilities();
     uint8_t source_allocated_data_slots =
         routing_msg.GetSourceAllocatedDataSlots();
+    uint8_t source_control_slot_index = routing_msg.GetSourceControlSlotIndex();
 
     LOG_INFO(
         "Received routing table update from 0x%04X: version %d, %zu entries at "
@@ -384,11 +385,35 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
 
     routing_changed |= routes_updated;
 
+    // A neighbour's own report of its control slot index is authoritative;
+    // the data band assigns its slots by that index.
+    if (source_control_slot_index != 0xFF) {
+        if (source_control_slot_index < config_.max_network_nodes) {
+            routing_table_->SetControlSlotIndex(source,
+                                                source_control_slot_index);
+        } else {
+            LOG_WARNING(
+                "Ignoring out-of-range own control slot index %d from "
+                "0x%04X",
+                source_control_slot_index, source);
+        }
+    }
+
     // Propagate control_slot_index from each received entry into the routing
     // table.  This lets any node reconstruct the full TDMA schedule if it
-    // wins an election.
+    // wins an election.  Active direct neighbours report their own index,
+    // which relayed entries must not override.
+    const auto& known_nodes = routing_table_->GetNodes();
+    auto is_active_neighbour = [&known_nodes](AddressType address) {
+        return std::any_of(known_nodes.begin(), known_nodes.end(),
+                           [address](const NetworkNodeRoute& node) {
+                               return node.GetAddress() == address &&
+                                      node.IsDirectNeighbor();
+                           });
+    };
     for (const auto& entry : entries) {
-        if (entry.control_slot_index != 0xFF) {
+        if (entry.control_slot_index != 0xFF &&
+            !is_active_neighbour(entry.destination)) {
             if (entry.control_slot_index >= config_.max_network_nodes) {
                 LOG_WARNING(
                     "Ignoring out-of-range control slot index %d for 0x%04X "
@@ -892,7 +917,7 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
 
     auto routing_msg_opt = RoutingTableMessage::Create(
         destination, node_address_, network_manager_, table_version_, entries,
-        local_capabilities, local_data_slots);
+        local_capabilities, local_data_slots, my_control_slot_index_);
     if (!routing_msg_opt) {
         LOG_ERROR("Failed to create routing table message");
         return nullptr;
@@ -3290,6 +3315,7 @@ void NetworkService::ResetNetworkState() {
     is_synchronized_ = false;
     network_manager_ = 0;
     local_allocated_data_slots_ = 0;
+    my_control_slot_index_ = 0xFF;
 
     // Reset timing variables
     discovery_start_time_ = 0;
