@@ -1,8 +1,9 @@
 # TODO: Reliable/group multi-hop delivery is ~0% at scale
 
-Status: OPEN — separate investigation (decided Jul 2026). Priority: P0 (dominates
-"does the network handle load" far more than slot allocation does).
-
+Status: ✅ DONE for reliable unicast (2026-09-23, commit `54cf983`): 25-node
+reliable PDR 0/14 → 14/14. Root cause and fix:
+`docs/design/reliable_delivery_at_scale.md`. Reliable GROUP ACK completeness
+(~28% at 25 nodes) remains open as TODO-016.
 ## Symptom
 In the 25-node mixed-traffic stress test (`test_network_stress`), reliable-unicast
 and group-ACK delivery over MULTIPLE hops is ~0% — and this holds **even under
