@@ -106,9 +106,12 @@ function(discover_tests REL_PATH)
 
         # Integration and routing tests simulate full multi-node mesh networks
         # under virtual time and need a longer per-test timeout than simple unit
-        # tests.  Any suite under protocols/ gets 60 s; everything else uses the
-        # project default (5 s).
-        if(REL_PATH MATCHES "^protocols/")
+        # tests.  The 25-node mixed-traffic stress suite runs many superframes
+        # across a large mesh and needs the most headroom; other protocols/
+        # suites get 60 s; everything else uses the project default (5 s).
+        if(REL_PATH MATCHES "test_network_stress")
+            set(SUITE_TIMEOUT 600)
+        elseif(REL_PATH MATCHES "^protocols/")
             set(SUITE_TIMEOUT 60)
         else()
             set(SUITE_TIMEOUT ${DEFAULT_TEST_TIMEOUT})

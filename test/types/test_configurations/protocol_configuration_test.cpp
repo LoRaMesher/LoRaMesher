@@ -271,9 +271,9 @@ TEST_F(LoRaMeshConfigTest, ValidateDefaultValues) {
     EXPECT_EQ(cfg.getHelloInterval(), 60000u);
     EXPECT_EQ(cfg.getMaxHops(), 5u);
     EXPECT_EQ(cfg.getMaxPacketSize(), 255u);
-    EXPECT_EQ(cfg.getDefaultDataSlots(), 1u);
+    EXPECT_EQ(cfg.getDefaultDataSlots(), 2u);
     EXPECT_EQ(cfg.getMaxNetworkNodes(), 50u);
-    EXPECT_EQ(cfg.getMaxDataSlots(), 50u);
+    EXPECT_EQ(cfg.getMaxDataSlots(), 100u);
     EXPECT_EQ(cfg.getGuardTime(), 50u);
     EXPECT_NEAR(cfg.getTargetDutyCycle(), 0.01f, 0.001f);
     EXPECT_NEAR(cfg.getMinSleepFraction(), 0.30f, 0.001f);
@@ -427,35 +427,36 @@ TEST_F(LoRaMeshConfigTest, GetSyncBeaconSubslotConfigDefault) {
     const auto& cfg = config_.getSyncBeaconSubslotConfig();
     EXPECT_EQ(cfg.num_subslots, 5u);
     EXPECT_EQ(cfg.strategy,
-              protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH);
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH);
 }
 
 TEST_F(LoRaMeshConfigTest, SetSyncBeaconSubslotConfig) {
-    protocols::lora_mesh::SubslotConfig new_cfg{
-        3, 20, protocols::lora_mesh::SubslotAssignment::HOP_BASED};
+    types::protocols::lora_mesh::SubslotConfig new_cfg{
+        3, 20, types::protocols::lora_mesh::SubslotAssignment::HOP_BASED};
     config_.setSyncBeaconSubslotConfig(new_cfg);
     const auto& result = config_.getSyncBeaconSubslotConfig();
     EXPECT_EQ(result.num_subslots, 3u);
     EXPECT_EQ(result.guard_time_ms, 20u);
     EXPECT_EQ(result.strategy,
-              protocols::lora_mesh::SubslotAssignment::HOP_BASED);
+              types::protocols::lora_mesh::SubslotAssignment::HOP_BASED);
 }
 
 TEST_F(LoRaMeshConfigTest, GetDiscoverySubslotConfigDefault) {
     const auto& cfg = config_.getDiscoverySubslotConfig();
     EXPECT_EQ(cfg.num_subslots, 5u);
-    EXPECT_EQ(cfg.strategy, protocols::lora_mesh::SubslotAssignment::RANDOM);
+    EXPECT_EQ(cfg.strategy,
+              types::protocols::lora_mesh::SubslotAssignment::RANDOM);
 }
 
 TEST_F(LoRaMeshConfigTest, SetDiscoverySubslotConfig) {
-    protocols::lora_mesh::SubslotConfig new_cfg{
-        4, 15, protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
+    types::protocols::lora_mesh::SubslotConfig new_cfg{
+        4, 15, types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
     config_.setDiscoverySubslotConfig(new_cfg);
     const auto& result = config_.getDiscoverySubslotConfig();
     EXPECT_EQ(result.num_subslots, 4u);
     EXPECT_EQ(result.guard_time_ms, 15u);
     EXPECT_EQ(result.strategy,
-              protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
 }
 
 // ---- ProtocolConfig wrapper additional coverage ----

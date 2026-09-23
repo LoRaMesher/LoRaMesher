@@ -204,9 +204,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     explicit LoRaMeshProtocolConfig(
         AddressType node_address = 0, uint32_t hello_interval = 60000,
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
-        uint8_t max_packet_size = 255, uint8_t default_data_slots = 1,
+        uint8_t max_packet_size = 255, uint8_t default_data_slots = 2,
         uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50,
-        uint8_t max_data_slots = 50, uint32_t guard_time_ms = 50,
+        uint8_t max_data_slots = 100, uint32_t guard_time_ms = 50,
         uint32_t wake_up_guard_ms = 100)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
@@ -651,14 +651,13 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint8_t max_packet_size_ = 255;  ///< Maximum packet size
     bool max_packet_size_user_set_ =
         false;  ///< True when setMaxPacketSize() was called
-    uint8_t default_data_slots_ =
-        1;  ///< Default Number of data slots in the superframe
+    uint8_t default_data_slots_ = 2;  ///< Data slots allocated to each node
     uint32_t joining_timeout_ms_ =
         hello_interval_ * 3;  ///< Joining timeout in ms
     uint8_t max_network_nodes_ =
         50;  ///< Maximum number of nodes in the network
     uint8_t max_data_slots_ =
-        50;  ///< Maximum total data slots allocatable in the superframe
+        100;  ///< Ceiling on total data slots allocatable in the superframe
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
     uint32_t wake_up_guard_ms_ =
         100;  ///< Guard time before slot boundary for MCU wake-up
