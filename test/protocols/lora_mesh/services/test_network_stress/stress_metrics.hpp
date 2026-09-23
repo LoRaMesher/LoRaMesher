@@ -122,6 +122,7 @@ struct StressMetrics {
     uint64_t reliable_sent = 0;
     uint64_t reliable_delivered = 0;  // distinct Delivered outcomes
     uint64_t reliable_failed = 0;
+    size_t reliable_pending_at_end = 0;     // unresolved after the drain phase
     std::vector<uint32_t> reliable_rtt_ms;  // RTT samples
 
     // ---- App plane: non-reliable unicast ----

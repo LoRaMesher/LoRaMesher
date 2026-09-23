@@ -49,6 +49,7 @@ class NetworkStressTest : public RoutingTestFixture,
     static constexpr int kClusterSize = 5;
     static constexpr int kRounds = 20;
     static constexpr int kSettleSuperframes = 20;
+    static constexpr int kMaxDrainSuperframes = 40;
 
     protocols::lora_mesh::NetworkService* Net(TestNode& node) {
         return node.protocol->GetNetworkServiceForTest();
@@ -193,12 +194,11 @@ class NetworkStressTest : public RoutingTestFixture,
         auto payload = StressPayload::Encode(
             TrafficClass::kReliable, topo_[from_idx]->address,
             topo_[to_idx]->address, ++global_seq_, now);
-        auto superframe = metrics_.superframe_ms;
-        MessageId id =
-            Net(*topo_[from_idx])
-                ->SendReliable(topo_[to_idx]->address, payload,
-                               /*max_retries=*/4,
-                               /*timeout_override_ms=*/superframe * 3);
+        // No timeout override: the library sizes the timeout from the
+        // measured round trip (or the hop count before the first sample).
+        MessageId id = Net(*topo_[from_idx])
+                           ->SendReliable(topo_[to_idx]->address, payload,
+                                          /*max_retries=*/4);
         std::lock_guard<std::mutex> lock(metrics_mu_);
         if (id.source != 0) {
             metrics_.reliable_sent++;
@@ -389,11 +389,22 @@ class NetworkStressTest : public RoutingTestFixture,
             SampleRelayQueues();
         }
 
-        // Drain: let in-flight reliable retries and group windows resolve.
-        for (int i = 0; i < 8; i++) {
+        // Drain: let in-flight reliable messages and group windows resolve,
+        // bounded so a stuck message cannot hang the test.
+        for (int i = 0; i < kMaxDrainSuperframes && ReliablePending() > 0;
+             i++) {
             AdvanceTime(superframe, superframe, 50u, 0, nullptr);
             SampleRelayQueues();
         }
+        metrics_.reliable_pending_at_end = ReliablePending();
+    }
+
+    size_t ReliablePending() {
+        size_t pending = 0;
+        for (auto* node : topo_) {
+            pending += Net(*node)->GetReliablePendingCount();
+        }
+        return pending;
     }
 
     // -- Finalize / report ---------------------------------------------------
@@ -456,6 +467,8 @@ class NetworkStressTest : public RoutingTestFixture,
         auto row = [](const std::string& k, const std::string& v) {
             std::cout << std::left << std::setw(28) << k << v << "\n";
         };
+        row("reliable pending at end",
+            std::to_string(m.reliable_pending_at_end));
         row("reliable PDR", pct(m.ReliablePdr()) + "  (" +
                                 std::to_string(m.reliable_delivered) + "/" +
                                 std::to_string(m.reliable_sent) + ")");
@@ -501,6 +514,7 @@ class NetworkStressTest : public RoutingTestFixture,
            << "\"slots\":" << static_cast<int>(p.data_slots) << ","
            << "\"loss\":" << p.backbone_loss << ","
            << "\"pdr_reliable\":" << m.ReliablePdr() << ","
+           << "\"reliable_pending_at_end\":" << m.reliable_pending_at_end << ","
            << "\"pdr_non_reliable\":" << m.NonReliablePdr() << ","
            << "\"group_ack_completeness\":" << m.GroupAckCompleteness() << ","
            << "\"rtt_p50\":" << Percentile(m.reliable_rtt_ms, 0.50) << ","
@@ -564,11 +578,12 @@ class NetworkStressTest : public RoutingTestFixture,
             << "Data-band TX slots not matched by neighbour RX slots";
 
         if (p.enforce) {
-            // Slot allocation governs local delivery and relay-queue drainage.
-            // Reliable/group multi-hop PDR is reported above but not gated: it
-            // has a separate ACK-return/timeout issue.
             EXPECT_GE(metrics_.NonReliablePdr(), 0.95)
                 << "1-hop non-reliable delivery regressed";
+            EXPECT_GE(metrics_.ReliablePdr(), 0.9)
+                << "Reliable unicast delivery regressed";
+            EXPECT_EQ(metrics_.reliable_pending_at_end, 0u)
+                << "Reliable messages still pending after the drain";
             EXPECT_LT(metrics_.FinalQuartileRelayQueue(), 5.0)
                 << "Backbone relay TX queue is persistently saturated";
             EXPECT_GT(metrics_.link_received, 0u) << "Network never forwarded";
