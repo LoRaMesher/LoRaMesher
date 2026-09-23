@@ -149,6 +149,9 @@ struct StressMetrics {
     uint64_t link_dropped = 0;
     uint64_t link_collisions = 0;
 
+    // ---- Schedule: data TX slots not matched by a neighbour's RX slot ----
+    size_t tdma_misalignments = 0;
+
     // ---- Timing ----
     uint32_t convergence_ms = 0;
     uint32_t superframe_ms = 0;

@@ -75,6 +75,9 @@ class NetworkStressTest : public RoutingTestFixture,
             CreateNode("N" + std::to_string(i), addr, role, PinConfig(),
                        RadioConfig(), [slots](LoRaMeshProtocolConfig& c) {
                            c.setDefaultDataSlots(slots);
+                           // Leaf-to-leaf across the backbone is 6 hops at 25
+                           // nodes; allow it so routing can fully converge.
+                           c.setMaxHops(6);
                        });
             for (auto& np : nodes_) {
                 if (np->address == addr) {
@@ -84,17 +87,24 @@ class NetworkStressTest : public RoutingTestFixture,
             }
         }
 
+        neighbours_.assign(p.node_count, {});
+        auto link = [this](int a, int b) {
+            SetLinkStatus(*topo_[a], *topo_[b], true);
+            neighbours_[a].push_back(b);
+            neighbours_[b].push_back(a);
+        };
+
         // Intra-cluster star edges: each leaf to its head.
         for (int i = 0; i < p.node_count; i++) {
             if (!IsHead(i)) {
-                SetLinkStatus(*topo_[i], *topo_[HeadIndexOf(i)], true);
+                link(i, HeadIndexOf(i));
             }
         }
         // Backbone line edges between consecutive heads.
         for (int c = 0; c + 1 < num_clusters_; c++) {
             int a = c * kClusterSize;
             int b = (c + 1) * kClusterSize;
-            SetLinkStatus(*topo_[a], *topo_[b], true);
+            link(a, b);
             if (p.backbone_loss > 0.0f) {
                 SetLinkLoss(*topo_[a], *topo_[b], p.backbone_loss);
             }
@@ -114,10 +124,14 @@ class NetworkStressTest : public RoutingTestFixture,
         for (auto* node : topo_) {
             TestNode* n = node;
             Net(*n)->SetDataReceivedExCallback(
-                [this](AddressType /*source*/, MessageId /*id*/, uint8_t hops,
-                       const std::vector<uint8_t>& data) {
+                [this, n](AddressType /*source*/, MessageId /*id*/,
+                          uint8_t hops, const std::vector<uint8_t>& data) {
                     StressPayload pl = StressPayload::Decode(data);
                     if (!pl.valid) {
+                        return;
+                    }
+                    if (pl.cls == TrafficClass::kNonReliable &&
+                        pl.dest != n->address) {
                         return;
                     }
                     uint32_t now = GetRTOS().getTickCount();
@@ -263,6 +277,71 @@ class NetworkStressTest : public RoutingTestFixture,
         metrics_ = StressMetrics{};
         metrics_.superframe_ms = sf;
         metrics_.convergence_ms = conv;
+        // Link counters cover the measured window only, not network formation.
+        for (auto* node : topo_) {
+            virtual_network_.ResetReceivedMessageCount(node->address);
+            virtual_network_.ResetDroppedMessageCount(node->address);
+            virtual_network_.ResetCollisionCount(node->address);
+        }
+    }
+
+    // -- TDMA alignment ------------------------------------------------------
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+    /// Print each node's data band: T = own TX, R<i> = RX from node i,
+    /// . = sleep. Other slot types are omitted.
+    void DumpDataBand() {
+        for (size_t i = 0; i < topo_.size(); i++) {
+            auto table = topo_[i]->protocol->GetSlotTable();
+            std::ostringstream row;
+            row << "##DATA## " << topo_[i]->name << " |";
+            for (const auto& slot : table) {
+                if (slot.type == SlotType::TX) {
+                    row << " T";
+                } else if (slot.type == SlotType::RX) {
+                    row << " R" << (slot.target_address - kBaseAddr);
+                }
+            }
+            std::cout << row.str() << "\n";
+        }
+        std::cout << std::flush;
+    }
+
+    /// For every node X and every data slot X transmits in, each topology
+    /// neighbour Y of X must be listening to X in that slot. Returns the
+    /// number of (sender, listener, slot) violations.
+    size_t CountTdmaMisalignments() {
+        size_t violations = 0;
+        for (size_t x = 0; x < topo_.size(); x++) {
+            auto tx_table = topo_[x]->protocol->GetSlotTable();
+            for (int y : neighbours_[x]) {
+                auto rx_table = topo_[y]->protocol->GetSlotTable();
+                if (rx_table.size() != tx_table.size()) {
+                    ADD_FAILURE()
+                        << topo_[x]->name << " and " << topo_[y]->name
+                        << " disagree on superframe length (" << tx_table.size()
+                        << " vs " << rx_table.size() << ")";
+                    violations++;
+                    continue;
+                }
+                for (size_t s = 0; s < tx_table.size(); s++) {
+                    if (tx_table[s].type != SlotType::TX) {
+                        continue;
+                    }
+                    if (rx_table[s].type != SlotType::RX ||
+                        rx_table[s].target_address != topo_[x]->address) {
+                        violations++;
+                        std::cout
+                            << "##MISALIGNED## slot " << s << ": "
+                            << topo_[x]->name << " TX, " << topo_[y]->name
+                            << " type=" << static_cast<int>(rx_table[s].type)
+                            << " target=0x" << std::hex
+                            << rx_table[s].target_address << std::dec << "\n";
+                    }
+                }
+            }
+        }
+        return violations;
     }
 
     void RunTraffic(const StressParams& p) {
@@ -277,6 +356,9 @@ class NetworkStressTest : public RoutingTestFixture,
         // match the settled frame.
         superframe = GetSuperframeDuration(*topo_.front());
         metrics_.superframe_ms = superframe;
+
+        DumpDataBand();
+        metrics_.tdma_misalignments = CountTdmaMisalignments();
 
         // DIAGNOSTIC: dump per-node allocation + slot-table composition.
         for (auto* node : topo_) {
@@ -357,7 +439,8 @@ class NetworkStressTest : public RoutingTestFixture,
         // it is reported below but does not decide HEALTHY/COLLAPSED here.
         // TX queue capacity in tests is 10; a persistently >half-full relay
         // queue means it never drains (collapse).
-        bool healthy = m.NonReliablePdr() >= 0.85 && q_sat < 5.0;
+        bool healthy = m.NonReliablePdr() >= 0.95 && q_sat < 5.0 &&
+                       m.tdma_misalignments == 0;
 
         auto pct = [](double d) {
             std::ostringstream o;
@@ -404,6 +487,7 @@ class NetworkStressTest : public RoutingTestFixture,
             return o.str();
         }());
         row("collision rate", pct(m.CollisionRate()));
+        row("TDMA misalignments", std::to_string(m.tdma_misalignments));
         row("superframe / convergence",
             std::to_string(m.superframe_ms) + " / " +
                 std::to_string(m.convergence_ms) + " ms");
@@ -429,6 +513,7 @@ class NetworkStressTest : public RoutingTestFixture,
            << "\"relay_queue_final_q\":" << q_sat << ","
            << "\"rtt_p95_slope\":" << m.RttP95Slope() << ","
            << "\"collision_rate\":" << m.CollisionRate() << ","
+           << "\"tdma_misalignments\":" << m.tdma_misalignments << ","
            << "\"superframe_ms\":" << m.superframe_ms << ","
            << "\"convergence_ms\":" << m.convergence_ms << ","
            << "\"verdict\":\"" << (healthy ? "HEALTHY" : "COLLAPSED") << "\"}";
@@ -474,11 +559,15 @@ class NetworkStressTest : public RoutingTestFixture,
         CollectLinkCounters();
         EmitScorecard(p);
 
+        // Every node's data band must agree with its neighbours' after settle.
+        EXPECT_EQ(metrics_.tdma_misalignments, 0u)
+            << "Data-band TX slots not matched by neighbour RX slots";
+
         if (p.enforce) {
             // Slot allocation governs local delivery and relay-queue drainage.
             // Reliable/group multi-hop PDR is reported above but not gated: it
             // has a separate ACK-return/timeout issue.
-            EXPECT_GE(metrics_.NonReliablePdr(), 0.85)
+            EXPECT_GE(metrics_.NonReliablePdr(), 0.95)
                 << "1-hop non-reliable delivery regressed";
             EXPECT_LT(metrics_.FinalQuartileRelayQueue(), 5.0)
                 << "Backbone relay TX queue is persistently saturated";
@@ -489,6 +578,7 @@ class NetworkStressTest : public RoutingTestFixture,
     std::mutex metrics_mu_;
     StressMetrics metrics_;
     std::vector<TestNode*> topo_;
+    std::vector<std::vector<int>> neighbours_;  // topology adjacency by index
     std::set<uint32_t> reliable_ids_;
     std::set<uint32_t> group_ids_;
     int num_clusters_ = 0;
