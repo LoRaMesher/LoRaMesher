@@ -1,7 +1,24 @@
 # Delivery Packet-Loss Analysis — where the ~25% 1-hop loss comes from
 
-Status: root cause identified (2026-09-23); fix in progress (index-based data
-band, below). Supersedes the Jul 2026 "half-duplex + collisions" explanation.
+Status: **fixed (2026-09-23)** — commits `0b872de` (index-based data band),
+`3b87bf2` (routing-header `source_control_slot_index`), `e96a7e7` (stress-test
+alignment assertion). Supersedes the Jul 2026 "half-duplex + collisions"
+explanation.
+
+## Result (stress test, `default_data_slots=2`)
+
+| cell | 1-hop non-reliable PDR | reliable PDR | TDMA misalignments | relay queue final-q |
+|------|------|------|------|------|
+| 10n before | 90.0% | 50.0% | not measured | 2.0 |
+| 10n after  | 100.0% (80/80) | 85.7% | 0 | 1.1 |
+| 25n before | ~75% | 0% | not measured | 1.28 |
+| 25n after  | 100.0% (200/200) | 0% (0/14) | 0 | 4.6 |
+
+The 1-hop criterion is met. Multi-hop reliable/group delivery at 25 nodes is
+still ~0% — a separate issue (`todos/reliable_multihop_ack_zero.md`); the higher
+25n relay queue is likely its retries and group floods and should be rechecked
+once that is fixed. Remaining link-level collisions (~8%) are counted at every
+listener and include sync-beacon forwards in shared hop-layer slots.
 
 Success criterion (from user): **every originated packet delivered within some
 bounded number of superframes, and no queue grows unboundedly. Latency is NOT a
@@ -71,6 +88,6 @@ own index; it takes precedence over gossip for direct neighbours.
 ## Verification hooks
 - Unit: `test_unit_slot_scheduler` alignment tests (two schedulers with different
   local views must agree: every TX slot of A is RX(A) at neighbour B).
-- Integration: `test_network_stress` deterministic `AssertTdmaAlignment()` over
+- Integration: `test_network_stress` deterministic `CountTdmaMisalignments()` over
   every node/neighbour pair, 1-hop non-reliable PDR counted only at the intended
   destination, and link counters reset at the start of the measured window.

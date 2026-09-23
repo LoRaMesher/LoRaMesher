@@ -13,13 +13,11 @@ docs. Read this top-to-bottom first.
   computed different data-band layouts from their local routing tables, so
   senders transmitted while receivers slept. See
   `delivery_packet_loss_analysis.md`.
-- **Fix in progress** (plan: `~/.claude/plans/what-we-were-doing-optimized-phoenix.md`):
-  1. failing alignment unit tests in `test_unit_slot_scheduler`;
-  2. data band indexed by `control_slot_index` in `SlotScheduler`;
-  3. new routing-header field `source_control_slot_index` so direct neighbours
-     learn each other's index;
-  4. stress test: alignment assertion, destination-only 1-hop PDR, counters reset
-     at the measured window, `max_hops=6`.
+- **Fixed and committed:** `698b1c7` (base=2, stress test), `0b872de`
+  (data band indexed by control-slot index), `3b87bf2` (RT header
+  `source_control_slot_index`), `e96a7e7` (stress alignment assertion).
+  1-hop delivery is 100% at 10n and 25n with 0 misalignments; results table in
+  `delivery_packet_loss_analysis.md`.
 - Multi-hop reliable/group ~0% remains a separate P0
   (`todos/reliable_multihop_ack_zero.md`).
 - Sections below describe the Jul 2026 state and are kept for history.
@@ -246,5 +244,6 @@ GOTCHAS (learned the hard way):
 
 ## 10. Immediate next action when resuming
 
-Follow the phase list in §0. Commit each phase separately; stage only files from
-this work.
+The slot-alignment work is done. Next: the multi-hop reliable/group P0
+(`todos/reliable_multihop_ack_zero.md`, TODO-014), then the data-band
+follow-ups (TODO-015).
