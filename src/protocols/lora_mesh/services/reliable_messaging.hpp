@@ -21,6 +21,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -30,6 +31,7 @@
 #include "types/messages/base_message.hpp"
 #include "types/messages/loramesher/data_message.hpp"
 #include "types/messages/loramesher/group_message.hpp"
+#include "types/protocols/lora_mesh/path_rtt.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -79,6 +81,15 @@ class ReliableMessaging {
             max_packet_size;        ///< Configured max packet size
         HopsToDestFn hops_to_dest;  ///< Routing hop-count lookup
         SuperframeDurationFn superframe_duration;  ///< Superframe duration (ms)
+        /// Stored round-trip estimate toward a destination (nullopt if the
+        /// destination is unknown).
+        std::function<std::optional<types::protocols::lora_mesh::PathRtt>(
+            AddressType)>
+            get_path_rtt;
+        /// Store the round-trip estimate toward a destination.
+        std::function<bool(AddressType,
+                           const types::protocols::lora_mesh::PathRtt&)>
+            set_path_rtt;
     };
 
     ReliableMessaging(std::mutex& mutex, Host host);
@@ -109,6 +120,14 @@ class ReliableMessaging {
 
     /// Estimate a retransmit timeout (ms) from hop count and superframe duration.
     uint32_t ComputeReliableTimeout(AddressType dest) const;
+
+    /// Retransmit timeout (ms) for @p dest: the measured round-trip estimate
+    /// when one exists, otherwise ComputeReliableTimeout(), clamped to
+    /// [kTimeoutFloorMs, MaxReliableTimeout()].
+    uint32_t ComputeAdaptiveTimeout(AddressType dest) const;
+
+    /// Upper bound (ms) for a retransmit timeout, including backoff.
+    uint32_t MaxReliableTimeout() const;
 
     /// Track a reliable unicast send; returns the message id (or {0,0} on error).
     reliability::MessageId SendReliable(AddressType destination,
@@ -142,11 +161,17 @@ class ReliableMessaging {
     Result ForwardGroupMessage(const GroupMessage& original);
     Result SendReliableAttempt(const reliability::MessageId& id,
                                std::span<const uint8_t> payload);
+    /// Fold an acknowledgement's round-trip sample into @p peer's estimate.
+    void RecordRttSample(AddressType peer, uint32_t echo_ts);
+    uint32_t SuperframeOrDefault() const;
     void OnReliableOutcome(const reliability::DeliveryResult& result);
     void CloseExpiredGroupWindows();
     reliability::Host BuildReliableHost();
 
     static constexpr uint8_t kDefaultTTL = 10;
+    static constexpr uint32_t kTimeoutFloorMs = 500;
+    /// Retransmit timeouts never exceed this many superframes per hop limit.
+    static constexpr uint32_t kMaxTimeoutSuperframesPerHop = 4;
 
     // Group membership
     static constexpr size_t kMaxGroups = 8;
@@ -158,7 +183,10 @@ class ReliableMessaging {
         bool valid = false;
         uint8_t seq = 0;
         AddressType dest = 0;
+        bool attempted = false;  ///< An attempt has already been queued
     };
+
+    ReliableDest* FindReliableDest(uint8_t seq);
 
     std::array<ReliableDest, reliability::ReliableDelivery::kMaxPending>
         reliable_dest_{};

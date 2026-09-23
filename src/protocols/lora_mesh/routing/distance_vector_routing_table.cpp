@@ -564,6 +564,27 @@ void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
     }
 }
 
+std::optional<types::protocols::lora_mesh::PathRtt>
+DistanceVectorRoutingTable::GetPathRtt(AddressType destination) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(destination);
+    if (it == nodes_.end()) {
+        return std::nullopt;
+    }
+    return it->path_rtt;
+}
+
+bool DistanceVectorRoutingTable::SetPathRtt(
+    AddressType destination, const types::protocols::lora_mesh::PathRtt& rtt) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(destination);
+    if (it == nodes_.end()) {
+        return false;
+    }
+    it->path_rtt = rtt;
+    return true;
+}
+
 bool DistanceVectorRoutingTable::SetControlSlotIndex(
     AddressType node_address, uint8_t control_slot_index) {
     // Reject out-of-range indices (0xFF is the valid "unassigned" sentinel) so a
@@ -840,6 +861,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 source_node_it->next_hop != source_address) {
                 source_node_it->next_hop = source_address;
                 source_node_it->routing_entry.hop_count = 1;
+                source_node_it->path_rtt = {};
                 routing_changed = true;
 
                 NotifyRouteUpdate(true, source_address, source_address, 1);

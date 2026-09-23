@@ -123,6 +123,12 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     void SetMaxNodes(size_t max_nodes) override;
 
+    std::optional<types::protocols::lora_mesh::PathRtt> GetPathRtt(
+        AddressType destination) const override;
+
+    bool SetPathRtt(AddressType destination,
+                    const types::protocols::lora_mesh::PathRtt& rtt) override;
+
     bool SetControlSlotIndex(AddressType node_address,
                              uint8_t control_slot_index) override;
 

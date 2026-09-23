@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "utils/logger.hpp"
+
 namespace loramesher {
 namespace protocols {
 namespace reliability {
@@ -71,16 +73,47 @@ Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
     std::copy(payload.begin(), payload.end(), entry->payload.begin());
     entry->policy = policy;
     entry->retries_left = policy.max_retries;
-    entry->next_deadline_ms = now + policy.timeout_ms;
-    entry->sent_at_ms = now;
+    entry->current_timeout_ms = policy.timeout_ms;
+    entry->requeue = false;
+    entry->requeue_is_retry = false;
     entry->responder_count = 0;
 
-    if (host_.send_attempt) {
-        host_.send_attempt(
-            id, std::span<const uint8_t>(entry->payload.data(), entry->len));
-    }
+    Attempt(*entry, now, /*is_retry=*/false);
 
     return Result::Success();
+}
+
+void ReliableDelivery::Attempt(PendingEntry& entry, uint32_t now,
+                               bool is_retry) {
+    Result sent =
+        host_.send_attempt
+            ? host_.send_attempt(entry.id, std::span<const uint8_t>(
+                                               entry.payload.data(), entry.len))
+            : Result::Success();
+
+    if (!sent.IsSuccess()) {
+        const uint32_t delay = entry.policy.requeue_delay_ms != 0
+                                   ? entry.policy.requeue_delay_ms
+                                   : entry.current_timeout_ms;
+        LOG_WARNING(
+            "Reliable seq=%u attempt not queued (%s); retrying in %u ms",
+            entry.id.seq, sent.GetErrorMessage().c_str(), delay);
+        entry.next_deadline_ms = now + delay;
+        entry.requeue = true;
+        entry.requeue_is_retry = is_retry;
+        return;
+    }
+
+    if (is_retry && entry.policy.exponential_backoff) {
+        uint64_t doubled = static_cast<uint64_t>(entry.current_timeout_ms) * 2;
+        if (entry.policy.max_timeout_ms != 0) {
+            doubled = std::min<uint64_t>(doubled, entry.policy.max_timeout_ms);
+        }
+        entry.current_timeout_ms = static_cast<uint32_t>(doubled);
+    }
+    entry.requeue = false;
+    entry.sent_at_ms = now;
+    entry.next_deadline_ms = now + entry.current_timeout_ms;
 }
 
 bool ReliableDelivery::OnAck(MessageId acked, AddressType by,
@@ -115,22 +148,22 @@ void ReliableDelivery::Tick() {
     const uint32_t now = Now();
 
     for (auto& entry : entries_) {
-        if (!entry.valid || entry.policy.collect_multiple) {
+        if (!entry.valid || now < entry.next_deadline_ms) {
             continue;
         }
-        if (now < entry.next_deadline_ms) {
+        // Group windows are closed by their owner, not by retry timers; only
+        // an attempt that could not be queued is repeated.
+        if (entry.policy.collect_multiple && !entry.requeue) {
             continue;
         }
 
-        if (entry.retries_left > 0) {
+        if (entry.requeue) {
+            // The previous attempt never left the node; repeating it does not
+            // spend the retry budget.
+            Attempt(entry, now, entry.requeue_is_retry);
+        } else if (entry.retries_left > 0) {
             entry.retries_left--;
-            entry.sent_at_ms = now;
-            entry.next_deadline_ms = now + entry.policy.timeout_ms;
-            if (host_.send_attempt) {
-                host_.send_attempt(
-                    entry.id,
-                    std::span<const uint8_t>(entry.payload.data(), entry.len));
-            }
+            Attempt(entry, now, /*is_retry=*/true);
         } else {
             const MessageId id = entry.id;
             entry.valid = false;

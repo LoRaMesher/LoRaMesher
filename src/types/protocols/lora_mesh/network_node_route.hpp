@@ -11,6 +11,7 @@
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
+#include "types/protocols/lora_mesh/path_rtt.hpp"
 #include "types/protocols/lora_mesh/sliding_window_pdr.hpp"
 #include "utils/byte_operations.h"
 
@@ -385,6 +386,9 @@ class NetworkNodeRoute {
     // Control slot tracking (NM-local, not serialized for network transmission)
     uint8_t control_slot_index =
         0xFF;  ///< Assigned control slot index (0xFF = unassigned)
+
+    // Round-trip time toward this node (local, not serialized)
+    PathRtt path_rtt;  ///< Reset when the route's next hop or hop count changes
 
     /**
      * @brief Equality operator (based on address)

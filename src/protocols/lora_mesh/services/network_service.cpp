@@ -125,6 +125,14 @@ NetworkService::NetworkService(
                    ? superframe_service_->GetSuperframeDuration()
                    : 0;
     };
+    reliable_host.get_path_rtt = [this](AddressType dest) {
+        return routing_table_->GetPathRtt(dest);
+    };
+    reliable_host.set_path_rtt =
+        [this](AddressType dest,
+               const types::protocols::lora_mesh::PathRtt& rtt) {
+            return routing_table_->SetPathRtt(dest, rtt);
+        };
     reliable_messaging_ = std::make_unique<ReliableMessaging>(
         network_mutex_, std::move(reliable_host));
 
@@ -1811,56 +1819,58 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
         return Result::Success();
     }
 
-    const bool duplicate = IsMessageDuplicate(original_src, seq_num);
-
     if (final_dest == node_address_) {
-        // The reliable payload carries a 4-byte send-timestamp prefix used for
-        // RTT. The auto-ACK is emitted on EVERY reception (idempotent): if an
-        // earlier ACK was lost and the sender retransmitted, the duplicate must
-        // still be acknowledged, even though it is delivered to the app once.
         std::span<const uint8_t> payload = data_msg.GetPayload();
+        // Delivery is de-duplicated per message: for reliable data that is the
+        // stable message sequence in the framing prefix, since each
+        // retransmission travels with its own link-layer sequence.
+        uint8_t message_seq = seq_num;
         if (reliable) {
-            // Reliable framing prefix is a 4-byte send-timestamp.
-            uint32_t echo_ts = 0;
-            if (payload.size() >= reliability::kReliableTimestampSize) {
-                utils::ByteDeserializer deserializer(payload);
-                auto ts = deserializer.ReadUint32();
-                if (ts) {
-                    echo_ts = *ts;
-                }
-                payload = payload.subspan(reliability::kReliableTimestampSize);
+            auto prefix = reliability::ReliablePrefix::Read(payload);
+            if (!prefix) {
+                LOG_ERROR(
+                    "Reliable DATA from 0x%04X seq=%u lacks framing prefix, "
+                    "dropping",
+                    original_src, seq_num);
+                return Result(LoraMesherErrorCode::kSerializationError,
+                              "Malformed reliable data payload");
             }
-            reliable_messaging_->EnqueueAck(original_src, seq_num,
-                                            /*was_group=*/false, echo_ts);
+            message_seq = prefix->msg_seq;
+            payload = payload.subspan(reliability::ReliablePrefix::kSize);
+            // ACK every reception: if an earlier ACK was lost, the
+            // retransmission must be acknowledged again even though it is
+            // delivered to the app only once.
+            reliable_messaging_->EnqueueAck(original_src, message_seq,
+                                            /*was_group=*/false,
+                                            prefix->send_ts);
         }
 
-        if (duplicate) {
+        if (IsMessageDuplicate(original_src, message_seq)) {
             LOG_DEBUG("Duplicate DATA from 0x%04X seq=%u already delivered",
-                      original_src, seq_num);
+                      original_src, message_seq);
             return Result::Success();
         }
 
-        AddToMessageCache(original_src, seq_num);
+        AddToMessageCache(original_src, message_seq);
 
         LOG_INFO(
             "DATA reached final destination: src=0x%04X, dest=0x%04X, seq=%u, "
             "payload_size=%zu",
-            original_src, final_dest, seq_num, payload.size());
+            original_src, final_dest, message_seq, payload.size());
 
-        DeliverToApp(original_src, seq_num, HopsFromTtl(ttl), payload);
+        DeliverToApp(original_src, message_seq, HopsFromTtl(ttl), payload);
         return Result::Success();
     }
 
     // Not the final destination: forward toward it.
-    if (duplicate) {
+    if (IsMessageDuplicate(original_src, seq_num)) {
         LOG_DEBUG("Dropping duplicate DATA from 0x%04X seq=%u", original_src,
                   seq_num);
         return Result::Success();
     }
 
-    AddToMessageCache(original_src, seq_num);
-
     if (ttl <= 1) {
+        AddToMessageCache(original_src, seq_num);
         LOG_WARNING(
             "DATA TTL expired: src=0x%04X, dest=0x%04X, seq=%u, dropping",
             original_src, final_dest, seq_num);
@@ -1868,7 +1878,13 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
     }
     LOG_INFO("Forwarding DATA: src=0x%04X, dest=0x%04X, seq=%u, ttl=%u",
              original_src, final_dest, seq_num, ttl);
-    return ForwardDataMessage(data_msg);
+    Result forwarded = ForwardDataMessage(data_msg);
+    // Only a packet that was actually queued counts as seen, so a copy that
+    // could not be forwarded does not block a later copy of the same packet.
+    if (forwarded.IsSuccess()) {
+        AddToMessageCache(original_src, seq_num);
+    }
+    return forwarded;
 }
 
 Result NetworkService::ForwardDataMessage(const DataMessage& original_msg) {

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "protocols/reliability/rtt_estimator.hpp"
 #include "types/messages/loramesher/ack_payload.hpp"
 #include "types/messages/loramesher/data_header.hpp"
 #include "types/messages/loramesher/group_message.hpp"
@@ -99,6 +100,16 @@ std::vector<AddressType> ReliableMessaging::GetGroups() const {
 
 // --- Reliable destination shadow table ---
 
+ReliableMessaging::ReliableDest* ReliableMessaging::FindReliableDest(
+    uint8_t seq) {
+    for (auto& entry : reliable_dest_) {
+        if (entry.valid && entry.seq == seq) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
 AddressType ReliableMessaging::LookupReliableDest(uint8_t seq) const {
     for (const auto& entry : reliable_dest_) {
         if (entry.valid && entry.seq == seq) {
@@ -111,7 +122,7 @@ AddressType ReliableMessaging::LookupReliableDest(uint8_t seq) const {
 void ReliableMessaging::RecordReliableDest(uint8_t seq, AddressType dest) {
     for (auto& entry : reliable_dest_) {
         if (!entry.valid) {
-            entry = {true, seq, dest};
+            entry = {true, seq, dest, false};
             return;
         }
     }
@@ -204,18 +215,17 @@ Result ReliableMessaging::ProcessGroupMessage(
     std::span<const uint8_t> payload = group_msg.GetPayload();
 
     if (group_msg.RequestAcks()) {
-        // The reliable group framing prefixes a 4-byte send-timestamp.
-        uint32_t echo_ts = 0;
-        if (payload.size() >= reliability::kReliableTimestampSize) {
-            utils::ByteDeserializer deserializer(payload);
-            auto ts = deserializer.ReadUint32();
-            if (ts) {
-                echo_ts = *ts;
-            }
-            payload = payload.subspan(reliability::kReliableTimestampSize);
+        auto prefix = reliability::ReliablePrefix::Read(payload);
+        if (!prefix) {
+            LOG_ERROR("Reliable GROUP from 0x%04X seq=%u lacks framing prefix",
+                      source, seq_num);
+            return Result(LoraMesherErrorCode::kSerializationError,
+                          "Malformed reliable group payload");
         }
+        payload = payload.subspan(reliability::ReliablePrefix::kSize);
         if (member) {
-            EnqueueAck(source, seq_num, /*was_group=*/true, echo_ts);
+            EnqueueAck(source, prefix->msg_seq, /*was_group=*/true,
+                       prefix->send_ts);
         }
     }
 
@@ -260,30 +270,72 @@ uint32_t ReliableMessaging::ComputeReliableTimeout(AddressType dest) const {
 
     // Round trip ≈ 2 hops, plus one superframe of slot-phase guard.
     uint32_t timeout = (2u * hops + 1u) * superframe_ms;
-    constexpr uint32_t kTimeoutFloorMs = 500;
     return timeout < kTimeoutFloorMs ? kTimeoutFloorMs : timeout;
+}
+
+uint32_t ReliableMessaging::SuperframeOrDefault() const {
+    uint32_t superframe_ms =
+        host_.superframe_duration ? host_.superframe_duration() : 0;
+    return superframe_ms != 0 ? superframe_ms : 1000;
+}
+
+uint32_t ReliableMessaging::MaxReliableTimeout() const {
+    uint32_t max_hops = host_.max_hops ? host_.max_hops() : 0;
+    if (max_hops == 0) {
+        max_hops = 1;
+    }
+    uint64_t max_ms = static_cast<uint64_t>(max_hops) *
+                      kMaxTimeoutSuperframesPerHop * SuperframeOrDefault();
+    return static_cast<uint32_t>(std::min<uint64_t>(
+        std::max<uint64_t>(max_ms, kTimeoutFloorMs), UINT32_MAX));
+}
+
+uint32_t ReliableMessaging::ComputeAdaptiveTimeout(AddressType dest) const {
+    types::protocols::lora_mesh::PathRtt rtt;
+    if (host_.get_path_rtt) {
+        rtt = host_.get_path_rtt(dest).value_or(rtt);
+    }
+    return reliability::ComputeRto(rtt, ComputeReliableTimeout(dest),
+                                   kTimeoutFloorMs, MaxReliableTimeout());
+}
+
+void ReliableMessaging::RecordRttSample(AddressType peer, uint32_t echo_ts) {
+    if (!host_.get_path_rtt || !host_.set_path_rtt) {
+        return;
+    }
+    const uint32_t now = host_.now_ms();
+    if (echo_ts > now) {
+        return;
+    }
+    auto rtt = host_.get_path_rtt(peer);
+    if (!rtt) {
+        return;
+    }
+    reliability::AddRttSample(*rtt, now - echo_ts);
+    host_.set_path_rtt(peer, *rtt);
 }
 
 Result ReliableMessaging::SendReliableAttempt(
     const reliability::MessageId& id, std::span<const uint8_t> payload) {
-    AddressType dest = LookupReliableDest(id.seq);
-    if (dest == 0) {
+    ReliableDest* record = FindReliableDest(id.seq);
+    if (record == nullptr) {
         LOG_ERROR("No destination recorded for reliable seq=%u", id.seq);
         return Result(LoraMesherErrorCode::kInvalidState,
                       "No destination for reliable attempt");
     }
+    const AddressType dest = record->dest;
 
     uint8_t ttl =
         (host_.max_hops() > 0)
             ? static_cast<uint8_t>(std::min(2u * host_.max_hops(), 255u))
             : kDefaultTTL;
 
-    // Build wire payload: [send_timestamp:4][application payload]
-    uint32_t timestamp = host_.now_ms();
-    std::vector<uint8_t> wire(reliability::kReliableTimestampSize +
+    // Build wire payload: [msg_seq:1][send_ts:4][application payload]
+    reliability::ReliablePrefix prefix{id.seq, host_.now_ms()};
+    std::vector<uint8_t> wire(reliability::ReliablePrefix::kSize +
                               payload.size());
     utils::ByteSerializer serializer(wire.data(), wire.size());
-    serializer.WriteUint32(timestamp);
+    prefix.Write(serializer);
     if (!payload.empty()) {
         serializer.WriteBytes(payload.data(), payload.size());
     }
@@ -303,9 +355,17 @@ Result ReliableMessaging::SendReliableAttempt(
         if (next_hop == 0) {
             next_hop = dest;
         }
+        // Each transmitted attempt is a new link-layer packet: the first uses
+        // the message sequence, every retransmission draws a fresh one so
+        // relays that forwarded an earlier attempt forward this one too.
+        uint8_t link_seq = id.seq;
+        if (record->attempted) {
+            link_seq = host_.next_seq();
+            host_.record_in_cache(host_.node_address, link_seq);
+        }
         auto data_msg =
             DataMessage::Create(dest, host_.node_address, next_hop, wire, ttl,
-                                id.seq, MessageType::DATA_RELIABLE);
+                                link_seq, MessageType::DATA_RELIABLE);
         if (!data_msg) {
             return Result(LoraMesherErrorCode::kMemoryError,
                           "Failed to create reliable data message");
@@ -313,7 +373,11 @@ Result ReliableMessaging::SendReliableAttempt(
         base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
     }
 
-    return host_.enqueue(SlotType::TX, std::move(base_msg));
+    Result result = host_.enqueue(SlotType::TX, std::move(base_msg));
+    if (result.IsSuccess()) {
+        record->attempted = true;
+    }
+    return result;
 }
 
 reliability::MessageId ReliableMessaging::SendReliable(
@@ -332,7 +396,7 @@ reliability::MessageId ReliableMessaging::SendReliable(
     }
 
     const size_t overhead = BaseHeader::Size() + DataHeader::DataFieldsSize() +
-                            reliability::kReliableTimestampSize;
+                            reliability::ReliablePrefix::kSize;
     if (data.size() + overhead > host_.max_packet_size() ||
         data.size() > reliability::ReliableDelivery::MaxReliablePayload()) {
         LOG_WARNING("Reliable payload %zu B exceeds capacity", data.size());
@@ -347,11 +411,17 @@ reliability::MessageId ReliableMessaging::SendReliable(
 
     reliability::MessageId id{host_.node_address, seq};
     reliability::Policy policy;
-    policy.timeout_ms = timeout_override_ms != 0
-                            ? timeout_override_ms
-                            : ComputeReliableTimeout(destination);
     policy.max_retries = max_retries;
     policy.collect_multiple = false;
+    policy.requeue_delay_ms = SuperframeOrDefault();
+    if (timeout_override_ms != 0) {
+        // An explicit timeout is used as-is for every attempt.
+        policy.timeout_ms = timeout_override_ms;
+    } else {
+        policy.timeout_ms = ComputeAdaptiveTimeout(destination);
+        policy.exponential_backoff = true;
+        policy.max_timeout_ms = MaxReliableTimeout();
+    }
 
     Result result = reliable_.Track(
         id, std::span<const uint8_t>(data.data(), data.size()), policy);
@@ -385,7 +455,7 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
 
     const size_t overhead = BaseHeader::Size() +
                             GroupMessage::kGroupFieldsSize +
-                            reliability::kReliableTimestampSize;
+                            reliability::ReliablePrefix::kSize;
     if (data.size() + overhead > host_.max_packet_size() ||
         data.size() > reliability::ReliableDelivery::MaxReliablePayload()) {
         LOG_WARNING("Reliable group payload %zu B exceeds capacity",
@@ -405,6 +475,7 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     policy.timeout_ms = window_ms;
     policy.max_retries = max_retries;
     policy.collect_multiple = true;
+    policy.requeue_delay_ms = SuperframeOrDefault();
 
     Result result = reliable_.Track(id, data, policy);
     if (!result.IsSuccess()) {
@@ -495,6 +566,9 @@ Result ReliableMessaging::ProcessAckMessage(const BaseMessage& message) {
             return Result(LoraMesherErrorCode::kSerializationError,
                           "Malformed ACK payload");
         }
+        // Every acknowledgement carries a round-trip sample, even one that
+        // arrives after the message was given up on.
+        RecordRttSample(acker, ack->echo_timestamp);
         reliability::MessageId id{host_.node_address, ack->acked_seq};
         bool matched = reliable_.OnAck(id, acker, ack->echo_timestamp);
         LOG_DEBUG("ACK from 0x%04X for seq=%u matched=%d", acker,

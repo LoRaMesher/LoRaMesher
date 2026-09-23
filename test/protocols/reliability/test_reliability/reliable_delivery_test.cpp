@@ -32,6 +32,10 @@ class ReliableDeliveryTest : public ::testing::Test {
         };
         host.send_attempt = [this](const MessageId& id,
                                    std::span<const uint8_t> payload) {
+            if (failing_sends_ > 0) {
+                failing_sends_--;
+                return Result(LoraMesherErrorCode::kQueueFull, "queue full");
+            }
             sent_.push_back(
                 {id, std::vector<uint8_t>(payload.begin(), payload.end())});
             return Result::Success();
@@ -48,6 +52,7 @@ class ReliableDeliveryTest : public ::testing::Test {
     }
 
     uint32_t clock_ms_ = 0;
+    int failing_sends_ = 0;  ///< Upcoming send attempts rejected as queue-full
     std::vector<SentAttempt> sent_;
     std::vector<DeliveryResult> results_;
     std::unique_ptr<ReliableDelivery> delivery_;
@@ -178,6 +183,64 @@ TEST_F(ReliableDeliveryTest, TrackFailsWhenTableFull) {
     Result r = delivery_->Track(Id(0x10, 200), Bytes({1}), {1000, 3, false});
     EXPECT_FALSE(r.IsSuccess());
     EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kQueueFull);
+}
+
+TEST_F(ReliableDeliveryTest, FailedEnqueueDoesNotConsumeAttempt) {
+    Policy policy;
+    policy.timeout_ms = 1000;
+    policy.max_retries = 1;
+    policy.requeue_delay_ms = 100;
+
+    failing_sends_ = 1;
+    ASSERT_TRUE(delivery_->Track(Id(0x10, 1), Bytes({1}), policy));
+    EXPECT_TRUE(sent_.empty());
+
+    // The rejected first attempt is re-tried after the requeue delay, without
+    // spending a retry.
+    clock_ms_ = 100;
+    delivery_->Tick();
+    ASSERT_EQ(sent_.size(), 1u);
+
+    // The single retry is still available one timeout later.
+    clock_ms_ = 1100;
+    delivery_->Tick();
+    ASSERT_EQ(sent_.size(), 2u);
+
+    clock_ms_ = 2100;
+    delivery_->Tick();
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].outcome, Outcome::Failed);
+}
+
+TEST_F(ReliableDeliveryTest, BackoffDoublesTimeoutUpToMax) {
+    Policy policy;
+    policy.timeout_ms = 1000;
+    policy.max_retries = 2;
+    policy.max_timeout_ms = 3000;
+    policy.exponential_backoff = true;
+
+    ASSERT_TRUE(delivery_->Track(Id(0x10, 1), Bytes({1}), policy));
+
+    clock_ms_ = 1000;
+    delivery_->Tick();  // attempt #2, next timeout 2000
+    ASSERT_EQ(sent_.size(), 2u);
+
+    clock_ms_ = 2999;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 2u);
+
+    clock_ms_ = 3000;
+    delivery_->Tick();  // attempt #3, next timeout min(4000, 3000)
+    ASSERT_EQ(sent_.size(), 3u);
+
+    clock_ms_ = 5999;
+    delivery_->Tick();
+    EXPECT_TRUE(results_.empty());
+
+    clock_ms_ = 6000;
+    delivery_->Tick();
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].outcome, Outcome::Failed);
 }
 
 TEST_F(ReliableDeliveryTest, TrackFailsWhenPayloadTooLarge) {

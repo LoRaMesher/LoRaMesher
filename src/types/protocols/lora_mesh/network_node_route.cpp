@@ -261,6 +261,11 @@ bool NetworkNodeRoute::UpdateRouteInfo(AddressType new_next_hop,
                                        uint32_t current_time) {
     bool changed = false;
 
+    if (next_hop != new_next_hop || routing_entry.hop_count != new_hop_count) {
+        // Round-trip samples describe the previous path.
+        path_rtt = PathRtt{};
+    }
+
     if (next_hop != new_next_hop) {
         next_hop = new_next_hop;
         changed = true;

@@ -28,6 +28,10 @@ TEST(NetworkServiceCoverageTest, SkipOnArduino) {
 
 #else
 
+#include "os/rtos_mock.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
+#include "utils/byte_operations.h"
+
 namespace loramesher {
 namespace protocols {
 namespace lora_mesh {
@@ -1747,6 +1751,212 @@ TEST_F(NetworkServiceCoverageTest, UnassignedHeaderIndexKeepsGossipedIndex) {
 
     // kOtherNode reached only via kNMAddress (hop 2): gossip applies.
     EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 5u);
+}
+
+// ============================================================================
+// Reliable delivery: per-attempt link seq, stable message seq
+// ============================================================================
+
+namespace {
+
+using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+/// Switches the RTOS mock to virtual time for the lifetime of the object.
+class VirtualClock {
+   public:
+    VirtualClock() : mock_(dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+        EXPECT_NE(mock_, nullptr);
+        if (mock_) {
+            mock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+        }
+    }
+
+    ~VirtualClock() {
+        if (mock_) {
+            mock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+        }
+    }
+
+    void Advance(uint32_t ms) {
+        if (mock_) {
+            mock_->advanceTime(ms);
+        }
+    }
+
+   private:
+    os::RTOSMock* mock_;
+};
+
+/// Reliable framing prefix: [msg_seq:1][send_ts:4].
+std::vector<uint8_t> ReliablePayload(uint8_t msg_seq,
+                                     const std::vector<uint8_t>& app) {
+    std::vector<uint8_t> out(5 + app.size());
+    utils::ByteSerializer ser(out.data(), out.size());
+    ser.WriteUint8(msg_seq);
+    ser.WriteUint32(1234);
+    ser.WriteBytes(app.data(), app.size());
+    return out;
+}
+
+std::optional<DataMessage> PopTx(MessageQueueService& queue) {
+    auto msg = queue.ExtractMessageOfType(SlotType::TX);
+    if (!msg) {
+        return std::nullopt;
+    }
+    return DataMessage::CreateFromBaseMessage(*msg);
+}
+
+}  // namespace
+
+TEST_F(NetworkServiceCoverageTest, ReliableRetryUsesFreshLinkSeqStableMsgSeq) {
+    VirtualClock clock;
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    auto id = service_->SendReliable(kOtherNode, {1, 2, 3}, /*max_retries=*/2,
+                                     /*timeout_override_ms=*/1000);
+    ASSERT_NE(id.source, 0);
+
+    auto first = PopTx(*message_queue_);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_GE(first->GetPayload().size(), 5u);
+    EXPECT_EQ(first->GetPayload()[0], id.seq);
+
+    clock.Advance(1000);
+    service_->ProcessReliableTimers();
+
+    auto retry = PopTx(*message_queue_);
+    ASSERT_TRUE(retry.has_value());
+    EXPECT_NE(retry->GetSeqNum(), first->GetSeqNum())
+        << "a retransmission must be a new link-layer packet";
+    ASSERT_GE(retry->GetPayload().size(), 5u);
+    EXPECT_EQ(retry->GetPayload()[0], id.seq)
+        << "the message sequence must stay stable across attempts";
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableDeliveredOnceAckedPerAttempt) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    int deliveries = 0;
+    uint8_t delivered_seq = 0;
+    std::vector<uint8_t> delivered_payload;
+    service_->SetDataReceivedExCallback([&](AddressType,
+                                            reliability::MessageId id, uint8_t,
+                                            const std::vector<uint8_t>& data) {
+        deliveries++;
+        delivered_seq = id.seq;
+        delivered_payload = data;
+    });
+
+    // Two attempts of message 7: distinct link seqs, same message seq.
+    for (uint8_t link_seq : {uint8_t{7}, uint8_t{9}}) {
+        auto msg = DataMessage::Create(kNodeAddress, kOtherNode, kNodeAddress,
+                                       ReliablePayload(7, {0xAB}), /*ttl=*/10,
+                                       link_seq, MessageType::DATA_RELIABLE);
+        ASSERT_TRUE(msg.has_value());
+        ASSERT_TRUE(service_->ProcessReceivedMessage(msg->ToBaseMessage(), 0)
+                        .IsSuccess());
+    }
+
+    EXPECT_EQ(deliveries, 1);
+    EXPECT_EQ(delivered_seq, 7u);
+    EXPECT_EQ(delivered_payload, std::vector<uint8_t>({0xAB}));
+
+    for (int i = 0; i < 2; i++) {
+        auto ack_msg = PopTx(*message_queue_);
+        ASSERT_TRUE(ack_msg.has_value()) << "missing ACK for attempt " << i;
+        auto ack = AckPayload::Deserialize(ack_msg->GetPayload());
+        ASSERT_TRUE(ack.has_value());
+        EXPECT_EQ(ack->acked_seq, 7u);
+    }
+}
+
+TEST_F(NetworkServiceCoverageTest, RelayForwardsCopyAfterFailedForward) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    constexpr AddressType kFarNode = 0x4004;
+    // kFarNode is reachable through kNMAddress.
+    std::vector<RoutingTableEntry> entries = {
+        RoutingTableEntry(kFarNode, 1, 200, 2)};
+    ASSERT_TRUE(
+        service_
+            ->ProcessReceivedMessage(
+                MakeRoutingTable(kNMAddress, kNMAddress, entries, 0), 100)
+            .IsSuccess());
+    ASSERT_EQ(service_->FindNextHop(kFarNode), kNMAddress);
+
+    auto relay_msg = DataMessage::Create(kFarNode, kOtherNode, kNodeAddress,
+                                         ReliablePayload(5, {1}), /*ttl=*/10,
+                                         /*seq=*/5, MessageType::DATA_RELIABLE);
+    ASSERT_TRUE(relay_msg.has_value());
+
+    // Fill the TX queue so the forward is rejected.
+    bool queue_full = false;
+    for (int i = 0; i < 64 && !queue_full; i++) {
+        auto dummy = DataMessage::Create(kOtherNode, kNodeAddress, kOtherNode,
+                                         {0}, 10, 0, MessageType::DATA);
+        if (!message_queue_
+                 ->AddMessageToQueue(
+                     SlotType::TX,
+                     std::make_unique<BaseMessage>(dummy->ToBaseMessage()))
+                 .IsSuccess()) {
+            queue_full = true;
+        }
+    }
+    ASSERT_TRUE(queue_full);
+    service_->ProcessReceivedMessage(relay_msg->ToBaseMessage(), 200);
+
+    message_queue_->ClearQueue(SlotType::TX);
+
+    // The same packet arriving again must be forwarded, not dropped as a
+    // duplicate of the copy that was never queued.
+    service_->ProcessReceivedMessage(relay_msg->ToBaseMessage(), 300);
+    auto forwarded = PopTx(*message_queue_);
+    ASSERT_TRUE(forwarded.has_value());
+    EXPECT_EQ(forwarded->GetDestination(), kFarNode);
+    EXPECT_EQ(forwarded->GetNextHop(), kNMAddress);
+}
+
+TEST_F(NetworkServiceCoverageTest, LateAckStillUpdatesPathRtt) {
+    VirtualClock clock;
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    // kOtherNode must be in the routing table to hold an RTT estimate.
+    ASSERT_TRUE(service_
+                    ->ProcessReceivedMessage(
+                        MakeRoutingTable(kOtherNode, kNMAddress, {}, 3), 0)
+                    .IsSuccess());
+
+    auto id = service_->SendReliable(kOtherNode, {1}, /*max_retries=*/0,
+                                     /*timeout_override_ms=*/1000);
+    ASSERT_NE(id.source, 0);
+    auto sent = PopTx(*message_queue_);
+    ASSERT_TRUE(sent.has_value());
+    utils::ByteDeserializer deser(sent->GetPayload());
+    deser.ReadUint8();
+    uint32_t send_ts = deser.ReadUint32().value_or(0);
+
+    // The message fails before its ACK arrives.
+    clock.Advance(1000);
+    service_->ProcessReliableTimers();
+    ASSERT_EQ(service_->GetReliablePendingCount(), 0u);
+
+    clock.Advance(500);
+    AckPayload ack;
+    ack.acked_seq = id.seq;
+    ack.echo_timestamp = send_ts;
+    auto ack_bytes = ack.Serialize();
+    auto ack_msg = DataMessage::Create(
+        kNodeAddress, kOtherNode, kNodeAddress,
+        std::vector<uint8_t>(ack_bytes.begin(), ack_bytes.end()), 10, 0,
+        MessageType::ACK);
+    ASSERT_TRUE(ack_msg.has_value());
+    service_->ProcessReceivedMessage(ack_msg->ToBaseMessage(), 0);
+
+    std::optional<types::protocols::lora_mesh::PathRtt> rtt;
+    for (const auto& node : service_->GetNetworkNodes()) {
+        if (node.GetAddress() == kOtherNode) {
+            rtt = node.path_rtt;
+        }
+    }
+    ASSERT_TRUE(rtt.has_value());
+    EXPECT_EQ(rtt->srtt_ms, 1500u);
 }
 
 }  // namespace test

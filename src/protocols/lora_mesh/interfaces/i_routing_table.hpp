@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "types/error_codes/result.hpp"
@@ -272,6 +273,29 @@ class IRoutingTable {
      */
     virtual bool SetControlSlotIndex(AddressType node_address,
                                      uint8_t control_slot_index) = 0;
+
+    /**
+     * @brief Round-trip-time estimate stored for a destination
+     *
+     * @param destination Destination address
+     * @return The estimate, or std::nullopt if the destination is unknown
+     */
+    virtual std::optional<types::protocols::lora_mesh::PathRtt> GetPathRtt(
+        AddressType destination) const = 0;
+
+    /**
+     * @brief Store the round-trip-time estimate for a destination
+     *
+     * The estimate is cleared automatically when the route's next hop or hop
+     * count changes.
+     *
+     * @param destination Destination address
+     * @param rtt Estimate to store
+     * @return bool True if the destination was found and updated
+     */
+    virtual bool SetPathRtt(
+        AddressType destination,
+        const types::protocols::lora_mesh::PathRtt& rtt) = 0;
 
     /**
      * @brief Clear all routes and nodes from the table

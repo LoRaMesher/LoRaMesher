@@ -14,18 +14,56 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/messages/loramesher/data_header.hpp"
+#include "utils/byte_operations.h"
 
 namespace loramesher {
 namespace protocols {
 namespace reliability {
 
-/// Size of the send-timestamp prefix carried by reliable messages for RTT.
-static constexpr size_t kReliableTimestampSize = 4;
+/**
+ * @brief Framing prefix of reliable DATA and reliable GROUP payloads.
+ *
+ * Wire layout: [msg_seq:1][send_ts:4][application payload]. Every
+ * transmission attempt is a distinct link-layer packet with its own sequence
+ * number; msg_seq is the sequence allocated when the message was first sent
+ * and stays the same across attempts, so the destination can de-duplicate
+ * delivery and the acknowledgement can be matched to the tracked message.
+ * send_ts is the attempt's own send time, echoed by the acknowledgement for a
+ * round-trip sample.
+ */
+struct ReliablePrefix {
+    static constexpr size_t kSize = sizeof(uint8_t) + sizeof(uint32_t);
+
+    uint8_t msg_seq = 0;   ///< Stable end-to-end message sequence
+    uint32_t send_ts = 0;  ///< Send time of this attempt (ms)
+
+    /// Write the prefix into @p serializer.
+    void Write(utils::ByteSerializer& serializer) const {
+        serializer.WriteUint8(msg_seq);
+        serializer.WriteUint32(send_ts);
+    }
+
+    /// Parse the prefix from the start of @p payload.
+    static std::optional<ReliablePrefix> Read(
+        std::span<const uint8_t> payload) {
+        if (payload.size() < kSize) {
+            return std::nullopt;
+        }
+        utils::ByteDeserializer deserializer(payload);
+        auto seq = deserializer.ReadUint8();
+        auto ts = deserializer.ReadUint32();
+        if (!seq || !ts) {
+            return std::nullopt;
+        }
+        return ReliablePrefix{*seq, *ts};
+    }
+};
 
 /**
  * @brief Stable identifier for a tracked message.
@@ -78,6 +116,11 @@ struct Policy {
     uint8_t max_retries = 3;        ///< Retransmissions after the first attempt
     bool collect_multiple = false;  ///< true: group window (one Delivered per
                                     ///< distinct responder, no erase on ACK)
+    uint32_t requeue_delay_ms = 0;  ///< Delay before re-trying an attempt the
+                                    ///< host could not queue (0 = timeout_ms)
+    uint32_t max_timeout_ms = 0;    ///< Upper bound for backed-off timeouts
+                                    ///< (0 = unbounded)
+    bool exponential_backoff = false;  ///< Double the timeout on each retry
 };
 
 /**
@@ -87,12 +130,14 @@ class ReliableDelivery {
    public:
     /// Maximum number of concurrently tracked messages.
     static constexpr size_t kMaxPending = 8;
-    /// Maximum distinct responders tracked per group window.
-    static constexpr size_t kMaxGroupResponders = 16;
+    /// Maximum distinct responders tracked per group window: every other node
+    /// of the largest network the protocol can address (control-slot indices
+    /// are 8-bit with 0xFF reserved as "unassigned").
+    static constexpr size_t kMaxGroupResponders = 0xFF - 1;
     /// Largest application payload a reliable message can carry.
     static constexpr size_t kMaxReliablePayload = BaseMessage::kMaxPayloadSize -
                                                   DataHeader::DataFieldsSize() -
-                                                  kReliableTimestampSize;
+                                                  ReliablePrefix::kSize;
 
     /// Largest application payload a reliable message can carry.
     static constexpr size_t MaxReliablePayload() { return kMaxReliablePayload; }
@@ -153,6 +198,9 @@ class ReliableDelivery {
         uint8_t len = 0;
         Policy policy{};
         uint32_t next_deadline_ms = 0;
+        uint32_t current_timeout_ms = 0;  ///< Timeout of the latest attempt
+        bool requeue = false;             ///< Latest attempt was not queued
+        bool requeue_is_retry = false;    ///< That attempt was a retransmission
         uint8_t retries_left = 0;
         uint32_t sent_at_ms = 0;
         std::array<AddressType, kMaxGroupResponders> responders{};
@@ -161,6 +209,10 @@ class ReliableDelivery {
 
     PendingEntry* FindEntry(MessageId id);
     PendingEntry* FindFreeSlot();
+    /// Hand one attempt of @p entry to the host and schedule its deadline.
+    /// A rejected attempt is re-tried after the requeue delay and does not
+    /// consume a retry.
+    void Attempt(PendingEntry& entry, uint32_t now, bool is_retry);
     bool RecordResponder(PendingEntry& entry, AddressType by);
     uint32_t Now() const;
 

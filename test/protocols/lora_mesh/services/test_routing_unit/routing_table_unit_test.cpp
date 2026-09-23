@@ -2167,5 +2167,50 @@ TEST_F(RoutingTableUnitTest, CapabilityLoggingDefaultsOff) {
     EXPECT_TRUE(routing_table_->IsLoggingCapabilities());
 }
 
+// =============================================================================
+// Path RTT storage
+// =============================================================================
+
+TEST_F(RoutingTableUnitTest, PathRttIsStoredPerDestination) {
+    AddDirectNeighbor(kNeighbor1);
+    EXPECT_FALSE(routing_table_->GetPathRtt(kNeighbor2).has_value());
+    EXPECT_FALSE(routing_table_->SetPathRtt(kNeighbor2, {1000, 500}));
+
+    auto initial = routing_table_->GetPathRtt(kNeighbor1);
+    ASSERT_TRUE(initial.has_value());
+    EXPECT_EQ(initial->srtt_ms, 0u);
+
+    ASSERT_TRUE(routing_table_->SetPathRtt(kNeighbor1, {1000, 500}));
+    auto stored = routing_table_->GetPathRtt(kNeighbor1);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->srtt_ms, 1000u);
+    EXPECT_EQ(stored->rttvar_ms, 500u);
+}
+
+TEST_F(RoutingTableUnitTest, PathRttResetWhenRouteChangesNextHop) {
+    ReceiveRoutingMessage(kNeighbor1, {CreateEntry(kRemoteNode, 2)});
+    ASSERT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor1);
+    ASSERT_TRUE(routing_table_->SetPathRtt(kRemoteNode, {1000, 500}));
+
+    // A shorter path through another neighbour replaces the route.
+    ReceiveRoutingMessage(kNeighbor2, {CreateEntry(kRemoteNode, 1)});
+    ASSERT_EQ(routing_table_->FindNextHop(kRemoteNode), kNeighbor2);
+
+    auto rtt = routing_table_->GetPathRtt(kRemoteNode);
+    ASSERT_TRUE(rtt.has_value());
+    EXPECT_EQ(rtt->srtt_ms, 0u);
+}
+
+TEST_F(RoutingTableUnitTest, PathRttKeptWhenSameRouteIsRefreshed) {
+    ReceiveRoutingMessage(kNeighbor1, {CreateEntry(kRemoteNode, 2)});
+    ASSERT_TRUE(routing_table_->SetPathRtt(kRemoteNode, {1000, 500}));
+
+    ReceiveRoutingMessage(kNeighbor1, {CreateEntry(kRemoteNode, 2)});
+
+    auto rtt = routing_table_->GetPathRtt(kRemoteNode);
+    ASSERT_TRUE(rtt.has_value());
+    EXPECT_EQ(rtt->srtt_ms, 1000u);
+}
+
 }  // namespace test
 }  // namespace loramesher

@@ -632,20 +632,22 @@ User payload: up to 251 bytes
 - Sequence number + de-duplication cache detects messages already seen
 - Own messages heard back are silently dropped (source == self check)
 
-**DATA_RELIABLE Message Wire Format** (DataHeader + 4-byte timestamp prefix):
+**DATA_RELIABLE Message Wire Format** (DataHeader + 5-byte reliable prefix):
 ```
 BaseHeader (6 bytes):
   destination     (2 bytes) - Final destination address
   source          (2 bytes) - Original sender address
   type            = 0x13
-  payload_size    (1 byte)  - Size of extension + timestamp + user data
+  payload_size    (1 byte)  - Size of extension + prefix + user data
 
 DataHeader Extension (4 bytes): next_hop, ttl, seq_num (as DATA)
+  seq_num is the link-layer sequence of this transmission attempt
 
-Reliable framing prefix (4 bytes):
-  send_timestamp  (4 bytes) - Sender tick count, echoed in the ACK for RTT
+Reliable framing prefix (5 bytes):
+  msg_seq         (1 byte)  - Stable message sequence, identical in every attempt
+  send_timestamp  (4 bytes) - Send time of this attempt, echoed in the ACK for RTT
 
-User payload: up to 247 bytes (255 - 4 extension - 4 timestamp)
+User payload: up to 246 bytes (255 - 4 extension - 5 prefix)
 ```
 
 **DATA_GROUP Message Wire Format** (flood with group destination):
@@ -663,7 +665,8 @@ Extension (5 bytes):
   seq_num         (1 byte)  - Per-source sequence number for de-duplication
 
 User payload: up to 250 bytes (255 - 5 extension); when request_acks is set,
-the payload begins with the same 4-byte send-timestamp prefix as DATA_RELIABLE.
+the payload begins with the same 5-byte reliable prefix as DATA_RELIABLE
+(`msg_seq` equals `seq_num`; group sends are not retransmitted).
 ```
 
 **ACK Message Wire Format** (DataHeader + 6-byte ACK payload):
@@ -677,15 +680,18 @@ BaseHeader (6 bytes):
 DataHeader Extension (4 bytes): next_hop, ttl, seq_num
 
 ACK payload (6 bytes):
-  acked_seq       (1 byte)  - seq_num of the message being acknowledged
+  acked_seq       (1 byte)  - msg_seq of the message being acknowledged
   flags           (1 byte)  - bit0 = was_group
   echo_timestamp  (4 bytes) - Timestamp echoed from the acked message, for RTT
 ```
 
 **Reliable Delivery Behavior** (DATA_RELIABLE):
-- The sender tracks the message and retransmits up to `max_retries` times until an ACK arrives; the retransmit timeout is estimated as `(2 × hop_count + 1) × superframe`.
-- The final destination auto-generates an ACK on every reception (idempotent, so a retransmit after a lost ACK is still acknowledged) but delivers to the application exactly once.
-- The sender computes RTT from the echoed timestamp and reports a per-message outcome (delivered with RTT, or failed after exhausting retries).
+- The sender tracks the message and retransmits up to `max_retries` times until an ACK arrives.
+- Every attempt is a distinct link-layer packet: the first carries `seq_num = msg_seq`, each retransmission draws a new `seq_num`. Relays de-duplicate on `(source, seq_num)`, so they forward every attempt; a relay records a packet as seen only after queuing its forward.
+- The final destination auto-generates an ACK (`acked_seq = msg_seq`) on every reception, so a retransmit after a lost ACK is still acknowledged, and delivers to the application once per `(source, msg_seq)`.
+- An attempt that cannot be queued locally does not consume a retry; it is re-tried one superframe later.
+- **Retransmission timeout:** each ACK yields a round-trip sample (`now − echo_timestamp`) for the acknowledging node, including ACKs that arrive after the message was given up on. Samples update a per-destination estimate (RFC 6298: `SRTT ← 7/8·SRTT + 1/8·R`, `RTTVAR ← 3/4·RTTVAR + 1/4·|SRTT − R|`; first sample `SRTT = R`, `RTTVAR = R/2`) stored on the destination's routing entry and cleared when the route's next hop or hop count changes. The timeout is `SRTT + 4·RTTVAR`, or `(2 × hop_count + 1) × superframe` before the first sample, clamped to `[500 ms, max_hops × 4 × superframe]`, and doubles on each retransmission up to that bound. A caller-supplied timeout override is used unchanged for every attempt.
+- The sender reports a per-message outcome (delivered with RTT, or failed after exhausting retries).
 - ACKs are unicast back to the source over the normal routing table and are not entered into the data de-duplication cache.
 
 **Group Delivery Behavior** (DATA_GROUP):
@@ -2711,14 +2717,14 @@ The base header structure used by all messages:
 | ROUTE_TABLE | network_manager(2), table_version(1), entry_count(1), source_capabilities(1), source_allocated_slots(1), source_control_slot_index(1) + entries(10 each) | 13+ bytes |
 | DATA | next_hop(2), ttl(1), seq_num(1) + payload | 10+ bytes |
 | DATA_BROADCAST | next_hop=0xFFFF(2), ttl(1), seq_num(1) + payload | 10+ bytes |
-| DATA_RELIABLE | next_hop(2), ttl(1), seq_num(1), send_timestamp(4) + payload | 14+ bytes |
+| DATA_RELIABLE | next_hop(2), ttl(1), seq_num(1), msg_seq(1), send_timestamp(4) + payload | 15+ bytes |
 | DATA_GROUP | next_hop=0xFFFF(2), ttl(1), flags(1), seq_num(1) + payload | 11+ bytes |
 | ACK | next_hop(2), ttl(1), seq_num(1), acked_seq(1), flags(1), echo_timestamp(4) | 16 bytes |
 | NM_CLAIM | election_priority(1), network_node_count(1), network_id(2) | 10 bytes |
 | SLOT_REQUEST | requested_slots(1) | 7 bytes |
 | SLOT_ALLOCATION | network_id(2), allocated_slots(1), total_nodes(1) | 10 bytes |
 
-> **Note**: The BaseHeader is 6 bytes (dest, src, type, payload_size). TTL and Sequence Number are implemented in the DataHeader extension (for DATA, DATA_RELIABLE, ACK, and — as a flood variant — DATA_BROADCAST/DATA_GROUP) for loop prevention and de-duplication. DATA_RELIABLE and ACK carry a 4-byte timestamp for RTT measurement. Flags and Checksum fields are not implemented.
+> **Note**: The BaseHeader is 6 bytes (dest, src, type, payload_size). TTL and Sequence Number are implemented in the DataHeader extension (for DATA, DATA_RELIABLE, ACK, and — as a flood variant — DATA_BROADCAST/DATA_GROUP) for loop prevention and de-duplication. DATA_RELIABLE carries a 5-byte reliable prefix (message sequence + timestamp) and ACK a 4-byte echoed timestamp for RTT measurement. Flags and Checksum fields are not implemented.
 
 ### 7.4 Maximum Frame Sizes
 
@@ -2741,7 +2747,7 @@ The LoRa PHY ceiling is 255 bytes. LoRaMesher additionally selects an **SF-deriv
 
 **Override semantics:** when `LoRaMeshProtocolConfig::setMaxPacketSize()` is called, the user's value is preserved. If that value exceeds the SF-derived cap, `LoRaMeshProtocol::Configure()` logs a warning; the value is not rejected. Values set via the `LoRaMeshProtocolConfig` constructor default arguments do **not** mark the value as user-set and are replaced by the SF-derived default when `ApplySfDerivedDefaults()` runs inside `Configure()`.
 
-**Frame overheads (unchanged):** BaseHeader is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific) and always fit regardless of SF. DATA/DATA_BROADCAST messages carry an additional 4-byte DataHeader, so the maximum data payload for a given SF is `max_packet_size - 6 (BaseHeader) - 4 (DataHeader)`. Example: at SF10/BW125 the data payload is capped at 41 bytes. DATA_RELIABLE and acknowledged DATA_GROUP carry an extra 4-byte timestamp (reducing the payload cap by 4); DATA_GROUP uses a 5-byte extension (one extra flags byte versus broadcast).
+**Frame overheads (unchanged):** BaseHeader is 6 bytes. Sync beacons are 20 bytes total (6 base + 14 sync-specific) and always fit regardless of SF. DATA/DATA_BROADCAST messages carry an additional 4-byte DataHeader, so the maximum data payload for a given SF is `max_packet_size - 6 (BaseHeader) - 4 (DataHeader)`. Example: at SF10/BW125 the data payload is capped at 41 bytes. DATA_RELIABLE and acknowledged DATA_GROUP carry an extra 5-byte reliable prefix (reducing the payload cap by 5); DATA_GROUP uses a 5-byte extension (one extra flags byte versus broadcast).
 
 **Routing fragmentation at high SF:** at SF10–SF12 the per-frame entry budget is smaller than `kMaxRoutingEntries = 24` (≈ 3 entries at SF12/BW125), so the routing layer fragments the table across superframes — see §4.6.
 
