@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <random>
 #include <vector>
@@ -246,6 +247,9 @@ class VirtualNetwork {
             src_config.getCRC());
         LOG_DEBUG("Time-on-Air for message: %u ms", toa);
 
+        const uint32_t now = GetCurrentTime();
+        std::vector<PendingMessage> arrivals;
+
         // Determine which nodes should receive the message
         for (auto& node_pair : nodes_) {
             uint32_t dest_address = node_pair.first;
@@ -271,15 +275,20 @@ class VirtualNetwork {
                 continue;
             }
 
-            // Calculate delivery time
-            uint32_t delay = GetLinkDelay(source, dest_address);
-            uint32_t now = GetCurrentTime();
-            uint32_t delivery_time = now + delay + toa;
-
-            // Queue the message for delivery with timing metadata
-            QueueMessageDelivery(source, dest_address, data, now, toa,
-                                 delivery_time, rssi, snr);
+            PendingMessage msg;
+            msg.source = source;
+            msg.destination = dest_address;
+            msg.data = data;
+            msg.transmission_start_time = now;
+            msg.time_on_air = toa;
+            msg.arrival_start = now + GetLinkDelay(source, dest_address);
+            msg.delivery_time = msg.arrival_start + toa;
+            msg.rssi = rssi;
+            msg.snr = snr;
+            arrivals.push_back(std::move(msg));
         }
+
+        QueueTransmission(source, now, toa, std::move(arrivals));
     }
 
     /**
@@ -498,11 +507,95 @@ class VirtualNetwork {
     }
 
     /**
-     * @brief Deliver every pending message whose delivery time has passed
-     *
-     * @return Number of messages accepted by their receivers
+     * @brief Delivery time of the earliest pending message, if any
      */
-    size_t DeliverDueMessages() { return ProcessPendingMessages(); }
+    std::optional<uint32_t> NextDeliveryTime() const {
+        std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+        std::optional<uint32_t> next;
+        for (const auto& msg : pending_messages_) {
+            if (!next || msg.delivery_time < *next) {
+                next = msg.delivery_time;
+            }
+        }
+        return next;
+    }
+
+    /**
+     * @brief Resolve the earliest due message: deliver it, or drop it when it
+     * collided or its receiver cannot take it
+     *
+     * Due messages are resolved in (delivery time, transmission start,
+     * source, destination) order. A message collides when another arrival at
+     * the same receiver overlaps its on-air interval, whichever step either
+     * was delivered in. It is dropped when the receiver was itself
+     * transmitting during the arrival (half duplex) or its radio is not
+     * receiving at delivery time.
+     *
+     * @return true if the message was accepted by its receiver
+     */
+    bool DeliverNextMessage() {
+        PendingMessage msg;
+        bool collided = false;
+        bool receiver_transmitting = false;
+        {
+            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+            const uint32_t now = GetCurrentTime();
+            auto next = pending_messages_.end();
+            for (auto it = pending_messages_.begin();
+                 it != pending_messages_.end(); ++it) {
+                if (it->delivery_time <= now &&
+                    (next == pending_messages_.end() ||
+                     DeliversBefore(*it, *next))) {
+                    next = it;
+                }
+            }
+            if (next == pending_messages_.end()) {
+                return false;
+            }
+            msg = std::move(*next);
+            pending_messages_.erase(next);
+
+            for (const auto& other : arrivals_[msg.destination]) {
+                if (other.packet_id != msg.packet_id &&
+                    Overlaps(other, msg.arrival_start, msg.delivery_time)) {
+                    collided = true;
+                    LOG_WARNING(
+                        "[COLLISION] Messages from 0x%04X and 0x%04X collided "
+                        "at destination 0x%04X (windows: [%u-%u] vs [%u-%u])",
+                        msg.source, other.source, msg.destination,
+                        msg.arrival_start, msg.delivery_time, other.start,
+                        other.end);
+                    break;
+                }
+            }
+            for (const auto& own : transmissions_[msg.destination]) {
+                if (Overlaps(own, msg.arrival_start, msg.delivery_time)) {
+                    receiver_transmitting = true;
+                    break;
+                }
+            }
+            PruneAirLog(now);
+        }
+
+        if (collided) {
+            LOG_DEBUG(
+                "[COLLISION] Dropping message from 0x%04X to 0x%04X due to "
+                "collision",
+                msg.source, msg.destination);
+            std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+            collided_by_dest_[msg.destination]++;
+            return false;
+        }
+        if (receiver_transmitting) {
+            LOG_DEBUG(
+                "[%u ms] Message from 0x%04X dropped at 0x%04X - receiver "
+                "was transmitting",
+                GetCurrentTime(), msg.source, msg.destination);
+            RecordReceiverDrop(msg.destination);
+            return false;
+        }
+        return DeliverMessage(msg);
+    }
 
     /**
      * @brief Get current simulation time
@@ -615,39 +708,40 @@ class VirtualNetwork {
      * @brief Information about a pending message
      */
     struct PendingMessage {
-        uint32_t source;
-        uint32_t destination;
+        uint64_t packet_id = 0;  ///< Shared by all copies of one transmission
+        uint32_t source = 0;
+        uint32_t destination = 0;
         std::vector<uint8_t> data;
-        uint32_t transmission_start_time;  ///< When transmission started
-        uint32_t time_on_air;              ///< Duration of transmission in ms
-        uint32_t delivery_time;            ///< transmission_start + delay + toa
-        float rssi;
-        float snr;
-
-        /**
-         * @brief Get the end time of this transmission's on-air window
-         * @return Time when this transmission ends (start + toa)
-         */
-        uint32_t GetTransmissionEndTime() const {
-            return transmission_start_time + time_on_air;
-        }
-
-        /**
-         * @brief Check if this message's on-air window overlaps with another
-         * @param other The other pending message to check against
-         * @return true if the on-air windows overlap
-         */
-        bool OverlapsWith(const PendingMessage& other) const {
-            // Two windows overlap if: start_A < end_B AND start_B < end_A
-            return transmission_start_time < other.GetTransmissionEndTime() &&
-                   other.transmission_start_time < GetTransmissionEndTime();
-        }
+        uint32_t transmission_start_time = 0;  ///< When transmission started
+        uint32_t time_on_air = 0;    ///< Duration of transmission in ms
+        uint32_t arrival_start = 0;  ///< transmission_start + link delay
+        uint32_t delivery_time = 0;  ///< arrival_start + time_on_air
+        float rssi = 0.0f;
+        float snr = 0.0f;
     };
+
+    /**
+     * @brief A packet's on-air interval [start, end) at one node
+     */
+    struct AirInterval {
+        uint64_t packet_id;
+        uint32_t source;
+        uint32_t start;
+        uint32_t end;
+    };
+
+    /// How long past its end an air interval is kept for overlap checks
+    static constexpr uint32_t kAirLogRetentionMs = 60000;
 
     std::map<uint32_t, NodeInfo> nodes_;
     std::vector<PendingMessage> pending_messages_;
+    /// Arrivals per receiver, including those already delivered or dropped
+    std::map<uint32_t, std::vector<AirInterval>> arrivals_;
+    /// Own transmissions per node
+    std::map<uint32_t, std::vector<AirInterval>> transmissions_;
+    uint64_t next_packet_id_ = 0;
     mutable std::mutex
-        pending_messages_mutex_;  ///< Mutex for thread-safe access to pending_messages_
+        pending_messages_mutex_;  ///< Guards pending_messages_ and the air logs
     std::map<uint32_t, std::vector<std::vector<uint8_t>>>
         sent_messages_;  ///< Store sent messages per node
     mutable std::mutex
@@ -747,127 +841,75 @@ class VirtualNetwork {
     }
 
     /**
-     * @brief Queue a message for delivery
+     * @brief Record a transmission and queue its arrivals for delivery
      */
-    void QueueMessageDelivery(uint32_t source, uint32_t destination,
-                              const std::vector<uint8_t>& data,
-                              uint32_t transmission_start_time,
-                              uint32_t time_on_air, uint32_t delivery_time,
-                              float rssi, float snr) {
-        PendingMessage msg;
-        msg.source = source;
-        msg.destination = destination;
-        msg.data = data;
-        msg.transmission_start_time = transmission_start_time;
-        msg.time_on_air = time_on_air;
-        msg.delivery_time = delivery_time;
-        msg.rssi = rssi;
-        msg.snr = snr;
-
-        {
-            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
-            pending_messages_.push_back(msg);
+    void QueueTransmission(uint32_t source, uint32_t start, uint32_t toa,
+                           std::vector<PendingMessage> arrivals) {
+        std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+        const uint64_t packet_id = ++next_packet_id_;
+        transmissions_[source].push_back(
+            AirInterval{packet_id, source, start, start + toa});
+        for (auto& msg : arrivals) {
+            msg.packet_id = packet_id;
+            arrivals_[msg.destination].push_back(AirInterval{
+                packet_id, source, msg.arrival_start, msg.delivery_time});
+            LOG_DEBUG(
+                "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery "
+                "at %u ms (tx_start: %u, toa: %u)",
+                start, source, msg.destination, msg.delivery_time, start, toa);
+            pending_messages_.push_back(std::move(msg));
         }
+    }
 
-        LOG_DEBUG(
-            "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery at %u "
-            "ms (tx_start: %u, toa: %u)",
-            GetCurrentTime(), source, destination, delivery_time,
-            transmission_start_time, time_on_air);
+    static bool DeliversBefore(const PendingMessage& a,
+                               const PendingMessage& b) {
+        if (a.delivery_time != b.delivery_time)
+            return a.delivery_time < b.delivery_time;
+        if (a.transmission_start_time != b.transmission_start_time)
+            return a.transmission_start_time < b.transmission_start_time;
+        if (a.source != b.source)
+            return a.source < b.source;
+        return a.destination < b.destination;
+    }
+
+    static bool Overlaps(const AirInterval& interval, uint32_t start,
+                         uint32_t end) {
+        return interval.start < end && start < interval.end;
     }
 
     /**
-     * @brief Detect collisions among messages targeting the same destination
-     *
-     * @param messages Vector of messages for a single destination
-     * @return Vector of messages that did not collide (safe to deliver)
+     * @brief Drop air intervals that can no longer overlap a pending
+     * message; caller holds pending_messages_mutex_
      */
-    std::vector<PendingMessage> DetectAndFilterCollisions(
-        std::vector<PendingMessage>& messages) {
-        if (messages.size() <= 1) {
-            return messages;  // No collision possible with 0 or 1 message
-        }
-
-        // Track which messages are involved in collisions
-        std::vector<bool> collided(messages.size(), false);
-
-        // Check each pair of messages for overlapping on-air windows
-        for (size_t i = 0; i < messages.size(); ++i) {
-            for (size_t j = i + 1; j < messages.size(); ++j) {
-                if (messages[i].OverlapsWith(messages[j])) {
-                    // Both messages in the collision are affected
-                    collided[i] = true;
-                    collided[j] = true;
-
-                    LOG_WARNING(
-                        "[COLLISION] Messages from 0x%04X and 0x%04X collided "
-                        "at destination 0x%04X (windows: [%u-%u] vs [%u-%u])",
-                        messages[i].source, messages[j].source,
-                        messages[i].destination,
-                        messages[i].transmission_start_time,
-                        messages[i].GetTransmissionEndTime(),
-                        messages[j].transmission_start_time,
-                        messages[j].GetTransmissionEndTime());
-                }
+    void PruneAirLog(uint32_t now) {
+        auto prune = [now](std::map<uint32_t, std::vector<AirInterval>>& log) {
+            for (auto& [address, intervals] : log) {
+                std::erase_if(intervals, [now](const AirInterval& interval) {
+                    return interval.end + kAirLogRetentionMs < now;
+                });
             }
-        }
+        };
+        prune(arrivals_);
+        prune(transmissions_);
+    }
 
-        // Collect non-collided messages
-        std::vector<PendingMessage> non_collided;
-        for (size_t i = 0; i < messages.size(); ++i) {
-            if (!collided[i]) {
-                non_collided.push_back(messages[i]);
-            } else {
-                LOG_DEBUG(
-                    "[COLLISION] Dropping message from 0x%04X to 0x%04X due to "
-                    "collision",
-                    messages[i].source, messages[i].destination);
-                std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
-                collided_by_dest_[messages[i].destination]++;
-            }
-        }
-
-        return non_collided;
+    void RecordReceiverDrop(uint32_t destination) {
+        ++dropped_message_count_;
+        std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+        ++dropped_by_dest_[destination];
     }
 
     /**
-     * @brief Process any pending messages that are due for delivery
+     * @brief Resolve every pending message whose delivery time has passed
      *
-     * This method groups messages by destination and performs collision
-     * detection. Messages with overlapping on-air windows at the same
-     * receiver are dropped (simulating real radio behavior).
+     * @return Number of messages accepted by their receivers
      */
     size_t ProcessPendingMessages() {
-        // Extract messages due for delivery under lock
-        std::vector<PendingMessage> messages_to_deliver;
-        {
-            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
-            auto it = pending_messages_.begin();
-            const uint32_t now = GetCurrentTime();
-            while (it != pending_messages_.end()) {
-                if (it->delivery_time <= now) {
-                    messages_to_deliver.push_back(*it);
-                    it = pending_messages_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
-
-        // Group messages by destination for collision detection
-        std::map<uint32_t, std::vector<PendingMessage>> by_destination;
-        for (auto& msg : messages_to_deliver) {
-            by_destination[msg.destination].push_back(msg);
-        }
-
-        // For each destination, detect collisions and deliver non-collided messages
         size_t delivered = 0;
-        for (auto& [dest, dest_messages] : by_destination) {
-            auto non_collided = DetectAndFilterCollisions(dest_messages);
-            for (const auto& msg : non_collided) {
-                if (DeliverMessage(msg)) {
-                    ++delivered;
-                }
+        for (auto next = NextDeliveryTime(); next && *next <= GetCurrentTime();
+             next = NextDeliveryTime()) {
+            if (DeliverNextMessage()) {
+                ++delivered;
             }
         }
         return delivered;
@@ -910,11 +952,7 @@ class VirtualNetwork {
                 "unavailable (state=%d)",
                 GetCurrentTime(), msg.source, msg.destination,
                 static_cast<int>(radio->GetRadioState()));
-            ++dropped_message_count_;
-            {
-                std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
-                ++dropped_by_dest_[msg.destination];
-            }
+            RecordReceiverDrop(msg.destination);
             GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
@@ -940,7 +978,13 @@ class VirtualTimeController {
      * @param network Reference to the virtual network
      */
     VirtualTimeController(VirtualNetwork& network)
-        : network_(network), current_time_(0) {
+        : network_(network),
+          current_time_(0)
+#ifdef LORAMESHER_BUILD_NATIVE
+          ,
+          network_events_(network)
+#endif
+    {
         // Register this instance as the global singleton
         instance_ = this;
 
@@ -1003,13 +1047,7 @@ class VirtualTimeController {
         if (!rtos_mock) {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
-        rtos_mock->advanceTime(time_ms);
-
-        // Deliver the messages that finished their air time during the step,
-        // then let the receiving tasks process them.
-        if (network_.DeliverDueMessages() > 0) {
-            rtos_mock->waitForTasksToReblock(os::RTOSMock::kReblockTimeoutMs);
-        }
+        rtos_mock->advanceTime(time_ms, &network_events_);
 #else
         network_.AdvanceTime(time_ms);
 #endif  // LORAMESHER_BUILD_NATIVE
@@ -1048,11 +1086,40 @@ class VirtualTimeController {
     }
 
    private:
+#ifdef LORAMESHER_BUILD_NATIVE
+    /**
+     * @brief Feeds the network's message deliveries into the RTOS event loop
+     */
+    class NetworkEventSource : public os::RTOSMock::VirtualEventSource {
+       public:
+        explicit NetworkEventSource(VirtualNetwork& network)
+            : network_(network) {}
+
+        std::optional<uint64_t> NextEventTime() override {
+            std::optional<uint32_t> next = network_.NextDeliveryTime();
+            if (!next) {
+                return std::nullopt;
+            }
+            return *next;
+        }
+
+        void ProcessNextEvent(uint64_t /*now*/) override {
+            network_.DeliverNextMessage();
+        }
+
+       private:
+        VirtualNetwork& network_;
+    };
+#endif  // LORAMESHER_BUILD_NATIVE
+
     // Singleton instance for static access
     static VirtualTimeController* instance_;
 
     VirtualNetwork& network_;
     uint32_t current_time_;
+#ifdef LORAMESHER_BUILD_NATIVE
+    NetworkEventSource network_events_;
+#endif
 
     /**
      * @brief Scheduled event structure

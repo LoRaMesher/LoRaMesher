@@ -58,10 +58,11 @@ class RxSlotListeningTests : public RoutingTestFixture {
 TEST_F(RxSlotListeningTests, SecondPacketInControlRxSlotIsNotDropped) {
     auto& mgr = CreateManagerNode("Mgr", 0x2001);
     auto& node = CreateJoiningNode("Node", 0x2002);
-    // A second transmitter, used only to inject the "later" packet. Never
-    // started; it serves purely as a delivery source on a one-way link so it
-    // does not perturb the formed mgr<->node network.
+    // Two transmitters used only to inject the packets. Never started; they
+    // serve purely as delivery sources on one-way links so they do not
+    // perturb the formed mgr<->node network.
     auto& src2 = CreateJoiningNode("Src2", 0x2003);
+    auto& src1 = CreateJoiningNode("Src1", 0x2004);
 
     SetLinkStatus(mgr, node, true);
 
@@ -82,9 +83,19 @@ TEST_F(RxSlotListeningTests, SecondPacketInControlRxSlotIsNotDropped) {
     }
     ASSERT_FALSE(packet.empty());
 
+    virtual_network_.SetDirectionalLink(src1.address, node.address, true);
     virtual_network_.SetDirectionalLink(src2.address, node.address, true);
-    virtual_network_.SetMessageDelay(mgr.address, node.address, 1);
+    virtual_network_.SetMessageDelay(src1.address, node.address, 1);
     virtual_network_.SetMessageDelay(src2.address, node.address, 1);
+
+    // Restores the manager's link to the receiver when an attempt ends.
+    struct ManagerLinkRestore {
+        VirtualNetwork& network;
+        AddressType from;
+        AddressType to;
+
+        ~ManagerLinkRestore() { network.SetDirectionalLink(from, to, true); }
+    };
 
     const uint32_t superframe = GetSuperframeDuration(node);
     const uint32_t max_search_ms = superframe * 20u + 5000u;
@@ -138,8 +149,13 @@ TEST_F(RxSlotListeningTests, SecondPacketInControlRxSlotIsNotDropped) {
         virtual_network_.ResetReceivedMessageCount(node.address);
         virtual_network_.ResetDroppedMessageCount(node.address);
 
+        // The manager transmits in this slot; mute it towards the receiver for
+        // the attempt so its packet cannot collide with the injected ones.
+        virtual_network_.SetDirectionalLink(mgr.address, node.address, false);
+        ManagerLinkRestore restore{virtual_network_, mgr.address, node.address};
+
         // First packet — must actually be delivered within this slot.
-        virtual_network_.TransmitMessage(mgr.address, packet, -65.0f, 8.0f);
+        virtual_network_.TransmitMessage(src1.address, packet, -65.0f, 8.0f);
         bool in_slot = run_in_slot(slot0, 20, [&]() {
             return virtual_network_.GetReceivedMessageCount(node.address) >= 1;
         });

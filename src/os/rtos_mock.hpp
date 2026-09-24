@@ -867,6 +867,10 @@ class RTOSMock : public RTOS {
             return true;
         }
 
+        if (!is_suspended) {
+            AcknowledgeResume(*task_info);
+        }
+
         // If task is suspended, wait until resumed or stop requested
         if (is_suspended) {
             // LOG_DEBUG(
@@ -1435,6 +1439,10 @@ class RTOSMock : public RTOS {
             if (task_info->suspended) {
                 // std::cout << "MOCK: Task is suspended during WaitForNotify, will wait for resume" << std::endl;
                 // Don't return error here - we should wait for resume or stop
+            }
+
+            if (!task_info->suspended.load(std::memory_order_acquire)) {
+                AcknowledgeResume(*task_info);
             }
 
             // If we already have a pending notification and not suspended, consume it
@@ -2302,6 +2310,21 @@ class RTOSMock : public RTOS {
         std::lock_guard<std::mutex> lock(info.mutex);
         info.notification_pending.store(true, std::memory_order_release);
         info.notify_cv.notify_all();
+    }
+
+    /**
+     * @brief Acknowledge a pending ResumeTask() once the task observes that it
+     * is no longer suspended, wherever it observes it
+     */
+    static void AcknowledgeResume(TaskInfo& info) {
+        if (info.resume_acknowledged.load(std::memory_order_acquire)) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(info.mutex);
+        if (!info.suspended.load(std::memory_order_acquire)) {
+            info.resume_acknowledged.store(true, std::memory_order_release);
+            info.resume_ack_cv.notify_all();
+        }
     }
 
     /**
