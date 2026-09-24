@@ -15,8 +15,12 @@ TEST(RTOSMockTest, ImplementArduinoTests) {
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <string>
 #include <thread>
+#include <vector>
+
 #include "os/rtos_mock.hpp"
 
 using namespace loramesher;
@@ -2099,6 +2103,69 @@ TEST_F(RTOSMockTest, GetCurrentTaskNodeAddressWithAddressSet) {
 
     shouldExit.store(true);
     rtosInstance->DeleteTask(taskHandle);
+}
+
+namespace {
+
+struct RandomDrawParams {
+    const char* address;
+    int count;
+    std::vector<uint32_t>* draws;
+    std::atomic<bool>* done;
+};
+
+/**
+ * @brief Run one task per address, one after another in @p order, each
+ * drawing @p count values from GetRandom(). The test thread draws once before
+ * each task.
+ */
+std::map<std::string, std::vector<uint32_t>> DrawPerNode(
+    RTOSMock* rtos, const std::vector<const char*>& order, int count) {
+    std::map<std::string, std::vector<uint32_t>> result;
+    auto task_fn = [](void* param) {
+        auto* p = static_cast<RandomDrawParams*>(param);
+        GetRTOS().SetCurrentTaskNodeAddress(p->address);
+        for (int i = 0; i < p->count; ++i) {
+            p->draws->push_back(GetRTOS().GetRandom());
+        }
+        p->done->store(true);
+    };
+    for (const char* address : order) {
+        (void)rtos->GetRandom();
+        std::atomic<bool> done{false};
+        std::vector<uint32_t>& draws = result[address];
+        RandomDrawParams params{address, count, &draws, &done};
+        TaskHandle_t handle = nullptr;
+        EXPECT_TRUE(
+            rtos->CreateTask(task_fn, "RandomDraw", 2048, &params, 1, &handle));
+        for (int i = 0; i < 500 && !done.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        EXPECT_TRUE(done.load());
+        rtos->DeleteTask(handle);
+    }
+    return result;
+}
+
+}  // namespace
+
+/**
+ * @brief Each node draws its own random sequence, independent of the order in
+ * which nodes and the test thread call GetRandom()
+ */
+TEST_F(RTOSMockTest, GetRandomIsPerNode) {
+    rtosInstance->SeedRandom(1234);
+    auto forward = DrawPerNode(rtosInstance, {"0x1001", "0x1002"}, 4);
+    rtosInstance->SeedRandom(1234);
+    auto reverse = DrawPerNode(rtosInstance, {"0x1002", "0x1001"}, 4);
+
+    EXPECT_EQ(forward["0x1001"], reverse["0x1001"]);
+    EXPECT_EQ(forward["0x1002"], reverse["0x1002"]);
+    EXPECT_NE(forward["0x1001"], forward["0x1002"]);
+
+    rtosInstance->SeedRandom(4321);
+    auto other_seed = DrawPerNode(rtosInstance, {"0x1001"}, 4);
+    EXPECT_NE(forward["0x1001"], other_seed["0x1001"]);
 }
 
 #endif  // ARDUINO

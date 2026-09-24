@@ -35,6 +35,7 @@
 #include <mutex>
 #include <queue>
 #include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -67,7 +68,7 @@ class RTOSMock : public RTOS {
     /// Virtual time value (ms) set whenever the mock switches to virtual time
     static constexpr uint64_t kVirtualEpochMs = 1'000'000;
 
-    /// Seed of the GetRandom() generator until SeedRandom() is called
+    /// Seed of the GetRandom() generators until SeedRandom() is called
     static constexpr uint32_t kDefaultRandomSeed = 42;
 
     /**
@@ -97,8 +98,7 @@ class RTOSMock : public RTOS {
           virtualTimeMs_(0),
           timeMutex_(),
           waitingTasks_(),
-          timerCallbacks_(),
-          prng_engine_(kDefaultRandomSeed) {}
+          timerCallbacks_() {}
 
     /**
      * @brief Sets the time mode for the RTOS mock
@@ -1899,18 +1899,41 @@ class RTOSMock : public RTOS {
         return pred();
     }
 
+    /**
+     * @brief Draw a random value from the caller's random stream
+     *
+     * Every node owns an independent stream, selected by the node address of
+     * the calling task and seeded from the SeedRandom() seed and that address.
+     * A node's sequence therefore does not depend on how its draws interleave
+     * with other nodes' draws. Non-task threads (e.g. the test thread) share
+     * one separate stream; a task without a node address uses a stream keyed
+     * by its task name.
+     *
+     * @return Uniformly distributed 32-bit value
+     */
     uint32_t GetRandom() override {
+        std::string key = RandomStreamKey();
         std::lock_guard<std::mutex> lock(prng_mutex_);
-        return prng_distribution_(prng_engine_);
+        auto it = prng_streams_.find(key);
+        if (it == prng_streams_.end()) {
+            std::seed_seq seq{prng_seed_, HashStreamKey(key)};
+            it = prng_streams_.emplace(key, std::mt19937(seq)).first;
+        }
+        return prng_distribution_(it->second);
     }
 
     /**
-     * @brief Seed the PRNG for deterministic random sequences in tests.
+     * @brief Seed every random stream for deterministic sequences in tests
+     *
+     * Restarts all streams: the next draw of each node starts its sequence
+     * for @p seed.
+     *
      * @param seed The seed value
      */
     void SeedRandom(uint32_t seed) {
         std::lock_guard<std::mutex> lock(prng_mutex_);
-        prng_engine_.seed(seed);
+        prng_seed_ = seed;
+        prng_streams_.clear();
     }
 
     /**
@@ -2020,6 +2043,33 @@ class RTOSMock : public RTOS {
                          info->name.c_str(), used, info->stack_size);
             std::abort();
         }
+    }
+
+    /**
+     * @brief Key of the random stream used by the calling thread
+     */
+    static std::string RandomStreamKey() {
+        const TaskInfo* info = GetThreadLocalTaskInfo();
+        if (info == nullptr) {
+            return "<host>";
+        }
+        const char* address = getThreadLocalNodeAddress();
+        if (address[0] != '\0') {
+            return std::string("node:") + address;
+        }
+        return "task:" + info->name;
+    }
+
+    /**
+     * @brief FNV-1a hash of a random stream key
+     */
+    static uint32_t HashStreamKey(const std::string& key) {
+        uint32_t hash = 2166136261u;
+        for (char c : key) {
+            hash ^= static_cast<uint8_t>(c);
+            hash *= 16777619u;
+        }
+        return hash;
     }
 
     /**
@@ -2456,7 +2506,8 @@ class RTOSMock : public RTOS {
     std::mutex isrMutex_;
 
     // PRNG for GetRandom()
-    std::mt19937 prng_engine_;
+    uint32_t prng_seed_ = kDefaultRandomSeed;
+    std::map<std::string, std::mt19937> prng_streams_;  ///< Streams per key
     std::uniform_int_distribution<uint32_t> prng_distribution_;
     std::mutex prng_mutex_;
 
