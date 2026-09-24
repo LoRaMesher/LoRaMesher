@@ -22,7 +22,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <span>
 #include <vector>
 
 #include "protocols/reliability/reliable_delivery.hpp"
@@ -33,6 +32,7 @@
 #include "types/messages/loramesher/group_message.hpp"
 #include "types/protocols/lora_mesh/path_rtt.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {
