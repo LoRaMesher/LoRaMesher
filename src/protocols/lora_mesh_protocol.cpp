@@ -1203,7 +1203,7 @@ uint16_t LoRaMeshProtocol::ComputeSubslotIdentifier(
     const lora_mesh::SubslotConfig& config) {
     switch (config.strategy) {
         case lora_mesh::SubslotAssignment::RANDOM:
-            return static_cast<uint16_t>(GetRTOS().GetRandom());
+            return static_cast<uint16_t>(network_service_->NextRandom());
         case lora_mesh::SubslotAssignment::ADDRESS_HASH: {
             uint32_t frame =
                 superframe_service_->GetSuperframeStats().superframes_completed;
