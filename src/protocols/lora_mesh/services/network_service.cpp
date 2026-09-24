@@ -48,9 +48,6 @@ NetworkService::NetworkService(
         LOG_ERROR("Message queue service is required");
     }
 
-    random_.seed(static_cast<std::minstd_rand::result_type>(
-        GetRTOS().GetRandom() ^ node_address_));
-
     // Create default routing table if none provided
     if (!routing_table_) {
         routing_table_ = CreateDistanceVectorRoutingTable(node_address_);
@@ -1014,8 +1011,8 @@ Result NetworkService::CreateNetwork() {
 
     // Generate stable network_id_ if not already set (e.g. from a prior beacon)
     if (network_id_ == 0) {
-        network_id_ =
-            static_cast<uint16_t>(node_address_ ^ (NextRandom() & 0xFFFF));
+        network_id_ = static_cast<uint16_t>(node_address_ ^
+                                            (GetRTOS().GetRandom() & 0xFFFF));
         if (network_id_ == 0)
             network_id_ = node_address_;  // never 0
     }
@@ -2615,10 +2612,6 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
         total_allocated, static_cast<uint16_t>(config_.max_data_slots)));
 }
 
-uint32_t NetworkService::NextRandom() {
-    return static_cast<uint32_t>(random_());
-}
-
 uint32_t NetworkService::GetJoinTimeout() {
     if (!superframe_service_) {
         return 60000;
@@ -3007,7 +3000,8 @@ Result NetworkService::HandleSuperframeStart() {
 
             // Always wait at least 1 superframe so the sponsor has time to deliver
             // the JOIN_RESPONSE before the joining node retransmits
-            join_backoff_remaining_ = 1 + NextRandom() % (max_backoff + 1);
+            join_backoff_remaining_ =
+                1 + GetRTOS().GetRandom() % (max_backoff + 1);
             LOG_DEBUG("Join retry #%d, next backoff: %d superframes",
                       join_retry_count_, join_backoff_remaining_);
         }
@@ -3443,7 +3437,8 @@ void NetworkService::StartElectionBackoff() {
         (node_role_ == NodeRole::NETWORK_MANAGER) ? 0 : listen_window_ms;
     // addr_bonus: up to 1 extra listen window spread over address space
     uint32_t addr_bonus_ms = (listen_window_ms * (node_address_ & 0xFF)) / 256;
-    uint32_t jitter_ms = NextRandom() % (listen_window_ms / 2 + 1);
+    uint32_t jitter_ms = static_cast<uint32_t>(GetRTOS().GetRandom()) %
+                         (listen_window_ms / 2 + 1);
 
     uint32_t backoff_ms =
         listen_window_ms + role_bonus_ms + addr_bonus_ms + jitter_ms;

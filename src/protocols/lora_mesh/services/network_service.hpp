@@ -9,7 +9,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <random>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
@@ -1031,19 +1030,6 @@ class NetworkService : public INetworkService {
 
     Result ApplyRoleChange(NodeRole new_role) override;
 
-    /**
-     * @brief Next value from this node's random source
-     *
-     * The source is seeded once, at construction, from the platform random
-     * number generator and the node address. Afterwards its sequence depends
-     * only on this node's own draws, not on other nodes or threads. Used for
-     * subslot selection, join backoff, election jitter and the network id.
-     * Called from the protocol task only.
-     *
-     * @return uint32_t Pseudo-random value
-     */
-    uint32_t NextRandom();
-
    private:
     /**
      * @brief Get comprehensive link quality for a node
@@ -1375,7 +1361,6 @@ class NetworkService : public INetworkService {
 
     // Node role configuration
     NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
-    std::minstd_rand random_;  ///< Per-node random source (see NextRandom)
 
     // Duty cycle regulation
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle

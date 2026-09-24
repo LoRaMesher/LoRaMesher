@@ -1959,47 +1959,6 @@ TEST_F(NetworkServiceCoverageTest, LateAckStillUpdatesPathRtt) {
     EXPECT_EQ(rtt->srtt_ms, 1500u);
 }
 
-// ============================================================================
-// Per-node random source
-// ============================================================================
-
-namespace {
-
-std::vector<uint32_t> DrawRandoms(NetworkService& service, int count,
-                                  NetworkService* other = nullptr) {
-    std::vector<uint32_t> values;
-    for (int i = 0; i < count; i++) {
-        if (other != nullptr) {
-            other->NextRandom();
-        }
-        GetRTOS().GetRandom();
-        values.push_back(service.NextRandom());
-    }
-    return values;
-}
-
-}  // namespace
-
-TEST(NetworkServiceRandomTest, NodeRandomIsReproducibleAndIndependent) {
-    auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
-    ASSERT_NE(mock, nullptr);
-
-    mock->SeedRandom(7);
-    NetworkService a(0x1001, nullptr, nullptr, nullptr);
-    NetworkService b(0x1002, nullptr, nullptr, nullptr);
-    auto alone = DrawRandoms(a, 8);
-
-    // Same seed and construction order; draws of another node and of the
-    // platform RNG are interleaved and must not change this node's sequence.
-    mock->SeedRandom(7);
-    NetworkService a2(0x1001, nullptr, nullptr, nullptr);
-    NetworkService b2(0x1002, nullptr, nullptr, nullptr);
-    auto interleaved = DrawRandoms(a2, 8, &b2);
-
-    EXPECT_EQ(alone, interleaved);
-    EXPECT_NE(alone, DrawRandoms(b, 8));
-}
-
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols
