@@ -1189,6 +1189,18 @@ class NetworkService : public INetworkService {
     void MarkSlotTableDirty() { slot_scheduler_->MarkDirty(); }
 
     /**
+     * @brief Store a node's control slot index in the routing table
+     *
+     * The data band assigns slots by control slot index, so a changed index
+     * requires the slot table to be rebuilt.
+     *
+     * @param node Node address
+     * @param control_slot_index Index to store
+     * @return bool True if the node is known and its stored index changed
+     */
+    bool StoreControlSlotIndex(AddressType node, uint8_t control_slot_index);
+
+    /**
      * @brief Rebuild the slot table when dirty, or unconditionally when forced.
      *
      * @param force Rebuild even if the dirty flag is clear.

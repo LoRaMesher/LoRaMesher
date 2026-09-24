@@ -397,8 +397,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     // the data band assigns its slots by that index.
     if (source_control_slot_index != 0xFF) {
         if (source_control_slot_index < config_.max_network_nodes) {
-            routing_table_->SetControlSlotIndex(source,
-                                                source_control_slot_index);
+            routing_changed |=
+                StoreControlSlotIndex(source, source_control_slot_index);
         } else {
             LOG_WARNING(
                 "Ignoring out-of-range own control slot index %d from "
@@ -429,8 +429,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
                     entry.control_slot_index, entry.destination, source);
                 continue;
             }
-            routing_table_->SetControlSlotIndex(entry.destination,
-                                                entry.control_slot_index);
+            routing_changed |= StoreControlSlotIndex(entry.destination,
+                                                     entry.control_slot_index);
         }
     }
 
@@ -441,6 +441,19 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     }
 
     return Result::Success();
+}
+
+bool NetworkService::StoreControlSlotIndex(AddressType node,
+                                           uint8_t control_slot_index) {
+    const auto& nodes = routing_table_->GetNodes();
+    auto it = std::find_if(nodes.begin(), nodes.end(),
+                           [node](const NetworkNodeRoute& entry) {
+                               return entry.GetAddress() == node;
+                           });
+    if (it == nodes.end() || it->control_slot_index == control_slot_index) {
+        return false;
+    }
+    return routing_table_->SetControlSlotIndex(node, control_slot_index);
 }
 
 Result NetworkService::SendRoutingTableUpdate() {
