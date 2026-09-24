@@ -91,6 +91,15 @@ TEST(VirtualNetworkDeterminismTest, GlobalPacketLossFollowsSeed) {
     EXPECT_NE(first_run, other_run);
 }
 
+TEST(TestSeedTest, ParsesSeedFromEnvironmentValue) {
+    EXPECT_EQ(TestSeedFromEnvironmentValue(nullptr), kDefaultTestSeed);
+    EXPECT_EQ(TestSeedFromEnvironmentValue(""), kDefaultTestSeed);
+    EXPECT_EQ(TestSeedFromEnvironmentValue("123"), 123u);
+    EXPECT_EQ(TestSeedFromEnvironmentValue("0x10"), 16u);
+    EXPECT_EQ(TestSeedFromEnvironmentValue("abc"), kDefaultTestSeed);
+    EXPECT_EQ(TestSeedFromEnvironmentValue("12abc"), kDefaultTestSeed);
+}
+
 /**
  * @brief Three nodes in range of each other, stepped in 1 ms increments
  */

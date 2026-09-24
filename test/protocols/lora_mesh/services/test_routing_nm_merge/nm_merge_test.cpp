@@ -191,7 +191,7 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
     // offset is permanent. A fixed seed makes the offset reproducible.
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     // Phase 1: Isolate both networks — no cross-links
     SetLinkStatus(nm_a, node_a, true);
@@ -330,7 +330,7 @@ TEST_F(NMMergeTests, AutoRoleNMYieldsToConfiguredNM) {
     // offset is permanent. A fixed seed makes the offset reproducible.
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     // Phase 1: Isolate both networks — no cross-links
     SetLinkStatus(nm_a, node_a, true);

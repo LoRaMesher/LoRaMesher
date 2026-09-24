@@ -117,7 +117,7 @@ TEST_F(RoleChangeTests, PromoteNodeOnlyBeforeNetworkExists) {
 
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     SetLinkStatus(node1, node2, true);
 
@@ -177,7 +177,7 @@ TEST_F(RoleChangeTests, DemoteNetworkManagerSurrendersNetwork) {
 
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     SetLinkStatus(nm, peer, true);
 
@@ -228,7 +228,7 @@ TEST_F(RoleChangeTests, SameRoleRequestIsNoOp) {
 
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
     SetLinkStatus(nm, peer, true);
 
     ASSERT_TRUE(StartNode(nm));
@@ -278,7 +278,7 @@ TEST_F(RoleChangeTests, ForcedPromotionInNormalOperationUnseatsIncumbent) {
 
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
     SetLinkStatus(incumbent, challenger, true);
 
     ASSERT_TRUE(StartNode(incumbent));

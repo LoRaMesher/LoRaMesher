@@ -443,7 +443,7 @@ TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
     // so the phase offset is constant — zero drift).
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     // Phase 1a: Form NM_A's network (NM_A + Helper).
     SetLinkStatus(nm_a, helper, true);

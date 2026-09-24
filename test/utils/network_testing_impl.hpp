@@ -6,9 +6,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -37,6 +39,37 @@ using ::testing::A;
 
 namespace loramesher {
 namespace test {
+
+/// Seed used by the test harness when LORAMESHER_TEST_SEED is not set
+inline constexpr uint32_t kDefaultTestSeed = 42;
+
+/**
+ * @brief Parse a LORAMESHER_TEST_SEED value
+ *
+ * Accepts decimal, hexadecimal (0x) or octal (0) integers that fit in 32 bits.
+ *
+ * @param value Environment variable value, or nullptr when unset
+ * @return The parsed seed, or kDefaultTestSeed when unset or invalid
+ */
+inline uint32_t TestSeedFromEnvironmentValue(const char* value) {
+    if (value == nullptr || value[0] == '\0') {
+        return kDefaultTestSeed;
+    }
+    char* end = nullptr;
+    errno = 0;
+    unsigned long long parsed = std::strtoull(value, &end, 0);
+    if (errno != 0 || end == value || *end != '\0' || parsed > UINT32_MAX) {
+        return kDefaultTestSeed;
+    }
+    return static_cast<uint32_t>(parsed);
+}
+
+/**
+ * @brief Seed selected by the LORAMESHER_TEST_SEED environment variable
+ */
+inline uint32_t TestSeedFromEnvironment() {
+    return TestSeedFromEnvironmentValue(std::getenv("LORAMESHER_TEST_SEED"));
+}
 
 /**
  * @brief Calculate Time-on-Air for LoRa transmission

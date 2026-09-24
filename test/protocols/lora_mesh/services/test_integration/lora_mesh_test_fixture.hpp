@@ -7,6 +7,7 @@
 #define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -56,6 +57,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
     std::map<AddressType, std::vector<BaseMessage>> message_log_;
     std::vector<std::unique_ptr<RadioToNetworkAdapter>> network_adapters_;
 
+    /// Seed of the per-node random streams and the network's loss decisions
+    uint32_t test_seed_ = kDefaultTestSeed;
+
     // File logging support
     std::unique_ptr<FileLogHandler> file_log_handler_;
     std::unique_ptr<LogHandler> original_log_handler_;
@@ -66,8 +70,11 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
     void SetUp() override {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        test_seed_ = TestSeedFromEnvironment();
+        RecordProperty("seed", static_cast<int>(test_seed_));
+        virtual_network_.SetSeed(test_seed_);
         if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
-            mock->SeedRandom(42);
+            mock->SeedRandom(test_seed_);
             mock->resetReblockTimeoutCount();
         }
 // Set up file logging for this test
@@ -82,6 +89,10 @@ class LoRaMeshTestFixture : public ::testing::Test {
                 << "Virtual-time steps did not complete deterministically "
                    "(a woken task did not block again); see the MOCK reblock "
                    "timeout lines in the test log";
+        }
+        if (HasFailure()) {
+            std::cout << "[   SEED   ] Reproduce with LORAMESHER_TEST_SEED="
+                      << test_seed_ << std::endl;
         }
 
         // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
@@ -977,6 +988,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
             ::testing::UnitTest::GetInstance()->current_test_info();
         std::string test_name = std::string(test_info->test_case_name()) + "_" +
                                 std::string(test_info->name());
+        // Parameterized test names contain '/'
+        std::replace(test_name.begin(), test_name.end(), '/', '_');
 
         // Create unique log filename
         std::string log_filename = log_directory_ + "/" + test_name + ".log";
