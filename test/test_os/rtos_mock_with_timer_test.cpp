@@ -559,6 +559,64 @@ TEST_F(RTOSMockTimeTest, WaitForTasksReblocksAfterQueueDataArrives) {
            "returned";
 }
 
+TEST_F(RTOSMockTimeTest, ReblockUnaffectedByItemConsumedByAnotherThread) {
+    auto q = CreateTrackedQueue(5, sizeof(int));
+
+    struct State {
+        std::atomic<int> popped{0};
+    };
+
+    auto state = std::make_shared<State>();
+    auto* p =
+        new std::pair<os::QueueHandle_t, std::shared_ptr<State>>(q, state);
+    taskParameterCleanup_.push_back([p] { delete p; });
+
+    // Consumer: take one item, then sleep before waiting on the queue again.
+    os::TaskHandle_t task = nullptr;
+    rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<
+                std::pair<os::QueueHandle_t, std::shared_ptr<State>>*>(param);
+            int v = 0;
+            while (!GetRTOS().ShouldStopOrPause()) {
+                if (GetRTOS().ReceiveFromQueue(s->first, &v, 100000) ==
+                    os::QueueResult::kOk) {
+                    s->second->popped++;
+                    GetRTOS().delay(1000);
+                }
+            }
+        },
+        "Consumer", 2048, p, 1, &task);
+    taskHandles_.push_back(task);
+    rtosMock_->waitForTasksToReblock(1000);
+
+    // Two items arrive while the consumer waits; it takes only the first.
+    int a = 1;
+    int b = 2;
+    rtos_->SendToQueue(q, &a, 0);
+    rtos_->SendToQueue(q, &b, 0);
+    for (int i = 0; i < 100 && state->popped.load() == 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    ASSERT_EQ(state->popped.load(), 1);
+
+    // Another thread drains the second item while the consumer sleeps.
+    int drained = 0;
+    ASSERT_EQ(rtos_->ReceiveFromQueue(q, &drained, 0), os::QueueResult::kOk);
+
+    // The consumer wakes and waits on the now-empty queue: every task is
+    // blocked, so advancing time must not wait for the reblock timeout.
+    auto start = std::chrono::steady_clock::now();
+    rtosMock_->advanceTime(1000);
+    rtosMock_->advanceTime(10);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+
+    EXPECT_EQ(state->popped.load(), 1);
+    EXPECT_LT(elapsed.count(), 500)
+        << "advanceTime waited for a task that was already blocked";
+}
+
 }  // namespace test
 }  // namespace loramesher
 

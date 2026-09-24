@@ -886,6 +886,8 @@ class RTOSMock : public RTOS {
             isSystemQueue;  // True for system semaphores that bypass virtual time
         std::atomic<TaskInfo*> current_waiter_{
             nullptr};  // task currently waiting on this queue
+        std::atomic<uint32_t> size{
+            0};  // mirrors data.size(); readable without the queue mutex
     };
 
     QueueHandle_t CreateQueue(uint32_t length, uint32_t itemSize) override {
@@ -947,13 +949,8 @@ class RTOSMock : public RTOS {
 
         auto* bytes = static_cast<const uint8_t*>(item);
         q->data.push(std::vector<uint8_t>(bytes, bytes + q->itemSize));
+        q->size.fetch_add(1, std::memory_order_release);
         pending_queue_items_.fetch_add(1, std::memory_order_relaxed);
-        {
-            TaskInfo* waiter =
-                q->current_waiter_.load(std::memory_order_acquire);
-            if (waiter)
-                waiter->pending_items_.fetch_add(1, std::memory_order_release);
-        }
         q->notEmpty.notify_one();
         return QueueResult::kOk;
     }
@@ -999,6 +996,7 @@ class RTOSMock : public RTOS {
                 // Uses task_info overload to avoid acquiring M0 while M6 is held.
                 registerQueueCV(&q->notEmpty, task_info);
                 q->current_waiter_.store(task_info, std::memory_order_release);
+                task_info->waiting_queue_.store(q, std::memory_order_release);
 
                 bool success =
                     waitFor(q->notEmpty, lock, timeout,
@@ -1013,6 +1011,8 @@ class RTOSMock : public RTOS {
                                         initial_suspended_state);
                             });
 
+                task_info->waiting_queue_.store(nullptr,
+                                                std::memory_order_release);
                 q->current_waiter_.store(nullptr, std::memory_order_release);
                 unregisterQueueCV(&q->notEmpty, task_info);
 
@@ -1046,13 +1046,7 @@ class RTOSMock : public RTOS {
         auto& item = q->data.front();
         memcpy(buffer, item.data(), q->itemSize);
         q->data.pop();
-        if (task_info) {
-            auto old =
-                task_info->pending_items_.load(std::memory_order_relaxed);
-            while (old > 0 && !task_info->pending_items_.compare_exchange_weak(
-                                  old, old - 1, std::memory_order_release,
-                                  std::memory_order_relaxed)) {}
-        }
+        q->size.fetch_sub(1, std::memory_order_release);
         pending_queue_items_.fetch_sub(1, std::memory_order_relaxed);
         q->notFull.notify_one();
         return QueueResult::kOk;
@@ -2214,6 +2208,12 @@ class RTOSMock : public RTOS {
         return task_info->stop_requested.load(std::memory_order_acquire);
     }
 
+    static uint32_t WaitingQueueSize(const TaskInfo& task_info) {
+        const QueueData* q =
+            task_info.waiting_queue_.load(std::memory_order_acquire);
+        return q != nullptr ? q->size.load(std::memory_order_acquire) : 0;
+    }
+
     void LogReblockTimeout() {
         // Collect all diagnostic data under locks, then log outside to avoid
         // timeMutex_ -> system_semaphore lock-order inversion with Logger::Log.
@@ -2223,6 +2223,9 @@ class RTOSMock : public RTOS {
             int pending;
             bool stalled;
             bool queue_blocked;
+            bool suspended;
+            uint32_t waiting_queue_items;
+            int task_pending_wakeup;
         };
 
         std::string pred_task;
@@ -2253,7 +2256,10 @@ class RTOSMock : public RTOS {
                 bool stalled = !is_suspended && !is_stopping && !in_delay &&
                                !in_notify && queue_cvs == 0;
                 diags.push_back({task_info.name, queue_cvs, pending, stalled,
-                                 pending > 0 && queue_cvs > 0});
+                                 pending > 0 && queue_cvs > 0, is_suspended,
+                                 WaitingQueueSize(task_info),
+                                 task_info.pending_wakeup_.load(
+                                     std::memory_order_acquire)});
             }
         }
 
@@ -2276,6 +2282,13 @@ class RTOSMock : public RTOS {
                     "item(s) "
                     "(queue_cvs=%d)",
                     d.name.c_str(), d.pending, d.queue_cvs);
+            }
+            if (d.waiting_queue_items > 0 || d.task_pending_wakeup > 0) {
+                LOG_DEBUG(
+                    "MOCK: reblock timeout: '%s' waits on a queue holding %u "
+                    "item(s), pending_wakeup=%d (queue_cvs=%d, suspended=%d)",
+                    d.name.c_str(), d.waiting_queue_items,
+                    d.task_pending_wakeup, d.queue_cvs, d.suspended ? 1 : 0);
             }
         }
     }
@@ -2349,18 +2362,18 @@ class RTOSMock : public RTOS {
 
             // All tasks passed the "blocked" check. Now verify no task is in
             // a transition window:
-            // (a) registered on a queue CV but has not yet dequeued the
-            //     notification that woke it (pending_items_), or
+            // (a) registered on a queue that holds an item it has not yet
+            //     dequeued (whichever thread sent it), or
             // (b) its queue CV timeout was moved to tasksToWake but the task
             //     hasn't woken and called unregisterQueueCV yet (pending_wakeup_)
             for (const auto& [thread_ptr, task_info] : tasks_) {
                 if (task_info.pending_wakeup_.load(std::memory_order_acquire) >
                     0)
                     return false;
-                if (task_info.queue_cv_count_.load(std::memory_order_acquire) >
-                        0 &&
-                    task_info.pending_items_.load(std::memory_order_acquire) >
-                        0)
+                const QueueData* waiting_on =
+                    task_info.waiting_queue_.load(std::memory_order_acquire);
+                if (waiting_on != nullptr &&
+                    waiting_on->size.load(std::memory_order_acquire) > 0)
                     return false;
             }
 
@@ -2408,8 +2421,8 @@ class RTOSMock : public RTOS {
         std::vector<std::condition_variable*> waiting_on_queue_cvs;
         std::atomic<int> queue_cv_count_{
             0};  // mirrors waiting_on_queue_cvs.size(); atomic for hasRegisteredWait
-        std::atomic<int> pending_items_{
-            0};  // SendToQueue notifications received while registered
+        std::atomic<QueueData*> waiting_queue_{
+            nullptr};  // queue this task is blocked on in ReceiveFromQueue
         std::atomic<int> pending_wakeup_{
             0};  // queue CV timeouts moved to tasksToWake but not yet processed
 
