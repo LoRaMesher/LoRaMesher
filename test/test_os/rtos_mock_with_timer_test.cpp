@@ -7,6 +7,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include "os/rtos_mock.hpp"
@@ -145,6 +147,90 @@ TEST_F(RTOSMockTimeTest, VirtualTimeStartsAtFixedEpoch) {
 
     EXPECT_EQ(first_epoch, second_epoch);
     EXPECT_EQ(first_epoch, initialTime_);
+}
+
+/**
+ * @brief A delayed task wakes at its exact deadline even when time is
+ * advanced in a larger step
+ */
+TEST_F(RTOSMockTimeTest, DelayWakesAtExactDeadlineWithinStep) {
+    struct State {
+        std::atomic<bool> ready{false};
+        std::atomic<uint32_t> wake_time{0};
+    } state;
+
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<State*>(param);
+            s->ready = true;
+            GetRTOS().delay(7);
+            s->wake_time = GetRTOS().getTickCount();
+            GetRTOS().delay(100000);
+        },
+        "ExactWake", 2048, &state, 1, &task));
+    taskHandles_.push_back(task);
+
+    for (int i = 0; i < 100 && !state.ready; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(50);
+
+    EXPECT_EQ(state.wake_time.load(), initialTime_ + 7);
+    EXPECT_EQ(rtos_->getTickCount(), initialTime_ + 50);
+}
+
+/**
+ * @brief Tasks due at the same instant run one at a time in a stable order
+ */
+TEST_F(RTOSMockTimeTest, SameDeadlineTasksRunSerially) {
+    struct State {
+        std::mutex mutex;
+        std::vector<std::string> order;
+        std::atomic<int> ready{0};
+    } state;
+
+    struct Param {
+        State* state;
+        const char* name;
+        int real_work_ms;
+    };
+
+    // "B" is created first and does no work; "A" sorts first and does slow
+    // work. Running them concurrently would record B before A.
+    Param b{&state, "B", 0};
+    Param a{&state, "A", 20};
+
+    auto task_fn = [](void* param) {
+        auto* p = static_cast<Param*>(param);
+        p->state->ready++;
+        GetRTOS().delay(10);
+        std::this_thread::sleep_for(std::chrono::milliseconds(p->real_work_ms));
+        {
+            std::lock_guard<std::mutex> lock(p->state->mutex);
+            p->state->order.push_back(p->name);
+        }
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task_b = nullptr;
+    os::TaskHandle_t task_a = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "B", 2048, &b, 1, &task_b));
+    taskHandles_.push_back(task_b);
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "A", 2048, &a, 1, &task_a));
+    taskHandles_.push_back(task_a);
+
+    for (int i = 0; i < 100 && state.ready < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(20);
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    EXPECT_EQ(state.order, (std::vector<std::string>{"A", "B"}));
 }
 
 /**

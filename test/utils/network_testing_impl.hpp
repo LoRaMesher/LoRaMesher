@@ -157,6 +157,19 @@ class VirtualNetwork {
     void SetSeed(uint32_t seed) { seed_ = seed; }
 
     /**
+     * @brief Drive the network clock from an external time source
+     *
+     * With a source set (e.g. the RTOS virtual clock), transmissions are
+     * stamped with the sender's current time and AdvanceTime() no longer moves
+     * the clock. Pass nullptr to return to the internal clock.
+     *
+     * @param source Function returning the current time in milliseconds
+     */
+    void SetTimeSource(std::function<uint32_t()> source) {
+        time_source_ = std::move(source);
+    }
+
+    /**
      * @brief Register a node with the network
      * 
      * @param address Address of the node
@@ -260,10 +273,11 @@ class VirtualNetwork {
 
             // Calculate delivery time
             uint32_t delay = GetLinkDelay(source, dest_address);
-            uint32_t delivery_time = current_time_ + delay + toa;
+            uint32_t now = GetCurrentTime();
+            uint32_t delivery_time = now + delay + toa;
 
             // Queue the message for delivery with timing metadata
-            QueueMessageDelivery(source, dest_address, data, current_time_, toa,
+            QueueMessageDelivery(source, dest_address, data, now, toa,
                                  delivery_time, rssi, snr);
         }
     }
@@ -484,11 +498,20 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Deliver every pending message whose delivery time has passed
+     *
+     * @return Number of messages accepted by their receivers
+     */
+    size_t DeliverDueMessages() { return ProcessPendingMessages(); }
+
+    /**
      * @brief Get current simulation time
      * 
      * @return Current time in milliseconds
      */
-    uint32_t GetCurrentTime() const { return current_time_; }
+    uint32_t GetCurrentTime() const {
+        return time_source_ ? time_source_() : current_time_.load();
+    }
 
     uint32_t GetDroppedMessageCount() const {
         return dropped_message_count_.load();
@@ -629,7 +652,8 @@ class VirtualNetwork {
         sent_messages_;  ///< Store sent messages per node
     mutable std::mutex
         sent_messages_mutex_;  ///< Mutex for thread-safe access to sent_messages_
-    uint32_t current_time_;
+    std::atomic<uint32_t> current_time_;
+    std::function<uint32_t()> time_source_;
     float packet_loss_rate_;
     uint32_t seed_ = kDefaultSeed;
     std::atomic<uint32_t> dropped_message_count_{0};
@@ -748,7 +772,7 @@ class VirtualNetwork {
         LOG_DEBUG(
             "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery at %u "
             "ms (tx_start: %u, toa: %u)",
-            current_time_, source, destination, delivery_time,
+            GetCurrentTime(), source, destination, delivery_time,
             transmission_start_time, time_on_air);
     }
 
@@ -819,8 +843,9 @@ class VirtualNetwork {
         {
             std::lock_guard<std::mutex> lock(pending_messages_mutex_);
             auto it = pending_messages_.begin();
+            const uint32_t now = GetCurrentTime();
             while (it != pending_messages_.end()) {
-                if (it->delivery_time <= current_time_) {
+                if (it->delivery_time <= now) {
                     messages_to_deliver.push_back(*it);
                     it = pending_messages_.erase(it);
                 } else {
@@ -883,7 +908,7 @@ class VirtualNetwork {
             LOG_DEBUG(
                 "[%u ms] Message from 0x%04X dropped at 0x%04X - receiver "
                 "unavailable (state=%d)",
-                current_time_, msg.source, msg.destination,
+                GetCurrentTime(), msg.source, msg.destination,
                 static_cast<int>(radio->GetRadioState()));
             ++dropped_message_count_;
             {
@@ -925,6 +950,9 @@ class VirtualTimeController {
         if (rtos_mock) {
             LOG_DEBUG("Setting RTOSMock to virtual time mode");
             rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+            network_.SetTimeSource([rtos_mock]() {
+                return static_cast<uint32_t>(rtos_mock->getVirtualTime());
+            });
         } else {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
@@ -938,6 +966,7 @@ class VirtualTimeController {
         if (instance_ == this)
             instance_ = nullptr;
 #ifdef LORAMESHER_BUILD_NATIVE
+        network_.SetTimeSource(nullptr);
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
         if (rtos_mock) {
             rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
@@ -969,14 +998,17 @@ class VirtualTimeController {
         ProcessTimeDependentEvents();
 
 #ifdef LORAMESHER_BUILD_NATIVE
-        network_.AdvanceTime(time_ms);
-
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
 
-        if (rtos_mock) {
-            rtos_mock->advanceTime(time_ms);
-        } else {
+        if (!rtos_mock) {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
+        }
+        rtos_mock->advanceTime(time_ms);
+
+        // Deliver the messages that finished their air time during the step,
+        // then let the receiving tasks process them.
+        if (network_.DeliverDueMessages() > 0) {
+            rtos_mock->waitForTasksToReblock(os::RTOSMock::kReblockTimeoutMs);
         }
 #else
         network_.AdvanceTime(time_ms);
