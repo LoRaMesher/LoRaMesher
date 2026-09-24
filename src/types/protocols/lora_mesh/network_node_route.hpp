@@ -44,6 +44,12 @@ class NetworkNodeRoute {
         /// degradation responsive so a worsening link still reroutes promptly.
         static constexpr uint16_t kRemoteUpAlpha = 51;     ///< ~0.20
         static constexpr uint16_t kRemoteDownAlpha = 192;  ///< ~0.75
+        /// Local routing broadcasts since first contact after which a peer
+        /// broadcast omitting us counts as absence: the peer needs
+        /// kMinSamplesForQuality of our tables before it lists us, plus one
+        /// broadcast of margin for a lost frame.
+        static constexpr uint8_t kUnidirectionalGraceBroadcasts =
+            kMinSamplesForQuality + 1;
 
         uint32_t messages_expected = 0;   ///< Expected messages count
         uint32_t messages_received = 0;   ///< Received messages count
@@ -51,6 +57,8 @@ class NetworkNodeRoute {
         uint8_t remote_link_quality = 0;  ///< Link quality as reported by peer
         uint8_t remote_absent_streak =
             0;  ///< Consecutive peer broadcasts not listing us as a reception
+        uint8_t local_broadcasts =
+            0;  ///< Own routing broadcasts since first reception (saturating)
         uint8_t consecutive_missed = 0;  ///< Consecutive missed messages
         uint8_t ewma_quality =
             kProvisionalQuality;       ///< EWMA-smoothed link quality (0-255)
@@ -103,11 +111,30 @@ class NetworkNodeRoute {
          * of the peer's table (absent_threshold), which distinguishes slice
          * rotation from a genuinely unidirectional or degraded link.
          *
+         * An absent report counts only once the peer could have heard us,
+         * i.e. after kUnidirectionalGraceBroadcasts local broadcasts.
+         *
          * @param quality Reception quality reported by peer (0 = not listed)
          * @param absent_threshold Consecutive absent reports tolerated before
          *        the link is treated as unidirectional/degraded
          */
         void UpdateRemoteQuality(uint8_t quality, uint8_t absent_threshold = 1);
+
+        /**
+         * @brief Register one local routing broadcast
+         *
+         * Counted only after the peer has been heard directly, so the count
+         * bounds how many of our tables the peer could have received.
+         */
+        void RecordLocalBroadcast();
+
+        /**
+         * @brief Whether the link is confirmed unidirectional
+         *
+         * True when the peer has been heard at least kMinSamplesForQuality
+         * times and has reported us as absent after it could have heard us.
+         */
+        bool IsUnidirectional() const;
     };
 
     /**

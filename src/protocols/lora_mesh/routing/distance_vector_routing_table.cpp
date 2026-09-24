@@ -763,6 +763,13 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
     }
 }
 
+void DistanceVectorRoutingTable::NotifyLocalRoutingBroadcast() {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    for (auto& node : nodes_) {
+        node.link_stats.RecordLocalBroadcast();
+    }
+}
+
 bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     AddressType source_address, std::span<const RoutingTableEntry> entries,
     uint32_t reception_timestamp, uint8_t local_link_quality, uint8_t max_hops,
@@ -797,10 +804,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             source_node_it->link_stats.ewma_quality, direct_quality,
             source_node_it->link_stats.messages_expected,
             source_node_it->link_stats.messages_received,
-            (source_node_it->link_stats.remote_link_quality == 0 &&
-             source_node_it->link_stats.messages_expected >= 3)
-                ? " [UNIDIRECTIONAL]"
-                : "",
+            source_node_it->link_stats.IsUnidirectional() ? " [UNIDIRECTIONAL]"
+                                                          : "",
             (source_node_it->link_stats.messages_received <
              types::protocols::lora_mesh::NetworkNodeRoute::LinkQualityStats::
                  kMinSamplesForQuality)
@@ -841,19 +846,26 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // existing indirect route: the indirect path may still deliver
         // packets while the direct one never will.
         bool direct_confirmed_unidirectional =
-            source_node_it->link_stats.remote_link_quality == 0 &&
-            source_node_it->link_stats.messages_expected >= 3;
+            source_node_it->link_stats.IsUnidirectional();
 
-        // Don't displace an indirect route on provisional quality alone.
+        // Don't displace a working indirect route on provisional quality
+        // alone. A route with unusable cost, or whose next hop is not an
+        // active direct neighbour, is not working.
         bool direct_quality_trusted =
             source_node_it->link_stats.messages_received >=
             types::protocols::lora_mesh::NetworkNodeRoute::LinkQualityStats::
                 kMinSamplesForQuality;
+        auto prev_hop_it = GetNode(prev_next_hop);
+        bool current_route_usable = current_cost < UINT16_MAX &&
+                                    prev_hop_it != nodes_.end() &&
+                                    prev_hop_it->IsDirectNeighbor() &&
+                                    prev_hop_it->next_hop == prev_next_hop;
 
         bool use_direct =
             was_inactive || prev_next_hop == source_address ||
-            (direct_cost <= current_cost && direct_quality_trusted &&
-             !direct_confirmed_unidirectional);
+            (!direct_confirmed_unidirectional &&
+             (!current_route_usable ||
+              (direct_cost <= current_cost && direct_quality_trusted)));
 
         if (use_direct) {
             source_node_it->routing_entry.link_quality = direct_quality;
@@ -936,6 +948,19 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             node.routing_entry.link_quality = source_link_quality;
             routing_changed = true;
         }
+    }
+
+    // Advertised routes are usable only through a source that is an active
+    // direct neighbour.
+    auto source_route_it = GetNode(source_address);
+    if (source_route_it == nodes_.end() ||
+        !source_route_it->IsDirectNeighbor() ||
+        source_route_it->next_hop != source_address) {
+        LOG_DEBUG(
+            "Ignoring %zu advertised routes from 0x%04X: not an active direct "
+            "neighbour",
+            entries.size(), source_address);
+        return routing_changed;
     }
 
     // Process each routing entry from the message

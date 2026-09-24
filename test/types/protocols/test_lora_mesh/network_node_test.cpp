@@ -544,17 +544,69 @@ TEST_F(NetworkNodeRouteTest, LinkQualityCalculateQualityWithRemote) {
     EXPECT_EQ(q, 123);
 }
 
-TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
-    NetworkNodeRoute::LinkQualityStats stats;
-    // Simulate 4 superframes where peer never lists us (remote stays 0)
-    for (int i = 0; i < 4; i++) {
+/**
+ * @brief Simulates superframes in which the peer's table is heard and omits
+ * us, each followed by one local routing broadcast.
+ */
+static void HearPeerOmittingUs(NetworkNodeRoute::LinkQualityStats& stats,
+                               int superframes) {
+    for (int i = 0; i < superframes; i++) {
         stats.ExpectMessage();
         stats.ReceivedMessage(i * 1000);
+        stats.UpdateRemoteQuality(0);
+        stats.RecordLocalBroadcast();
     }
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalPenaltyAfterThreshold) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    // The peer keeps omitting us after it has had grace broadcasts to hear us
+    HearPeerOmittingUs(
+        stats,
+        NetworkNodeRoute::LinkQualityStats::kUnidirectionalGraceBroadcasts + 1);
     EXPECT_GE(stats.messages_expected, 3u);
     EXPECT_EQ(stats.remote_link_quality, 0);
+    EXPECT_TRUE(stats.IsUnidirectional());
     // Unidirectional penalty: minimum quality (1)
     EXPECT_EQ(stats.CalculateQuality(), 1);
+}
+
+TEST_F(NetworkNodeRouteTest,
+       LinkQualityOmissionBeforeGraceIsNotUnidirectional) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    // The peer's tables omit us, but every one of them was built before the
+    // peer could have received enough of our broadcasts to list us.
+    HearPeerOmittingUs(
+        stats,
+        NetworkNodeRoute::LinkQualityStats::kUnidirectionalGraceBroadcasts);
+    EXPECT_GE(stats.messages_received,
+              NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality);
+    EXPECT_FALSE(stats.IsUnidirectional());
+    EXPECT_GT(stats.CalculateQuality(), 1);
+
+    // The first omission after the grace period is conclusive.
+    stats.ExpectMessage();
+    stats.ReceivedMessage(10000);
+    stats.UpdateRemoteQuality(0);
+    EXPECT_TRUE(stats.IsUnidirectional());
+    EXPECT_EQ(stats.CalculateQuality(), 1);
+}
+
+TEST_F(NetworkNodeRouteTest, LinkQualityLocalBroadcastsCountAfterFirstContact) {
+    NetworkNodeRoute::LinkQualityStats stats;
+    // Broadcasts before the peer was ever heard say nothing about whether the
+    // peer received them.
+    for (int i = 0; i < 10; i++) {
+        stats.RecordLocalBroadcast();
+    }
+    EXPECT_EQ(stats.local_broadcasts, 0u);
+
+    for (int i = 0; i < 5; i++) {
+        stats.ExpectMessage();
+        stats.ReceivedMessage(i * 1000);
+        stats.UpdateRemoteQuality(0);
+    }
+    EXPECT_FALSE(stats.IsUnidirectional());
 }
 
 TEST_F(NetworkNodeRouteTest,
@@ -574,11 +626,10 @@ TEST_F(NetworkNodeRouteTest,
 
 TEST_F(NetworkNodeRouteTest, LinkQualityUnidirectionalRecovery) {
     NetworkNodeRoute::LinkQualityStats stats;
-    // Simulate 5 superframes with no remote quality — penalty active
-    for (int i = 0; i < 5; i++) {
-        stats.ExpectMessage();
-        stats.ReceivedMessage(i * 1000);
-    }
+    // Peer omits us past the grace period — penalty active
+    HearPeerOmittingUs(
+        stats,
+        NetworkNodeRoute::LinkQualityStats::kUnidirectionalGraceBroadcasts + 1);
     uint8_t penalized = stats.CalculateQuality();
     EXPECT_EQ(penalized, 1);
 

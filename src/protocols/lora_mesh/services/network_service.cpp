@@ -946,7 +946,11 @@ std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
 
     RoutingTableMessage routing_msg = std::move(routing_msg_opt.value());
 
-    return std::make_unique<BaseMessage>(routing_msg.ToBaseMessage());
+    auto message = std::make_unique<BaseMessage>(routing_msg.ToBaseMessage());
+    message->SetPreSendCallback([this](BaseMessage&) {
+        routing_table_->NotifyLocalRoutingBroadcast();
+    });
+    return message;
 }
 
 Result NetworkService::JoinNetwork(AddressType manager_address) {

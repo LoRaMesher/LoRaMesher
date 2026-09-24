@@ -319,6 +319,15 @@ class IRoutingTable {
     virtual void UpdateLinkStatistics() = 0;
 
     /**
+     * @brief Record that this node broadcast its routing table
+     *
+     * Peers list us as a reception only after hearing several of our tables,
+     * so a peer's omission of us counts toward a unidirectional verdict only
+     * after enough local broadcasts since that peer was first heard.
+     */
+    virtual void NotifyLocalRoutingBroadcast() = 0;
+
+    /**
      * @brief Set link quality parameters
      *
      * @param ewma_alpha_fixed EWMA alpha in fixed-point (0-255, maps to 0.0-1.0)

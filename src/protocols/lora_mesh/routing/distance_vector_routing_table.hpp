@@ -140,6 +140,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     void UpdateLinkStatistics() override;
 
+    void NotifyLocalRoutingBroadcast() override;
+
     void SetLinkQualityParams(uint8_t ewma_alpha_fixed,
                               uint8_t inactivation_threshold,
                               uint8_t reactivation_threshold) override;

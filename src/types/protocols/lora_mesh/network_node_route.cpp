@@ -39,17 +39,26 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
         return static_cast<uint8_t>((bottleneck * 7 + average * 3) / 10);
     }
 
-    // Unidirectional link: received 3+ routing tables from peer
-    // but peer never lists us — they cannot hear us.
-    // Return 1 (minimum quality): a link we cannot transmit on has
-    // maximum ETX cost (65535). This lets the entries loop find an
-    // indirect route via relay. Using 1 instead of 0 avoids the
+    // Unidirectional link: return 1 (minimum quality) so a link we cannot
+    // transmit on has maximum ETX cost (65535) and the entries loop can find
+    // an indirect route via a relay. 1 instead of 0 avoids the
     // "unknown/unset" semantics of quality=0.
-    if (messages_expected >= 3) {
+    if (IsUnidirectional()) {
         return 1;
     }
 
     return local_quality;
+}
+
+bool NetworkNodeRoute::LinkQualityStats::IsUnidirectional() const {
+    return remote_link_quality == 0 && remote_absent_streak > 0 &&
+           messages_expected >= kMinSamplesForQuality;
+}
+
+void NetworkNodeRoute::LinkQualityStats::RecordLocalBroadcast() {
+    if (messages_received > 0 && local_broadcasts < UINT8_MAX) {
+        local_broadcasts++;
+    }
 }
 
 void NetworkNodeRoute::LinkQualityStats::Reset() {
@@ -62,6 +71,7 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
     last_snr = 0.0f;
     window.Reset();
     remote_absent_streak = 0;
+    local_broadcasts = 0;
     // Don't reset last_message_time or remote_link_quality
 }
 
@@ -124,9 +134,16 @@ void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(
         return;
     }
 
-    // Our entry was absent from this slice. Hold the last known value until the
-    // peer's table has had a full rotation cycle (plus margin) to broadcast it;
-    // only then treat the link as unidirectional/degraded.
+    // Our entry was absent from this slice. A peer that has not yet had the
+    // chance to receive enough of our tables cannot list us, so its omission
+    // is not evidence.
+    if (local_broadcasts < kUnidirectionalGraceBroadcasts) {
+        return;
+    }
+
+    // Hold the last known value until the peer's table has had a full
+    // rotation cycle (plus margin) to broadcast it; only then treat the link
+    // as unidirectional/degraded.
     if (remote_absent_streak < 255) {
         remote_absent_streak++;
     }

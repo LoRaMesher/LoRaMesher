@@ -1924,7 +1924,8 @@ TEST_F(RoutingTableUnitTest,
     AddDirectNeighbor(kNeighbor2, kGoodQuality);
 
     // Step 2: Receive routing tables from kNeighbor1 directly with
-    // remote_link_quality=0 (unidirectional from the start).
+    // remote_link_quality=0 (unidirectional from the start), while we keep
+    // broadcasting our own tables that kNeighbor1 never hears.
     // Interleave UpdateLinkStatistics to build messages_expected >= 3.
     uint32_t t = kCurrentTime;
     for (int i = 0; i < 5; i++) {
@@ -1932,6 +1933,7 @@ TEST_F(RoutingTableUnitTest,
         routing_table_->ProcessRoutingTableMessage(
             kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
         routing_table_->UpdateLinkStatistics();
+        routing_table_->NotifyLocalRoutingBroadcast();
         t += 1000;
     }
 
@@ -2011,6 +2013,292 @@ TEST_F(RoutingTableUnitTest, BidirectionalDirectRouteCanReplaceIndirectRoute) {
     EXPECT_EQ(it->next_hop, kNeighbor1)
         << "Bidirectional direct route should replace degraded indirect route";
     EXPECT_EQ(it->routing_entry.hop_count, 1);
+}
+
+// =============================================================================
+// Start-up link verdicts and route acceptance
+// =============================================================================
+
+namespace {
+
+const NetworkNodeRoute* FindRoute(const DistanceVectorRoutingTable& table,
+                                  AddressType destination) {
+    const auto& nodes = table.GetNodes();
+    auto it = std::find_if(
+        nodes.begin(), nodes.end(), [destination](const NetworkNodeRoute& n) {
+            return n.routing_entry.destination == destination;
+        });
+    return it == nodes.end() ? nullptr : &*it;
+}
+
+/**
+ * @brief Every active multi-hop route must go through an active direct
+ * neighbour whose own route is the direct link.
+ */
+void ExpectAllRoutesViaActiveDirectNeighbours(
+    const DistanceVectorRoutingTable& table) {
+    for (const auto& node : table.GetNodes()) {
+        if (!node.is_active || node.routing_entry.hop_count <= 1) {
+            continue;
+        }
+        const NetworkNodeRoute* hop = FindRoute(table, node.next_hop);
+        ASSERT_NE(hop, nullptr)
+            << "Route to 0x" << std::hex << node.routing_entry.destination
+            << " via unknown next hop 0x" << node.next_hop;
+        EXPECT_TRUE(hop->IsDirectNeighbor() && hop->next_hop == node.next_hop)
+            << "Route to 0x" << std::hex << node.routing_entry.destination
+            << " via 0x" << node.next_hop
+            << " which is not an active direct neighbour";
+    }
+}
+
+}  // namespace
+
+/**
+ * @brief A joining node hears the peer's tables before it broadcasts any of
+ * its own, so the peer cannot list it yet. Those tables must not mark the
+ * link unidirectional.
+ */
+TEST_F(RoutingTableUnitTest,
+       PeerTablesBeforeLocalBroadcastAreNotUnidirectional) {
+    std::vector<RoutingTableEntry> empty;
+    uint32_t t = kCurrentTime;
+    for (int i = 0; i < 6; i++) {
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+    }
+
+    const NetworkNodeRoute* n1 = FindRoute(*routing_table_, kNeighbor1);
+    ASSERT_NE(n1, nullptr);
+    EXPECT_TRUE(n1->IsDirectNeighbor());
+    EXPECT_EQ(n1->next_hop, kNeighbor1);
+    EXPECT_GE(n1->link_stats.messages_expected,
+              NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality);
+    EXPECT_GT(n1->link_stats.CalculateQuality(), 1)
+        << "Link judged unidirectional before the peer could hear us";
+    EXPECT_GT(n1->routing_entry.link_quality, 1);
+}
+
+/**
+ * @brief A provisional direct link replaces a route whose cost is unusable.
+ */
+TEST_F(RoutingTableUnitTest, ProvisionalDirectLinkReplacesUnusableRoute) {
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+    std::vector<RoutingTableEntry> entries{
+        CreateEntry(kNeighbor3, 1, kGoodQuality)};
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+    routing_table_->DegradeRouteQuality(kNeighbor3, 1);
+
+    const NetworkNodeRoute* n3 = FindRoute(*routing_table_, kNeighbor3);
+    ASSERT_NE(n3, nullptr);
+    ASSERT_EQ(n3->next_hop, kNeighbor2);
+    ASSERT_EQ(NetworkNodeRoute::CalculateRouteCost(
+                  n3->routing_entry.hop_count, n3->routing_entry.link_quality),
+              UINT16_MAX);
+
+    std::vector<RoutingTableEntry> empty;
+    ReceiveRoutingMessage(kNeighbor3, empty, /*local_link_quality=*/0);
+
+    n3 = FindRoute(*routing_table_, kNeighbor3);
+    ASSERT_NE(n3, nullptr);
+    EXPECT_EQ(n3->next_hop, kNeighbor3);
+    EXPECT_EQ(n3->routing_entry.hop_count, 1);
+    EXPECT_TRUE(n3->is_active);
+}
+
+/**
+ * @brief A provisional direct link replaces a route whose next hop is no
+ * longer an active direct neighbour.
+ */
+TEST_F(RoutingTableUnitTest,
+       ProvisionalDirectLinkReplacesRouteViaNonNeighbour) {
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+    std::vector<RoutingTableEntry> entries{
+        CreateEntry(kNeighbor3, 1, kGoodQuality)};
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+
+    // kNeighbor2 becomes reachable only through kNeighbor1, so the route to
+    // kNeighbor3 via kNeighbor2 no longer has a direct first hop.
+    AddDirectNeighbor(kNeighbor1, kGoodQuality);
+    routing_table_->DegradeRouteQuality(kNeighbor2, 1);
+    std::vector<RoutingTableEntry> via_n1{
+        CreateEntry(kNeighbor2, 1, kGoodQuality)};
+    ReceiveRoutingMessage(kNeighbor1, via_n1, kGoodQuality);
+
+    const NetworkNodeRoute* n2 = FindRoute(*routing_table_, kNeighbor2);
+    ASSERT_NE(n2, nullptr);
+    ASSERT_EQ(n2->next_hop, kNeighbor1);
+    ASSERT_FALSE(n2->IsDirectNeighbor());
+    const NetworkNodeRoute* n3 = FindRoute(*routing_table_, kNeighbor3);
+    ASSERT_NE(n3, nullptr);
+    ASSERT_EQ(n3->next_hop, kNeighbor2);
+    ASSERT_TRUE(n3->is_active);
+
+    std::vector<RoutingTableEntry> empty;
+    ReceiveRoutingMessage(kNeighbor3, empty, /*local_link_quality=*/0);
+
+    n3 = FindRoute(*routing_table_, kNeighbor3);
+    ASSERT_NE(n3, nullptr);
+    EXPECT_EQ(n3->next_hop, kNeighbor3);
+    EXPECT_EQ(n3->routing_entry.hop_count, 1);
+}
+
+/**
+ * @brief Routes advertised by a source that was not accepted as a direct
+ * neighbour are not installed through it.
+ */
+TEST_F(RoutingTableUnitTest, RoutesNotInstalledViaRejectedSource) {
+    AddDirectNeighbor(kNeighbor1, kGoodQuality);
+    AddDirectNeighbor(kNeighbor2, kGoodQuality);
+    std::vector<RoutingTableEntry> entries{
+        CreateEntry(kNeighbor3, 1, kGoodQuality)};
+    ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
+
+    const NetworkNodeRoute* n3 = FindRoute(*routing_table_, kNeighbor3);
+    ASSERT_NE(n3, nullptr);
+    ASSERT_EQ(n3->next_hop, kNeighbor2);
+
+    // kNeighbor3 is heard directly for the first time. Its provisional link
+    // does not displace the working relay route, so its advertisements must
+    // not be used either.
+    std::vector<RoutingTableEntry> advertised{
+        CreateEntry(kRemoteNode, 1, kGoodQuality),
+        CreateEntry(kNeighbor1, 1, kGoodQuality),
+        CreateEntry(kNeighbor2, 1, kGoodQuality)};
+    ReceiveRoutingMessage(kNeighbor3, advertised, /*local_link_quality=*/0);
+
+    n3 = FindRoute(*routing_table_, kNeighbor3);
+    ASSERT_NE(n3, nullptr);
+    ASSERT_EQ(n3->next_hop, kNeighbor2) << "Relay route should be kept";
+
+    const NetworkNodeRoute* remote = FindRoute(*routing_table_, kRemoteNode);
+    EXPECT_TRUE(remote == nullptr || remote->next_hop != kNeighbor3)
+        << "Route to 0x2000 installed via rejected source 0x1003";
+    ExpectAllRoutesViaActiveDirectNeighbours(*routing_table_);
+}
+
+/**
+ * @brief Full-mesh join: the network manager stays an active direct
+ * neighbour and no route uses a next hop that is not one.
+ */
+TEST_F(RoutingTableUnitTest, FullMeshJoinKeepsRoutesViaDirectNeighbours) {
+    uint32_t t = kCurrentTime;
+    // The network manager (kNeighbor1) is heard repeatedly while joining.
+    for (int i = 0; i < 4; i++) {
+        std::vector<RoutingTableEntry> nm_table{
+            CreateEntry(kNeighbor2, 1, kGoodQuality),
+            CreateEntry(kNeighbor3, 1, kGoodQuality)};
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, nm_table, t, /*local_link_quality=*/0, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+    }
+    // The other members are then heard directly for the first time.
+    std::vector<RoutingTableEntry> n2_table{
+        CreateEntry(kNeighbor1, 1, kGoodQuality),
+        CreateEntry(kNeighbor3, 1, kGoodQuality)};
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor2, n2_table, t, /*local_link_quality=*/0, kMaxHops);
+    std::vector<RoutingTableEntry> n3_table{
+        CreateEntry(kNeighbor1, 1, kGoodQuality),
+        CreateEntry(kNeighbor2, 1, kGoodQuality)};
+    routing_table_->ProcessRoutingTableMessage(
+        kNeighbor3, n3_table, t, /*local_link_quality=*/0, kMaxHops);
+
+    const NetworkNodeRoute* nm = FindRoute(*routing_table_, kNeighbor1);
+    ASSERT_NE(nm, nullptr);
+    EXPECT_TRUE(nm->IsDirectNeighbor());
+    EXPECT_EQ(nm->next_hop, kNeighbor1);
+    EXPECT_GT(nm->routing_entry.link_quality, 1);
+    for (AddressType member : {kNeighbor2, kNeighbor3}) {
+        const NetworkNodeRoute* route = FindRoute(*routing_table_, member);
+        ASSERT_NE(route, nullptr);
+        EXPECT_TRUE(route->is_active);
+    }
+    ExpectAllRoutesViaActiveDirectNeighbours(*routing_table_);
+}
+
+/**
+ * @brief Join sequence: the peer lists us once it has heard
+ * kMinSamplesForQuality of our broadcasts. The link is never judged
+ * unidirectional on the way and ends up bidirectional.
+ */
+TEST_F(RoutingTableUnitTest, JoiningNodeLinkNeverJudgedUnidirectional) {
+    std::vector<RoutingTableEntry> empty;
+    uint32_t t = kCurrentTime;
+    for (int i = 0; i < 5; i++) {
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+    }
+
+    for (uint32_t own_broadcasts = 1; own_broadcasts <= 6; own_broadcasts++) {
+        routing_table_->NotifyLocalRoutingBroadcast();
+        uint8_t reported =
+            own_broadcasts >=
+                    NetworkNodeRoute::LinkQualityStats::kMinSamplesForQuality
+                ? kGoodQuality
+                : 0;
+        routing_table_->ProcessRoutingTableMessage(kNeighbor1, empty, t,
+                                                   reported, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+
+        const NetworkNodeRoute* n1 = FindRoute(*routing_table_, kNeighbor1);
+        ASSERT_NE(n1, nullptr);
+        EXPECT_FALSE(n1->link_stats.IsUnidirectional())
+            << "after " << own_broadcasts << " local broadcasts";
+        EXPECT_GT(n1->routing_entry.link_quality, 1)
+            << "after " << own_broadcasts << " local broadcasts";
+        EXPECT_TRUE(n1->IsDirectNeighbor());
+    }
+
+    const NetworkNodeRoute* n1 = FindRoute(*routing_table_, kNeighbor1);
+    ASSERT_NE(n1, nullptr);
+    EXPECT_GT(n1->link_stats.remote_link_quality, 0);
+    EXPECT_GT(n1->link_stats.CalculateQuality(),
+              NetworkNodeRoute::LinkQualityStats::kProvisionalQuality);
+}
+
+/**
+ * @brief A peer that keeps omitting us after it has had the grace number of
+ * our broadcasts to hear us is judged unidirectional.
+ */
+TEST_F(RoutingTableUnitTest,
+       PeerOmittingUsAfterGraceBroadcastsIsUnidirectional) {
+    constexpr uint8_t kGrace =
+        NetworkNodeRoute::LinkQualityStats::kUnidirectionalGraceBroadcasts;
+    std::vector<RoutingTableEntry> empty;
+    uint32_t t = kCurrentTime;
+    for (int i = 0; i < 3; i++) {
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+    }
+
+    for (uint8_t own_broadcasts = 1; own_broadcasts <= kGrace;
+         own_broadcasts++) {
+        routing_table_->NotifyLocalRoutingBroadcast();
+        routing_table_->ProcessRoutingTableMessage(
+            kNeighbor1, empty, t, /*local_link_quality=*/0, kMaxHops);
+        routing_table_->UpdateLinkStatistics();
+        t += 1000;
+
+        const NetworkNodeRoute* n1 = FindRoute(*routing_table_, kNeighbor1);
+        ASSERT_NE(n1, nullptr);
+        EXPECT_EQ(n1->link_stats.IsUnidirectional(), own_broadcasts == kGrace)
+            << "after " << static_cast<int>(own_broadcasts)
+            << " local broadcasts";
+    }
+
+    const NetworkNodeRoute* n1 = FindRoute(*routing_table_, kNeighbor1);
+    ASSERT_NE(n1, nullptr);
+    EXPECT_EQ(n1->routing_entry.link_quality, 1);
+    EXPECT_EQ(n1->link_stats.CalculateQuality(), 1);
 }
 
 // =============================================================================
