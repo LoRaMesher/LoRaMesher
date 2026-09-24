@@ -401,7 +401,7 @@ Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memo
 | Cell | Nodes | Worst-case hops | Asserts | Approx. run time |
 |------|-------|-----------------|---------|------------------|
 | `10n_uniform` | 10 | 3 | Pass/fail on 1-hop delivery, relay queue, TDMA alignment | ~1 min |
-| `25n_uniform` | 25 | 6 | TDMA alignment only (other metrics reported) | ~3–10 min |
+| `25n_uniform` | 25 | 6 | TDMA alignment only (other metrics reported); **opt-in** | ~5–10 min |
 
 Build the suite once, then run a single cell directly (the full suite runs every cell):
 
@@ -411,6 +411,9 @@ pio test -e test_native -f "protocols/lora_mesh/services/test_network_stress" --
 
 # Run one cell, writing the (multi-MB, verbose) output to a file
 .pio/build/test_native/program --gtest_filter='*10n_uniform' > stress.log 2>&1
+
+# The 25-node cell is skipped unless explicitly enabled (it is not run in CI)
+LORAMESHER_STRESS_FULL=1 .pio/build/test_native/program --gtest_filter='*25n_uniform' > stress25.log 2>&1
 
 # Extract the results
 grep -aE "STRESS SCORECARD|^(reliable|non-reliable|group|relay|collision|TDMA|superframe|VERDICT)|##METRICS##|##MISALIGNED##|  OK |FAILED" stress.log
@@ -424,7 +427,7 @@ grep -aE "STRESS SCORECARD|^(reliable|non-reliable|group|relay|collision|TDMA|su
 - `##ALLOC## N<i> ...`: per-node TX / RX / sleep slot counts and frame length.
 - `##MISALIGNED## slot <s>: ...`: a slot where a node transmits but a neighbour is not listening to it.
 
-**Tips:** always redirect to a file and search it with `grep -a` (the log contains colour codes); do not edit sources while a build is running; allow a long timeout for the 25-node cell.
+**Tips:** always redirect to a file and search it with `grep -a` (the log contains colour codes); do not edit sources while a build is running; allow a long timeout for the 25-node cell. The fixture writes per-test logs to `test_logs/` in the current directory — on WSL, run the binary from a Linux directory (not `/mnt/<drive>`), since slow log writes there make the tests stall.
 
 ---
 

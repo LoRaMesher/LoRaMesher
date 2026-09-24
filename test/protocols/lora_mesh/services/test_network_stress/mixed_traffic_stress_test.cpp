@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -33,6 +34,7 @@ struct StressParams {
     uint8_t data_slots;   // default_data_slots per node (baseline)
     float backbone_loss;  // per-link loss on backbone edges (0 = clean)
     bool enforce;         // apply hard pass/fail asserts (shipping config)
+    bool opt_in;          // runs only when LORAMESHER_STRESS_FULL=1 is set
     const char* label;
 };
 
@@ -60,6 +62,11 @@ class NetworkStressTest : public RoutingTestFixture,
     bool IsHead(int i) const { return (i % kClusterSize) == 0; }
 
     int HeadIndexOf(int i) const { return ClusterOf(i) * kClusterSize; }
+
+    static bool FullStressEnabled() {
+        const char* value = std::getenv("LORAMESHER_STRESS_FULL");
+        return value != nullptr && std::string(value) == "1";
+    }
 
     // -- Topology ------------------------------------------------------------
     void BuildTopology(const StressParams& p) {
@@ -543,6 +550,10 @@ class NetworkStressTest : public RoutingTestFixture,
 
     // -- The scenario --------------------------------------------------------
     void RunScenario(const StressParams& p) {
+        if (p.opt_in && !FullStressEnabled()) {
+            GTEST_SKIP() << "Long-running cell; set LORAMESHER_STRESS_FULL=1 "
+                            "to run it";
+        }
         BuildTopology(p);
         WireCallbacks();
 
@@ -608,9 +619,9 @@ TEST_P(NetworkStressTest, MixedTraffic) {
 INSTANTIATE_TEST_SUITE_P(
     Scenarios, NetworkStressTest,
     ::testing::Values(
-        // node_count, data_slots, backbone_loss, enforce, label
-        StressParams{10, 2, 0.0f, true, "10n_uniform"},
-        StressParams{25, 2, 0.0f, false, "25n_uniform"}),
+        // node_count, data_slots, backbone_loss, enforce, opt_in, label
+        StressParams{10, 2, 0.0f, true, false, "10n_uniform"},
+        StressParams{25, 2, 0.0f, false, true, "25n_uniform"}),
     [](const ::testing::TestParamInfo<StressParams>& info) {
         return std::string(info.param.label);
     });
