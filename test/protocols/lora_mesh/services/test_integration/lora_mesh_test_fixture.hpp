@@ -68,6 +68,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
         if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
             mock->SeedRandom(42);
+            mock->resetReblockTimeoutCount();
         }
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
@@ -76,6 +77,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
     }
 
     void TearDown() override {
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            EXPECT_EQ(mock->getReblockTimeoutCount(), 0u)
+                << "Virtual-time steps did not complete deterministically "
+                   "(a woken task did not block again); see the MOCK reblock "
+                   "timeout lines in the test log";
+        }
+
         // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
         for (auto& node : nodes_) {
             if (node->protocol) {

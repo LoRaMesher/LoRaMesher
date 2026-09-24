@@ -155,7 +155,10 @@ class VirtualNetwork {
      *
      * @param seed Seed value
      */
-    void SetSeed(uint32_t seed) { seed_ = seed; }
+    void SetSeed(uint32_t seed) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        seed_ = seed;
+    }
 
     /**
      * @brief Drive the network clock from an external time source
@@ -182,6 +185,7 @@ class VirtualNetwork {
 
     void RegisterNode(uint32_t address, IRadioReceiver* radio,
                       const RadioConfig& config) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         if (nodes_.find(address) != nodes_.end()) {
             std::cerr << "Node with address " << address
                       << " already registered" << std::endl;
@@ -200,7 +204,10 @@ class VirtualNetwork {
      * @param address Address of the node to remove
      */
     void UnregisterNode(uint32_t address) {
-        nodes_.erase(address);
+        {
+            std::lock_guard<std::mutex> lock(nodes_mutex_);
+            nodes_.erase(address);
+        }
         std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         sent_messages_.erase(address);
     }
@@ -221,13 +228,6 @@ class VirtualNetwork {
             sent_messages_[source].push_back(data);
         }
 
-        // Check if source exists
-        if (nodes_.find(source) == nodes_.end()) {
-            std::cerr << "Source node " << source << " not found in network"
-                      << std::endl;
-            return;
-        }
-
         std::string hex_data;
         if (data.size() > 0) {
             char hex_byte[4];  // Extra space for the format
@@ -239,14 +239,21 @@ class VirtualNetwork {
 
         LOG_DEBUG("Transmitting message from 0x%04X, hex: %s", source,
                   hex_data.c_str());
-        const auto& src_config = nodes_[source].radio_config;
+
+        std::unique_lock<std::mutex> nodes_lock(nodes_mutex_);
+        auto src_it = nodes_.find(source);
+        if (src_it == nodes_.end()) {
+            nodes_lock.unlock();
+            std::cerr << "Source node " << source << " not found in network"
+                      << std::endl;
+            return;
+        }
+        const RadioConfig& src_config = src_it->second.radio_config;
         uint32_t toa = CalculateLoRaTimeOnAir(
             static_cast<uint8_t>(data.size()), src_config.getSpreadingFactor(),
             static_cast<uint32_t>(src_config.getBandwidth() * 1000),
             src_config.getCodingRate(), src_config.getPreambleLength(), true,
             src_config.getCRC());
-        LOG_DEBUG("Time-on-Air for message: %u ms", toa);
-
         const uint32_t now = GetCurrentTime();
         std::vector<PendingMessage> arrivals;
 
@@ -256,12 +263,11 @@ class VirtualNetwork {
 
             // Skip the source node
             if (dest_address == source) {
-                LOG_DEBUG("Skipping transmission to self (0x%04X)", source);
                 continue;
             }
 
             // Check if link is active
-            if (!IsLinkActive(source, dest_address)) {
+            if (!IsLinkActiveLocked(source, dest_address)) {
                 continue;
             }
 
@@ -287,7 +293,9 @@ class VirtualNetwork {
             msg.snr = snr;
             arrivals.push_back(std::move(msg));
         }
+        nodes_lock.unlock();
 
+        LOG_DEBUG("Time-on-Air for message: %u ms", toa);
         QueueTransmission(source, now, toa, std::move(arrivals));
     }
 
@@ -400,6 +408,7 @@ class VirtualNetwork {
      * @param active Whether the link should be active
      */
     void SetLinkStatus(uint32_t node1, uint32_t node2, bool active) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         // Ensure bidirectional link update
         if (nodes_.find(node1) != nodes_.end()) {
             nodes_[node1].active_links[node2] = active;
@@ -417,6 +426,7 @@ class VirtualNetwork {
      * the reverse direction.
      */
     void SetDirectionalLink(uint32_t from, uint32_t to, bool active) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         if (nodes_.find(from) != nodes_.end()) {
             nodes_[from].active_links[to] = active;
         }
@@ -430,19 +440,8 @@ class VirtualNetwork {
      * @return true if link is active, false otherwise
      */
     bool IsLinkActive(uint32_t node1, uint32_t node2) const {
-        auto it1 = nodes_.find(node1);
-        if (it1 == nodes_.end())
-            return false;
-
-        auto& links = it1->second.active_links;
-        auto it2 = links.find(node2);
-
-        // If explicit link status not set, default to inactive
-        if (it2 == links.end()) {
-            return false;
-        }
-
-        return it2->second;
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        return IsLinkActiveLocked(node1, node2);
     }
 
     /**
@@ -454,6 +453,7 @@ class VirtualNetwork {
      */
     void SetMessageDelay(uint32_t node1, uint32_t node2,
                          uint32_t delay_ms = 50) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         // Ensure bidirectional delay update
         if (nodes_.find(node1) != nodes_.end()) {
             nodes_[node1].link_delays[node2] = delay_ms;
@@ -469,6 +469,7 @@ class VirtualNetwork {
      * @param rate Loss rate (0.0 = no loss, 1.0 = all packets lost)
      */
     void SetPacketLossRate(float rate) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         packet_loss_rate_ = std::min(1.0f, std::max(0.0f, rate));
     }
 
@@ -481,6 +482,7 @@ class VirtualNetwork {
      */
     void SetDirectionalLinkLoss(uint32_t from_addr, uint32_t to_addr,
                                 float rate) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         auto it = nodes_.find(from_addr);
         if (it != nodes_.end()) {
             it->second.link_loss_rates[to_addr] =
@@ -679,6 +681,7 @@ class VirtualNetwork {
      * @return Radio state, or kSleep if the node/radio is unknown
      */
     loramesher::radio::RadioState GetNodeRadioState(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         auto it = nodes_.find(address);
         if (it == nodes_.end() || it->second.radio == nullptr) {
             return loramesher::radio::RadioState::kSleep;
@@ -696,8 +699,7 @@ class VirtualNetwork {
         std::map<uint32_t, uint32_t> link_delays;
         std::map<uint32_t, float> link_loss_rates;
         /// Per-destination transmit counter driving the deterministic
-        /// error-diffusion drop pattern. Owned by this (source) node's TX
-        /// thread, so it needs no synchronization.
+        /// error-diffusion drop pattern.
         std::map<uint32_t, uint32_t> link_tx_counts;
         /// Per-destination transmit counter driving the global-loss decisions
         std::map<uint32_t, uint32_t> global_loss_counts;
@@ -733,6 +735,9 @@ class VirtualNetwork {
     /// How long past its end an air interval is kept for overlap checks
     static constexpr uint32_t kAirLogRetentionMs = 60000;
 
+    /// Guards nodes_ (links, delays, loss settings and counters), the loss
+    /// rate and the seed; transmit threads and the test thread share them
+    mutable std::mutex nodes_mutex_;
     std::map<uint32_t, NodeInfo> nodes_;
     std::vector<PendingMessage> pending_messages_;
     /// Arrivals per receiver, including those already delivered or dropped
@@ -762,7 +767,26 @@ class VirtualNetwork {
     mutable std::mutex collided_by_dest_mutex_;
 
     /**
-     * @brief Get delay between two nodes
+     * @brief Check if a link is active; caller holds nodes_mutex_
+     */
+    bool IsLinkActiveLocked(uint32_t node1, uint32_t node2) const {
+        auto it1 = nodes_.find(node1);
+        if (it1 == nodes_.end())
+            return false;
+
+        auto& links = it1->second.active_links;
+        auto it2 = links.find(node2);
+
+        // If explicit link status not set, default to inactive
+        if (it2 == links.end()) {
+            return false;
+        }
+
+        return it2->second;
+    }
+
+    /**
+     * @brief Get delay between two nodes; caller holds nodes_mutex_
      */
     uint32_t GetLinkDelay(uint32_t node1, uint32_t node2) const {
         auto it1 = nodes_.find(node1);
@@ -788,9 +812,9 @@ class VirtualNetwork {
      * avoiding a regular pattern that would resonate with periodic traffic — a
      * fixed-phase drop sequence can otherwise always coincide with a node's
      * once-per-superframe routing broadcast, starving a neighbour of route
-     * updates. The per-link counter is owned by the source node's transmit
-     * thread, so the decision is independent of thread scheduling and free of
-     * the shared-RNG data race the previous probabilistic implementation had.
+     * updates. The per-link counter advances only with the link's own
+     * transmissions, so the decision is independent of thread scheduling.
+     * Caller holds nodes_mutex_.
      */
     bool ShouldDropPacketForLink(uint32_t from_addr, uint32_t to_addr) {
         auto it = nodes_.find(from_addr);
@@ -927,8 +951,17 @@ class VirtualNetwork {
         snprintf(addr_str, sizeof(addr_str), "0x%04X", msg.destination);
         GetRTOS().SetCurrentTaskNodeAddress(addr_str);
 
-        auto it = nodes_.find(msg.destination);
-        if (it == nodes_.end()) {
+        IRadioReceiver* radio = nullptr;
+        bool known = false;
+        {
+            std::lock_guard<std::mutex> lock(nodes_mutex_);
+            auto it = nodes_.find(msg.destination);
+            if (it != nodes_.end()) {
+                known = true;
+                radio = it->second.radio;
+            }
+        }
+        if (!known) {
             LOG_ERROR(
                 "Message delivery failed - Node 0x%04X not found in network",
                 msg.destination);
@@ -936,7 +969,6 @@ class VirtualNetwork {
             return false;
         }
 
-        auto* radio = it->second.radio;
         if (!radio) {
             LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
                       msg.destination);

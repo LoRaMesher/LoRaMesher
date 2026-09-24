@@ -234,6 +234,45 @@ TEST_F(RTOSMockTimeTest, SameDeadlineTasksRunSerially) {
 }
 
 /**
+ * @brief A task that does not block again after waking is counted as a
+ * reblock timeout
+ */
+TEST_F(RTOSMockTimeTest, ReblockTimeoutIsCounted) {
+    struct State {
+        std::atomic<bool> ready{false};
+        std::atomic<bool> release{false};
+    } state;
+
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<State*>(param);
+            s->ready = true;
+            GetRTOS().delay(5);
+            while (!s->release) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            GetRTOS().delay(100000);
+        },
+        "Spinner", 2048, &state, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !state.ready; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    rtosMock_->advanceTime(10);
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 1u);
+
+    state.release = true;
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+    rtosMock_->advanceTime(10);
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 0u);
+}
+
+/**
  * @brief Basic test for virtual time operation
  */
 TEST_F(RTOSMockTimeTest, BasicVirtualTimeOperation) {

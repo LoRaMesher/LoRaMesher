@@ -285,6 +285,7 @@ class RTOSMock : public RTOS {
                 events_at_instant = 0;
             }
             if (++events_at_instant > kMaxEventsPerInstant) {
+                reblock_timeouts_.fetch_add(1, std::memory_order_relaxed);
                 LOG_ERROR(
                     "MOCK: more than %u events at virtual time %llu ms; "
                     "skipping to %llu ms",
@@ -2488,7 +2489,26 @@ class RTOSMock : public RTOS {
             }
         }
         lock.unlock();
+        reblock_timeouts_.fetch_add(1, std::memory_order_relaxed);
         LogReblockTimeout(busy_task);
+    }
+
+    /**
+     * @brief Number of event steps that could not complete deterministically
+     * since the last reset: reblock timeouts (a woken task kept running past
+     * kReblockTimeoutMs) and instants with more than kMaxEventsPerInstant
+     * events. After such a step the order of task execution depends on
+     * thread scheduling.
+     */
+    uint32_t getReblockTimeoutCount() const {
+        return reblock_timeouts_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset the counter returned by getReblockTimeoutCount()
+     */
+    void resetReblockTimeoutCount() {
+        reblock_timeouts_.store(0, std::memory_order_relaxed);
     }
 
    private:
@@ -2575,6 +2595,8 @@ class RTOSMock : public RTOS {
     std::atomic<int> pending_queue_items_{0};  ///< items sitting in all queues
     std::condition_variable tasks_blocked_cv_;
     std::mutex tasks_blocked_mutex_;
+
+    std::atomic<uint32_t> reblock_timeouts_{0};
 
     /// Real-time poll interval of virtual-time waits
     static constexpr uint32_t kWaitPollMs = 20;
