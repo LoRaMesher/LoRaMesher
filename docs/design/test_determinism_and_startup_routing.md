@@ -33,6 +33,17 @@ Fix direction:
   not an active direct neighbour, even while provisional.
 - Routes are not installed via a source that was not accepted as a direct neighbour.
 
+Result (fdc995d): peer tables that omit us count toward the unidirectional verdict only
+after `kUnidirectionalGraceBroadcasts = kMinSamplesForQuality + 1` of our own routing
+broadcasts since first contact (recorded at actual transmit via
+`IRoutingTable::NotifyLocalRoutingBroadcast`); `LinkQualityStats::IsUnidirectional()` is the
+single verdict. A non-unidirectional direct link replaces an unusable route (cost 65535 or
+next hop not an active direct neighbour) even while provisional, and advertised entries are
+installed only through a source that is an active direct neighbour.
+`GroupNoDuplicateDeliveryUnderFlood` 11/11. Reporting `reception_quality` after the first
+sample was rejected: it would seed the peer's remote EWMA low and depress link costs for
+many superframes.
+
 ## 2. Nondeterminism in the test harness
 
 Seeding the RTOS mock's RNG (fixture seeds 42) does not make runs repeatable:
