@@ -64,6 +64,12 @@ class RTOSMock : public RTOS {
     struct TaskInfo;  // Forward declaration
 
    public:
+    /// Virtual time value (ms) set whenever the mock switches to virtual time
+    static constexpr uint64_t kVirtualEpochMs = 1'000'000;
+
+    /// Seed of the GetRandom() generator until SeedRandom() is called
+    static constexpr uint32_t kDefaultRandomSeed = 42;
+
     /**
      * @brief Struct representing a timer callback registration
      */
@@ -92,9 +98,7 @@ class RTOSMock : public RTOS {
           timeMutex_(),
           waitingTasks_(),
           timerCallbacks_(),
-          prng_engine_(static_cast<uint32_t>(
-              std::chrono::steady_clock::now().time_since_epoch().count() ^
-              reinterpret_cast<uintptr_t>(this))) {}
+          prng_engine_(kDefaultRandomSeed) {}
 
     /**
      * @brief Sets the time mode for the RTOS mock
@@ -121,14 +125,10 @@ class RTOSMock : public RTOS {
                 debug_time = virtualTimeMs_;
                 debug_case = 1;
             }
-            // If switching to virtual time, initialize with current real time
+            // Virtual time always starts at the same fixed epoch
             else if (mode == TimeMode::kVirtualTime &&
                      timeMode_ == TimeMode::kRealTime) {
-                auto now = std::chrono::steady_clock::now();
-                virtualTimeMs_ =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch())
-                        .count();
+                virtualTimeMs_ = kVirtualEpochMs;
                 virtualTimeMsAtomic_.store(virtualTimeMs_,
                                            std::memory_order_release);
                 debug_time = virtualTimeMs_;

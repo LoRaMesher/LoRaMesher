@@ -141,11 +141,20 @@ class VirtualNetwork {
     /**
      * @brief Constructor
      */
-    VirtualNetwork() : current_time_(0), packet_loss_rate_(0.0f) {
-        // Initialize random number generator
-        std::random_device rd;
-        rng_ = std::mt19937(rd());
-    }
+    VirtualNetwork() : current_time_(0), packet_loss_rate_(0.0f) {}
+
+    /// Seed used by the global packet-loss decisions until SetSeed() is called
+    static constexpr uint32_t kDefaultSeed = 42;
+
+    /**
+     * @brief Set the seed of the global packet-loss decisions
+     *
+     * The same seed, topology and transmission sequence always drop the same
+     * packets.
+     *
+     * @param seed Seed value
+     */
+    void SetSeed(uint32_t seed) { seed_ = seed; }
 
     /**
      * @brief Register a node with the network
@@ -245,7 +254,7 @@ class VirtualNetwork {
             }
 
             // Check for global packet loss
-            if (ShouldDropPacket()) {
+            if (ShouldDropPacket(source, dest_address)) {
                 continue;
             }
 
@@ -574,6 +583,8 @@ class VirtualNetwork {
         /// error-diffusion drop pattern. Owned by this (source) node's TX
         /// thread, so it needs no synchronization.
         std::map<uint32_t, uint32_t> link_tx_counts;
+        /// Per-destination transmit counter driving the global-loss decisions
+        std::map<uint32_t, uint32_t> global_loss_counts;
         RadioConfig radio_config;
     };
 
@@ -620,7 +631,7 @@ class VirtualNetwork {
         sent_messages_mutex_;  ///< Mutex for thread-safe access to sent_messages_
     uint32_t current_time_;
     float packet_loss_rate_;
-    std::mt19937 rng_;
+    uint32_t seed_ = kDefaultSeed;
     std::atomic<uint32_t> dropped_message_count_{0};
     std::map<uint32_t, uint32_t>
         dropped_by_dest_;  ///< Drops per destination (radio not receiving)
@@ -685,15 +696,30 @@ class VirtualNetwork {
 
     /**
      * @brief Check if packet should be dropped based on global loss rate
+     *
+     * The decision hashes (seed, link, per-link packet index), so it depends
+     * only on the seed and on the sequence of packets sent over the link.
      */
-    bool ShouldDropPacket() {
+    bool ShouldDropPacket(uint32_t from_addr, uint32_t to_addr) {
         if (packet_loss_rate_ <= 0.0f)
             return false;
         if (packet_loss_rate_ >= 1.0f)
             return true;
 
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-        return dist(rng_) < packet_loss_rate_;
+        auto it = nodes_.find(from_addr);
+        if (it == nodes_.end())
+            return false;
+        uint32_t n = it->second.global_loss_counts[to_addr]++;
+        uint64_t x = (static_cast<uint64_t>(seed_) << 32) ^
+                     (static_cast<uint64_t>(from_addr) << 16) ^ to_addr;
+        x ^= static_cast<uint64_t>(n) * 0x9E3779B97F4A7C15ull;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ull;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBull;
+        x ^= x >> 31;
+        return (x & 0xFFFFFFu) <
+               static_cast<uint32_t>(packet_loss_rate_ * 16777216.0f);
     }
 
     /**

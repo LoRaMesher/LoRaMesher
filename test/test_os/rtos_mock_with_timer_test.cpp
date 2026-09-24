@@ -128,6 +128,26 @@ class RTOSMockTimeTest : public ::testing::Test {
 };
 
 /**
+ * @brief Every switch to virtual time starts the clock at the same epoch
+ */
+TEST_F(RTOSMockTimeTest, VirtualTimeStartsAtFixedEpoch) {
+    rtosMock_->advanceTime(1234);
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+    uint32_t first_epoch = rtos_->getTickCount();
+
+    rtosMock_->advanceTime(4321);
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+    uint32_t second_epoch = rtos_->getTickCount();
+
+    EXPECT_EQ(first_epoch, second_epoch);
+    EXPECT_EQ(first_epoch, initialTime_);
+}
+
+/**
  * @brief Basic test for virtual time operation
  */
 TEST_F(RTOSMockTimeTest, BasicVirtualTimeOperation) {
