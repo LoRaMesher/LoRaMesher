@@ -1959,6 +1959,20 @@ TEST_F(NetworkServiceCoverageTest, LateAckStillUpdatesPathRtt) {
     EXPECT_EQ(rtt->srtt_ms, 1500u);
 }
 
+TEST_F(NetworkServiceCoverageTest, RoutingTableUsesConfiguredNodeLimit) {
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kNodeAddress;
+    cfg.max_hops = 5;
+    cfg.max_network_nodes = 100;
+    ASSERT_TRUE(service_->Configure(cfg));
+    ASSERT_TRUE(service_->UpdateNetworkNode(kOtherNode, false, 1));
+
+    EXPECT_TRUE(
+        service_->GetRoutingTable()->SetControlSlotIndex(kOtherNode, 60));
+    EXPECT_FALSE(
+        service_->GetRoutingTable()->SetControlSlotIndex(kOtherNode, 100));
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

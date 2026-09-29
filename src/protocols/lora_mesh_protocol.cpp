@@ -106,10 +106,12 @@ Result LoRaMeshProtocol::Init(
     superframe_service_ = std::make_shared<lora_mesh::SuperframeService>();
     superframe_service_->SetNodeAddress(node_address);
 
-    // Create distance vector routing table
+    // Create distance vector routing table; NetworkService::Configure applies
+    // the configured node limit.
     auto routing_table =
         std::make_unique<lora_mesh::DistanceVectorRoutingTable>(
-            node_address, 50);  // max 50 nodes
+            node_address,
+            lora_mesh::INetworkService::NetworkConfig{}.max_network_nodes);
 
     // Create network service
     network_service_ = std::make_shared<lora_mesh::NetworkService>(

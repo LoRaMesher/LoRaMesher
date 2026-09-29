@@ -555,6 +555,9 @@ void DistanceVectorRoutingTable::SetRouteUpdateCallback(
 void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     max_nodes_ = max_nodes;
+    if (max_nodes_ > 0) {
+        nodes_.reserve(max_nodes_);
+    }
 
     // If we now exceed the limit, remove oldest nodes
     while (max_nodes_ > 0 && nodes_.size() > max_nodes_) {
@@ -587,12 +590,13 @@ bool DistanceVectorRoutingTable::SetPathRtt(
 
 bool DistanceVectorRoutingTable::SetControlSlotIndex(
     AddressType node_address, uint8_t control_slot_index) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
     // Reject out-of-range indices (0xFF is the valid "unassigned" sentinel) so a
     // corrupted value can never inflate the control band of the TDMA schedule.
-    if (control_slot_index != 0xFF && control_slot_index >= max_nodes_) {
+    if (control_slot_index != 0xFF && max_nodes_ > 0 &&
+        control_slot_index >= max_nodes_) {
         return false;
     }
-    std::lock_guard<std::mutex> lock(table_mutex_);
     auto it = GetNode(node_address);
     if (it == nodes_.end()) {
         return false;
