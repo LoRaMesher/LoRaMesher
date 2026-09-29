@@ -8,10 +8,10 @@
  * Constructed and owned by NetworkService, which delegates the corresponding
  * public API to it and supplies cross-cutting dependencies as Host closures.
  *
- * Threading: this component does not own a mutex. The membership operations
- * lock the coordinator's mutex (passed by reference) exactly as before; the
- * reliable/group paths run on the single protocol task like the rest of the
- * coordinator.
+ * Threading: sends run on the application thread while timers and received
+ * acknowledgements run on the protocol task. All state is guarded by an
+ * internal mutex; delivery outcomes are reported after it is released, so a
+ * delivery callback may call back into this component.
  */
 
 #pragma once
@@ -24,6 +24,7 @@
 #include <optional>
 #include <vector>
 
+#include "protocols/lora_mesh/services/message_cache.hpp"
 #include "protocols/reliability/reliable_delivery.hpp"
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
@@ -63,12 +64,6 @@ class ReliableMessaging {
         std::function<AddressType(AddressType)> find_next_hop;
         /// Forward an ACK DataMessage toward its destination.
         std::function<Result(const DataMessage&)> forward_data_message;
-        /// Allocate the next message sequence number.
-        std::function<uint8_t()> next_seq;
-        /// Record (source, seq) in the de-duplication cache.
-        std::function<void(AddressType, uint8_t)> record_in_cache;
-        /// True if (source, seq) was already seen (de-duplication).
-        std::function<bool(AddressType, uint8_t)> is_duplicate;
         /// Deliver a received payload to the app. The component passes the
         /// message's remaining TTL; the coordinator converts it to a hop count.
         std::function<void(AddressType src, uint8_t seq, uint8_t ttl,
@@ -92,7 +87,12 @@ class ReliableMessaging {
             set_path_rtt;
     };
 
-    ReliableMessaging(std::mutex& mutex, Host host);
+    /**
+     * @param message_cache Node-wide sequence counter and de-duplication
+     *        cache (not owned; must outlive this component)
+     * @param host Cross-cutting dependencies
+     */
+    ReliableMessaging(MessageCache& message_cache, Host host);
 
     // --- Group (multicast) membership ---
 
@@ -152,6 +152,22 @@ class ReliableMessaging {
     size_t GetReliablePendingCount() const;
 
    private:
+    /// Outcomes produced while the mutex is held, reported after release.
+    struct OutcomeBatch {
+        std::array<reliability::DeliveryResult,
+                   2 * reliability::ReliableDelivery::kMaxPending>
+            results{};
+        size_t count = 0;
+    };
+
+    /// Run @p fn under mutex_, collecting its delivery outcomes, then report
+    /// them after the mutex is released.
+    template <typename Fn>
+    auto RunLocked(Fn&& fn);
+    /// Report @p batch to the delivery callback; the mutex must not be held.
+    void DispatchOutcomes(const OutcomeBatch& batch);
+    bool IsMemberOfGroupLocked(AddressType group) const;
+
     Result ForwardGroupMessage(const GroupMessage& original);
     Result SendReliableAttempt(const reliability::AttemptRequest& request);
     /// Fold an acknowledgement's round-trip sample into @p peer's estimate.
@@ -183,7 +199,11 @@ class ReliableMessaging {
 
     reliability::DeliveryCallback delivery_callback_;
 
-    std::mutex& mutex_;  ///< Coordinator mutex (not owned)
+    /// Collects outcomes while mutex_ is held; null otherwise.
+    OutcomeBatch* outcome_batch_ = nullptr;
+
+    mutable std::mutex mutex_;
+    MessageCache& message_cache_;
     Host host_;
 
     // Constructed last: BuildReliableHost() reads host_, so host_ must precede.

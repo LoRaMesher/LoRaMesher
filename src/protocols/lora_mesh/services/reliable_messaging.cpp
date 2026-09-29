@@ -6,6 +6,7 @@
 #include "reliable_messaging.hpp"
 
 #include <algorithm>
+#include <type_traits>
 
 #include "protocols/reliability/rtt_estimator.hpp"
 #include "types/messages/loramesher/ack_payload.hpp"
@@ -24,8 +25,8 @@ namespace {
 using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
 }  // namespace
 
-ReliableMessaging::ReliableMessaging(std::mutex& mutex, Host host)
-    : mutex_(mutex),
+ReliableMessaging::ReliableMessaging(MessageCache& message_cache, Host host)
+    : message_cache_(message_cache),
       host_(std::move(host)),
       reliable_(BuildReliableHost(),
                 [this](const reliability::DeliveryResult& result) {
@@ -41,6 +42,47 @@ reliability::Host ReliableMessaging::BuildReliableHost() {
         return host_.now_ms ? host_.now_ms() : 0u;
     };
     return host;
+}
+
+template <typename Fn>
+auto ReliableMessaging::RunLocked(Fn&& fn) {
+    OutcomeBatch batch;
+    if constexpr (std::is_void_v<std::invoke_result_t<Fn>>) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            outcome_batch_ = &batch;
+            fn();
+            outcome_batch_ = nullptr;
+        }
+        DispatchOutcomes(batch);
+    } else {
+        std::invoke_result_t<Fn> result;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            outcome_batch_ = &batch;
+            result = fn();
+            outcome_batch_ = nullptr;
+        }
+        DispatchOutcomes(batch);
+        return result;
+    }
+}
+
+void ReliableMessaging::DispatchOutcomes(const OutcomeBatch& batch) {
+    if (batch.count == 0) {
+        return;
+    }
+    reliability::DeliveryCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback = delivery_callback_;
+    }
+    if (!callback) {
+        return;
+    }
+    for (size_t i = 0; i < batch.count; ++i) {
+        callback(batch.results[i]);
+    }
 }
 
 // --- Group (multicast) membership ---
@@ -84,6 +126,10 @@ Result ReliableMessaging::LeaveGroup(AddressType group) {
 
 bool ReliableMessaging::IsMemberOfGroup(AddressType group) const {
     std::lock_guard<std::mutex> lock(mutex_);
+    return IsMemberOfGroupLocked(group);
+}
+
+bool ReliableMessaging::IsMemberOfGroupLocked(AddressType group) const {
     for (uint8_t i = 0; i < group_count_; ++i) {
         if (groups_[i] == group) {
             return true;
@@ -120,13 +166,13 @@ Result ReliableMessaging::SendGroup(AddressType group,
                       "Group payload exceeds max packet size");
     }
 
-    uint8_t seq = host_.next_seq();
+    uint8_t seq = message_cache_.NextSeq();
     uint8_t ttl =
         (host_.max_hops() > 0)
             ? static_cast<uint8_t>(std::min(2u * host_.max_hops(), 255u))
             : kDefaultTTL;
 
-    host_.record_in_cache(host_.node_address, seq);
+    message_cache_.Record(host_.node_address, seq);
 
     auto group_msg = GroupMessage::Create(group, host_.node_address, ttl,
                                           /*flags=*/0, seq, data);
@@ -163,13 +209,11 @@ Result ReliableMessaging::ProcessGroupMessage(
     }
 
     // De-duplication prevents flood loops and duplicate delivery
-    if (host_.is_duplicate(source, seq_num)) {
+    if (!message_cache_.RecordIfNew(source, seq_num)) {
         LOG_DEBUG("Dropping duplicate GROUP from 0x%04X seq=%u", source,
                   seq_num);
         return Result::Success();
     }
-
-    host_.record_in_cache(source, seq_num);
 
     const bool member = IsMemberOfGroup(group);
     std::span<const uint8_t> payload = group_msg.GetPayload();
@@ -316,8 +360,8 @@ Result ReliableMessaging::SendReliableAttempt(
         // relays that forwarded an earlier attempt forward this one too.
         uint8_t link_seq = id.seq;
         if (!request.first_attempt) {
-            link_seq = host_.next_seq();
-            host_.record_in_cache(host_.node_address, link_seq);
+            link_seq = message_cache_.NextSeq();
+            message_cache_.Record(host_.node_address, link_seq);
         }
         auto data_msg =
             DataMessage::Create(dest, host_.node_address, next_hop, wire, ttl,
@@ -355,10 +399,10 @@ reliability::MessageId ReliableMessaging::SendReliable(
         return kInvalidId;
     }
 
-    uint8_t seq = host_.next_seq();
+    uint8_t seq = message_cache_.NextSeq();
 
     // Prevent self-receive if we hear our own message.
-    host_.record_in_cache(host_.node_address, seq);
+    message_cache_.Record(host_.node_address, seq);
 
     reliability::MessageId id{host_.node_address, seq};
     reliability::Policy policy;
@@ -374,9 +418,11 @@ reliability::MessageId ReliableMessaging::SendReliable(
         policy.max_timeout_ms = MaxReliableTimeout();
     }
 
-    Result result = reliable_.Track(
-        id, destination, std::span<const uint8_t>(data.data(), data.size()),
-        policy);
+    Result result = RunLocked([&]() {
+        return reliable_.Track(
+            id, destination, std::span<const uint8_t>(data.data(), data.size()),
+            policy);
+    });
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable message seq=%u: %s", seq,
                   result.GetErrorMessage().c_str());
@@ -414,9 +460,9 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
         return kInvalidId;
     }
 
-    uint8_t seq = host_.next_seq();
+    uint8_t seq = message_cache_.NextSeq();
 
-    host_.record_in_cache(host_.node_address, seq);
+    message_cache_.Record(host_.node_address, seq);
 
     reliability::MessageId id{host_.node_address, seq};
     reliability::Policy policy;
@@ -427,20 +473,24 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
 
     // A group destination makes each attempt a flooded group message with
     // the request-acks flag rather than a unicast.
-    Result result = reliable_.Track(id, group, data, policy);
+    Result result = RunLocked([&]() {
+        Result tracked = reliable_.Track(id, group, data, policy);
+        if (tracked.IsSuccess()) {
+            // Register the acknowledgement-collection window.
+            uint32_t deadline = host_.now_ms() + window_ms;
+            for (auto& window : group_windows_) {
+                if (!window.valid) {
+                    window = {true, seq, deadline};
+                    break;
+                }
+            }
+        }
+        return tracked;
+    });
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable group seq=%u: %s", seq,
                   result.GetErrorMessage().c_str());
         return kInvalidId;
-    }
-
-    // Register the acknowledgement-collection window.
-    uint32_t deadline = host_.now_ms() + window_ms;
-    for (auto& window : group_windows_) {
-        if (!window.valid) {
-            window = {true, seq, deadline};
-            break;
-        }
     }
 
     LOG_INFO("Sending reliable GROUP to 0x%04X (seq=%u, window=%u)", group, seq,
@@ -519,7 +569,8 @@ Result ReliableMessaging::ProcessAckMessage(const BaseMessage& message) {
         // arrives after the message was given up on.
         RecordRttSample(acker, ack->echo_timestamp);
         reliability::MessageId id{host_.node_address, ack->acked_seq};
-        bool matched = reliable_.OnAck(id, acker, ack->echo_timestamp);
+        bool matched = RunLocked(
+            [&]() { return reliable_.OnAck(id, acker, ack->echo_timestamp); });
         LOG_DEBUG("ACK from 0x%04X for seq=%u matched=%d", acker,
                   ack->acked_seq, matched);
         return Result::Success();
@@ -534,8 +585,10 @@ Result ReliableMessaging::ProcessAckMessage(const BaseMessage& message) {
 }
 
 void ReliableMessaging::ProcessReliableTimers() {
-    reliable_.Tick();
-    CloseExpiredGroupWindows();
+    RunLocked([this]() {
+        reliable_.Tick();
+        CloseExpiredGroupWindows();
+    });
 }
 
 void ReliableMessaging::CloseExpiredGroupWindows() {
@@ -550,17 +603,22 @@ void ReliableMessaging::CloseExpiredGroupWindows() {
 
 void ReliableMessaging::OnReliableOutcome(
     const reliability::DeliveryResult& result) {
-    if (delivery_callback_) {
-        delivery_callback_(result);
+    if (outcome_batch_ == nullptr ||
+        outcome_batch_->count >= outcome_batch_->results.size()) {
+        LOG_ERROR("Reliable outcome for seq=%u dropped", result.id.seq);
+        return;
     }
+    outcome_batch_->results[outcome_batch_->count++] = result;
 }
 
 void ReliableMessaging::SetDeliveryCallback(
     reliability::DeliveryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
     delivery_callback_ = std::move(callback);
 }
 
 size_t ReliableMessaging::GetReliablePendingCount() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return reliable_.PendingCount();
 }
 

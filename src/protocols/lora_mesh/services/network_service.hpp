@@ -15,6 +15,7 @@
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
+#include "protocols/lora_mesh/services/message_cache.hpp"
 #include "protocols/lora_mesh/services/reliable_messaging.hpp"
 #include "protocols/lora_mesh/services/slot_scheduler.hpp"
 #include "protocols/lora_mesh/services/sync_beacon_service.hpp"
@@ -1268,18 +1269,6 @@ class NetworkService : public INetworkService {
      */
     uint8_t FindLowestAvailableControlSlot();
 
-    // Message de-duplication helpers
-
-    /**
-     * @brief Check if a message has already been seen (broadcast or unicast)
-     */
-    bool IsMessageDuplicate(AddressType source, uint8_t seq_num) const;
-
-    /**
-     * @brief Record a message in the de-duplication cache
-     */
-    void AddToMessageCache(AddressType source, uint8_t seq_num);
-
     /**
      * @brief Forward a broadcast message with decremented TTL
      */
@@ -1400,19 +1389,11 @@ class NetworkService : public INetworkService {
     // State-change notification callback
     StateChangeCallback state_change_callback_;
 
-    // Unified message de-duplication cache (shared by DATA and DATA_BROADCAST)
-    struct MessageCacheEntry {
-        AddressType source = 0;
-        uint8_t seq_num = 0;
-        bool valid = false;
-    };
-
-    static constexpr size_t kMessageCacheSize = 32;
     static constexpr uint8_t kDefaultTTL = 10;
-    std::array<MessageCacheEntry, kMessageCacheSize> message_cache_{};
-    uint8_t message_cache_head_ = 0;
-    uint8_t message_seq_ =
-        0;  ///< Per-node sequence counter (shared by unicast + broadcast)
+
+    /// Per-node sequence counter and de-duplication cache, shared by every
+    /// send and receive path.
+    MessageCache message_cache_;
 
     // Reliable delivery / group multicast subsystem
     DataReceivedExCallback data_received_ex_callback_;
@@ -1424,9 +1405,8 @@ class NetworkService : public INetworkService {
     /// Estimate hops travelled from a message's remaining TTL.
     uint8_t HopsFromTtl(uint8_t remaining_ttl) const;
 
-    /// Group multicast + reliable-delivery subsystem extracted from this
-    /// coordinator; owns the reliability state machine, shadow table, group
-    /// membership, and ack-collection windows.
+    /// Group multicast + reliable-delivery subsystem; owns the reliability
+    /// state machine, group membership, and ack-collection windows.
     std::unique_ptr<ReliableMessaging> reliable_messaging_;
 
     /// TDMA slot-table scheduler; sole owner of the slot table and the
