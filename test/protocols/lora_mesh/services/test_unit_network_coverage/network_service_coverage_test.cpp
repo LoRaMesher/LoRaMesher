@@ -82,15 +82,14 @@ class NetworkServiceCoverageTest : public ::testing::Test {
     }
 
     // Helper to build a sync beacon base message
-    BaseMessage MakeSyncBeacon(AddressType src, uint16_t network_id = 0xABCD) {
-        auto beacon =
-            SyncBeaconMessage::CreateOriginal(0xFFFF, src, network_id,
-                                              /*total_slots=*/20,
-                                              /*slot_duration=*/1000,
-                                              /*nm_address=*/src,
-                                              /*propagation_delay=*/0,
-                                              /*max_hops=*/3,
-                                              /*allocated_control_slots=*/2);
+    BaseMessage MakeSyncBeacon(AddressType src, uint16_t network_id = 0xABCD,
+                               uint8_t max_hops = 3, uint8_t total_slots = 20) {
+        auto beacon = SyncBeaconMessage::CreateOriginal(
+            0xFFFF, src, network_id, total_slots,
+            /*slot_duration=*/1000,
+            /*nm_address=*/src,
+            /*propagation_delay=*/0, max_hops,
+            /*allocated_control_slots=*/2);
         EXPECT_TRUE(beacon.has_value());
         return beacon->ToBaseMessage();
     }
@@ -1957,6 +1956,25 @@ TEST_F(NetworkServiceCoverageTest, LateAckStillUpdatesPathRtt) {
     }
     ASSERT_TRUE(rtt.has_value());
     EXPECT_EQ(rtt->srtt_ms, 1500u);
+}
+
+TEST_F(NetworkServiceCoverageTest, ImplausibleSyncBeaconIsIgnoredWhole) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    ASSERT_NE(service_->GetNetworkManagerAddress(), kNMAddress);
+
+    // Depth beyond the protocol hop limit.
+    service_->ProcessReceivedMessage(
+        MakeSyncBeacon(kNMAddress, 0xABCD, /*max_hops=*/200), 100);
+    EXPECT_NE(service_->GetNetworkManagerAddress(), kNMAddress);
+
+    // Sync band larger than the announced superframe.
+    service_->ProcessReceivedMessage(
+        MakeSyncBeacon(kNMAddress, 0xABCD, /*max_hops=*/12, /*total_slots=*/10),
+        100);
+    EXPECT_NE(service_->GetNetworkManagerAddress(), kNMAddress);
+
+    service_->ProcessReceivedMessage(MakeSyncBeacon(kNMAddress), 100);
+    EXPECT_EQ(service_->GetNetworkManagerAddress(), kNMAddress);
 }
 
 TEST_F(NetworkServiceCoverageTest, RoutingTableUsesConfiguredNodeLimit) {

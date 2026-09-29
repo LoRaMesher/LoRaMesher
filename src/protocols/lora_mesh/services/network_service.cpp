@@ -13,10 +13,27 @@
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
+#include "types/configurations/protocol_configuration.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
 using JoinResponseStatus = loramesher::JoinResponseHeader::ResponseStatus;
+
+/**
+ * @brief Whether a sync beacon's schedule parameters are internally consistent
+ *
+ * Every node lays out its superframe from the beacon, so a beacon announcing a
+ * depth beyond the protocol limit, or a sync band that cannot fit in the
+ * announced superframe, is discarded as a whole.
+ */
+bool IsPlausibleSyncBeacon(const loramesher::SyncBeaconMessage& beacon) {
+    const uint8_t depth = beacon.GetMaxHops();
+    if (depth > loramesher::LoRaMeshProtocolConfig::kMaxHopsLimit) {
+        return false;
+    }
+    const uint8_t total_slots = beacon.GetTotalSlots();
+    return total_slots == 0 || static_cast<uint16_t>(depth) + 1 <= total_slots;
+}
 }  // namespace
 
 namespace loramesher {
@@ -2642,6 +2659,14 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     LOG_DEBUG("Received sync beacon from 0x%04X, hop count %d at timestamp %u",
               sync_beacon.GetSource(), sync_beacon.GetHopCount(),
               reception_timestamp);
+
+    if (!IsPlausibleSyncBeacon(sync_beacon)) {
+        LOG_WARNING(
+            "Discarding sync beacon from 0x%04X: depth %u, %u total slots",
+            sync_beacon.GetSource(), sync_beacon.GetMaxHops(),
+            sync_beacon.GetTotalSlots());
+        return Result::Success();
+    }
 
     uint32_t current_time = GetRTOS().getTickCount();
     if (current_time < last_sync_beacon_received_ +

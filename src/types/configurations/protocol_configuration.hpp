@@ -186,6 +186,10 @@ enum class NodeRole : uint8_t {
  */
 class LoRaMeshProtocolConfig : public BaseProtocolConfig {
    public:
+    /// Largest hop count the protocol supports; also bounds the network depth
+    /// a sync beacon may announce.
+    static constexpr uint8_t kMaxHopsLimit = 16;
+
     /**
      * @brief Constructor with LoRaMesh-specific parameters
      * 
@@ -602,8 +606,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
                hello_interval_ <= 3600000 &&  // Maximum 1 hour
                route_timeout_ >
                    hello_interval_ &&  // Route timeout must be greater than hello interval
-               max_hops_ > 0 &&           // At least 1 hop
-               max_hops_ <= 16 &&         // Maximum 16 hops
+               max_hops_ > 0 &&  // At least 1 hop
+               max_hops_ <= kMaxHopsLimit &&
                guard_time_ms_ >= 10 &&    // At least 10ms guard time
                guard_time_ms_ <= 500 &&   // Maximum 500ms guard time
                wake_up_guard_ms_ <= 500;  // Maximum 500ms wake-up guard
@@ -627,7 +631,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (max_hops_ == 0) {
             return "Max hops must be at least 1";
         }
-        if (max_hops_ > 16) {
+        if (max_hops_ > kMaxHopsLimit) {
             return "Max hops too large (maximum 16)";
         }
         if (guard_time_ms_ < 10) {
