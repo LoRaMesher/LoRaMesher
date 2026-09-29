@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - Unreleased
+
+The on-air protocol changes again: every node of a network must run 2.x.
+Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
+
+### Added
+- Reliable (acknowledged) unicast: `SendReliable(dst, data, ReliableOptions)`
+  returns a `MessageId`, and `SetDeliveryCallback(...)` reports each message
+  as delivered (with round-trip time) or failed. Retransmission timeouts adapt
+  to the measured round-trip time per destination.
+- Group multicast: `JoinGroup` / `LeaveGroup` / `IsMemberOfGroup` /
+  `GetGroups` and `SendGroup(group, data, GroupSendOptions)`. An acknowledged
+  group send reports every responder and closes with the responder count;
+  `GroupSendOptions::max_retries` re-floods the message inside the ACK window,
+  and members still deliver it once.
+- `SetDataCallbackEx(...)` also delivers the sender's `MessageId` and the hop
+  count.
+- Routing-table broadcasts are sliced across superframes, so large tables fit
+  in high-SF packets.
+- `max_data_slots` configuration: the data-slot budget is separate from the
+  node-count cap.
+- SX1278 and SX1268 radios in the radio factory.
+- Deterministic (address-hash) sync-beacon subslot assignment.
+- Network stress test suite (`test_network_stress`).
+
+### Changed
+- TDMA data slots are assigned by control-slot index, and `ROUTE_TABLE`
+  headers carry the sender's control-slot index (6 → 7 bytes).
+- `default_data_slots` defaults to 2 (was 1) and must be the same on every
+  node; `max_data_slots` defaults to 100.
+- `max_packet_size` is capped to the physical limit of the spreading factor,
+  and subslots are sized from time-on-air.
+- `LoRaMeshProtocol::GetNetworkNodes()` returns a snapshot copy;
+  `GetNetworkNodesCopy()` is removed.
+- Route-update callbacks run while the routing table is locked and must not
+  call back into the routing table or the network service.
+- `battery_level` is removed from `JOIN_REQUEST`, `NM_CLAIM` and routing
+  messages.
+- Cross-network Network Manager merge is disabled.
+
+### Fixed
+- ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
+  tasks ran with a quarter of the configured stack and the stack monitor
+  reported four times the real free space. Stack sizes are now real bytes.
+- Reliable delivery: retransmissions reach distant destinations under load; a
+  message is no longer acknowledged but dropped after the sequence number
+  wraps; an attempt that can never be queued fails instead of retrying
+  forever; ACKs are accepted only from the destination; deadlines survive the
+  32-bit tick wrap.
+- Thread safety: send APIs are safe to call from the application thread, and
+  the routing table is only read under its lock.
+- Routing: route flapping on marginal links is damped; link quality holds
+  across sliced broadcasts; gateways stay reachable for far nodes at SF12;
+  links are not judged unidirectional before the peer could hear this node.
+- TDMA slots: corrupted slot values no longer collapse the network; band sizes
+  cannot wrap at large network depth; the slot table is rebuilt when a
+  control-slot index changes; slot grants keep node capabilities; the
+  routing table honours the configured `max_network_nodes`; sync beacons with
+  an impossible schedule are discarded.
+- Radio: the receiver stays on for the whole listening slot; time-on-air is
+  correct at high SF (LDRO).
+- A Network Manager that surrendered in a merge stays committed to joining the
+  winner.
+
 ## [1.0.0] - 2026-05-15
 
 Complete rewrite of LoRaMesher. The public API, configuration model, and wire
@@ -76,6 +140,7 @@ Final release of the pre-rewrite line. Tagged as `v0.0.11-legacy` for
 reference; no further updates planned. Users on `0.0.x` should follow
 [MIGRATION.md](MIGRATION.md) to move to `1.0.0`.
 
-[Unreleased]: https://github.com/LoRaMesher/LoRaMesher/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/LoRaMesher/LoRaMesher/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/LoRaMesher/LoRaMesher/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/LoRaMesher/LoRaMesher/releases/tag/v1.0.0
 [0.0.11-alpha]: https://github.com/LoRaMesher/LoRaMesher/releases/tag/v0.0.11-legacy

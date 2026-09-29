@@ -1,19 +1,76 @@
-# Migration Guide: 0.0.x → 1.0.0
+# Migration Guide
+
+- [1.x → 2.0.0](#1x--200)
+- [0.0.x → 1.0.0](#00x--100)
+
+For protocol-level details (state machine, message formats, TDMA superframe,
+routing), see [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md). For the full release
+summary, see [CHANGELOG.md](CHANGELOG.md).
+
+## 1.x → 2.0.0
+
+The application API of 1.x keeps compiling against 2.0.0; the changes that
+need attention are on the air, in the configuration, and in the lower-level
+`LoRaMeshProtocol` API.
+
+> **Network upgrade is all-or-nothing.** 2.0.0 changes the wire format:
+> `ROUTE_TABLE` headers carry the sender's control-slot index (header fields
+> grow from 6 to 7 bytes), TDMA data slots are assigned by control-slot index,
+> and `JOIN_REQUEST`, `NM_CLAIM` and routing messages no longer carry a battery
+> level. 1.x and 2.x nodes cannot share a network — flash every node in one
+> window.
+
+### Configuration
+
+| Setting | 1.x | 2.0.0 |
+|---|---|---|
+| `default_data_slots` | default 1 | default 2; **must be identical on every node** (the data band is laid out from it) |
+| `max_data_slots` | — | new: total data-slot budget of the superframe (default 100); `setMaxDataSlots()` or the last `LoRaMeshProtocolConfig` constructor argument |
+| `max_packet_size` | as configured | capped to the physical limit of the spreading factor |
+
+If you set `default_data_slots` explicitly, set the same value on every node.
+
+### Network Manager merge
+
+1.x merged two independently formed networks when they came into range. In
+2.0.0 cross-network merge is disabled: a node that already belongs to a network
+ignores another network's beacons. Pre-designate one Network Manager (see
+*Deployment Tips* in the README) so a deployment forms a single network.
+
+### `LoRaMeshProtocol` API
+
+Only relevant if you use the protocol object directly instead of `LoraMesher`.
+
+- `GetNetworkNodes()` returns a snapshot copy of the routing table;
+  `GetNetworkNodesCopy()` is removed — call `GetNetworkNodes()` instead.
+- Route-update callbacks (`SetRouteUpdateCallback`) run while the routing table
+  is locked: they must not call back into the routing table or the network
+  service.
+
+### New in 2.0.0
+
+- Reliable unicast: `SendReliable(dst, data, ReliableOptions)` returns a
+  `MessageId`; `SetDeliveryCallback(...)` reports delivered (with round-trip
+  time) or failed.
+- Group multicast: `JoinGroup` / `LeaveGroup` and
+  `SendGroup(group, data, GroupSendOptions)`, optionally acknowledged, with
+  per-responder outcomes and `max_retries` re-floods.
+- `SetDataCallbackEx(...)` also delivers the sender's `MessageId` and hop
+  count. A `MessageId` identifies a message by source, sequence and
+  destination.
+
+## 0.0.x → 1.0.0
 
 LoRaMesher 1.0.0 is a complete rewrite. The public API, configuration model,
 and wire protocol have all changed — your `0.0.x` sketch will not compile
 against 1.0.0, and a `0.0.x` node cannot talk to a 1.0.0 node on the air. This
 guide walks through what to update in user code.
 
-For protocol-level details (state machine, message formats, TDMA superframe,
-routing), see [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md). For the full release
-summary, see [CHANGELOG.md](CHANGELOG.md).
-
 > **Network upgrade is all-or-nothing.** Wire formats are incompatible. Plan
 > to flash every node in a deployment in one window — mixed-version networks
 > will not form.
 
-## At a glance
+### At a glance
 
 | Concern | 0.0.x (`v0.0.11-legacy`) | 1.0.0 |
 |---|---|---|
@@ -30,7 +87,7 @@ summary, see [CHANGELOG.md](CHANGELOG.md).
 | Errors | silent `void` returns | `[[nodiscard]] Result` |
 | Payload type | `AppPacket<UserStruct>` (templated) | `std::vector<uint8_t>` (serialize yourself) |
 
-## 1. Initialization
+### 1. Initialization
 
 The singleton is gone, configuration is now three composed objects, and
 `begin()` + `start()` collapse into a single `Builder().Build()` + `Start()`.
@@ -89,7 +146,7 @@ Notes:
   to restart.
 - Board pinouts are documented in `README.md` under *Common board presets*.
 
-## 2. Sending
+### 2. Sending
 
 `createPacketAndSend<T>(dst, ptr, n)` is replaced by `Send(dst, vector)` for
 unicast and `SendBroadcast(vector)` for broadcast. Both return `Result` and
@@ -134,7 +191,7 @@ vTaskDelay(pdMS_TO_TICKS(wait_ms));
 auto r = mesher->Send(dst, payload);
 ```
 
-## 3. Receiving
+### 3. Receiving
 
 The task-handle + `ulTaskNotifyTake` + queue-poll + `deletePacket` pattern is
 replaced by a single callback registration.
@@ -177,7 +234,7 @@ mesher->SetDataCallback(OnDataReceived);
 You no longer need to call `deletePacket(...)` — payload lifetime is owned
 by the library and the buffer is valid for the duration of the callback.
 
-## 4. Configuration mapping
+### 4. Configuration mapping
 
 | 0.0.x field | 1.0.0 location |
 |---|---|
@@ -198,7 +255,7 @@ Anything mesh-protocol related (timeouts, role, slot counts) lives on
 `LoRaMeshProtocolConfig`. Defaults match the documented behavior; override
 per-field as needed.
 
-## 5. Removed APIs
+### 5. Removed APIs
 
 | Removed (0.0.x) | Replacement (1.0.0) |
 |---|---|
@@ -215,7 +272,7 @@ per-field as needed.
 | `AppPacket<T>` templated user packet | flat `std::vector<uint8_t>`; serialize on top |
 | `BROADCAST_ADDR` macro | `SendBroadcast(...)` (no destination needed) |
 
-## 6. New capabilities worth adopting
+### 6. New capabilities worth adopting
 
 These have no 0.0.x equivalent — once your sketch compiles, look at the
 [`README.md` API Usage](README.md#api-usage) section for full details:
@@ -235,7 +292,7 @@ These have no 0.0.x equivalent — once your sketch compiles, look at the
   cuts time-to-network from ~30 s to immediate; see the *Deployment Tips*
   section in `README.md`.
 
-## 7. Protocol incompatibility
+### 7. Protocol incompatibility
 
 The 1.0.0 wire format introduces TDMA superframes, sponsor-based join, NM
 election with merge handling, and link-quality-weighted routing. **A 0.0.x
@@ -247,7 +304,7 @@ Plan deployments accordingly:
 - See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) for the wire format, state
   machine, and timing rules.
 
-## Reference: complete before/after
+### Reference: complete before/after
 
 A complete 0.0.x → 1.0.0 conversion of the canonical "broadcast a counter"
 example is the difference between `examples/Counter/` on the
