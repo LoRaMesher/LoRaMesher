@@ -107,6 +107,7 @@ Follows Google C++ Style Guide with specific conventions:
 - **trailing underscore**: Private members (`config_`)
 - **Doxygen comments** for public APIs
 - **RAII principles** with smart pointers
+- **Code organization**: keep related code together; place new functions near the code that uses them, and reserve the start of a file for its general setup (includes, construction, destruction)
 
 When adding or modifying comments in code, keep them generic and describe *what* the code does, not *why* a specific change was made. Do not reference bug fixes, issues, or past problems in comments. Only add comments where the logic is not self-evident; do not comment self-explanatory code.
 
