@@ -110,6 +110,24 @@ TEST_F(SlotSchedulerTest, UpdateSlotTableProducesValidSuperframe) {
     EXPECT_EQ(table.back().type, SlotType::DISCOVERY_RX);
 }
 
+TEST_F(SlotSchedulerTest, DeepNetworkDepthDoesNotWrapBandSizes) {
+    SlotScheduler::Context ctx = NmContext();
+    ctx.current_network_depth = 127;
+
+    EXPECT_TRUE(scheduler_->UpdateSlotTableIfDirty(ctx, true).IsSuccess());
+
+    auto table = scheduler_->GetSlotTable();
+    auto count = [&table](SlotType type) {
+        return std::count_if(
+            table.begin(), table.end(),
+            [type](const SlotAllocation& slot) { return slot.type == type; });
+    };
+    // A 128-layer sync band is followed by this NM's control slot.
+    ASSERT_GT(table.size(), 128u);
+    EXPECT_EQ(table[128].type, SlotType::CONTROL_TX);
+    EXPECT_GT(count(SlotType::DISCOVERY_RX), 0);
+}
+
 TEST_F(SlotSchedulerTest, DirtyGatingSkipsRebuildWhenClean) {
     SlotScheduler::Context ctx = NmContext();
 

@@ -30,7 +30,7 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
     SlotPlan plan;
 
     // Use max_hops from received sync beacons
-    int max_hops_count = ctx.current_network_depth;
+    const uint16_t max_hops_count = ctx.current_network_depth;
 
     if (ctx.network_manager == ctx.node_address) {
         // NM: compute from actual assignments. Ignore any out-of-range index
@@ -63,17 +63,17 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
                            ctx.max_data_slots));
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
-    allocated_discovery_slots_ = (max_hops_count + 1) * 2;
+    allocated_discovery_slots_ =
+        static_cast<uint16_t>((max_hops_count + 1) * 2);
 
     // Add sync beacon slots 1 per hop layer
-    plan.sync_beacon_slots = (max_hops_count + 1);
+    plan.sync_beacon_slots = static_cast<uint16_t>(max_hops_count + 1);
 
     // Calculate active slots (non-sleep). Computed in a wider type so the sum
     // cannot silently wrap uint8_t even if an input slipped past the clamps.
-    plan.total_active_slots = static_cast<uint16_t>(plan.sync_beacon_slots) +
-                              allocated_control_slots_ +
-                              allocated_discovery_slots_ +
-                              plan.total_data_slots;
+    plan.total_active_slots = static_cast<uint16_t>(
+        plan.sync_beacon_slots + allocated_control_slots_ +
+        allocated_discovery_slots_ + plan.total_data_slots);
 
     plan.total_superframe_slots =
         std::max<uint16_t>(ctx.number_of_slots_per_superframe, kMinSlots);
@@ -405,9 +405,9 @@ void SlotScheduler::LogSlotTable(const Context& ctx) const {
 
 Result SlotScheduler::SetDiscoverySlots() {
     // Clear existing discovery slots
-    allocated_discovery_slots_ =
+    allocated_discovery_slots_ = static_cast<uint16_t>(
         std::max(ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT,
-                 static_cast<uint32_t>(slot_count_));
+                 static_cast<uint32_t>(slot_count_)));
 
     slot_count_ = static_cast<uint16_t>(allocated_discovery_slots_);
     for (size_t i = 0; i < allocated_discovery_slots_; i++) {
@@ -444,7 +444,7 @@ Result SlotScheduler::SetJoiningSlots(const Context& ctx) {
     size_t discovery_tx_added = 0;
     size_t active_slots = 0;
 
-    for (auto& slot : slot_table_) {
+    for (auto& slot : ActiveSlots()) {
         switch (slot.type) {
             case SlotAllocation::SlotType::SYNC_BEACON_RX:
                 // Keep sync beacon slots active for synchronization
@@ -504,21 +504,22 @@ Result SlotScheduler::SetJoiningSlots(const Context& ctx) {
         }
     }
 
-    float duty_cycle = (float)active_slots / slot_count_ * 100.0f;
+    const size_t total = slot_count_;
+    float duty_cycle =
+        total > 0 ? static_cast<float>(active_slots) / total * 100.0f : 0.0f;
 
     LOG_INFO(
         "Set joining slots: %zu active + %zu sleep = %zu total (%.1f%% duty "
         "cycle) - synchronized with network",
-        active_slots, slot_count_ - active_slots, slot_count_, duty_cycle);
+        active_slots, total - active_slots, total, duty_cycle);
 
     return Result::Success();
 }
 
 void SlotScheduler::ExpandSyncBeaconListening(const Context& ctx) {
-    uint8_t sync_beacon_slots =
-        static_cast<uint8_t>(ctx.current_network_depth + 1);
-    uint16_t limit =
-        std::min(static_cast<uint16_t>(sync_beacon_slots), slot_count_);
+    const uint16_t sync_beacon_slots =
+        static_cast<uint16_t>(ctx.current_network_depth + 1);
+    const uint16_t limit = std::min(sync_beacon_slots, slot_count_);
 
     for (uint16_t i = 0; i < limit; i++) {
         auto& slot = slot_table_[i];
@@ -566,7 +567,7 @@ bool SlotScheduler::ScheduleDiscoverySlotForwarding(
     // Find the next DISCOVERY_RX slot and temporarily convert it to TX
     // When next slot allocation the DISCOVERY_TX slot will be replaced by
     // a DISCOVERY_RX as previously set.
-    for (auto& slot : slot_table_) {
+    for (auto& slot : ActiveSlots()) {
         if (slot.type == SlotAllocation::SlotType::DISCOVERY_RX) {
             // Temporarily convert this slot to TX for forwarding
             slot.type = SlotAllocation::SlotType::DISCOVERY_TX;

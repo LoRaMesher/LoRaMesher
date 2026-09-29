@@ -137,7 +137,7 @@ class SlotScheduler {
    private:
     /// Aggregated sizing produced by ComputeBandSizes(), consumed downstream.
     struct SlotPlan {
-        uint8_t sync_beacon_slots = 0;
+        uint16_t sync_beacon_slots = 0;
         uint8_t total_data_slots = 0;
         uint16_t total_active_slots = 0;
         uint16_t total_superframe_slots = 0;
@@ -171,6 +171,11 @@ class SlotScheduler {
     /// Emit a debug rendering of the current slot table.
     void LogSlotTable(const Context& ctx) const;
 
+    /// Mutable span over the active slot allocations.
+    std::span<SlotAllocation> ActiveSlots() {
+        return {slot_table_.data(), slot_count_};
+    }
+
     static constexpr size_t kMaxSlots = 256;
 
     Host host_;
@@ -180,7 +185,7 @@ class SlotScheduler {
     uint16_t slot_count_ = 0;  ///< Number of valid slots in slot_table_
     uint8_t allocated_control_slots_ =
         ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
-    uint8_t allocated_discovery_slots_ =
+    uint16_t allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
     /// Set when any input to the slot table changes. Protocol-task only.
