@@ -236,7 +236,7 @@ Result ReliableMessaging::ProcessGroupMessage(
     if (member) {
         LOG_INFO("GROUP 0x%04X delivered from 0x%04X (seq=%u)", group, source,
                  seq_num);
-        host_.deliver_to_app(source, seq_num, ttl, payload);
+        host_.deliver_to_app(source, seq_num, group, ttl, payload);
     }
 
     // Relay the flood regardless of local membership
@@ -322,7 +322,7 @@ void ReliableMessaging::RecordRttSample(AddressType peer, uint32_t echo_ts) {
 Result ReliableMessaging::SendReliableAttempt(
     const reliability::AttemptRequest& request) {
     const reliability::MessageId& id = request.id;
-    const AddressType dest = request.dest;
+    const AddressType dest = id.dest;
     std::span<const uint8_t> payload = request.payload;
 
     uint8_t ttl =
@@ -404,7 +404,7 @@ reliability::MessageId ReliableMessaging::SendReliable(
     // Prevent self-receive if we hear our own message.
     message_cache_.Record(host_.node_address, seq);
 
-    reliability::MessageId id{host_.node_address, seq};
+    reliability::MessageId id{host_.node_address, seq, destination};
     reliability::Policy policy;
     policy.max_retries = max_retries;
     policy.collect_multiple = false;
@@ -420,8 +420,7 @@ reliability::MessageId ReliableMessaging::SendReliable(
 
     Result result = RunLocked([&]() {
         return reliable_.Track(
-            id, destination, std::span<const uint8_t>(data.data(), data.size()),
-            policy);
+            id, std::span<const uint8_t>(data.data(), data.size()), policy);
     });
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable message seq=%u: %s", seq,
@@ -464,7 +463,7 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
 
     message_cache_.Record(host_.node_address, seq);
 
-    reliability::MessageId id{host_.node_address, seq};
+    reliability::MessageId id{host_.node_address, seq, group};
     reliability::Policy policy;
     policy.timeout_ms = window_ms;
     policy.max_retries = max_retries;
@@ -474,13 +473,13 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     // A group destination makes each attempt a flooded group message with
     // the request-acks flag rather than a unicast.
     Result result = RunLocked([&]() {
-        Result tracked = reliable_.Track(id, group, data, policy);
+        Result tracked = reliable_.Track(id, data, policy);
         if (tracked.IsSuccess()) {
             // Register the acknowledgement-collection window.
             uint32_t deadline = host_.now_ms() + window_ms;
             for (auto& window : group_windows_) {
                 if (!window.valid) {
-                    window = {true, seq, deadline};
+                    window = {true, seq, group, deadline};
                     break;
                 }
             }
@@ -568,9 +567,18 @@ Result ReliableMessaging::ProcessAckMessage(const BaseMessage& message) {
         // Every acknowledgement carries a round-trip sample, even one that
         // arrives after the message was given up on.
         RecordRttSample(acker, ack->echo_timestamp);
-        reliability::MessageId id{host_.node_address, ack->acked_seq};
-        bool matched = RunLocked(
-            [&]() { return reliable_.OnAck(id, acker, ack->echo_timestamp); });
+        bool matched = RunLocked([&]() {
+            reliability::MessageId id{host_.node_address, ack->acked_seq,
+                                      acker};
+            if (ack->WasGroup()) {
+                const GroupWindow* window = FindGroupWindow(ack->acked_seq);
+                if (window == nullptr) {
+                    return false;
+                }
+                id.dest = window->group;
+            }
+            return reliable_.OnAck(id, acker, ack->echo_timestamp);
+        });
         LOG_DEBUG("ACK from 0x%04X for seq=%u matched=%d", acker,
                   ack->acked_seq, matched);
         return Result::Success();
@@ -591,12 +599,23 @@ void ReliableMessaging::ProcessReliableTimers() {
     });
 }
 
+ReliableMessaging::GroupWindow* ReliableMessaging::FindGroupWindow(
+    uint8_t seq) {
+    for (auto& window : group_windows_) {
+        if (window.valid && window.seq == seq) {
+            return &window;
+        }
+    }
+    return nullptr;
+}
+
 void ReliableMessaging::CloseExpiredGroupWindows() {
     uint32_t now = host_.now_ms();
     for (auto& window : group_windows_) {
         if (window.valid && utils::TimeReached(now, window.deadline_ms)) {
             window.valid = false;
-            reliable_.CloseGroup({host_.node_address, window.seq});
+            reliable_.CloseGroup(
+                {host_.node_address, window.seq, window.group});
         }
     }
 }

@@ -49,7 +49,7 @@ class ReliableMessagingConcurrencyTest : public ::testing::Test {
         host.forward_data_message = [](const DataMessage&) {
             return Result::Success();
         };
-        host.deliver_to_app = [](AddressType, uint8_t, uint8_t,
+        host.deliver_to_app = [](AddressType, uint8_t, AddressType, uint8_t,
                                  std::span<const uint8_t>) {
         };
         host.in_operational_state = []() {

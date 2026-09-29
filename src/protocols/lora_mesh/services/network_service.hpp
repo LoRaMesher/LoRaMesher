@@ -1398,9 +1398,10 @@ class NetworkService : public INetworkService {
     // Reliable delivery / group multicast subsystem
     DataReceivedExCallback data_received_ex_callback_;
 
-    /// Deliver a received payload to both the legacy and extended callbacks.
-    void DeliverToApp(AddressType source, uint8_t seq, uint8_t hops,
-                      std::span<const uint8_t> payload);
+    /// Deliver a received payload addressed to @p dest (this node, a group or
+    /// broadcast) to both the legacy and extended callbacks.
+    void DeliverToApp(AddressType source, uint8_t seq, AddressType dest,
+                      uint8_t hops, std::span<const uint8_t> payload);
 
     /// Estimate hops travelled from a message's remaining TTL.
     uint8_t HopsFromTtl(uint8_t remaining_ttl) const;

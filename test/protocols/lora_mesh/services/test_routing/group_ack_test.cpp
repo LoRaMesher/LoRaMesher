@@ -335,9 +335,8 @@ TEST_F(GroupAckTests, MessageIdsAreStableAndObservable) {
 
     ASSERT_GE(received_ids.size(), 2u);
     // The id observed at the receiver matches the id returned to the sender.
-    EXPECT_EQ(received_ids[0].source, id1.source);
-    EXPECT_EQ(received_ids[0].seq, id1.seq);
-    EXPECT_EQ(received_ids[1].seq, id2.seq);
+    EXPECT_EQ(received_ids[0], id1);
+    EXPECT_EQ(received_ids[1], id2);
     // Sequence numbers increase per source.
     EXPECT_NE(id1.seq, id2.seq);
 }

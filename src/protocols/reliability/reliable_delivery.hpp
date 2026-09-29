@@ -67,18 +67,23 @@ struct ReliablePrefix {
 
 /**
  * @brief Stable identifier for a tracked message.
+ *
+ * Sequence numbers are allocated per destination stream, so a message is
+ * identified by its source, sequence and destination together.
  */
 struct MessageId {
     AddressType source = 0;  ///< Originator of the message
-    uint8_t seq = 0;         ///< Per-source sequence number
+    uint8_t seq = 0;         ///< Sequence number within the destination stream
+    AddressType dest = 0;    ///< Unicast destination or group address
 
-    /// Pack source and sequence into a single comparable value.
-    uint32_t value() const {
-        return (static_cast<uint32_t>(source) << 8) | seq;
+    /// Pack source, destination and sequence into a single comparable value.
+    uint64_t value() const {
+        return (static_cast<uint64_t>(source) << 24) |
+               (static_cast<uint64_t>(dest) << 8) | seq;
     }
 
     bool operator==(const MessageId& other) const {
-        return source == other.source && seq == other.seq;
+        return source == other.source && seq == other.seq && dest == other.dest;
     }
 
     bool operator!=(const MessageId& other) const { return !(*this == other); }
@@ -104,8 +109,7 @@ using DeliveryCallback = std::function<void(const DeliveryResult&)>;
  * @brief One transmission attempt handed to the host.
  */
 struct AttemptRequest {
-    MessageId id;                      ///< Identifier of the tracked message
-    AddressType dest = 0;              ///< Unicast or group destination
+    MessageId id;  ///< Identifier of the tracked message, incl. destination
     std::span<const uint8_t> payload;  ///< Retained application payload
     bool first_attempt = true;         ///< No earlier attempt has been queued
 };
@@ -168,22 +172,21 @@ class ReliableDelivery {
     /**
      * @brief Begin tracking a message and perform attempt #1.
      *
-     * @param id Identifier the host placed on the wire
-     * @param dest Unicast destination, or group address for a group window
+     * @param id Identifier of the message; its dest is the unicast
+     *        destination, or the group address for a group window
      * @param payload Application payload (retained for retransmission)
      * @param policy Retransmission / acknowledgement policy
      * @return Result Success, or an error if the table is full, @p id is
      *         already pending, or the payload exceeds MaxReliablePayload()
      */
-    Result Track(MessageId id, AddressType dest,
-                 std::span<const uint8_t> payload, Policy policy);
+    Result Track(MessageId id, std::span<const uint8_t> payload, Policy policy);
 
     /**
      * @brief Process an acknowledgement.
      *
-     * @param acked Identifier being acknowledged
-     * @param by Acknowledging node; for a unicast entry it must be the
-     *        tracked destination
+     * @param acked Identifier being acknowledged; for a unicast message its
+     *        dest is the acknowledging node
+     * @param by Acknowledging node
      * @param echo_ts Send timestamp echoed by the acknowledgement, for RTT
      * @return bool true if it matched a tracked entry; false if unsolicited
      */
@@ -212,7 +215,6 @@ class ReliableDelivery {
     struct PendingEntry {
         bool valid = false;
         MessageId id{};
-        AddressType dest = 0;
         std::array<uint8_t, kMaxReliablePayload> payload{};
         uint8_t len = 0;
         Policy policy{};

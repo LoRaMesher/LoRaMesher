@@ -418,7 +418,7 @@ class NetworkStressTest : public RoutingTestFixture,
     void CollectOutcomes() {
         for (auto* node : topo_) {
             for (const auto& r : node->delivery_outcomes) {
-                uint32_t v = r.id.value();
+                uint64_t v = r.id.value();
                 if (reliable_ids_.count(v)) {
                     if (r.outcome == Outcome::Delivered) {
                         metrics_.reliable_delivered++;
@@ -605,8 +605,8 @@ class NetworkStressTest : public RoutingTestFixture,
     StressMetrics metrics_;
     std::vector<TestNode*> topo_;
     std::vector<std::vector<int>> neighbours_;  // topology adjacency by index
-    std::set<uint32_t> reliable_ids_;
-    std::set<uint32_t> group_ids_;
+    std::set<uint64_t> reliable_ids_;
+    std::set<uint64_t> group_ids_;
     int num_clusters_ = 0;
     int nm_index_ = 0;
     uint32_t global_seq_ = 0;

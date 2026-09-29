@@ -88,9 +88,9 @@ NetworkService::NetworkService(
         return ForwardDataMessage(msg);
     };
     reliable_host.deliver_to_app = [this](AddressType src, uint8_t seq,
-                                          uint8_t ttl,
+                                          AddressType dest, uint8_t ttl,
                                           std::span<const uint8_t> payload) {
-        DeliverToApp(src, seq, HopsFromTtl(ttl), payload);
+        DeliverToApp(src, seq, dest, HopsFromTtl(ttl), payload);
     };
     reliable_host.in_operational_state = [this]() {
         return state_ == ProtocolState::NORMAL_OPERATION ||
@@ -1866,7 +1866,8 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
             "payload_size=%zu",
             original_src, final_dest, message_seq, payload.size());
 
-        DeliverToApp(original_src, message_seq, HopsFromTtl(ttl), payload);
+        DeliverToApp(original_src, message_seq, node_address_, HopsFromTtl(ttl),
+                     payload);
         return Result::Success();
     }
 
@@ -2051,14 +2052,15 @@ uint8_t NetworkService::HopsFromTtl(uint8_t remaining_ttl) const {
     return 1;
 }
 
-void NetworkService::DeliverToApp(AddressType source, uint8_t seq, uint8_t hops,
+void NetworkService::DeliverToApp(AddressType source, uint8_t seq,
+                                  AddressType dest, uint8_t hops,
                                   std::span<const uint8_t> payload) {
     std::vector<uint8_t> data(payload.begin(), payload.end());
     if (data_received_callback_) {
         data_received_callback_(source, data);
     }
     if (data_received_ex_callback_) {
-        data_received_ex_callback_(source, {source, seq}, hops, data);
+        data_received_ex_callback_(source, {source, seq, dest}, hops, data);
     }
 }
 
@@ -2132,7 +2134,8 @@ Result NetworkService::ProcessBroadcastMessage(
     LOG_INFO("BROADCAST from 0x%04X (ttl=%u, seq=%u), payload_size=%zu", source,
              ttl, seq_num, bcast.GetPayload().size());
 
-    DeliverToApp(source, seq_num, HopsFromTtl(ttl), bcast.GetPayload());
+    DeliverToApp(source, seq_num, kBroadcastAddress, HopsFromTtl(ttl),
+                 bcast.GetPayload());
 
     // Forward if TTL allows
     if (ttl > 1) {

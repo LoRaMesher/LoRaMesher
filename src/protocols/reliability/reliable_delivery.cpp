@@ -53,8 +53,7 @@ bool ReliableDelivery::RecordResponder(PendingEntry& entry, AddressType by) {
     return true;
 }
 
-Result ReliableDelivery::Track(MessageId id, AddressType dest,
-                               std::span<const uint8_t> payload,
+Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
                                Policy policy) {
     if (payload.size() > kMaxReliablePayload) {
         return Result(LoraMesherErrorCode::kBufferOverflow,
@@ -76,7 +75,6 @@ Result ReliableDelivery::Track(MessageId id, AddressType dest,
 
     entry->valid = true;
     entry->id = id;
-    entry->dest = dest;
     entry->len = static_cast<uint8_t>(payload.size());
     std::copy(payload.begin(), payload.end(), entry->payload.begin());
     entry->policy = policy;
@@ -96,8 +94,7 @@ Result ReliableDelivery::Track(MessageId id, AddressType dest,
 void ReliableDelivery::Attempt(PendingEntry& entry, uint32_t now,
                                bool is_retry) {
     AttemptRequest request{
-        entry.id, entry.dest,
-        std::span<const uint8_t>(entry.payload.data(), entry.len),
+        entry.id, std::span<const uint8_t>(entry.payload.data(), entry.len),
         !entry.attempted};
     Result sent =
         host_.send_attempt ? host_.send_attempt(request) : Result::Success();
@@ -146,7 +143,7 @@ bool ReliableDelivery::OnAck(MessageId acked, AddressType by,
         return false;
     }
 
-    if (!entry->policy.collect_multiple && by != entry->dest) {
+    if (!entry->policy.collect_multiple && by != entry->id.dest) {
         return false;
     }
 

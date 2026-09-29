@@ -64,10 +64,11 @@ class ReliableMessaging {
         std::function<AddressType(AddressType)> find_next_hop;
         /// Forward an ACK DataMessage toward its destination.
         std::function<Result(const DataMessage&)> forward_data_message;
-        /// Deliver a received payload to the app. The component passes the
-        /// message's remaining TTL; the coordinator converts it to a hop count.
-        std::function<void(AddressType src, uint8_t seq, uint8_t ttl,
-                           std::span<const uint8_t> payload)>
+        /// Deliver a received payload addressed to @p dest (this node or a
+        /// group) to the app. The component passes the message's remaining
+        /// TTL; the coordinator converts it to a hop count.
+        std::function<void(AddressType src, uint8_t seq, AddressType dest,
+                           uint8_t ttl, std::span<const uint8_t> payload)>
             deliver_to_app;
         /// True when the protocol is in NORMAL_OPERATION or NETWORK_MANAGER.
         std::function<bool()> in_operational_state;
@@ -191,8 +192,12 @@ class ReliableMessaging {
     struct GroupWindow {
         bool valid = false;
         uint8_t seq = 0;
+        AddressType group = 0;
         uint32_t deadline_ms = 0;
     };
+
+    /// Open window of a reliable group send with sequence @p seq, or null.
+    GroupWindow* FindGroupWindow(uint8_t seq);
 
     std::array<GroupWindow, reliability::ReliableDelivery::kMaxPending>
         group_windows_{};

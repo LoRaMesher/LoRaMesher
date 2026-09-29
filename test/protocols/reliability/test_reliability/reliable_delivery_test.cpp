@@ -40,7 +40,7 @@ class ReliableDeliveryTest : public ::testing::Test {
             sent_.push_back({request.id,
                              std::vector<uint8_t>(request.payload.begin(),
                                                   request.payload.end()),
-                             request.dest, request.first_attempt});
+                             request.id.dest, request.first_attempt});
             return Result::Success();
         };
         delivery_ = std::make_unique<ReliableDelivery>(
@@ -48,12 +48,14 @@ class ReliableDeliveryTest : public ::testing::Test {
             [this](const DeliveryResult& r) { results_.push_back(r); });
     }
 
-    MessageId Id(AddressType src, uint8_t seq) const { return {src, seq}; }
+    /// Identifier of a message from @p src addressed to kDest.
+    MessageId Id(AddressType src, uint8_t seq) const {
+        return {src, seq, kDest};
+    }
 
-    /// Track a message addressed to kDest.
     Result Track(MessageId id, std::span<const uint8_t> payload,
                  Policy policy) {
-        return delivery_->Track(id, kDest, payload, policy);
+        return delivery_->Track(id, payload, policy);
     }
 
     static constexpr AddressType kDest = 0x20;
@@ -250,6 +252,19 @@ TEST_F(ReliableDeliveryTest, BackoffDoublesTimeoutUpToMax) {
     delivery_->Tick();
     ASSERT_EQ(results_.size(), 1u);
     EXPECT_EQ(results_[0].outcome, Outcome::Failed);
+}
+
+TEST_F(ReliableDeliveryTest,
+       SameSeqToDifferentDestinationsIsTrackedSeparately) {
+    constexpr AddressType kOther = kDest + 1;
+    ASSERT_TRUE(Track({0x10, 5, kDest}, Bytes({1}), {1000, 3, false}));
+    ASSERT_TRUE(Track({0x10, 5, kOther}, Bytes({2}), {1000, 3, false}));
+    EXPECT_EQ(delivery_->PendingCount(), 2u);
+
+    EXPECT_TRUE(delivery_->OnAck({0x10, 5, kOther}, kOther, 0));
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].id.dest, kOther);
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
 }
 
 TEST_F(ReliableDeliveryTest, UnicastAckFromAnotherNodeIsIgnored) {
