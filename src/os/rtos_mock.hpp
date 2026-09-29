@@ -31,6 +31,7 @@
 #include <cstring>
 #include <functional>
 #include <future>
+#include <list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -397,6 +398,7 @@ class RTOSMock : public RTOS {
         // Store task information
         {
             std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+            ReapDetachedTasksLocked();
 
             // Initialize the TaskInfo directly in the map to avoid copy assignment
             auto& task_info = tasks_[thread];
@@ -445,6 +447,7 @@ class RTOSMock : public RTOS {
         std::thread::id thread_id;
         std::string task_name = "unknown";
         bool was_suspended = false;
+        bool detached = false;
         TaskInfo* task_info = nullptr;
 
         // Get thread information
@@ -527,10 +530,9 @@ class RTOSMock : public RTOS {
             // Give the task a moment to exit gracefully
             std::this_thread::yield();
 
-            // Wait for thread to finish with a reasonable timeout.
-            // Must be > waitFor's 1000ms wall-clock wait_until to avoid
-            // detaching a thread that is still blocked inside ReceiveFromQueue
-            // (missed-notification race) and then freeing the queue under it.
+            // Wait for the thread to finish. A task that does not honour the
+            // stop request in time is detached; its state is kept until it
+            // exits.
             if (thread->joinable()) {
                 auto status = task_info->exit_future.wait_for(
                     std::chrono::milliseconds(2000));
@@ -542,6 +544,7 @@ class RTOSMock : public RTOS {
                         task_name.c_str());
                     if (thread->joinable()) {
                         thread->detach();
+                        detached = true;
                     }
                 }
             }
@@ -550,11 +553,26 @@ class RTOSMock : public RTOS {
         // Clean up resources
         {
             std::lock_guard<std::timed_mutex> lock(tasksMutex_);
-            tasks_.erase(thread);
+            auto node = tasks_.extract(thread);
+            if (detached && !node.empty()) {
+                detached_tasks_.push_back(std::move(node));
+            }
+            ReapDetachedTasksLocked();
         }
 
         delete thread;
         LOG_DEBUG("MOCK: Task '%s' deleted", task_name.c_str());
+    }
+
+    /**
+     * @brief Release the state of detached tasks whose thread has exited;
+     * caller holds tasksMutex_
+     */
+    void ReapDetachedTasksLocked() {
+        detached_tasks_.remove_if([](const auto& node) {
+            return node.mapped().exit_future.wait_for(
+                       std::chrono::seconds(0)) == std::future_status::ready;
+        });
     }
 
     /**
@@ -978,6 +996,7 @@ class RTOSMock : public RTOS {
     QueueResult SendToQueue(QueueHandle_t queue, const void* item,
                             uint32_t timeout) override {
         auto* q = static_cast<QueueData*>(queue);
+        TaskInfo* task_info = GetThreadLocalTaskInfo();
         std::unique_lock<std::mutex> lock(q->mutex);
 
         if (q->data.size() >= q->maxSize) {
@@ -987,12 +1006,35 @@ class RTOSMock : public RTOS {
 
                 return QueueResult::kFull;
             }
+            if (task_info != nullptr &&
+                task_info->stop_requested.load(std::memory_order_acquire)) {
+                return QueueResult::kError;
+            }
 
-            // Use our waitFor helper that respects virtual time
+            // A task blocked on a full queue is busy as soon as room appears.
+            if (task_info != nullptr) {
+                registerQueueCV(&q->notFull, task_info);
+                task_info->waiting_send_queue_.store(q,
+                                                     std::memory_order_release);
+            }
             bool success = waitFor(
                 q->notFull, lock, timeout,
-                [q]() { return q->data.size() < q->maxSize; },
+                [q, task_info]() {
+                    return q->data.size() < q->maxSize ||
+                           (task_info != nullptr &&
+                            task_info->stop_requested.load(
+                                std::memory_order_acquire));
+                },
                 WaitKind::kQueue);
+            if (task_info != nullptr) {
+                task_info->waiting_send_queue_.store(nullptr,
+                                                     std::memory_order_release);
+                unregisterQueueCV(&q->notFull, task_info);
+                if (q->data.size() >= q->maxSize &&
+                    task_info->stop_requested.load(std::memory_order_acquire)) {
+                    return QueueResult::kError;
+                }
+            }
 
             if (!success) {
                 std::cout << "MOCK: Queue send timeout" << std::endl;
@@ -2251,6 +2293,13 @@ class RTOSMock : public RTOS {
         return task_info->stop_requested.load(std::memory_order_acquire);
     }
 
+    static bool WaitingSendQueueHasRoom(const TaskInfo& task_info) {
+        const QueueData* q =
+            task_info.waiting_send_queue_.load(std::memory_order_acquire);
+        return q != nullptr &&
+               q->size.load(std::memory_order_acquire) < q->maxSize;
+    }
+
     static uint32_t WaitingQueueSize(const TaskInfo& task_info) {
         const QueueData* q =
             task_info.waiting_queue_.load(std::memory_order_acquire);
@@ -2417,7 +2466,7 @@ class RTOSMock : public RTOS {
             info.notification_pending.load(std::memory_order_acquire)) {
             return false;
         }
-        if (WaitingQueueSize(info) > 0) {
+        if (WaitingQueueSize(info) > 0 || WaitingSendQueueHasRoom(info)) {
             return false;
         }
         if (suspended) {
@@ -2550,6 +2599,8 @@ class RTOSMock : public RTOS {
             0};  // mirrors waiting_on_queue_cvs.size()
         std::atomic<QueueData*> waiting_queue_{
             nullptr};  // queue this task is blocked on in ReceiveFromQueue
+        std::atomic<QueueData*> waiting_send_queue_{
+            nullptr};  // full queue this task is blocked on in SendToQueue
 
         // Stable ordering key for tasks woken at the same virtual instant
         std::string order_key;
@@ -2582,6 +2633,9 @@ class RTOSMock : public RTOS {
     std::vector<TimerCallback> timerCallbacks_;  ///< Timer callbacks
 
     std::map<std::thread*, TaskInfo> tasks_;
+    /// Tasks DeleteTask gave up waiting for; their state is kept until the
+    /// thread exits. Guarded by tasksMutex_.
+    std::list<std::map<std::thread*, TaskInfo>::node_type> detached_tasks_;
     mutable std::timed_mutex tasksMutex_;
     /// Tasks created per (creator node address, task name) since the last
     /// switch to virtual time; guarded by tasksMutex_
