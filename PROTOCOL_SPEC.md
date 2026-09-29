@@ -624,7 +624,7 @@ User payload: up to 251 bytes
 **Broadcast Behavior**:
 - Each receiving node delivers to the application layer AND re-broadcasts with TTL-1
 - De-duplication: 32-entry circular cache keyed on `(source, seq_num)` prevents duplicate delivery
-- A single per-node sequence counter is shared by `SendData()` and `SendBroadcast()`
+- A single per-node sequence counter numbers every link-layer packet a node originates (DATA, DATA_BROADCAST, DATA_GROUP and each DATA_RELIABLE attempt)
 - Messages with TTL ≤ 1 are delivered but not forwarded
 
 **Loop Prevention** (applies to both DATA and DATA_BROADCAST):
@@ -644,7 +644,8 @@ DataHeader Extension (4 bytes): next_hop, ttl, seq_num (as DATA)
   seq_num is the link-layer sequence of this transmission attempt
 
 Reliable framing prefix (5 bytes):
-  msg_seq         (1 byte)  - Stable message sequence, identical in every attempt
+  msg_seq         (1 byte)  - Message sequence in the sender's stream to this
+                              destination, identical in every attempt
   send_timestamp  (4 bytes) - Send time of this attempt, echoed in the ACK for RTT
 
 User payload: up to 246 bytes (255 - 4 extension - 5 prefix)
@@ -666,7 +667,7 @@ Extension (5 bytes):
 
 User payload: up to 250 bytes (255 - 5 extension); when request_acks is set,
 the payload begins with the same 5-byte reliable prefix as DATA_RELIABLE
-(`msg_seq` equals `seq_num`; group sends are not retransmitted).
+(`msg_seq` from the sender's group stream; `seq_num` is new in every attempt).
 ```
 
 **ACK Message Wire Format** (DataHeader + 6-byte ACK payload):
@@ -687,16 +688,19 @@ ACK payload (6 bytes):
 
 **Reliable Delivery Behavior** (DATA_RELIABLE):
 - The sender tracks the message and retransmits up to `max_retries` times until an ACK arrives.
-- Every attempt is a distinct link-layer packet: the first carries `seq_num = msg_seq`, each retransmission draws a new `seq_num`. Relays de-duplicate on `(source, seq_num)`, so they forward every attempt; a relay records a packet as seen only after queuing its forward.
-- The final destination auto-generates an ACK (`acked_seq = msg_seq`) on every reception, so a retransmit after a lost ACK is still acknowledged, and delivers to the application once per `(source, msg_seq)`.
-- An attempt that cannot be queued locally does not consume a retry; it is re-tried one superframe later.
+- **Sequence streams:** `msg_seq` is allocated from a per-destination counter (and one counter shared by all acknowledged group sends), starting at a random value. A message is identified by `(source, msg_seq, destination)`. A new message is refused while an unacknowledged message of the same stream is 32 or more sequences older, so every retransmission stays inside the receiver window.
+- Every attempt is a distinct link-layer packet with a new `seq_num`. Relays de-duplicate on `(source, seq_num)`, so they forward every attempt; a relay records a packet as seen only after queuing its forward.
+- The final destination auto-generates an ACK (`acked_seq = msg_seq`) on every reception, so a retransmit after a lost ACK is still acknowledged, and delivers to the application once per message.
+- **Delivery de-duplication:** the destination keeps, per `(source, stream)`, the highest `msg_seq` seen and a 32-sequence bitmap before it. A sequence ahead of the highest is new; one inside the window is new unless already seen; one 32 or more behind, or a `send_timestamp` that went back by more than the maximum retransmission timeout (sender restart), restarts the stream. Up to 32 streams are kept, least recently used replaced. Best-effort DATA stays de-duplicated on `(source, seq_num)`.
+- An attempt that cannot be queued locally does not consume a retry; it is re-tried one superframe later, and the message fails after 8 consecutive attempts that could not be queued.
 - **Retransmission timeout:** each ACK yields a round-trip sample (`now − echo_timestamp`) for the acknowledging node, including ACKs that arrive after the message was given up on. Samples update a per-destination estimate (RFC 6298: `SRTT ← 7/8·SRTT + 1/8·R`, `RTTVAR ← 3/4·RTTVAR + 1/4·|SRTT − R|`; first sample `SRTT = R`, `RTTVAR = R/2`) stored on the destination's routing entry and cleared when the route's next hop or hop count changes. The timeout is `SRTT + 4·RTTVAR`, or `(2 × hop_count + 1) × superframe` before the first sample, clamped to `[500 ms, max_hops × 4 × superframe]`, and doubles on each retransmission up to that bound. A caller-supplied timeout override is used unchanged for every attempt.
 - The sender reports a per-message outcome (delivered with RTT, or failed after exhausting retries).
-- ACKs are unicast back to the source over the normal routing table and are not entered into the data de-duplication cache.
+- ACKs are unicast back to the source over the normal routing table and are not entered into the data de-duplication cache. The source matches a unicast ACK on `(acker, acked_seq)` and a group ACK (`was_group=1`) on the open group window with that sequence.
 
 **Group Delivery Behavior** (DATA_GROUP):
 - Flooded like DATA_BROADCAST but carries a group address; every node relays (subject to TTL), and a node delivers to the application only if it is a member of the group.
-- With `request_acks`, each delivering member unicasts an ACK (`was_group=1`) back to the source; the source reports each distinct responder and a window-closed outcome with the responder count.
+- With `request_acks`, each member unicasts an ACK (`was_group=1`) back to the source for every copy it receives and delivers the message once (delivery de-duplication on the group stream); the source reports each distinct responder and a window-closed outcome with the responder count.
+- With `max_retries = R`, the source re-floods the message R times, attempts spread evenly over the ACK window and at least one superframe apart. Retries do not stop early (the member set is unknown), so a reliable group send costs R+1 floods plus up to (R+1) ACKs per member.
 
 ### 3.3 Message Serialization
 

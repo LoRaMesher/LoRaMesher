@@ -516,6 +516,8 @@ Version 2.0.0 changes the on-air format, so **all nodes of a network must run th
 - TDMA data slots are assigned by control-slot index, so the schedule differs from 1.x.
 - Reliable data and reliable group payloads carry a 5-byte prefix (message sequence + timestamp) instead of 4 bytes; the maximum reliable application payload is 1 byte smaller.
 - `default_data_slots` now defaults to 2 and `max_data_slots` to 100; `default_data_slots` must be the same on every node.
+- Reliable message sequences are allocated per destination, so a `MessageId` is identified by source, sequence **and** destination (`MessageId::dest`); `MessageId::value()` is now 64-bit.
+- `GroupSendOptions::max_retries` re-floods an acknowledged group send within its ACK window; members still deliver it once.
 
 See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) for the wire formats.
 
