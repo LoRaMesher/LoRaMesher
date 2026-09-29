@@ -201,17 +201,17 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param data_slots Number of data slots in the superframe
      * @param joining_timeout_ms Timeout for joining the network in milliseconds
      * @param max_network_nodes Maximum number of nodes in the network
-     * @param max_data_slots Maximum total data slots allocatable in the superframe
      * @param guard_time_ms TX guard time for RX readiness in milliseconds
      * @param wake_up_guard_ms Guard time before slot boundary for MCU wake-up in ms
+     * @param max_data_slots Maximum total data slots allocatable in the superframe
      */
     explicit LoRaMeshProtocolConfig(
         AddressType node_address = 0, uint32_t hello_interval = 60000,
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
         uint8_t max_packet_size = 255, uint8_t default_data_slots = 2,
         uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50,
-        uint8_t max_data_slots = 100, uint32_t guard_time_ms = 50,
-        uint32_t wake_up_guard_ms = 100)
+        uint32_t guard_time_ms = 50, uint32_t wake_up_guard_ms = 100,
+        uint8_t max_data_slots = 100)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),

@@ -140,6 +140,18 @@ TEST_F(LoRaMeshConfigTest, GettersSetters) {
     EXPECT_EQ(config_.getGuardTime(), 100u);
 }
 
+TEST_F(LoRaMeshConfigTest, PositionalArgumentsKeepTheirMeaning) {
+    // Every positional argument keeps the meaning it had before max_data_slots
+    // existed; max_data_slots is appended last.
+    LoRaMeshProtocolConfig config(0x1234, 60000, 180000, 5, 255, 1, 30000, 50,
+                                  /*guard_time_ms=*/75,
+                                  /*wake_up_guard_ms=*/120,
+                                  /*max_data_slots=*/40);
+    EXPECT_EQ(config.getGuardTime(), 75u);
+    EXPECT_EQ(config.getWakeUpGuardTime(), 120u);
+    EXPECT_EQ(config.getMaxDataSlots(), 40u);
+}
+
 TEST_F(LoRaMeshConfigTest, IsValidTrue) {
     EXPECT_TRUE(config_.IsValid());
     EXPECT_EQ(config_.Validate(), "");
