@@ -683,16 +683,21 @@ class RTOSMock : public RTOS {
             return true;
         }
 
+        // A task blocked in a virtual-time wait acknowledges at its next
+        // ShouldStopOrPause(), after that wait ends; waiting for it here would
+        // stall on a clock this thread may be the one to advance.
+        if (HasIdleWait(task_info)) {
+            return true;
+        }
+
         // Wait for the task to acknowledge it's suspended
         // This happens when the task calls ShouldStopOrPause()
         bool acknowledged;
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-
-            // Wait with a reasonable timeout (500ms)
-            // Use our waitFor helper that respects virtual time
-            acknowledged =
-                waitFor(task_info->suspend_ack_cv, lock, 10, [task_info]() {
+            acknowledged = task_info->suspend_ack_cv.wait_for(
+                lock, std::chrono::milliseconds(kSuspendAckTimeoutMs),
+                [task_info]() {
                     return task_info->suspension_acknowledged ||
                            task_info->stop_requested.load(
                                std::memory_order_relaxed);
@@ -799,21 +804,21 @@ class RTOSMock : public RTOS {
         //     "MOCK: Task '%s' resume signal sent to all condition variables",
         //     task_name.c_str());
 
-        // Wait for task to acknowledge the resume
-        // We only wait if this isn't a self-resume
-        if (taskHandle && static_cast<std::thread*>(taskHandle)->get_id() !=
-                              std::this_thread::get_id()) {
+        // Wait for task to acknowledge the resume. We only wait if this isn't
+        // a self-resume, and not for a task blocked in a virtual-time wait:
+        // it acknowledges only after that wait ends.
+        if (taskHandle &&
+            static_cast<std::thread*>(taskHandle)->get_id() !=
+                std::this_thread::get_id() &&
+            !HasIdleWait(task_info)) {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-
-            // Use our waitFor helper that respects virtual time
-            // IMPORTANT: Increased timeout and better predicate
-            bool acknowledged =
-                waitFor(task_info->resume_ack_cv, lock,
-                        1000 /* 1 second timeout */, [task_info]() {
-                            return task_info->resume_acknowledged ||
-                                   task_info->stop_requested.load(
-                                       std::memory_order_relaxed);
-                        });
+            bool acknowledged = task_info->resume_ack_cv.wait_for(
+                lock, std::chrono::milliseconds(kResumeAckTimeoutMs),
+                [task_info]() {
+                    return task_info->resume_acknowledged ||
+                           task_info->stop_requested.load(
+                               std::memory_order_relaxed);
+                });
 
             if (!acknowledged) {
                 // LOG_DEBUG(
@@ -2293,6 +2298,21 @@ class RTOSMock : public RTOS {
         return task_info->stop_requested.load(std::memory_order_acquire);
     }
 
+    /**
+     * @brief Whether @p info is blocked in a registered delay, notification
+     * or queue wait
+     */
+    bool HasIdleWait(const TaskInfo* info) {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        for (const auto& [id, waiter] : waiters_) {
+            if (waiter.owner == info && waiter.kind != WaitKind::kOther &&
+                waiter.kind != WaitKind::kPark) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static bool WaitingSendQueueHasRoom(const TaskInfo& task_info) {
         const QueueData* q =
             task_info.waiting_send_queue_.load(std::memory_order_acquire);
@@ -2657,6 +2677,10 @@ class RTOSMock : public RTOS {
 
     /// Real-time poll interval of virtual-time waits
     static constexpr uint32_t kWaitPollMs = 20;
+    /// Real-time bound on waiting for a task to acknowledge a suspension
+    static constexpr uint32_t kSuspendAckTimeoutMs = 100;
+    /// Real-time bound on waiting for a task to acknowledge a resume
+    static constexpr uint32_t kResumeAckTimeoutMs = 500;
 };
 
 }  // namespace os

@@ -385,6 +385,91 @@ TEST_F(RTOSMockTimeTest, BlockedSenderIsBusyOnceQueueHasRoom) {
     rtosMock_->resetReblockTimeoutCount();
 }
 
+namespace {
+
+/// Task body that checks for suspension and then sleeps in virtual time.
+void SleepyTask(void* param) {
+    auto* started = static_cast<std::atomic<bool>*>(param);
+    started->store(true);
+    while (true) {
+        GetRTOS().ShouldStopOrPause();
+        GetRTOS().delay(1000);
+    }
+}
+
+}  // namespace
+
+/**
+ * @brief The test thread can suspend a task that is sleeping in virtual time
+ * without advancing the clock
+ */
+TEST_F(RTOSMockTimeTest, SuspendSleepingTaskFromTestThreadReturns) {
+    std::atomic<bool> started{false};
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(
+        rtos_->CreateTask(SleepyTask, "Sleepy", 2048, &started, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !started; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    std::atomic<bool> returned{false};
+    std::thread suspender([&]() {
+        rtos_->SuspendTask(task);
+        returned = true;
+    });
+    for (int i = 0; i < 400 && !returned; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_TRUE(returned) << "SuspendTask waited on a clock nobody advances";
+    for (int i = 0; i < 100 && !returned; ++i) {
+        rtosMock_->advanceTime(20);
+    }
+    suspender.join();
+    rtos_->ResumeTask(task);
+}
+
+/**
+ * @brief A task suspending a sleeping task does not stall virtual time
+ */
+TEST_F(RTOSMockTimeTest, SuspendFromTaskDoesNotStallVirtualTime) {
+    std::atomic<bool> started{false};
+    os::TaskHandle_t sleepy = nullptr;
+    ASSERT_TRUE(
+        rtos_->CreateTask(SleepyTask, "Sleepy", 2048, &started, 1, &sleepy));
+    taskHandles_.push_back(sleepy);
+
+    struct Param {
+        os::TaskHandle_t target;
+        std::atomic<bool> started{false};
+    } param{sleepy};
+
+    auto suspender_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        param->started = true;
+        GetRTOS().delay(10);
+        GetRTOS().SuspendTask(param->target);
+        GetRTOS().WaitForNotify(UINT32_MAX);
+    };
+    os::TaskHandle_t suspender = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(suspender_fn, "Suspender", 2048, &param, 1,
+                                  &suspender));
+    taskHandles_.push_back(suspender);
+
+    for (int i = 0; i < 100 && !(started && param.started); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    rtosMock_->advanceTime(50);
+
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 0u);
+    rtosMock_->resetReblockTimeoutCount();
+    rtos_->ResumeTask(sleepy);
+}
+
 /**
  * @brief A task that does not block again after waking is counted as a
  * reblock timeout
