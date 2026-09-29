@@ -521,7 +521,10 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     }
 
     reliability::Policy policy;
-    policy.timeout_ms = window_ms;
+    // Attempts are spread evenly over the window, at most one per superframe.
+    policy.timeout_ms =
+        std::max(window_ms / (static_cast<uint32_t>(max_retries) + 1),
+                 SuperframeOrDefault());
     policy.max_retries = max_retries;
     policy.collect_multiple = true;
     policy.requeue_delay_ms = SuperframeOrDefault();

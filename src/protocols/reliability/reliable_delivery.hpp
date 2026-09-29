@@ -131,7 +131,8 @@ struct Policy {
     uint32_t timeout_ms = 0;        ///< Time between attempts
     uint8_t max_retries = 3;        ///< Retransmissions after the first attempt
     bool collect_multiple = false;  ///< true: group window (one Delivered per
-                                    ///< distinct responder, no erase on ACK)
+                                    ///< distinct responder, no erase on ACK,
+                                    ///< never Failed; closed by the owner)
     uint32_t requeue_delay_ms = 0;  ///< Delay before re-trying an attempt the
                                     ///< host could not queue (0 = timeout_ms)
     uint8_t max_consecutive_requeues = 8;  ///< Consecutive rejected attempts

@@ -301,6 +301,67 @@ TEST_F(GroupAckTests, ReliableGroupReportsEachResponder) {
     EXPECT_EQ(Net(*nodes[0])->GetReliablePendingCount(), 0u);
 }
 
+// A member that missed the first flood receives a retransmission; every
+// member delivers the message once and is counted once.
+TEST_F(GroupAckTests, ReliableGroupRetransmitsToMemberThatMissedFirstFlood) {
+    constexpr AddressType kGroup = 0x8001;
+    auto nodes = GenerateStarTopology(4, /*central=*/0, 0x1000, "Node",
+                                      /*manager_index=*/0);
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 3))
+        << "Network formation failed";
+    ASSERT_TRUE(WaitForRoutingStabilization(nodes)) << "Routing unstable";
+
+    for (int i = 1; i <= 3; ++i) {
+        ASSERT_TRUE(Net(*nodes[i])->JoinGroup(kGroup));
+    }
+
+    ClearAllReceivedMessages();
+    nodes[0]->delivery_outcomes.clear();
+    SetDirectionalLinkLoss(*nodes[0], *nodes[3], 1.0f);
+
+    auto superframe = GetSuperframeDuration(*nodes.front());
+    std::vector<uint8_t> payload = {0x66};
+    auto id = Net(*nodes[0])->SendGroupReliable(
+        kGroup, std::span<const uint8_t>(payload.data(), payload.size()),
+        /*max_retries=*/2, /*window_ms=*/superframe * 12);
+    ASSERT_EQ(id.source, nodes[0]->address);
+
+    // The first flood has gone out once a reachable member received it.
+    ASSERT_TRUE(AdvanceTime(superframe * 4, superframe * 4, 50u, 0, [&]() {
+        return HasReceivedMessageFrom(*nodes[1], nodes[0]->address,
+                                      MessageType::DATA);
+    }));
+    EXPECT_FALSE(HasReceivedMessageFrom(*nodes[3], nodes[0]->address,
+                                        MessageType::DATA));
+    SetDirectionalLinkLoss(*nodes[0], *nodes[3], 0.0f);
+
+    ASSERT_TRUE(AdvanceTime(superframe * 16, superframe * 16, 50u, 0, [&]() {
+        return CountOutcomes(*nodes[0], Outcome::GroupWindowClosed) > 0;
+    })) << "Group acknowledgement window did not close";
+
+    std::set<AddressType> responders;
+    uint8_t closed_count = 0;
+    for (const auto& r : nodes[0]->delivery_outcomes) {
+        if (r.outcome == Outcome::Delivered) {
+            responders.insert(r.by);
+        } else if (r.outcome == Outcome::GroupWindowClosed) {
+            closed_count = r.ack_count;
+        }
+    }
+    EXPECT_EQ(responders.size(), 3u);
+    EXPECT_TRUE(responders.count(nodes[3]->address));
+    EXPECT_EQ(closed_count, 3u);
+    for (int i = 1; i <= 3; ++i) {
+        EXPECT_EQ(CountReceivedMessages(*nodes[i], nodes[0]->address,
+                                        MessageType::DATA),
+                  1u)
+            << nodes[i]->name << " must deliver the message once";
+    }
+}
+
 // Scenario 7 — message ids are stable and observable at the receiver, and
 // sequence numbers increase per source.
 TEST_F(GroupAckTests, MessageIdsAreStableAndObservable) {

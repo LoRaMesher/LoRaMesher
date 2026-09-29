@@ -172,12 +172,6 @@ void ReliableDelivery::Tick() {
         if (!entry.valid || !utils::TimeReached(now, entry.next_deadline_ms)) {
             continue;
         }
-        // Group windows are closed by their owner, not by retry timers; only
-        // an attempt that could not be queued is repeated.
-        if (entry.policy.collect_multiple && !entry.requeue) {
-            continue;
-        }
-
         if (entry.requeue) {
             // The previous attempt never left the node; repeating it does not
             // spend the retry budget.
@@ -185,9 +179,11 @@ void ReliableDelivery::Tick() {
         } else if (entry.retries_left > 0) {
             entry.retries_left--;
             Attempt(entry, now, /*is_retry=*/true);
-        } else {
+        } else if (!entry.policy.collect_multiple) {
             Finish(entry, Outcome::Failed);
         }
+        // A group window with no retries left stays open until its owner
+        // closes it.
     }
 }
 

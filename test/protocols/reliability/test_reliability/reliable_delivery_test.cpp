@@ -171,6 +171,24 @@ TEST_F(ReliableDeliveryTest, CollectMultipleNotFailedByTick) {
     EXPECT_EQ(delivery_->PendingCount(), 1u);
 }
 
+TEST_F(ReliableDeliveryTest, CollectMultipleRetransmitsUntilRetriesExhausted) {
+    ASSERT_TRUE(
+        Track(Id(0x10, 2), Bytes({1}), {1000, 2, /*collect_multiple=*/true}));
+
+    clock_ms_ = 1000;
+    delivery_->Tick();
+    clock_ms_ = 2000;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 3u);
+
+    // Retries exhausted: the window stays open until it is closed.
+    clock_ms_ = 5000;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 3u);
+    EXPECT_TRUE(results_.empty());
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
+}
+
 TEST_F(ReliableDeliveryTest, CloseGroupReportsWindowClosed) {
     Track(Id(0x10, 2), Bytes({1}), {5000, 0, true});
     delivery_->OnAck(Id(0x10, 2), 0x21, 0);
