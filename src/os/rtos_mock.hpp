@@ -1171,31 +1171,28 @@ class RTOSMock : public RTOS {
         }
 
         // Virtual time mode continues below
-        uint64_t wakeTimeMs;
+        if (ms == 0) {
+            return;
+        }
 
         // Register this task as waiting until the wake time
-        wakeTimeMs = virtualTimeMsAtomic_.load(std::memory_order_acquire) + ms;
+        const uint64_t wakeTimeMs =
+            virtualTimeMsAtomic_.load(std::memory_order_acquire) + ms;
+        bool fired = false;
         uint64_t wait_id =
             registerWait(&task_info->delay_cv, &task_info->mutex, wakeTimeMs,
-                         WaitKind::kDelay, task_info);
+                         WaitKind::kDelay, task_info, &fired);
 
-        // Wait until either:
-        // 1. The virtual time advances beyond our wake time
-        // 2. We are explicitly woken up by advanceTime
-        // 3. Stop or delay interruption is requested
+        // Wait until advanceTime fires this wait, or stop or delay
+        // interruption is requested
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-            task_info->delay_cv.wait(lock, [this, wakeTimeMs, task_info]() {
-                // Check stop/interruption flags first
-                if (task_info->stop_requested.load(std::memory_order_relaxed) ||
-                    task_info->delay_interrupted.load(
-                        std::memory_order_acquire)) {
-                    return true;
-                }
-
-                // Check if virtual time has advanced enough using atomic mirror
-                return virtualTimeMsAtomic_.load(std::memory_order_acquire) >=
-                       wakeTimeMs;
+            task_info->delay_cv.wait(lock, [&fired, task_info]() {
+                return fired ||
+                       task_info->stop_requested.load(
+                           std::memory_order_relaxed) ||
+                       task_info->delay_interrupted.load(
+                           std::memory_order_acquire);
             });
 
             // After wait returns, check if we were woken due to termination request
@@ -1869,25 +1866,27 @@ class RTOSMock : public RTOS {
         if (pred()) {
             return true;
         }
+        if (relTimeMs == 0) {
+            return false;
+        }
 
         // Register the wait with its virtual deadline. The virtual clock does
         // not move while this thread runs, so reading the atomic mirror here
         // yields the current instant.
         const uint64_t wakeTimeMs =
             virtualTimeMsAtomic_.load(std::memory_order_acquire) + relTimeMs;
+        bool fired = false;
         lock.unlock();
         uint64_t wait_id = registerWait(&cv, lock.mutex(), wakeTimeMs, kind,
-                                        GetThreadLocalTaskInfo());
+                                        GetThreadLocalTaskInfo(), &fired);
         lock.lock();
 
-        // advanceTime() notifies under the caller's mutex when the deadline
-        // is reached, so no wake-up is lost. The short real-time timeout only
+        // The deadline counts as reached only when advanceTime() fires this
+        // wait, which it does under the caller's mutex, so waits due at the
+        // same instant run one at a time. The short real-time timeout only
         // bounds the latency of notifications sent without that mutex.
-        auto combined_pred = [this, wakeTimeMs, &pred]() {
-            if (pred())
-                return true;
-            return virtualTimeMsAtomic_.load(std::memory_order_acquire) >=
-                   wakeTimeMs;
+        auto combined_pred = [&fired, &pred]() {
+            return fired || pred();
         };
         while (!cv.wait_for(lock, std::chrono::milliseconds(kWaitPollMs),
                             combined_pred)) {
@@ -2268,18 +2267,21 @@ class RTOSMock : public RTOS {
         uint64_t deadline;  ///< Virtual wake time in milliseconds
         WaitKind kind;
         TaskInfo* owner;  ///< nullptr for non-task threads
+        bool* fired;      ///< Set under @ref mutex when advanceTime fires it
     };
 
     /**
      * @brief Register a virtual-time wait and return its id
      */
     uint64_t registerWait(std::condition_variable* cv, std::mutex* mutex,
-                          uint64_t deadline, WaitKind kind, TaskInfo* owner) {
+                          uint64_t deadline, WaitKind kind, TaskInfo* owner,
+                          bool* fired) {
         uint64_t id;
         {
             std::lock_guard<std::mutex> lock(timeMutex_);
             id = ++next_wait_id_;
-            waiters_.emplace(id, Waiter{cv, mutex, deadline, kind, owner});
+            waiters_.emplace(id,
+                             Waiter{cv, mutex, deadline, kind, owner, fired});
         }
         NotifyReblockWaiter();
         return id;
@@ -2391,6 +2393,7 @@ class RTOSMock : public RTOS {
         Waiter waiter = it->second;
         waiters_.erase(it);
         std::lock_guard<std::mutex> lock(*waiter.mutex);
+        *waiter.fired = true;
         waiter.cv->notify_all();
     }
 

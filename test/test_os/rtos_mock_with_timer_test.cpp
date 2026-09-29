@@ -234,6 +234,67 @@ TEST_F(RTOSMockTimeTest, SameDeadlineTasksRunSerially) {
 }
 
 /**
+ * @brief Timed waits that expire at the same virtual instant are woken one at
+ * a time, even when the first task works longer than the wait poll interval
+ */
+TEST_F(RTOSMockTimeTest, SameDeadlineWaitsRunSerially) {
+    struct State {
+        std::mutex mutex;
+        std::vector<std::string> order;
+        std::atomic<int> ready{0};
+        std::atomic<bool> a_running{false};
+        std::atomic<bool> overlap{false};
+    } state;
+
+    struct Param {
+        State* state;
+        const char* name;
+        int real_work_ms;
+    };
+
+    Param b{&state, "B", 0};
+    Param a{&state, "A", 150};
+
+    auto task_fn = [](void* param) {
+        auto* p = static_cast<Param*>(param);
+        const bool is_a = p->real_work_ms > 0;
+        p->state->ready++;
+        GetRTOS().WaitForNotify(10);
+        if (is_a) {
+            p->state->a_running = true;
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(p->real_work_ms));
+            p->state->a_running = false;
+        } else if (p->state->a_running) {
+            p->state->overlap = true;
+        }
+        {
+            std::lock_guard<std::mutex> lock(p->state->mutex);
+            p->state->order.push_back(p->name);
+        }
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task_b = nullptr;
+    os::TaskHandle_t task_a = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "B", 2048, &b, 1, &task_b));
+    taskHandles_.push_back(task_b);
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "A", 2048, &a, 1, &task_a));
+    taskHandles_.push_back(task_a);
+
+    for (int i = 0; i < 100 && state.ready < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(20);
+
+    EXPECT_FALSE(state.overlap);
+    std::lock_guard<std::mutex> lock(state.mutex);
+    EXPECT_EQ(state.order, (std::vector<std::string>{"A", "B"}));
+}
+
+/**
  * @brief A task that does not block again after waking is counted as a
  * reblock timeout
  */
