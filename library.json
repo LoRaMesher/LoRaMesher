@@ -34,5 +34,18 @@
     ],
     "build": {
         "extraScript": "scripts/extra_script.py"
+    },
+    "export": {
+        "exclude": [
+            "docs",
+            "test",
+            "test_logs",
+            "experiments",
+            "todos",
+            ".github",
+            "log_analyzer.html",
+            "sample_log.txt",
+            "lsan.supp"
+        ]
     }
 }

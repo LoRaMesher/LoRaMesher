@@ -6,10 +6,10 @@ jobs:
   esp32-build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v6
       with:
         python-version: '3.x'
 
@@ -28,10 +28,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v6
       with:
         python-version: '3.x'
 
@@ -172,7 +172,7 @@ jobs:
 
     - name: Upload failing test logs
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: failed-test-logs
         path: failed_test_logs/
@@ -213,7 +213,7 @@ jobs:
         always() &&
         github.event_name == 'push' &&
         (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/new_loramesher')
-      uses: schneegans/dynamic-badges-action@v1.7.0
+      uses: schneegans/dynamic-badges-action@v1.8.0
       with:
         auth: ${{ secrets.GIST_TOKEN }}
         gistID: ${{ secrets.GIST_ID }}

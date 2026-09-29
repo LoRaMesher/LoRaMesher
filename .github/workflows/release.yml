@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Extract changelog section for tag
+      run: |
+        set -euo pipefail
+        VERSION="${GITHUB_REF_NAME#v}"
+        awk -v v="$VERSION" '
+          $0 ~ "^## \\[" v "\\]"        { flag = 1; next }
+          flag && /^## \[/              { exit }
+          flag && /^\[[^]]+\]:[[:space:]]/ { exit }
+          flag                          { print }
+        ' CHANGELOG.md > RELEASE_NOTES.md
+        if ! [ -s RELEASE_NOTES.md ]; then
+          echo "::error::No CHANGELOG.md section found for version $VERSION (tag $GITHUB_REF_NAME)"
+          exit 1
+        fi
+        echo "----- Release notes for $GITHUB_REF_NAME -----"
+        cat RELEASE_NOTES.md
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v3
+      with:
+        body_path: ${{ github.workspace }}/RELEASE_NOTES.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

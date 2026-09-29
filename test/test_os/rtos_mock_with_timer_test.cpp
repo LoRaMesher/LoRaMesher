@@ -582,6 +582,10 @@ TEST_F(RTOSMockTimeTest, SimpleDelayWithVirtualTime) {
     // Task should not be completed yet
     EXPECT_FALSE(state->taskCompleted);
 
+    // Wait until the task is actually parked inside delay() and registered in
+    // waitingTasks_.
+    rtosMock_->waitForTasksToReblock(200);
+
     // Advance time by 300ms (not enough to complete)
     rtosMock_->advanceTime(300);
     WaitForTasksToExecute();
