@@ -7,7 +7,9 @@
  */
 
 #include <gtest/gtest.h>
+#include <atomic>
 #include <memory>
+#include <thread>
 
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/services/message_queue_service.hpp"
@@ -2045,6 +2047,31 @@ TEST_F(NetworkServiceCoverageTest, ReliableSendRefusedWhenStreamSpanIsFull) {
     // A 33rd outstanding sequence would fall outside the receiver window.
     auto refused = service_->SendReliable(kOtherNode, {2}, 3, 100000);
     EXPECT_EQ(refused.source, 0);
+}
+
+TEST_F(NetworkServiceCoverageTest, NodeQueriesAreSafeDuringRoutingUpdates) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    std::atomic<bool> updating{true};
+
+    std::thread reader([&]() {
+        while (updating.load()) {
+            (void)service_->GetNodeCapabilities(0x3003);
+            (void)service_->GetNetworkNodes().size();
+        }
+    });
+
+    for (int round = 0; round < 20; ++round) {
+        for (AddressType src = 0x3000; src < 0x3010; ++src) {
+            service_->ProcessReceivedMessage(
+                MakeRoutingTable(src, kNMAddress, {},
+                                 static_cast<uint8_t>(src - 0x3000)),
+                0);
+        }
+    }
+    updating.store(false);
+    reader.join();
+
+    EXPECT_FALSE(service_->GetNetworkNodes().empty());
 }
 
 TEST_F(NetworkServiceCoverageTest, ImplausibleSyncBeaconIsIgnoredWhole) {

@@ -5,10 +5,10 @@
 
 #include "network_service.hpp"
 #include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <cstdarg>
 #include <numeric>
-#include <set>
 
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
@@ -104,10 +104,9 @@ NetworkService::NetworkService(
     };
     reliable_host.hops_to_dest = [this](AddressType dest) -> uint8_t {
         if (routing_table_) {
-            auto it = routing_table_->GetNode(dest);
-            if (it != routing_table_->GetNodes().end() &&
-                it->routing_entry.hop_count > 0) {
-                return it->routing_entry.hop_count;
+            auto node = routing_table_->FindNode(dest);
+            if (node && node->routing_entry.hop_count > 0) {
+                return node->routing_entry.hop_count;
             }
         }
         return 1;
@@ -133,7 +132,7 @@ NetworkService::NetworkService(
 
     SlotScheduler::Host slot_host;
     slot_host.get_routing_nodes = [this]() {
-        return routing_table_->GetNodes();
+        return routing_table_->GetNodesCopy();
     };
     slot_host.get_hop_distance_to_nm = [this]() {
         return GetHopDistanceToNM();
@@ -262,12 +261,7 @@ bool NetworkService::IsNodeInNetwork(AddressType node_address) const {
     return routing_table_->IsNodePresent(node_address);
 }
 
-const std::vector<NetworkNodeRoute>& NetworkService::GetNetworkNodes() const {
-    // Note: Caller must be careful with concurrent access
-    return routing_table_->GetNodes();
-}
-
-std::vector<NetworkNodeRoute> NetworkService::GetNetworkNodesCopy() const {
+std::vector<NetworkNodeRoute> NetworkService::GetNetworkNodes() const {
     return routing_table_->GetNodesCopy();
 }
 
@@ -406,13 +400,9 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     // table.  This lets any node reconstruct the full TDMA schedule if it
     // wins an election.  Active direct neighbours report their own index,
     // which relayed entries must not override.
-    const auto& known_nodes = routing_table_->GetNodes();
-    auto is_active_neighbour = [&known_nodes](AddressType address) {
-        return std::any_of(known_nodes.begin(), known_nodes.end(),
-                           [address](const NetworkNodeRoute& node) {
-                               return node.GetAddress() == address &&
-                                      node.IsDirectNeighbor();
-                           });
+    auto is_active_neighbour = [this](AddressType address) {
+        auto node = routing_table_->FindNode(address);
+        return node && node->IsDirectNeighbor();
     };
     for (const auto& entry : entries) {
         if (entry.control_slot_index != 0xFF &&
@@ -440,12 +430,8 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
 
 bool NetworkService::StoreControlSlotIndex(AddressType node,
                                            uint8_t control_slot_index) {
-    const auto& nodes = routing_table_->GetNodes();
-    auto it = std::find_if(nodes.begin(), nodes.end(),
-                           [node](const NetworkNodeRoute& entry) {
-                               return entry.GetAddress() == node;
-                           });
-    if (it == nodes.end() || it->control_slot_index == control_slot_index) {
+    auto entry = routing_table_->FindNode(node);
+    if (!entry || entry->control_slot_index == control_slot_index) {
         return false;
     }
     return routing_table_->SetControlSlotIndex(node, control_slot_index);
@@ -644,15 +630,8 @@ uint8_t NetworkService::GetNodeCapabilities(AddressType node_address) const {
         return local_capabilities_;
     }
 
-    // Search routing table for other nodes
-    const auto& nodes = routing_table_->GetNodes();
-    for (const auto& node : nodes) {
-        if (node.GetAddress() == node_address) {
-            return node.routing_entry.capabilities;
-        }
-    }
-
-    return 0;  // Node not found
+    auto node = routing_table_->FindNode(node_address);
+    return node ? node->routing_entry.capabilities : 0;
 }
 
 Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
@@ -831,8 +810,7 @@ void NetworkService::SetNetworkManager(AddressType manager_address) {
 
         // Update network manager status for nodes
         uint32_t current_time = GetRTOS().getTickCount();
-        const auto& nodes = routing_table_->GetNodes();
-        for (const auto& node : nodes) {
+        for (const auto& node : routing_table_->GetNodesCopy()) {
             bool is_manager =
                 (node.routing_entry.destination == manager_address);
             routing_table_->UpdateNode(node.routing_entry.destination,
@@ -1497,32 +1475,30 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     uint8_t control_slot_index = 0xFF;
     {
         // Check if this node already has a control slot (re-join case)
-        const auto& nodes = routing_table_->GetNodes();
-        for (const auto& node : nodes) {
-            if (node.GetAddress() == source &&
-                node.control_slot_index != 0xFF) {
-                control_slot_index = node.control_slot_index;
-                LOG_INFO(
-                    "Reusing control slot index %d for re-joining node 0x%04X",
-                    control_slot_index, source);
-                break;
-            }
+        auto existing = routing_table_->FindNode(source);
+        if (existing && existing->control_slot_index != 0xFF) {
+            control_slot_index = existing->control_slot_index;
+            LOG_INFO("Reusing control slot index %d for re-joining node 0x%04X",
+                     control_slot_index, source);
         }
 
         // Verify no other node already holds this index (stale propagation
         // can cause a previously-removed node to re-appear with an index
         // that was already reassigned to another node)
         if (control_slot_index != 0xFF) {
-            for (const auto& node : nodes) {
-                if (node.GetAddress() != source &&
+            AddressType holder = 0;
+            routing_table_->ForEachNode([&](const NetworkNodeRoute& node) {
+                if (holder == 0 && node.GetAddress() != source &&
                     node.control_slot_index == control_slot_index) {
-                    LOG_WARNING(
-                        "Control slot index %d conflict: already assigned to "
-                        "0x%04X, reassigning for 0x%04X",
-                        control_slot_index, node.GetAddress(), source);
-                    control_slot_index = 0xFF;
-                    break;
+                    holder = node.GetAddress();
                 }
+            });
+            if (holder != 0) {
+                LOG_WARNING(
+                    "Control slot index %d conflict: already assigned to "
+                    "0x%04X, reassigning for 0x%04X",
+                    control_slot_index, holder, source);
+                control_slot_index = 0xFF;
             }
         }
 
@@ -2521,15 +2497,9 @@ uint8_t NetworkService::GetHopDistanceToNM() const {
         return 0;  // We are the Network Manager
     }
 
-    // Find network manager in routing table
-    const auto& nodes = routing_table_->GetNodes();
-    auto nm_it = std::find_if(
-        nodes.begin(), nodes.end(),
-        [this](const types::protocols::lora_mesh::NetworkNodeRoute& node) {
-            return node.routing_entry.destination == network_manager_;
-        });
-    if (nm_it != nodes.end()) {
-        return nm_it->routing_entry.hop_count;
+    auto nm_node = routing_table_->FindNode(network_manager_);
+    if (nm_node) {
+        return nm_node->routing_entry.hop_count;
     }
 
     // If we don't know our distance, default to 1
@@ -2582,16 +2552,15 @@ uint8_t NetworkService::GetAllocatedDataSlots() const {
     // and produce a bogus superframe size.
     uint16_t total_allocated = 0;
     bool is_self_active = false;
-    const auto& nodes = routing_table_->GetNodes();
-    for (const auto& node : nodes) {
+    routing_table_->ForEachNode([&](const NetworkNodeRoute& node) {
         if (!node.is_active) {
-            continue;
+            return;
         }
         total_allocated += node.GetAllocatedDataSlots();
         if (node.GetAddress() == node_address_) {
             is_self_active = true;
         }
-    }
+    });
     if (!is_self_active) {
         total_allocated += local_allocated_data_slots_;
     }
@@ -3288,8 +3257,8 @@ Result NetworkService::ForwardJoinResponse(
     if (join_response.GetStatus() ==
             JoinResponseHeader::ResponseStatus::ACCEPTED &&
         joining_node != 0) {
-        auto sponsor_route = routing_table_->GetNode(dest);
-        if (sponsor_route != routing_table_->GetNodes().end()) {
+        auto sponsor_route = routing_table_->FindNode(dest);
+        if (sponsor_route) {
             uint8_t hops_to_joining =
                 sponsor_route->routing_entry.hop_count + 1;
             routing_table_->UpdateRoute(
@@ -3382,32 +3351,29 @@ void NetworkService::ResetNetworkState() {
 
 uint8_t NetworkService::GetMaxHopsFromRoutingTable() const {
     uint8_t max_hop_count = 0;
-    const auto& nodes = routing_table_->GetNodes();
-    for (const auto& node : nodes) {
-        if (!node.is_active)
-            continue;  // skip stale entries
-        auto hop_count = node.routing_entry.hop_count;
-        if (hop_count > max_hop_count) {
-            max_hop_count = hop_count;
+    routing_table_->ForEachNode([&max_hop_count](const NetworkNodeRoute& node) {
+        if (node.is_active) {
+            max_hop_count =
+                std::max(max_hop_count, node.routing_entry.hop_count);
         }
-    }
+    });
 
     return max_hop_count;
 }
 
 uint8_t NetworkService::FindLowestAvailableControlSlot() {
-    std::set<uint8_t> used_indices;
+    std::bitset<0xFF> used_indices;
     if (my_control_slot_index_ != 0xFF) {
-        used_indices.insert(my_control_slot_index_);  // NM's own slot (0)
+        used_indices.set(my_control_slot_index_);  // NM's own slot (0)
     }
-    for (const auto& node : routing_table_->GetNodes()) {
+    routing_table_->ForEachNode([&used_indices](const NetworkNodeRoute& node) {
         if (node.control_slot_index != 0xFF) {
-            used_indices.insert(node.control_slot_index);
+            used_indices.set(node.control_slot_index);
         }
-    }
+    });
     // Find lowest gap
     for (uint8_t i = 0; i < 255; i++) {
-        if (used_indices.find(i) == used_indices.end()) {
+        if (!used_indices.test(i)) {
             return i;
         }
     }

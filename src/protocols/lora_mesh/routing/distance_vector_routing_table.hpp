@@ -73,8 +73,10 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     bool IsNodePresent(AddressType address) const override;
 
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>& GetNodes()
-        const override;
+    std::optional<types::protocols::lora_mesh::NetworkNodeRoute> FindNode(
+        AddressType node_address) const override;
+
+    void ForEachNode(const NodeVisitor& visitor) const override;
 
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNodesCopy()
         const override;
@@ -172,7 +174,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
      * @return Const iterator to the node, or end() if not found
      */
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute>::const_iterator
-    GetNode(AddressType node_address) const override;
+    GetNode(AddressType node_address) const;
 
     /**
      * @brief Check if adding a node would exceed the limit

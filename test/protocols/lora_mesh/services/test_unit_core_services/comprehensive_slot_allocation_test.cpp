@@ -1483,7 +1483,7 @@ TEST_F(ComprehensiveSlotAllocationTest, DataSlotBudgetIndependentOfNodeCap) {
     // Total admitted data slots must be clamped to the 6-slot budget, not the
     // 50-node cap (which would admit all 6 nodes = 12 slots).
     uint16_t total_allocated = 0;
-    for (const auto& node : routing_table->GetNodes()) {
+    for (const auto& node : routing_table->GetNodesCopy()) {
         total_allocated += node.GetAllocatedDataSlots();
     }
     EXPECT_EQ(total_allocated, 6u);
@@ -1770,7 +1770,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
     ASSERT_TRUE(result.IsSuccess()) << result.GetErrorMessage();
 
     bool found = false;
-    for (const auto& node : network_service_->GetNetworkNodesCopy()) {
+    for (const auto& node : network_service_->GetNetworkNodes()) {
         if (node.routing_entry.destination == kRequester) {
             found = true;
             EXPECT_EQ(node.routing_entry.capabilities, kCustomCapability)
@@ -1828,8 +1828,8 @@ TEST_F(ComprehensiveSlotAllocationTest,
         << "Discovery tail must survive";
 
     // The poisoned control index must not have been retained.
-    auto node = routing_table->GetNode(victim);
-    ASSERT_NE(node, routing_table->GetNodes().end());
+    auto node = routing_table->FindNode(victim);
+    ASSERT_TRUE(node.has_value());
     EXPECT_NE(node->control_slot_index, 247)
         << "Out-of-range control slot index must be rejected";
 }
@@ -1862,8 +1862,8 @@ TEST_F(ComprehensiveSlotAllocationTest,
     ASSERT_TRUE(r.IsSuccess()) << r.GetErrorMessage();
 
     auto* routing_table = network_service_->GetRoutingTable();
-    auto node = routing_table->GetNode(faraway);
-    if (node != routing_table->GetNodes().end()) {
+    auto node = routing_table->FindNode(faraway);
+    if (node) {
         EXPECT_NE(node->control_slot_index, 247)
             << "Out-of-range control slot index from radio must not be stored";
     }

@@ -191,11 +191,9 @@ Result LoRaMeshProtocol::Init(
 
     // Network service route update callback
     network_service_->SetRouteUpdateCallback(
-        [this](bool updated, AddressType dest, AddressType next_hop,
-               uint8_t hops) {
+        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
             LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
                       updated ? "updated" : "removed", dest, next_hop, hops);
-            OnNetworkTopologyChange(updated, dest, next_hop, hops);
         });
 
     // State-change callback: wake up the protocol task immediately
@@ -717,12 +715,8 @@ uint8_t LoRaMeshProtocol::GetNodeCapabilities(AddressType node_address) const {
     return 0;
 }
 
-const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
+std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodes() const {
     return network_service_->GetNetworkNodes();
-}
-
-std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodesCopy() const {
-    return network_service_->GetNetworkNodesCopy();
 }
 
 Result LoRaMeshProtocol::RequestNodeRoleChange(NodeRole role) {
@@ -1106,40 +1100,6 @@ void LoRaMeshProtocol::OnStateChange(
 
     // Notify protocol task of state change for immediate processing
     NotifyProtocolTask(ProtocolNotificationType::STATE_CHANGE);
-}
-
-void LoRaMeshProtocol::OnNetworkTopologyChange(bool route_updated,
-                                               AddressType destination,
-                                               AddressType next_hop,
-                                               uint8_t hop_count) {
-    if (!route_updated) {
-        LOG_DEBUG("Route removed: dest=0x%04X via=0x%04X hops=%d", destination,
-                  next_hop, hop_count);
-        return;  // No route update needed
-    }
-    // Network topology changed - may need to update slot allocations
-    // This would be handled by NetworkService internally
-    // LOG_DEBUG("Network topology changed");
-
-    // // switch for state change
-    // auto state = network_service_->GetState();
-    // switch (state) {
-    //     case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
-    //     case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
-    //         // Update slot allocations based on new topology
-    //         network_service_->UpdateSlotAllocations();
-    //     case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
-    //     case lora_mesh::INetworkService::ProtocolState::INITIALIZING:
-    //     case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-    //         break;
-
-    //     case lora_mesh::INetworkService::ProtocolState::JOINING:
-
-    //     default:
-    //         LOG_WARNING("Unhandled state for topology change: %d",
-    //                     static_cast<int>(state));
-    //         break;
-    // }
 }
 
 bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,

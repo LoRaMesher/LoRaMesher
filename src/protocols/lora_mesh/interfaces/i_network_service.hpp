@@ -130,20 +130,12 @@ class INetworkService {
     virtual bool IsNodeInNetwork(AddressType node_address) const = 0;
 
     /**
-     * @brief Get all network nodes with their routing information
-     * 
-     * @return std::vector<NetworkNodeRoute> All nodes and their routes
-     */
-    virtual const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const = 0;
-
-    /**
-     * @brief Get a thread-safe copy of all network nodes
+     * @brief Get a snapshot of all network nodes with their routing information
      *
-     * @return std::vector<NetworkNodeRoute> Copy of all nodes
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
     virtual std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const = 0;
+    GetNetworkNodes() const = 0;
 
     /**
      * @brief Get total node count
@@ -204,6 +196,9 @@ class INetworkService {
 
     /**
      * @brief Set route update callback
+     *
+     * The callback runs synchronously while the routing table is locked, so it
+     * must not call back into the routing table or the network service.
      *
      * @param callback Callback function
      */

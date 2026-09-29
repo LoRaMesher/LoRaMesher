@@ -366,7 +366,7 @@ std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
         return std::nullopt;
     }
 
-    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
+    const auto network_nodes = mesh_protocol->GetNetworkNodes();
     uint32_t now = GetRTOS().getTickCount();
 
     std::optional<RouteEntry> best;
@@ -443,7 +443,7 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         return routes;
     }
 
-    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
+    const auto network_nodes = mesh_protocol->GetNetworkNodes();
     uint32_t now = GetRTOS().getTickCount();
     routes.reserve(network_nodes.size());
 

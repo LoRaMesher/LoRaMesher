@@ -136,18 +136,12 @@ class NetworkService : public INetworkService {
     bool IsNodeInNetwork(AddressType node_address) const override;
 
     /**
-     * @brief Get all network nodes with their routing information
-     * 
-     * Note: Caller must be careful with concurrent access as this returns
-     * a reference to the internal vector.
-     * 
-     * @return const std::vector<NetworkNodeRoute>& Reference to all nodes
+     * @brief Get a snapshot of all network nodes with their routing information
+     *
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const override;
-
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const override;
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNetworkNodes()
+        const override;
 
     /**
      * @brief Get the number of nodes in the network

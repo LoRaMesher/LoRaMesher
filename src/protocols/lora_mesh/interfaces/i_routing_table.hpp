@@ -137,22 +137,24 @@ class IRoutingTable {
     virtual bool IsNodePresent(AddressType address) const = 0;
 
     /**
-     * @brief Find a node by address (const version)
-     * 
+     * @brief Find a node by address
+     *
      * @param node_address Address to search for
-     * @return Const iterator to the node, or end() if not found
+     * @return Copy of the node, or nullopt if it is not in the table
      */
-    virtual std::vector<
-        types::protocols::lora_mesh::NetworkNodeRoute>::const_iterator
-    GetNode(AddressType node_address) const = 0;
+    virtual std::optional<types::protocols::lora_mesh::NetworkNodeRoute>
+    FindNode(AddressType node_address) const = 0;
+
+    /// Visitor applied to each node by ForEachNode().
+    using NodeVisitor = std::function<void(
+        const types::protocols::lora_mesh::NetworkNodeRoute&)>;
 
     /**
-     * @brief Get all network nodes in the routing table
-     * 
-     * @return const std::vector<NetworkNodeRoute>& Reference to nodes vector
+     * @brief Apply @p visitor to every node while the table is locked
+     *
+     * The visitor must not call back into the routing table.
      */
-    virtual const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNodes() const = 0;
+    virtual void ForEachNode(const NodeVisitor& visitor) const = 0;
 
     /**
      * @brief Get a thread-safe copy of all network nodes
@@ -252,6 +254,9 @@ class IRoutingTable {
 
     /**
      * @brief Set the route update callback
+     *
+     * The callback runs synchronously while the routing table is locked, so it
+     * must not call back into the routing table or the network service.
      *
      * @param callback Callback function to notify of route changes
      */

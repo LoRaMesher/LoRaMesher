@@ -382,10 +382,21 @@ bool DistanceVectorRoutingTable::IsNodePresent(AddressType address) const {
     return GetNode(address) != nodes_.end();
 }
 
-const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-DistanceVectorRoutingTable::GetNodes() const {
-    // Note: Caller must be careful with concurrent access
-    return nodes_;
+std::optional<types::protocols::lora_mesh::NetworkNodeRoute>
+DistanceVectorRoutingTable::FindNode(AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(node_address);
+    if (it == nodes_.end()) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+void DistanceVectorRoutingTable::ForEachNode(const NodeVisitor& visitor) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    for (const auto& node : nodes_) {
+        visitor(node);
+    }
 }
 
 std::vector<types::protocols::lora_mesh::NetworkNodeRoute>

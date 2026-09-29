@@ -103,7 +103,7 @@ TEST_P(LinkQualitySlicingTests, DenseMeshLinkQualityStable) {
                     [&]() { return false; });
 
         for (auto* node : nodes) {
-            auto network_nodes = node->protocol->GetNetworkNodesCopy();
+            auto network_nodes = node->protocol->GetNetworkNodes();
             for (const auto& route : network_nodes) {
                 if (!route.is_active || route.routing_entry.hop_count != 1) {
                     continue;  // only established direct neighbors
@@ -138,7 +138,7 @@ TEST_P(LinkQualitySlicingTests, DenseMeshLinkQualityStable) {
     // fails on the buggy baseline without waiting on a long timeout.
     for (auto* node : nodes) {
         size_t one_hop_peers = 0;
-        auto network_nodes = node->protocol->GetNetworkNodesCopy();
+        auto network_nodes = node->protocol->GetNetworkNodes();
         for (const auto& route : network_nodes) {
             if (route.is_active && route.routing_entry.hop_count == 1) {
                 one_hop_peers++;
@@ -197,7 +197,7 @@ TEST_F(LinkQualitySlicingTests, GenuineUnidirectionalStillDetected) {
     auto superframe_ms = GetSuperframeDuration(*nodes.front());
     bool detected =
         AdvanceTime(superframe_ms * 20, superframe_ms * 20, 15u, 0, [&]() {
-            auto network_nodes = edge.protocol->GetNetworkNodesCopy();
+            auto network_nodes = edge.protocol->GetNetworkNodes();
             for (const auto& route : network_nodes) {
                 if (route.routing_entry.destination != relay.address) {
                     continue;

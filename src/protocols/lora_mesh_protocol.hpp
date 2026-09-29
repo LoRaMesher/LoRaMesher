@@ -297,18 +297,12 @@ class LoRaMeshProtocol : public Protocol {
     uint8_t GetNodeCapabilities(AddressType node_address) const;
 
     /**
-     * @brief Get all network nodes with their routing information
+     * @brief Get a snapshot of all network nodes with their routing information
      *
-     * Note: Caller must be careful with concurrent access as this returns
-     * a reference to the internal vector.
-     *
-     * @return const std::vector<NetworkNodeRoute>& Reference to all nodes
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const;
-
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const;
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNetworkNodes()
+        const;
 
     /**
      * @brief Request a runtime change of this node's role.
@@ -450,17 +444,6 @@ class LoRaMeshProtocol : public Protocol {
      * @param new_state New protocol state
      */
     void OnStateChange(lora_mesh::INetworkService::ProtocolState new_state);
-
-    /**
-     * @brief Handle network topology change
-     * 
-     * @param route_updated Whether the route was updated, if false, the route is stale
-     * @param destination Destination address of the route
-     * @param next_hop Next hop address for the route
-     * @param hop_count Number of hops to destination
-     */
-    void OnNetworkTopologyChange(bool route_updated, AddressType destination,
-                                 AddressType next_hop, uint8_t hop_count);
 
     /**
      * @brief Process messages for current slot type

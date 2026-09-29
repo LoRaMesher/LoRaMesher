@@ -138,7 +138,7 @@ TEST_F(RoutingTableRotationIntegrationTest, SF12_AllRoutesEventuallyKnown) {
                 [&]() { return false; });
 
     for (auto* node : nodes) {
-        auto network_nodes = node->protocol->GetNetworkNodesCopy();
+        auto network_nodes = node->protocol->GetNetworkNodes();
         std::set<AddressType> known;
         for (const auto& nn : network_nodes) {
             if (nn.is_active)
@@ -182,7 +182,7 @@ TEST_F(RoutingTableRotationIntegrationTest, SF7_BehaviourUnchanged) {
                 [&]() { return false; });
 
     for (auto* node : nodes) {
-        auto network_nodes = node->protocol->GetNetworkNodesCopy();
+        auto network_nodes = node->protocol->GetNetworkNodes();
         std::set<AddressType> known;
         for (const auto& nn : network_nodes) {
             if (nn.is_active)
