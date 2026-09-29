@@ -111,7 +111,6 @@ using DeliveryCallback = std::function<void(const DeliveryResult&)>;
 struct AttemptRequest {
     MessageId id;  ///< Identifier of the tracked message, incl. destination
     std::span<const uint8_t> payload;  ///< Retained application payload
-    bool first_attempt = true;         ///< No earlier attempt has been queued
 };
 
 /**
@@ -208,6 +207,17 @@ class ReliableDelivery {
     /// Number of currently tracked messages.
     size_t PendingCount() const;
 
+    /**
+     * @brief Distance from the oldest pending message of a stream to @p seq
+     *
+     * The stream is every group window when @p group_stream is set, otherwise
+     * the unicast messages to @p dest.
+     *
+     * @return (uint8_t)(seq - oldest pending seq), or 0 if none is pending
+     */
+    uint8_t PendingSeqSpan(bool group_stream, AddressType dest,
+                           uint8_t seq) const;
+
    private:
     /**
      * @brief One tracked message.
@@ -223,7 +233,6 @@ class ReliableDelivery {
         bool requeue = false;             ///< Latest attempt was not queued
         bool requeue_is_retry = false;    ///< That attempt was a retransmission
         uint8_t consecutive_requeues = 0;  ///< Rejected attempts in a row
-        bool attempted = false;            ///< An attempt has been queued
         uint8_t retries_left = 0;
         uint32_t sent_at_ms = 0;
         std::array<AddressType, kMaxGroupResponders> responders{};

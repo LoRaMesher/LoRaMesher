@@ -188,6 +188,15 @@ Result ReliableMessaging::SendGroup(AddressType group,
     return host_.enqueue(SlotType::TX, std::move(base_msg));
 }
 
+bool ReliableMessaging::AcceptReliable(AddressType source,
+                                       reliability::StreamKind kind,
+                                       uint8_t msg_seq, uint32_t send_ts) {
+    const uint32_t restart_regression_ms = MaxReliableTimeout();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return delivery_windows_.Accept(source, kind, msg_seq, send_ts,
+                                    restart_regression_ms);
+}
+
 Result ReliableMessaging::ProcessGroupMessage(
     const BaseMessage& message, uint32_t /* reception_timestamp */) {
     auto group_msg_opt = GroupMessage::CreateFromBaseMessage(message);
@@ -217,6 +226,8 @@ Result ReliableMessaging::ProcessGroupMessage(
 
     const bool member = IsMemberOfGroup(group);
     std::span<const uint8_t> payload = group_msg.GetPayload();
+    uint8_t delivered_seq = seq_num;
+    bool deliver = member;
 
     if (group_msg.RequestAcks()) {
         auto prefix = reliability::ReliablePrefix::Read(payload);
@@ -227,16 +238,20 @@ Result ReliableMessaging::ProcessGroupMessage(
                           "Malformed reliable group payload");
         }
         payload = payload.subspan(reliability::ReliablePrefix::kSize);
+        delivered_seq = prefix->msg_seq;
         if (member) {
+            // Every copy is acknowledged; the message is delivered once.
             EnqueueAck(source, prefix->msg_seq, /*was_group=*/true,
                        prefix->send_ts);
+            deliver = AcceptReliable(source, reliability::StreamKind::kGroup,
+                                     prefix->msg_seq, prefix->send_ts);
         }
     }
 
-    if (member) {
+    if (deliver) {
         LOG_INFO("GROUP 0x%04X delivered from 0x%04X (seq=%u)", group, source,
-                 seq_num);
-        host_.deliver_to_app(source, seq_num, group, ttl, payload);
+                 delivered_seq);
+        host_.deliver_to_app(source, delivered_seq, group, ttl, payload);
     }
 
     // Relay the flood regardless of local membership
@@ -340,11 +355,16 @@ Result ReliableMessaging::SendReliableAttempt(
         serializer.WriteBytes(payload.data(), payload.size());
     }
 
+    // Every attempt is a new link-layer packet with its own sequence, so
+    // relays that forwarded an earlier attempt forward this one too.
+    const uint8_t link_seq = message_cache_.NextSeq();
+    message_cache_.Record(host_.node_address, link_seq);
+
     std::unique_ptr<BaseMessage> base_msg;
     if (IsGroupAddress(dest)) {
-        auto group_msg =
-            GroupMessage::Create(dest, host_.node_address, ttl,
-                                 GroupMessage::kFlagRequestAcks, id.seq, wire);
+        auto group_msg = GroupMessage::Create(dest, host_.node_address, ttl,
+                                              GroupMessage::kFlagRequestAcks,
+                                              link_seq, wire);
         if (!group_msg) {
             return Result(LoraMesherErrorCode::kMemoryError,
                           "Failed to create reliable group message");
@@ -354,14 +374,6 @@ Result ReliableMessaging::SendReliableAttempt(
         AddressType next_hop = host_.find_next_hop(dest);
         if (next_hop == 0) {
             next_hop = dest;
-        }
-        // Each transmitted attempt is a new link-layer packet: the first uses
-        // the message sequence, every retransmission draws a fresh one so
-        // relays that forwarded an earlier attempt forward this one too.
-        uint8_t link_seq = id.seq;
-        if (!request.first_attempt) {
-            link_seq = message_cache_.NextSeq();
-            message_cache_.Record(host_.node_address, link_seq);
         }
         auto data_msg =
             DataMessage::Create(dest, host_.node_address, next_hop, wire, ttl,
@@ -374,6 +386,54 @@ Result ReliableMessaging::SendReliableAttempt(
     }
 
     return host_.enqueue(SlotType::TX, std::move(base_msg));
+}
+
+std::optional<uint8_t> ReliableMessaging::AllocateMessageSeq(
+    AddressType dest, bool group_stream) {
+    uint8_t* next = nullptr;
+    if (group_stream) {
+        if (!group_stream_started_) {
+            group_next_seq_ = RandomSeq();
+            group_stream_started_ = true;
+        }
+        next = &group_next_seq_;
+    } else {
+        SeqStream* stream = FindOrCreateSeqStream(dest);
+        if (stream == nullptr) {
+            return std::nullopt;
+        }
+        next = &stream->next;
+    }
+
+    const uint8_t seq = *next;
+    // Every unacknowledged message must stay inside the receiver window.
+    if (reliable_.PendingSeqSpan(group_stream, dest, seq) >=
+        reliability::DeliveryWindows::kWindow) {
+        return std::nullopt;
+    }
+    *next = static_cast<uint8_t>(seq + 1);
+    return seq;
+}
+
+ReliableMessaging::SeqStream* ReliableMessaging::FindOrCreateSeqStream(
+    AddressType dest) {
+    SeqStream* free_stream = nullptr;
+    for (auto& stream : seq_streams_) {
+        if (stream.valid && stream.dest == dest) {
+            return &stream;
+        }
+        if (!stream.valid && free_stream == nullptr) {
+            free_stream = &stream;
+        }
+    }
+    if (free_stream != nullptr) {
+        *free_stream = {true, dest, RandomSeq()};
+    }
+    return free_stream;
+}
+
+uint8_t ReliableMessaging::RandomSeq() const {
+    return host_.random ? static_cast<uint8_t>(host_.random()) : 0;
 }
 
 reliability::MessageId ReliableMessaging::SendReliable(
@@ -399,12 +459,6 @@ reliability::MessageId ReliableMessaging::SendReliable(
         return kInvalidId;
     }
 
-    uint8_t seq = message_cache_.NextSeq();
-
-    // Prevent self-receive if we hear our own message.
-    message_cache_.Record(host_.node_address, seq);
-
-    reliability::MessageId id{host_.node_address, seq, destination};
     reliability::Policy policy;
     policy.max_retries = max_retries;
     policy.collect_multiple = false;
@@ -418,18 +472,25 @@ reliability::MessageId ReliableMessaging::SendReliable(
         policy.max_timeout_ms = MaxReliableTimeout();
     }
 
+    reliability::MessageId id{};
     Result result = RunLocked([&]() {
+        auto seq = AllocateMessageSeq(destination, /*group_stream=*/false);
+        if (!seq) {
+            return Result(LoraMesherErrorCode::kQueueFull,
+                          "Reliable stream to destination is busy");
+        }
+        id = {host_.node_address, *seq, destination};
         return reliable_.Track(
             id, std::span<const uint8_t>(data.data(), data.size()), policy);
     });
     if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to track reliable message seq=%u: %s", seq,
+        LOG_ERROR("Failed to track reliable message to 0x%04X: %s", destination,
                   result.GetErrorMessage().c_str());
         return kInvalidId;
     }
 
     LOG_INFO("Sending reliable DATA to 0x%04X (seq=%u, timeout=%u, retries=%u)",
-             destination, seq, policy.timeout_ms, max_retries);
+             destination, id.seq, policy.timeout_ms, max_retries);
     return id;
 }
 
@@ -459,11 +520,6 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
         return kInvalidId;
     }
 
-    uint8_t seq = message_cache_.NextSeq();
-
-    message_cache_.Record(host_.node_address, seq);
-
-    reliability::MessageId id{host_.node_address, seq, group};
     reliability::Policy policy;
     policy.timeout_ms = window_ms;
     policy.max_retries = max_retries;
@@ -472,14 +528,21 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
 
     // A group destination makes each attempt a flooded group message with
     // the request-acks flag rather than a unicast.
+    reliability::MessageId id{};
     Result result = RunLocked([&]() {
+        auto seq = AllocateMessageSeq(group, /*group_stream=*/true);
+        if (!seq) {
+            return Result(LoraMesherErrorCode::kQueueFull,
+                          "Reliable group stream is busy");
+        }
+        id = {host_.node_address, *seq, group};
         Result tracked = reliable_.Track(id, data, policy);
         if (tracked.IsSuccess()) {
             // Register the acknowledgement-collection window.
             uint32_t deadline = host_.now_ms() + window_ms;
             for (auto& window : group_windows_) {
                 if (!window.valid) {
-                    window = {true, seq, group, deadline};
+                    window = {true, id.seq, group, deadline};
                     break;
                 }
             }
@@ -487,13 +550,13 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
         return tracked;
     });
     if (!result.IsSuccess()) {
-        LOG_ERROR("Failed to track reliable group seq=%u: %s", seq,
+        LOG_ERROR("Failed to track reliable group to 0x%04X: %s", group,
                   result.GetErrorMessage().c_str());
         return kInvalidId;
     }
 
-    LOG_INFO("Sending reliable GROUP to 0x%04X (seq=%u, window=%u)", group, seq,
-             window_ms);
+    LOG_INFO("Sending reliable GROUP to 0x%04X (seq=%u, window=%u)", group,
+             id.seq, window_ms);
     return id;
 }
 

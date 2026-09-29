@@ -1788,11 +1788,12 @@ class VirtualClock {
 
 /// Reliable framing prefix: [msg_seq:1][send_ts:4].
 std::vector<uint8_t> ReliablePayload(uint8_t msg_seq,
-                                     const std::vector<uint8_t>& app) {
+                                     const std::vector<uint8_t>& app,
+                                     uint32_t send_ts = 1234) {
     std::vector<uint8_t> out(5 + app.size());
     utils::ByteSerializer ser(out.data(), out.size());
     ser.WriteUint8(msg_seq);
-    ser.WriteUint32(1234);
+    ser.WriteUint32(send_ts);
     ser.WriteBytes(app.data(), app.size());
     return out;
 }
@@ -1956,6 +1957,94 @@ TEST_F(NetworkServiceCoverageTest, LateAckStillUpdatesPathRtt) {
     }
     ASSERT_TRUE(rtt.has_value());
     EXPECT_EQ(rtt->srtt_ms, 1500u);
+}
+
+/// Inject a DATA or DATA_RELIABLE packet from kOtherNode addressed to us.
+void InjectData(NetworkService& service, uint8_t link_seq,
+                const std::vector<uint8_t>& payload, MessageType type) {
+    auto msg = DataMessage::Create(0x1001, 0x3003, 0x1001, payload, 10,
+                                   link_seq, type);
+    ASSERT_TRUE(msg.has_value());
+    ASSERT_TRUE(
+        service.ProcessReceivedMessage(msg->ToBaseMessage(), 0).IsSuccess());
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableMsgSeqDoesNotBlockBestEffortData) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    int deliveries = 0;
+    service_->SetDataReceivedExCallback(
+        [&](AddressType, reliability::MessageId, uint8_t,
+            const std::vector<uint8_t>&) { deliveries++; });
+
+    InjectData(*service_, 20, ReliablePayload(9, {0x01}),
+               MessageType::DATA_RELIABLE);
+    InjectData(*service_, 9, {0x02}, MessageType::DATA);
+
+    EXPECT_EQ(deliveries, 2);
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableSeqReusedAfterAFullWindowIsNew) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    std::vector<std::vector<uint8_t>> delivered;
+    service_->SetDataReceivedExCallback(
+        [&](AddressType, reliability::MessageId, uint8_t,
+            const std::vector<uint8_t>& data) { delivered.push_back(data); });
+
+    InjectData(*service_, 1, ReliablePayload(7, {0x01}, 1000),
+               MessageType::DATA_RELIABLE);
+    InjectData(*service_, 2, ReliablePayload(40, {0x02}, 2000),
+               MessageType::DATA_RELIABLE);
+    // The sender's stream wrapped: 7 is a new message, not a retransmission.
+    InjectData(*service_, 3, ReliablePayload(7, {0x03}, 3000),
+               MessageType::DATA_RELIABLE);
+
+    ASSERT_EQ(delivered.size(), 3u);
+    EXPECT_EQ(delivered[2], std::vector<uint8_t>({0x03}));
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableSeqIsAllocatedPerDestination) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    constexpr AddressType kFarNode = 0x4004;
+
+    auto a1 = service_->SendReliable(kOtherNode, {1}, 0, 1000);
+    auto a2 = service_->SendReliable(kOtherNode, {2}, 0, 1000);
+    auto b1 = service_->SendReliable(kFarNode, {3}, 0, 1000);
+    auto a3 = service_->SendReliable(kOtherNode, {4}, 0, 1000);
+
+    ASSERT_NE(b1.source, 0);
+    EXPECT_EQ(b1.dest, kFarNode);
+    EXPECT_EQ(a1.dest, kOtherNode);
+    EXPECT_EQ(a2.seq, static_cast<uint8_t>(a1.seq + 1));
+    EXPECT_EQ(a3.seq, static_cast<uint8_t>(a2.seq + 1));
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableSendRefusedWhenStreamSpanIsFull) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    // The first message stays unacknowledged.
+    auto oldest = service_->SendReliable(kOtherNode, {0}, 3, 100000);
+    ASSERT_NE(oldest.source, 0);
+    PopTx(*message_queue_);
+
+    for (int i = 1; i < 32; ++i) {
+        auto id = service_->SendReliable(kOtherNode, {1}, 3, 100000);
+        ASSERT_NE(id.source, 0) << "message " << i;
+        PopTx(*message_queue_);
+        AckPayload ack;
+        ack.acked_seq = id.seq;
+        auto ack_bytes = ack.Serialize();
+        auto ack_msg = DataMessage::Create(
+            kNodeAddress, kOtherNode, kNodeAddress,
+            std::vector<uint8_t>(ack_bytes.begin(), ack_bytes.end()), 10, 0,
+            MessageType::ACK);
+        ASSERT_TRUE(ack_msg.has_value());
+        service_->ProcessReceivedMessage(ack_msg->ToBaseMessage(), 0);
+    }
+    ASSERT_EQ(service_->GetReliablePendingCount(), 1u);
+
+    // A 33rd outstanding sequence would fall outside the receiver window.
+    auto refused = service_->SendReliable(kOtherNode, {2}, 3, 100000);
+    EXPECT_EQ(refused.source, 0);
 }
 
 TEST_F(NetworkServiceCoverageTest, ImplausibleSyncBeaconIsIgnoredWhole) {

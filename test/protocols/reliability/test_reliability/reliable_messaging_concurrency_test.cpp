@@ -126,7 +126,7 @@ TEST_F(ReliableMessagingConcurrencyTest, DeliveryCallbackMaySendAgain) {
             }
         });
 
-    ASSERT_NE(messaging.SendReliable(kPeer, payload, 0, 100).seq, 0u);
+    ASSERT_NE(messaging.SendReliable(kPeer, payload, 0, 100).source, 0u);
     for (int i = 0; i < 100 && resends == 0; ++i) {
         messaging.ProcessReliableTimers();
     }

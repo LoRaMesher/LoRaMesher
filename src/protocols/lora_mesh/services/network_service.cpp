@@ -120,6 +120,9 @@ NetworkService::NetworkService(
     reliable_host.get_path_rtt = [this](AddressType dest) {
         return routing_table_->GetPathRtt(dest);
     };
+    reliable_host.random = []() {
+        return GetRTOS().GetRandom();
+    };
     reliable_host.set_path_rtt =
         [this](AddressType dest,
                const types::protocols::lora_mesh::PathRtt& rtt) {
@@ -1831,10 +1834,11 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
 
     if (final_dest == node_address_) {
         std::span<const uint8_t> payload = data_msg.GetPayload();
-        // Delivery is de-duplicated per message: for reliable data that is the
-        // stable message sequence in the framing prefix, since each
-        // retransmission travels with its own link-layer sequence.
+        // Best-effort data is de-duplicated on its link-layer sequence;
+        // reliable data on the message sequence of the sender's stream, since
+        // each attempt travels with its own link-layer sequence.
         uint8_t message_seq = seq_num;
+        bool is_new = true;
         if (reliable) {
             auto prefix = reliability::ReliablePrefix::Read(payload);
             if (!prefix) {
@@ -1853,9 +1857,14 @@ Result NetworkService::ProcessDataMessage(const BaseMessage& message,
             reliable_messaging_->EnqueueAck(original_src, message_seq,
                                             /*was_group=*/false,
                                             prefix->send_ts);
+            is_new = reliable_messaging_->AcceptReliable(
+                original_src, reliability::StreamKind::kUnicast, message_seq,
+                prefix->send_ts);
+        } else {
+            is_new = message_cache_.RecordIfNew(original_src, seq_num);
         }
 
-        if (!message_cache_.RecordIfNew(original_src, message_seq)) {
+        if (!is_new) {
             LOG_DEBUG("Duplicate DATA from 0x%04X seq=%u already delivered",
                       original_src, message_seq);
             return Result::Success();

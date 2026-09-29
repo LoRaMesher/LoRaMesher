@@ -83,7 +83,6 @@ Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
     entry->requeue = false;
     entry->requeue_is_retry = false;
     entry->consecutive_requeues = 0;
-    entry->attempted = false;
     entry->responder_count = 0;
 
     Attempt(*entry, now, /*is_retry=*/false);
@@ -94,8 +93,7 @@ Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
 void ReliableDelivery::Attempt(PendingEntry& entry, uint32_t now,
                                bool is_retry) {
     AttemptRequest request{
-        entry.id, std::span<const uint8_t>(entry.payload.data(), entry.len),
-        !entry.attempted};
+        entry.id, std::span<const uint8_t>(entry.payload.data(), entry.len)};
     Result sent =
         host_.send_attempt ? host_.send_attempt(request) : Result::Success();
 
@@ -131,7 +129,6 @@ void ReliableDelivery::Attempt(PendingEntry& entry, uint32_t now,
     }
     entry.requeue = false;
     entry.consecutive_requeues = 0;
-    entry.attempted = true;
     entry.sent_at_ms = now;
     entry.next_deadline_ms = now + entry.current_timeout_ms;
 }
@@ -209,6 +206,19 @@ void ReliableDelivery::CloseGroup(MessageId id) {
         return;
     }
     Finish(*entry, Outcome::GroupWindowClosed);
+}
+
+uint8_t ReliableDelivery::PendingSeqSpan(bool group_stream, AddressType dest,
+                                         uint8_t seq) const {
+    uint8_t span = 0;
+    for (const auto& entry : entries_) {
+        if (!entry.valid || entry.policy.collect_multiple != group_stream ||
+            (!group_stream && entry.id.dest != dest)) {
+            continue;
+        }
+        span = std::max(span, static_cast<uint8_t>(seq - entry.id.seq));
+    }
+    return span;
 }
 
 size_t ReliableDelivery::PendingCount() const {

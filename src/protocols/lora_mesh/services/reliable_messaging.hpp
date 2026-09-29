@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "protocols/lora_mesh/services/message_cache.hpp"
+#include "protocols/reliability/delivery_windows.hpp"
 #include "protocols/reliability/reliable_delivery.hpp"
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
@@ -86,6 +87,8 @@ class ReliableMessaging {
         std::function<bool(AddressType,
                            const types::protocols::lora_mesh::PathRtt&)>
             set_path_rtt;
+        /// Random value used to start new sequence streams.
+        std::function<uint32_t()> random;
     };
 
     /**
@@ -152,6 +155,18 @@ class ReliableMessaging {
     /// @return number of reliable messages currently awaiting acknowledgement.
     size_t GetReliablePendingCount() const;
 
+    /**
+     * @brief De-duplicate delivery of a received reliable message
+     *
+     * @param source Sender of the message
+     * @param kind Sender stream the message belongs to
+     * @param msg_seq Message sequence from the reliable framing prefix
+     * @param send_ts Send timestamp from the reliable framing prefix
+     * @return true if the message has not been delivered before
+     */
+    bool AcceptReliable(AddressType source, reliability::StreamKind kind,
+                        uint8_t msg_seq, uint32_t send_ts);
+
    private:
     /// Outcomes produced while the mutex is held, reported after release.
     struct OutcomeBatch {
@@ -198,6 +213,38 @@ class ReliableMessaging {
 
     /// Open window of a reliable group send with sequence @p seq, or null.
     GroupWindow* FindGroupWindow(uint8_t seq);
+
+    /// Message sequence counter of one unicast destination.
+    struct SeqStream {
+        bool valid = false;
+        AddressType dest = 0;
+        uint8_t next = 0;
+    };
+
+    /// Every unicast peer the protocol can address; streams are never evicted,
+    /// since restarting a counter could reuse a sequence the peer still holds.
+    static constexpr size_t kMaxSeqStreams = 0xFF - 1;
+
+    /**
+     * @brief Allocate the next message sequence of a stream
+     *
+     * @param dest Unicast destination (ignored for the group stream)
+     * @param group_stream Allocate from the stream shared by all group sends
+     * @return The sequence, or nullopt if the stream table is full or the
+     *         sequence would leave an unacknowledged message outside the
+     *         receiver's delivery window
+     */
+    std::optional<uint8_t> AllocateMessageSeq(AddressType dest,
+                                              bool group_stream);
+    SeqStream* FindOrCreateSeqStream(AddressType dest);
+    uint8_t RandomSeq() const;
+
+    std::array<SeqStream, kMaxSeqStreams> seq_streams_{};
+    uint8_t group_next_seq_ = 0;
+    bool group_stream_started_ = false;
+
+    /// Received reliable messages, de-duplicated per sender stream.
+    reliability::DeliveryWindows delivery_windows_;
 
     std::array<GroupWindow, reliability::ReliableDelivery::kMaxPending>
         group_windows_{};

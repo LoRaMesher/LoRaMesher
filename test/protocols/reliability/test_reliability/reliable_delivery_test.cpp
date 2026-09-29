@@ -24,7 +24,6 @@ class ReliableDeliveryTest : public ::testing::Test {
         MessageId id;
         std::vector<uint8_t> payload;
         AddressType dest;
-        bool first_attempt;
     };
 
     void SetUp() override {
@@ -40,7 +39,7 @@ class ReliableDeliveryTest : public ::testing::Test {
             sent_.push_back({request.id,
                              std::vector<uint8_t>(request.payload.begin(),
                                                   request.payload.end()),
-                             request.id.dest, request.first_attempt});
+                             request.id.dest});
             return Result::Success();
         };
         delivery_ = std::make_unique<ReliableDelivery>(
@@ -279,25 +278,18 @@ TEST_F(ReliableDeliveryTest, UnicastAckFromAnotherNodeIsIgnored) {
     EXPECT_EQ(results_[0].by, kDest);
 }
 
-TEST_F(ReliableDeliveryTest, AttemptsCarryDestinationAndFirstAttemptFlag) {
-    Policy policy;
-    policy.timeout_ms = 1000;
-    policy.max_retries = 1;
-    policy.requeue_delay_ms = 100;
+TEST_F(ReliableDeliveryTest, PendingSeqSpanMeasuresFromOldestOfTheStream) {
+    constexpr AddressType kOther = kDest + 1;
+    ASSERT_TRUE(Track({0x10, 250, kDest}, Bytes({1}), {1000, 3, false}));
+    ASSERT_TRUE(Track({0x10, 2, kDest}, Bytes({1}), {1000, 3, false}));
+    ASSERT_TRUE(Track({0x10, 100, kOther}, Bytes({1}), {1000, 3, false}));
+    ASSERT_TRUE(Track({0x10, 7, 0x8001}, Bytes({1}), {1000, 0, true}));
 
-    failing_sends_ = 1;
-    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), policy));
-
-    clock_ms_ = 100;
-    delivery_->Tick();  // re-try of the rejected first attempt
-    clock_ms_ = 1100;
-    delivery_->Tick();  // retransmission
-
-    ASSERT_EQ(sent_.size(), 2u);
-    EXPECT_EQ(sent_[0].dest, kDest);
-    EXPECT_TRUE(sent_[0].first_attempt);
-    EXPECT_EQ(sent_[1].dest, kDest);
-    EXPECT_FALSE(sent_[1].first_attempt);
+    // Across the 8-bit wrap, 250 is the oldest message to kDest.
+    EXPECT_EQ(delivery_->PendingSeqSpan(false, kDest, 5), 11u);
+    EXPECT_EQ(delivery_->PendingSeqSpan(false, kOther, 101), 1u);
+    EXPECT_EQ(delivery_->PendingSeqSpan(false, 0x30, 9), 0u);
+    EXPECT_EQ(delivery_->PendingSeqSpan(true, 0, 9), 2u);
 }
 
 TEST_F(ReliableDeliveryTest, DeadlineAcrossClockWrapIsNotReachedEarly) {
