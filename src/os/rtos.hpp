@@ -87,6 +87,7 @@ class RTOS {
 
     /**
      * @brief Create a new task
+     * @param stackSize Stack size in bytes
      */
     virtual bool CreateTask(TaskFunction_t taskFunction, const char* name,
                             uint32_t stackSize, void* parameters,

@@ -81,17 +81,12 @@ class TaskMonitor {
     /**
      * @brief Iterate every registered task, log its current high-water-mark
      * in bytes, and warn if the value drops below kStackWarnBytes.
-     *
-     * On this FreeRTOS port uxTaskGetStackHighWaterMark returns words, so
-     * we multiply by kStackBytesPerWord to report bytes consistently.
      */
     static void PollAllAndWarn() {
 #ifdef LORAMESHER_BUILD_ARDUINO
         std::lock_guard<std::mutex> lock(GetRegistry().mutex);
         for (const auto& reg : GetRegistry().entries) {
-            UBaseType_t hwm_words = uxTaskGetStackHighWaterMark(reg.handle);
-            uint32_t hwm_bytes = static_cast<uint32_t>(hwm_words) *
-                                 config::TaskConfig::kStackBytesPerWord;
+            uint32_t hwm_bytes = GetRTOS().getTaskStackWatermark(reg.handle);
             LOG_INFO("STACK[%s] total=%u free=%u", reg.name,
                      static_cast<unsigned>(reg.configured_bytes),
                      static_cast<unsigned>(hwm_bytes));

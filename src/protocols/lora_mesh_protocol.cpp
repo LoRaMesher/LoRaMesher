@@ -205,9 +205,8 @@ Result LoRaMeshProtocol::Init(
     // Create main protocol task
     bool task_created =
         GetRTOS().CreateTask(ProtocolTaskFunction, "LoRaMeshMain",
-                             config::TaskConfig::kProtocolMainStackSize /
-                                 config::TaskConfig::kStackBytesPerWord,
-                             this, TASK_PRIORITY, &protocol_task_handle_);
+                             config::TaskConfig::kProtocolMainStackSize, this,
+                             TASK_PRIORITY, &protocol_task_handle_);
 
     if (!task_created) {
         return Result(LoraMesherErrorCode::kConfigurationError,

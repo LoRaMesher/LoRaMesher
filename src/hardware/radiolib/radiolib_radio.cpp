@@ -77,9 +77,8 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
     // Create processing task with monitored configuration
     bool task_created = GetRTOS().CreateTask(
         ProcessEvents, taskName.c_str(),
-        config::TaskConfig::kRadioEventStackSize /
-            config::TaskConfig::kStackBytesPerWord,
-        this, config::TaskPriorities::kRadioEventPriority, &processing_task_);
+        config::TaskConfig::kRadioEventStackSize, this,
+        config::TaskPriorities::kRadioEventPriority, &processing_task_);
 
     if (!task_created) {
         GetRTOS().DeleteQueue(receive_queue_);
