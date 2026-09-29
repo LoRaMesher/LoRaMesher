@@ -18,22 +18,6 @@
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
 using JoinResponseStatus = loramesher::JoinResponseHeader::ResponseStatus;
-
-/**
- * @brief Whether a sync beacon's schedule parameters are internally consistent
- *
- * Every node lays out its superframe from the beacon, so a beacon announcing a
- * depth beyond the protocol limit, or a sync band that cannot fit in the
- * announced superframe, is discarded as a whole.
- */
-bool IsPlausibleSyncBeacon(const loramesher::SyncBeaconMessage& beacon) {
-    const uint8_t depth = beacon.GetMaxHops();
-    if (depth > loramesher::LoRaMeshProtocolConfig::kMaxHopsLimit) {
-        return false;
-    }
-    const uint8_t total_slots = beacon.GetTotalSlots();
-    return total_slots == 0 || static_cast<uint16_t>(depth) + 1 <= total_slots;
-}
 }  // namespace
 
 namespace loramesher {
@@ -2611,6 +2595,26 @@ uint32_t NetworkService::GetJoinTimeout() {
 
     return superframe_service_->GetSuperframeDuration() * 3;
 }
+
+namespace {
+
+/**
+ * @brief Whether a sync beacon's schedule parameters are internally consistent
+ *
+ * Every node lays out its superframe from the beacon, so a beacon announcing a
+ * depth beyond the protocol limit, or a sync band that cannot fit in the
+ * announced superframe, is discarded as a whole.
+ */
+bool IsPlausibleSyncBeacon(const SyncBeaconMessage& beacon) {
+    const uint8_t depth = beacon.GetMaxHops();
+    if (depth > LoRaMeshProtocolConfig::kMaxHopsLimit) {
+        return false;
+    }
+    const uint8_t total_slots = beacon.GetTotalSlots();
+    return total_slots == 0 || static_cast<uint16_t>(depth) + 1 <= total_slots;
+}
+
+}  // namespace
 
 Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                                          uint32_t reception_timestamp) {
