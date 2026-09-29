@@ -3,8 +3,8 @@
  * @brief Group multicast + reliable-delivery subsystem extracted from NetworkService
  *
  * Owns the end-to-end reliable unicast/group delivery state machine
- * (reliability::ReliableDelivery), the seq->destination shadow table, group
- * (multicast) membership, and the acknowledgement-collection windows.
+ * (reliability::ReliableDelivery), group (multicast) membership, and the
+ * acknowledgement-collection windows.
  * Constructed and owned by NetworkService, which delegates the corresponding
  * public API to it and supplies cross-cutting dependencies as Host closures.
  *
@@ -101,12 +101,6 @@ class ReliableMessaging {
     bool IsMemberOfGroup(AddressType group) const;
     std::vector<AddressType> GetGroups() const;
 
-    // --- Reliable destination shadow table ---
-
-    AddressType LookupReliableDest(uint8_t seq) const;
-    void RecordReliableDest(uint8_t seq, AddressType dest);
-    void ClearReliableDest(uint8_t seq);
-
     // --- Group send / receive ---
 
     /// Send a best-effort (non-reliable) group multicast message.
@@ -159,8 +153,7 @@ class ReliableMessaging {
 
    private:
     Result ForwardGroupMessage(const GroupMessage& original);
-    Result SendReliableAttempt(const reliability::MessageId& id,
-                               std::span<const uint8_t> payload);
+    Result SendReliableAttempt(const reliability::AttemptRequest& request);
     /// Fold an acknowledgement's round-trip sample into @p peer's estimate.
     void RecordRttSample(AddressType peer, uint32_t echo_ts);
     uint32_t SuperframeOrDefault() const;
@@ -177,19 +170,6 @@ class ReliableMessaging {
     static constexpr size_t kMaxGroups = 8;
     std::array<AddressType, kMaxGroups> groups_{};
     uint8_t group_count_ = 0;
-
-    // seq->destination shadow table
-    struct ReliableDest {
-        bool valid = false;
-        uint8_t seq = 0;
-        AddressType dest = 0;
-        bool attempted = false;  ///< An attempt has already been queued
-    };
-
-    ReliableDest* FindReliableDest(uint8_t seq);
-
-    std::array<ReliableDest, reliability::ReliableDelivery::kMaxPending>
-        reliable_dest_{};
 
     // Acknowledgement-collection windows for reliable group sends
     struct GroupWindow {

@@ -23,6 +23,8 @@ class ReliableDeliveryTest : public ::testing::Test {
     struct SentAttempt {
         MessageId id;
         std::vector<uint8_t> payload;
+        AddressType dest;
+        bool first_attempt;
     };
 
     void SetUp() override {
@@ -30,14 +32,15 @@ class ReliableDeliveryTest : public ::testing::Test {
         host.now_ms = [this]() {
             return clock_ms_;
         };
-        host.send_attempt = [this](const MessageId& id,
-                                   std::span<const uint8_t> payload) {
+        host.send_attempt = [this](const AttemptRequest& request) {
             if (failing_sends_ > 0) {
                 failing_sends_--;
                 return Result(LoraMesherErrorCode::kQueueFull, "queue full");
             }
-            sent_.push_back(
-                {id, std::vector<uint8_t>(payload.begin(), payload.end())});
+            sent_.push_back({request.id,
+                             std::vector<uint8_t>(request.payload.begin(),
+                                                  request.payload.end()),
+                             request.dest, request.first_attempt});
             return Result::Success();
         };
         delivery_ = std::make_unique<ReliableDelivery>(
@@ -46,6 +49,14 @@ class ReliableDeliveryTest : public ::testing::Test {
     }
 
     MessageId Id(AddressType src, uint8_t seq) const { return {src, seq}; }
+
+    /// Track a message addressed to kDest.
+    Result Track(MessageId id, std::span<const uint8_t> payload,
+                 Policy policy) {
+        return delivery_->Track(id, kDest, payload, policy);
+    }
+
+    static constexpr AddressType kDest = 0x20;
 
     static std::vector<uint8_t> Bytes(std::initializer_list<uint8_t> bytes) {
         return std::vector<uint8_t>(bytes);
@@ -60,7 +71,7 @@ class ReliableDeliveryTest : public ::testing::Test {
 
 TEST_F(ReliableDeliveryTest, TrackPerformsFirstAttempt) {
     const std::vector<uint8_t> payload = {1, 2, 3};
-    ASSERT_TRUE(delivery_->Track(Id(0x10, 5), payload, {1000, 3, false}));
+    ASSERT_TRUE(Track(Id(0x10, 5), payload, {1000, 3, false}));
 
     ASSERT_EQ(sent_.size(), 1u);
     EXPECT_EQ(sent_[0].id, Id(0x10, 5));
@@ -71,7 +82,7 @@ TEST_F(ReliableDeliveryTest, TrackPerformsFirstAttempt) {
 
 TEST_F(ReliableDeliveryTest, NoRetransmitBeforeTimeout) {
     const std::vector<uint8_t> payload = {7};
-    delivery_->Track(Id(0x10, 1), payload, {1000, 3, false});
+    Track(Id(0x10, 1), payload, {1000, 3, false});
 
     clock_ms_ = 999;
     delivery_->Tick();
@@ -80,7 +91,7 @@ TEST_F(ReliableDeliveryTest, NoRetransmitBeforeTimeout) {
 
 TEST_F(ReliableDeliveryTest, RetransmitOnTimeoutDecrementsRetries) {
     const std::vector<uint8_t> payload = {7};
-    delivery_->Track(Id(0x10, 1), payload, {1000, 2, false});
+    Track(Id(0x10, 1), payload, {1000, 2, false});
 
     clock_ms_ = 1000;
     delivery_->Tick();
@@ -97,7 +108,7 @@ TEST_F(ReliableDeliveryTest, RetransmitOnTimeoutDecrementsRetries) {
 }
 
 TEST_F(ReliableDeliveryTest, AckDeliversAndErases) {
-    delivery_->Track(Id(0x10, 4), Bytes({1, 2}), {1000, 3, false});
+    Track(Id(0x10, 4), Bytes({1, 2}), {1000, 3, false});
 
     clock_ms_ = 250;  // RTT will be now - echo_ts
     EXPECT_TRUE(delivery_->OnAck(Id(0x10, 4), 0x20, /*echo_ts=*/100));
@@ -110,14 +121,14 @@ TEST_F(ReliableDeliveryTest, AckDeliversAndErases) {
 }
 
 TEST_F(ReliableDeliveryTest, UnmatchedAckReturnsFalse) {
-    delivery_->Track(Id(0x10, 4), Bytes({1}), {1000, 3, false});
+    Track(Id(0x10, 4), Bytes({1}), {1000, 3, false});
     EXPECT_FALSE(delivery_->OnAck(Id(0x10, 99), 0x20, 0));
     EXPECT_EQ(results_.size(), 0u);
     EXPECT_EQ(delivery_->PendingCount(), 1u);
 }
 
 TEST_F(ReliableDeliveryTest, FailsAfterMaxRetries) {
-    delivery_->Track(Id(0x10, 1), Bytes({1}), {1000, 2, false});
+    Track(Id(0x10, 1), Bytes({1}), {1000, 2, false});
 
     clock_ms_ = 1000;
     delivery_->Tick();  // attempt #2
@@ -133,8 +144,7 @@ TEST_F(ReliableDeliveryTest, FailsAfterMaxRetries) {
 }
 
 TEST_F(ReliableDeliveryTest, CollectMultipleFiresPerDistinctResponder) {
-    delivery_->Track(Id(0x10, 2), Bytes({1}),
-                     {5000, 0, /*collect_multiple=*/true});
+    Track(Id(0x10, 2), Bytes({1}), {5000, 0, /*collect_multiple=*/true});
 
     clock_ms_ = 100;
     EXPECT_TRUE(delivery_->OnAck(Id(0x10, 2), 0x21, 0));
@@ -153,8 +163,7 @@ TEST_F(ReliableDeliveryTest, CollectMultipleFiresPerDistinctResponder) {
 }
 
 TEST_F(ReliableDeliveryTest, CollectMultipleNotFailedByTick) {
-    delivery_->Track(Id(0x10, 2), Bytes({1}),
-                     {1000, 3, /*collect_multiple=*/true});
+    Track(Id(0x10, 2), Bytes({1}), {1000, 3, /*collect_multiple=*/true});
     clock_ms_ = 100000;
     delivery_->Tick();
     EXPECT_TRUE(results_.empty());
@@ -162,7 +171,7 @@ TEST_F(ReliableDeliveryTest, CollectMultipleNotFailedByTick) {
 }
 
 TEST_F(ReliableDeliveryTest, CloseGroupReportsWindowClosed) {
-    delivery_->Track(Id(0x10, 2), Bytes({1}), {5000, 0, true});
+    Track(Id(0x10, 2), Bytes({1}), {5000, 0, true});
     delivery_->OnAck(Id(0x10, 2), 0x21, 0);
     delivery_->OnAck(Id(0x10, 2), 0x22, 0);
     results_.clear();
@@ -177,10 +186,10 @@ TEST_F(ReliableDeliveryTest, CloseGroupReportsWindowClosed) {
 
 TEST_F(ReliableDeliveryTest, TrackFailsWhenTableFull) {
     for (size_t i = 0; i < ReliableDelivery::kMaxPending; ++i) {
-        ASSERT_TRUE(delivery_->Track(Id(0x10, static_cast<uint8_t>(i)),
-                                     Bytes({1}), {1000, 3, false}));
+        ASSERT_TRUE(Track(Id(0x10, static_cast<uint8_t>(i)), Bytes({1}),
+                          {1000, 3, false}));
     }
-    Result r = delivery_->Track(Id(0x10, 200), Bytes({1}), {1000, 3, false});
+    Result r = Track(Id(0x10, 200), Bytes({1}), {1000, 3, false});
     EXPECT_FALSE(r.IsSuccess());
     EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kQueueFull);
 }
@@ -192,7 +201,7 @@ TEST_F(ReliableDeliveryTest, FailedEnqueueDoesNotConsumeAttempt) {
     policy.requeue_delay_ms = 100;
 
     failing_sends_ = 1;
-    ASSERT_TRUE(delivery_->Track(Id(0x10, 1), Bytes({1}), policy));
+    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), policy));
     EXPECT_TRUE(sent_.empty());
 
     // The rejected first attempt is re-tried after the requeue delay, without
@@ -219,7 +228,7 @@ TEST_F(ReliableDeliveryTest, BackoffDoublesTimeoutUpToMax) {
     policy.max_timeout_ms = 3000;
     policy.exponential_backoff = true;
 
-    ASSERT_TRUE(delivery_->Track(Id(0x10, 1), Bytes({1}), policy));
+    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), policy));
 
     clock_ms_ = 1000;
     delivery_->Tick();  // attempt #2, next timeout 2000
@@ -243,9 +252,83 @@ TEST_F(ReliableDeliveryTest, BackoffDoublesTimeoutUpToMax) {
     EXPECT_EQ(results_[0].outcome, Outcome::Failed);
 }
 
+TEST_F(ReliableDeliveryTest, UnicastAckFromAnotherNodeIsIgnored) {
+    ASSERT_TRUE(Track(Id(0x10, 4), Bytes({1}), {1000, 3, false}));
+
+    EXPECT_FALSE(delivery_->OnAck(Id(0x10, 4), kDest + 1, 0));
+    EXPECT_TRUE(results_.empty());
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
+
+    EXPECT_TRUE(delivery_->OnAck(Id(0x10, 4), kDest, 0));
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].by, kDest);
+}
+
+TEST_F(ReliableDeliveryTest, AttemptsCarryDestinationAndFirstAttemptFlag) {
+    Policy policy;
+    policy.timeout_ms = 1000;
+    policy.max_retries = 1;
+    policy.requeue_delay_ms = 100;
+
+    failing_sends_ = 1;
+    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), policy));
+
+    clock_ms_ = 100;
+    delivery_->Tick();  // re-try of the rejected first attempt
+    clock_ms_ = 1100;
+    delivery_->Tick();  // retransmission
+
+    ASSERT_EQ(sent_.size(), 2u);
+    EXPECT_EQ(sent_[0].dest, kDest);
+    EXPECT_TRUE(sent_[0].first_attempt);
+    EXPECT_EQ(sent_[1].dest, kDest);
+    EXPECT_FALSE(sent_[1].first_attempt);
+}
+
+TEST_F(ReliableDeliveryTest, DeadlineAcrossClockWrapIsNotReachedEarly) {
+    clock_ms_ = UINT32_MAX - 499;
+    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), {1000, 1, false}));
+
+    clock_ms_ = UINT32_MAX - 100;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 1u);
+
+    clock_ms_ = 500;  // 1000 ms after the first attempt, past the wrap
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 2u);
+}
+
+TEST_F(ReliableDeliveryTest, TrackRejectsIdAlreadyPending) {
+    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), {1000, 3, false}));
+
+    Result r = Track(Id(0x10, 1), Bytes({2}), {1000, 3, false});
+    EXPECT_FALSE(r.IsSuccess());
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
+    EXPECT_EQ(sent_.size(), 1u);
+}
+
+TEST_F(ReliableDeliveryTest, AttemptThatCanNeverBeQueuedEventuallyFails) {
+    Policy policy;
+    policy.timeout_ms = 1000;
+    policy.max_retries = 1;
+    policy.requeue_delay_ms = 100;
+
+    failing_sends_ = 1000000;
+    ASSERT_TRUE(Track(Id(0x10, 1), Bytes({1}), policy));
+
+    for (int i = 0; i < 1000 && results_.empty(); ++i) {
+        clock_ms_ += 100;
+        delivery_->Tick();
+    }
+
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].outcome, Outcome::Failed);
+    EXPECT_EQ(delivery_->PendingCount(), 0u);
+}
+
 TEST_F(ReliableDeliveryTest, TrackFailsWhenPayloadTooLarge) {
     std::vector<uint8_t> payload(ReliableDelivery::MaxReliablePayload() + 1, 0);
-    Result r = delivery_->Track(Id(0x10, 1), payload, {1000, 3, false});
+    Result r = Track(Id(0x10, 1), payload, {1000, 3, false});
     EXPECT_FALSE(r.IsSuccess());
     EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kBufferOverflow);
     EXPECT_EQ(delivery_->PendingCount(), 0u);

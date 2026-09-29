@@ -101,13 +101,22 @@ struct DeliveryResult {
 using DeliveryCallback = std::function<void(const DeliveryResult&)>;
 
 /**
+ * @brief One transmission attempt handed to the host.
+ */
+struct AttemptRequest {
+    MessageId id;                      ///< Identifier of the tracked message
+    AddressType dest = 0;              ///< Unicast or group destination
+    std::span<const uint8_t> payload;  ///< Retained application payload
+    bool first_attempt = true;         ///< No earlier attempt has been queued
+};
+
+/**
  * @brief Mesh-specific operations the host protocol must provide.
  */
 struct Host {
     /// Transmit one attempt of a tracked message. Must be non-blocking and must
     /// not transmit synchronously from a receive context.
-    std::function<Result(const MessageId&, std::span<const uint8_t>)>
-        send_attempt;
+    std::function<Result(const AttemptRequest&)> send_attempt;
     /// Monotonic millisecond clock.
     std::function<uint32_t()> now_ms;
 };
@@ -122,8 +131,10 @@ struct Policy {
                                     ///< distinct responder, no erase on ACK)
     uint32_t requeue_delay_ms = 0;  ///< Delay before re-trying an attempt the
                                     ///< host could not queue (0 = timeout_ms)
-    uint32_t max_timeout_ms = 0;    ///< Upper bound for backed-off timeouts
-                                    ///< (0 = unbounded)
+    uint8_t max_consecutive_requeues = 8;  ///< Consecutive rejected attempts
+                                           ///< before the message fails
+    uint32_t max_timeout_ms = 0;       ///< Upper bound for backed-off timeouts
+                                       ///< (0 = unbounded)
     bool exponential_backoff = false;  ///< Double the timeout on each retry
 };
 
@@ -158,18 +169,21 @@ class ReliableDelivery {
      * @brief Begin tracking a message and perform attempt #1.
      *
      * @param id Identifier the host placed on the wire
+     * @param dest Unicast destination, or group address for a group window
      * @param payload Application payload (retained for retransmission)
      * @param policy Retransmission / acknowledgement policy
-     * @return Result Success, or an error if the table is full or the payload
-     *         exceeds MaxReliablePayload()
+     * @return Result Success, or an error if the table is full, @p id is
+     *         already pending, or the payload exceeds MaxReliablePayload()
      */
-    Result Track(MessageId id, std::span<const uint8_t> payload, Policy policy);
+    Result Track(MessageId id, AddressType dest,
+                 std::span<const uint8_t> payload, Policy policy);
 
     /**
      * @brief Process an acknowledgement.
      *
      * @param acked Identifier being acknowledged
-     * @param by Acknowledging node
+     * @param by Acknowledging node; for a unicast entry it must be the
+     *        tracked destination
      * @param echo_ts Send timestamp echoed by the acknowledgement, for RTT
      * @return bool true if it matched a tracked entry; false if unsolicited
      */
@@ -198,6 +212,7 @@ class ReliableDelivery {
     struct PendingEntry {
         bool valid = false;
         MessageId id{};
+        AddressType dest = 0;
         std::array<uint8_t, kMaxReliablePayload> payload{};
         uint8_t len = 0;
         Policy policy{};
@@ -205,6 +220,8 @@ class ReliableDelivery {
         uint32_t current_timeout_ms = 0;  ///< Timeout of the latest attempt
         bool requeue = false;             ///< Latest attempt was not queued
         bool requeue_is_retry = false;    ///< That attempt was a retransmission
+        uint8_t consecutive_requeues = 0;  ///< Rejected attempts in a row
+        bool attempted = false;            ///< An attempt has been queued
         uint8_t retries_left = 0;
         uint32_t sent_at_ms = 0;
         std::array<AddressType, kMaxGroupResponders> responders{};
@@ -215,8 +232,11 @@ class ReliableDelivery {
     PendingEntry* FindFreeSlot();
     /// Hand one attempt of @p entry to the host and schedule its deadline.
     /// A rejected attempt is re-tried after the requeue delay and does not
-    /// consume a retry.
+    /// consume a retry; after max_consecutive_requeues rejections in a row
+    /// the message fails.
     void Attempt(PendingEntry& entry, uint32_t now, bool is_retry);
+    /// Erase @p entry and report @p outcome.
+    void Finish(PendingEntry& entry, Outcome outcome);
     bool RecordResponder(PendingEntry& entry, AddressType by);
     uint32_t Now() const;
 

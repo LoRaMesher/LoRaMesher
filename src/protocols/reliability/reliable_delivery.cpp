@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "utils/logger.hpp"
+#include "utils/time_utils.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -52,11 +53,17 @@ bool ReliableDelivery::RecordResponder(PendingEntry& entry, AddressType by) {
     return true;
 }
 
-Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
+Result ReliableDelivery::Track(MessageId id, AddressType dest,
+                               std::span<const uint8_t> payload,
                                Policy policy) {
     if (payload.size() > kMaxReliablePayload) {
         return Result(LoraMesherErrorCode::kBufferOverflow,
                       "Payload exceeds reliable delivery capacity");
+    }
+
+    if (FindEntry(id) != nullptr) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Message id is already pending");
     }
 
     PendingEntry* entry = FindFreeSlot();
@@ -69,6 +76,7 @@ Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
 
     entry->valid = true;
     entry->id = id;
+    entry->dest = dest;
     entry->len = static_cast<uint8_t>(payload.size());
     std::copy(payload.begin(), payload.end(), entry->payload.begin());
     entry->policy = policy;
@@ -76,6 +84,8 @@ Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
     entry->current_timeout_ms = policy.timeout_ms;
     entry->requeue = false;
     entry->requeue_is_retry = false;
+    entry->consecutive_requeues = 0;
+    entry->attempted = false;
     entry->responder_count = 0;
 
     Attempt(*entry, now, /*is_retry=*/false);
@@ -85,13 +95,24 @@ Result ReliableDelivery::Track(MessageId id, std::span<const uint8_t> payload,
 
 void ReliableDelivery::Attempt(PendingEntry& entry, uint32_t now,
                                bool is_retry) {
+    AttemptRequest request{
+        entry.id, entry.dest,
+        std::span<const uint8_t>(entry.payload.data(), entry.len),
+        !entry.attempted};
     Result sent =
-        host_.send_attempt
-            ? host_.send_attempt(entry.id, std::span<const uint8_t>(
-                                               entry.payload.data(), entry.len))
-            : Result::Success();
+        host_.send_attempt ? host_.send_attempt(request) : Result::Success();
 
     if (!sent.IsSuccess()) {
+        if (entry.consecutive_requeues >=
+            entry.policy.max_consecutive_requeues) {
+            LOG_WARNING(
+                "Reliable seq=%u could not be queued after %u tries (%s)",
+                entry.id.seq, entry.consecutive_requeues + 1,
+                sent.GetErrorMessage().c_str());
+            Finish(entry, Outcome::Failed);
+            return;
+        }
+        entry.consecutive_requeues++;
         const uint32_t delay = entry.policy.requeue_delay_ms != 0
                                    ? entry.policy.requeue_delay_ms
                                    : entry.current_timeout_ms;
@@ -112,6 +133,8 @@ void ReliableDelivery::Attempt(PendingEntry& entry, uint32_t now,
         entry.current_timeout_ms = static_cast<uint32_t>(doubled);
     }
     entry.requeue = false;
+    entry.consecutive_requeues = 0;
+    entry.attempted = true;
     entry.sent_at_ms = now;
     entry.next_deadline_ms = now + entry.current_timeout_ms;
 }
@@ -120,6 +143,10 @@ bool ReliableDelivery::OnAck(MessageId acked, AddressType by,
                              uint32_t echo_ts) {
     PendingEntry* entry = FindEntry(acked);
     if (!entry) {
+        return false;
+    }
+
+    if (!entry->policy.collect_multiple && by != entry->dest) {
         return false;
     }
 
@@ -148,7 +175,7 @@ void ReliableDelivery::Tick() {
     const uint32_t now = Now();
 
     for (auto& entry : entries_) {
-        if (!entry.valid || now < entry.next_deadline_ms) {
+        if (!entry.valid || !utils::TimeReached(now, entry.next_deadline_ms)) {
             continue;
         }
         // Group windows are closed by their owner, not by retry timers; only
@@ -165,12 +192,17 @@ void ReliableDelivery::Tick() {
             entry.retries_left--;
             Attempt(entry, now, /*is_retry=*/true);
         } else {
-            const MessageId id = entry.id;
-            entry.valid = false;
-            if (callback_) {
-                callback_({id, Outcome::Failed, 0, 0, 0});
-            }
+            Finish(entry, Outcome::Failed);
         }
+    }
+}
+
+void ReliableDelivery::Finish(PendingEntry& entry, Outcome outcome) {
+    const MessageId id = entry.id;
+    const uint8_t count = entry.responder_count;
+    entry.valid = false;
+    if (callback_) {
+        callback_({id, outcome, 0, 0, count});
     }
 }
 
@@ -179,11 +211,7 @@ void ReliableDelivery::CloseGroup(MessageId id) {
     if (!entry) {
         return;
     }
-    const uint8_t count = entry->responder_count;
-    entry->valid = false;
-    if (callback_) {
-        callback_({id, Outcome::GroupWindowClosed, 0, 0, count});
-    }
+    Finish(*entry, Outcome::GroupWindowClosed);
 }
 
 size_t ReliableDelivery::PendingCount() const {

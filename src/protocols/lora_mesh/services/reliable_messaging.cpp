@@ -14,6 +14,7 @@
 #include "types/messages/message_type.hpp"
 #include "utils/byte_operations.h"
 #include "utils/logger.hpp"
+#include "utils/time_utils.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -33,9 +34,8 @@ ReliableMessaging::ReliableMessaging(std::mutex& mutex, Host host)
 
 reliability::Host ReliableMessaging::BuildReliableHost() {
     reliability::Host host;
-    host.send_attempt = [this](const reliability::MessageId& id,
-                               std::span<const uint8_t> payload) {
-        return SendReliableAttempt(id, payload);
+    host.send_attempt = [this](const reliability::AttemptRequest& request) {
+        return SendReliableAttempt(request);
     };
     host.now_ms = [this]() {
         return host_.now_ms ? host_.now_ms() : 0u;
@@ -96,46 +96,6 @@ std::vector<AddressType> ReliableMessaging::GetGroups() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return std::vector<AddressType>(groups_.begin(),
                                     groups_.begin() + group_count_);
-}
-
-// --- Reliable destination shadow table ---
-
-ReliableMessaging::ReliableDest* ReliableMessaging::FindReliableDest(
-    uint8_t seq) {
-    for (auto& entry : reliable_dest_) {
-        if (entry.valid && entry.seq == seq) {
-            return &entry;
-        }
-    }
-    return nullptr;
-}
-
-AddressType ReliableMessaging::LookupReliableDest(uint8_t seq) const {
-    for (const auto& entry : reliable_dest_) {
-        if (entry.valid && entry.seq == seq) {
-            return entry.dest;
-        }
-    }
-    return 0;
-}
-
-void ReliableMessaging::RecordReliableDest(uint8_t seq, AddressType dest) {
-    for (auto& entry : reliable_dest_) {
-        if (!entry.valid) {
-            entry = {true, seq, dest, false};
-            return;
-        }
-    }
-    LOG_WARNING("Reliable destination table full; seq=%u not recorded", seq);
-}
-
-void ReliableMessaging::ClearReliableDest(uint8_t seq) {
-    for (auto& entry : reliable_dest_) {
-        if (entry.valid && entry.seq == seq) {
-            entry.valid = false;
-            return;
-        }
-    }
 }
 
 // --- Group send / receive ---
@@ -304,7 +264,7 @@ void ReliableMessaging::RecordRttSample(AddressType peer, uint32_t echo_ts) {
         return;
     }
     const uint32_t now = host_.now_ms();
-    if (echo_ts > now) {
+    if (!utils::TimeReached(now, echo_ts)) {
         return;
     }
     auto rtt = host_.get_path_rtt(peer);
@@ -316,14 +276,10 @@ void ReliableMessaging::RecordRttSample(AddressType peer, uint32_t echo_ts) {
 }
 
 Result ReliableMessaging::SendReliableAttempt(
-    const reliability::MessageId& id, std::span<const uint8_t> payload) {
-    ReliableDest* record = FindReliableDest(id.seq);
-    if (record == nullptr) {
-        LOG_ERROR("No destination recorded for reliable seq=%u", id.seq);
-        return Result(LoraMesherErrorCode::kInvalidState,
-                      "No destination for reliable attempt");
-    }
-    const AddressType dest = record->dest;
+    const reliability::AttemptRequest& request) {
+    const reliability::MessageId& id = request.id;
+    const AddressType dest = request.dest;
+    std::span<const uint8_t> payload = request.payload;
 
     uint8_t ttl =
         (host_.max_hops() > 0)
@@ -359,7 +315,7 @@ Result ReliableMessaging::SendReliableAttempt(
         // the message sequence, every retransmission draws a fresh one so
         // relays that forwarded an earlier attempt forward this one too.
         uint8_t link_seq = id.seq;
-        if (record->attempted) {
+        if (!request.first_attempt) {
             link_seq = host_.next_seq();
             host_.record_in_cache(host_.node_address, link_seq);
         }
@@ -373,11 +329,7 @@ Result ReliableMessaging::SendReliableAttempt(
         base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
     }
 
-    Result result = host_.enqueue(SlotType::TX, std::move(base_msg));
-    if (result.IsSuccess()) {
-        record->attempted = true;
-    }
-    return result;
+    return host_.enqueue(SlotType::TX, std::move(base_msg));
 }
 
 reliability::MessageId ReliableMessaging::SendReliable(
@@ -407,7 +359,6 @@ reliability::MessageId ReliableMessaging::SendReliable(
 
     // Prevent self-receive if we hear our own message.
     host_.record_in_cache(host_.node_address, seq);
-    RecordReliableDest(seq, destination);
 
     reliability::MessageId id{host_.node_address, seq};
     reliability::Policy policy;
@@ -424,11 +375,11 @@ reliability::MessageId ReliableMessaging::SendReliable(
     }
 
     Result result = reliable_.Track(
-        id, std::span<const uint8_t>(data.data(), data.size()), policy);
+        id, destination, std::span<const uint8_t>(data.data(), data.size()),
+        policy);
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable message seq=%u: %s", seq,
                   result.GetErrorMessage().c_str());
-        ClearReliableDest(seq);
         return kInvalidId;
     }
 
@@ -466,9 +417,6 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     uint8_t seq = host_.next_seq();
 
     host_.record_in_cache(host_.node_address, seq);
-    // A group destination tells the send_attempt closure to build a flooded
-    // group message (with the request-acks flag) rather than a unicast.
-    RecordReliableDest(seq, group);
 
     reliability::MessageId id{host_.node_address, seq};
     reliability::Policy policy;
@@ -477,11 +425,12 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     policy.collect_multiple = true;
     policy.requeue_delay_ms = SuperframeOrDefault();
 
-    Result result = reliable_.Track(id, data, policy);
+    // A group destination makes each attempt a flooded group message with
+    // the request-acks flag rather than a unicast.
+    Result result = reliable_.Track(id, group, data, policy);
     if (!result.IsSuccess()) {
         LOG_ERROR("Failed to track reliable group seq=%u: %s", seq,
                   result.GetErrorMessage().c_str());
-        ClearReliableDest(seq);
         return kInvalidId;
     }
 
@@ -592,7 +541,7 @@ void ReliableMessaging::ProcessReliableTimers() {
 void ReliableMessaging::CloseExpiredGroupWindows() {
     uint32_t now = host_.now_ms();
     for (auto& window : group_windows_) {
-        if (window.valid && now >= window.deadline_ms) {
+        if (window.valid && utils::TimeReached(now, window.deadline_ms)) {
             window.valid = false;
             reliable_.CloseGroup({host_.node_address, window.seq});
         }
@@ -601,22 +550,6 @@ void ReliableMessaging::CloseExpiredGroupWindows() {
 
 void ReliableMessaging::OnReliableOutcome(
     const reliability::DeliveryResult& result) {
-    const bool is_group = IsGroupAddress(LookupReliableDest(result.id.seq));
-
-    switch (result.outcome) {
-        case reliability::Outcome::Delivered:
-            // A unicast entry is erased on first ACK; a group window stays open
-            // until it is explicitly closed, so keep its destination mapping.
-            if (!is_group) {
-                ClearReliableDest(result.id.seq);
-            }
-            break;
-        case reliability::Outcome::Failed:
-        case reliability::Outcome::GroupWindowClosed:
-            ClearReliableDest(result.id.seq);
-            break;
-    }
-
     if (delivery_callback_) {
         delivery_callback_(result);
     }
