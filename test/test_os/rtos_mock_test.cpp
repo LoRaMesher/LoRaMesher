@@ -2168,4 +2168,23 @@ TEST_F(RTOSMockTest, GetRandomIsPerNode) {
     EXPECT_NE(forward["0x1001"], other_seed["0x1001"]);
 }
 
+/**
+ * @brief The test thread draws from a node's stream while it acts for that
+ * node, the same values the node's own task would draw
+ */
+TEST_F(RTOSMockTest, GetRandomUsesTheNodeStreamOnTheTestThread) {
+    rtosInstance->SeedRandom(1234);
+    auto from_task = DrawPerNode(rtosInstance, {"0x1001"}, 4);
+
+    rtosInstance->SeedRandom(1234);
+    rtosInstance->SetCurrentTaskNodeAddress("0x1001");
+    std::vector<uint32_t> from_test_thread;
+    for (int i = 0; i < 4; ++i) {
+        from_test_thread.push_back(rtosInstance->GetRandom());
+    }
+    rtosInstance->SetCurrentTaskNodeAddress("");
+
+    EXPECT_EQ(from_test_thread, from_task["0x1001"]);
+}
+
 #endif  // ARDUINO

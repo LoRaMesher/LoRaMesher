@@ -2098,13 +2098,15 @@ class RTOSMock : public RTOS {
      * @brief Key of the random stream used by the calling thread
      */
     static std::string RandomStreamKey() {
-        const TaskInfo* info = GetThreadLocalTaskInfo();
-        if (info == nullptr) {
-            return "<host>";
-        }
+        // A thread acting for a node (a task, or the test thread while it
+        // sets up that node) draws from the node's stream
         const char* address = getThreadLocalNodeAddress();
         if (address[0] != '\0') {
             return std::string("node:") + address;
+        }
+        const TaskInfo* info = GetThreadLocalTaskInfo();
+        if (info == nullptr) {
+            return "<host>";
         }
         return "task:" + info->name;
     }
