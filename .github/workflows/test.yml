@@ -4,7 +4,7 @@ on: [push, pull_request]
 
 jobs:
   esp32-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v6
 
@@ -25,7 +25,7 @@ jobs:
         pio run -e ttgo-lora32-v1
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     - uses: actions/checkout@v6
@@ -46,7 +46,7 @@ jobs:
         sudo apt-get install -y llvm-18 clang-18 ccache
 
     - name: Restore compiler cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ~/.cache/ccache
         key: ccache-test-native-profile-${{ github.sha }}
