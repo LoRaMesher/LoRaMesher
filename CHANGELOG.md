@@ -46,6 +46,10 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - `battery_level` is removed from `JOIN_REQUEST`, `NM_CLAIM` and routing
   messages.
 - Cross-network Network Manager merge is disabled.
+- Joining: a node sends its `JOIN_REQUEST` in a random even discovery slot
+  (sponsored joins in the first one) and the Network Manager answers in the
+  next slot; unanswered requests back off 0–3 superframes, the retry count
+  survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
 - ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
@@ -70,6 +74,8 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   correct at high SF (LDRO).
 - A Network Manager that surrendered in a merge stays committed to joining the
   winner.
+- Network formation: nodes that start joining together no longer collide in
+  lockstep, so dense networks form at SF10–SF12.
 
 ## [1.0.0] - 2026-05-15
 
