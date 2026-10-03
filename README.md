@@ -371,6 +371,29 @@ pio test -e test_native --list-tests
 
 > Run as a background task — integration tests take several minutes.
 
+#### Faster local runs (optional)
+
+The commands above work unchanged. Most of the time goes into building, not running: each of
+the 25 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
+recompiles all of `src/` (~100 s per suite, while most suites run in seconds). Optional
+settings that cut this down (measured on WSL2, repo on `/mnt/d`):
+
+| Setting | Effect |
+|---|---|
+| `ccache` on `PATH` (`sudo apt install ccache`) | Used automatically by `scripts/extra_script.py`; ~99% of the recompiles become cache hits: ~100 s → ~47 s per suite |
+| `export PLATFORMIO_BUILD_DIR=$HOME/.cache/loramesher-pio` | Build output on the Linux filesystem, where objects are reused between suites: 39–48 s per suite with ccache |
+| `export LORAMESHER_TEST_LOG_DIR=/tmp/loramesher-test-logs` | Per-test log files (`<Suite>_<Test>.log`, default `./test_logs`) go to a fast location |
+
+**Windows:** if the repo lives on a Windows drive, running PlatformIO natively on Windows (with
+an MSYS2 `clang64` toolchain on `PATH`) avoids the WSL file-system penalty. `test_native`
+(ASAN/UBSAN) and `test_native_profile` both build and pass there; `test_integration` took 28 s
+for build + run versus ~121 s from WSL on `/mnt/d`. When switching between WSL and Windows, give
+each its own `PLATFORMIO_BUILD_DIR` and `PLATFORMIO_LIBDEPS_DIR`. `test_native_tsan` and
+`test_native_xray` are Linux-only; CI runs on Linux.
+
+Failing integration tests print `Reproduce with LORAMESHER_TEST_SEED=N`; set that variable to
+replay the same deterministic run.
+
 ### CMake
 
 ```bash

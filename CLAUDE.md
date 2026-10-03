@@ -41,6 +41,16 @@ pio test -e test_native -f "protocols/lora_mesh/services/test_routing" --without
 - Capture binary output directly to a file (`> log 2>&1`); piping to `grep`
   block-buffers and loses output if the run is killed/timed out.
 
+#### Build time dominates
+
+With the build directory on `/mnt/d`, each suite recompiles all of `src/` (~100 s per
+suite) while most suites run in seconds. Optional speed-ups (see README "Faster local
+runs"): `ccache` on `PATH` is used automatically (~47 s per suite);
+`PLATFORMIO_BUILD_DIR` on the Linux filesystem lets objects be reused between suites
+(the binary is then `$PLATFORMIO_BUILD_DIR/test_native/program`);
+`LORAMESHER_TEST_LOG_DIR` moves the per-test logs. Run binaries from a Linux directory (not `/mnt/<drive>`), and copy the
+binary before building another suite if a run is still using it.
+
 ### ESP32 Compilation Check
 
 ```bash

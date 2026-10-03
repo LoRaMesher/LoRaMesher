@@ -43,8 +43,16 @@ jobs:
     - name: Install LLVM 18
       run: |
         sudo apt-get update -q
-        sudo apt-get install -y llvm-18 clang-18
+        sudo apt-get install -y llvm-18 clang-18 ccache
 
+    - name: Restore compiler cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-test-native-profile-${{ github.sha }}
+        restore-keys: ccache-test-native-profile-
+
+    # ccache's default cache directory is ~/.cache/ccache
     - name: Run Tests
       run: |
         LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
