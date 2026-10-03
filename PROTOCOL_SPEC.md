@@ -201,12 +201,12 @@ stateDiagram-v2
 - **Purpose**: Connect to discovered network
 - **Duration**: 5-15 seconds
 - **Activities**:
-  - Send join request to network manager
+  - Send join request to network manager (Section 6.3.3)
   - Negotiate slot assignment
   - Synchronize with network timing
 - **Transitions**:
   - Join successful → `NORMAL_OPERATION`
-  - Join failed/timeout → `FAULT_RECOVERY`
+  - Join rejected, or no response within the join timeout (13 superframes) → `FAULT_RECOVERY`
 
 #### NORMAL_OPERATION
 - **Purpose**: Standard data communication and routing
@@ -2334,7 +2334,7 @@ sequenceDiagram
     N3->>N3: Transition to NORMAL_OPERATION
     E->>E: Apply new slot allocation from sync beacon
     
-    Note over N4: Wait 1 superframe (RETRY_LATER backoff)
+    Note over N4: Wait 0..1 superframes (RETRY_LATER backoff)
     N4->>M: JOIN_REQUEST (retry attempt)
     M->>M: Buffer join request (1/3)
     M->>N4: JOIN_RESPONSE (ACCEPTED)
@@ -2457,25 +2457,28 @@ void ProcessSyncBeacon(const SyncBeaconHeader& beacon) {
 
 When the Network Manager receives a join request while the pending join queue is full (3 requests buffered), it responds with `RETRY_LATER`. This tells the joining node to try again in a future superframe.
 
-**Exponential Backoff at Superframe Boundaries:**
+**Request slot:** the discovery band (the last `(depth+1)*2` slots of the superframe) is a sequence of request/response pairs. A joiner sends its JOIN_REQUEST at the start of an even discovery slot `d_{2i}`; the Network Manager answers in the following odd slot `d_{2i+1}` of the same superframe.
+- Direct join (the sponsor is the Network Manager): `i = RTOS::GetRandom() % (depth + 1)`, so up to `depth + 1` requests per superframe can be answered.
+- Sponsored join: always `d0`, because relaying the request to the Network Manager and the response back takes the whole band (Section 6.4.2).
 
-Join retries use binary exponential backoff measured in superframes. At each superframe start while in JOINING state:
+Within the slot the request uses a `RANDOM` discovery subslot (Slotted ALOHA).
 
-1. If `join_backoff_remaining > 0`: decrement and skip this superframe
-2. Otherwise: send the join request and compute a random backoff:
-   - `max_backoff = min(2^min(retry_count, 4), 16)` superframes
-   - `backoff = RTOS::GetRandom() % (max_backoff + 1)`
+**First attempt:** a node that enters JOINING with no unanswered attempts sends in the superframe in which it heard the sync beacon.
 
-This ensures that multiple nodes competing to join will naturally desynchronize their retries, preventing persistent collisions. Combined with the `RANDOM` subslot assignment strategy (Slotted ALOHA), each retry attempt also picks a different subslot within the discovery slot, further reducing collision probability.
+**Exponential backoff at superframe boundaries:** a request with no JOIN_RESPONSE by the next superframe start counts as unanswered. The node increments `join_retry_count` and waits a random number of superframes before the next attempt:
+- `backoff = RTOS::GetRandom() % 2^min(retry_count, 2)` superframes
+- a sponsored joiner waits one extra superframe, since the relayed response can arrive during the next superframe
 
-**Example progression:**
-| Retry # | Max Backoff (superframes) |
-|---------|--------------------------|
-| 0       | 1                        |
-| 1       | 2                        |
-| 2+      | 4                        |
+| Retry # | Backoff (superframes), direct join |
+|---------|-----------------------------------|
+| 1       | 0–1                               |
+| 2+      | 0–3                               |
 
-When a node receives `RETRY_LATER` (its message was delivered but NM is busy), the retry counter resets to 0 and backoff is set to 1 superframe. This prevents over-backing-off when the collision was at the NM scheduling level rather than the radio level.
+**Retry state across rejoins:** `join_retry_count` is reset only when the node is accepted, creates its own network, or resets its network state. A node that leaves JOINING on the join timeout and rejoins through DISCOVERY keeps its retry count and first waits `GetRandom() % 2^min(retry_count, 2)` superframes, so joiners that timed out together do not retry in lockstep.
+
+**Join timeout:** 13 superframes (the first superframe plus three attempts at the full 4-superframe window). It is the exit for a sponsor that cannot answer.
+
+When a node receives `RETRY_LATER` (its message was delivered but NM is busy), the attempt does not count as unanswered: the retry count is kept and the node waits `GetRandom() % 2^max(1, min(retry_count, 2))` superframes, so deferred joiners do not return together.
 
 ### 6.4 Sponsor-Based Join Protocol
 
@@ -2523,6 +2526,8 @@ sequenceDiagram
     J->>J: Join network, clear sponsor
     S->>S: Resume normal operation
 ```
+
+A sponsored JOIN_REQUEST is sent in the first discovery slot `d0`. Each relay forwards in the next discovery slot, so a joiner at hop `k+1` receives the response in `d_{2k+1}`; the band has `2(depth+1)` slots, so the round trip fits in one superframe.
 
 #### 6.4.3 Message Routing Semantics
 
@@ -2880,7 +2885,7 @@ Recovery flow when sync is lost:
 | Slot Duration | 500 | auto-calculated | 5000 | ms |
 | Superframe Duration | 4000 | 8000 | 40000 | ms |
 | Route Update Interval | 5000 | 10000 | 30000 | ms |
-| Join Timeout | 5000 | 10000 | 30000 | ms |
+| Join Timeout | 13 | 13 | 13 | superframes |
 | Sync Tolerance | 50 | 100 | 500 | ms |
 
 ### 9.2 Scalability Limits

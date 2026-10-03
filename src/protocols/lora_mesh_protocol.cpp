@@ -1080,13 +1080,16 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         network_service_->HandleSuperframeStart();
     }
 
-    // Get current slot type from allocation table
+    // Get current slot type and its position within the discovery band
     SlotAllocation::SlotType slot_type = SlotAllocation::SlotType::SLEEP;
+    uint8_t discovery_index = 0;
 
     for (const auto& allocation : GetSlotTable()) {
         if (allocation.slot_number == current_slot) {
             slot_type = allocation.type;
-            break;
+        } else if (allocation.slot_number < current_slot &&
+                   allocation.IsDiscoverySlot()) {
+            discovery_index++;
         }
     }
 
@@ -1094,6 +1097,11 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
              slot_utils::SlotTypeToString(slot_type).c_str(),
              superframe_service_->GetSlotStartTime(current_slot),
              new_superframe ? " (new superframe)" : "");
+
+    if (slot_type == SlotAllocation::SlotType::DISCOVERY_RX ||
+        slot_type == SlotAllocation::SlotType::DISCOVERY_TX) {
+        network_service_->HandleDiscoverySlotStart(discovery_index);
+    }
 
     // Process messages based on slot type
     ProcessSlotMessages(slot_type);

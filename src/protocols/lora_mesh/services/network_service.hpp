@@ -794,6 +794,24 @@ class NetworkService : public INetworkService {
     Result HandleSuperframeStart();
 
     /**
+     * @brief Handle the start of a discovery slot
+     *
+     * While joining, queues the scheduled JOIN_REQUEST when its discovery
+     * slot begins, so it is transmitted in that slot.
+     *
+     * @param discovery_index Position of the slot within the discovery band
+     */
+    void HandleDiscoverySlotStart(uint8_t discovery_index);
+
+    /**
+     * @brief Consecutive join attempts that went unanswered
+     *
+     * Kept across rejoins of a network; reset once the node is accepted or
+     * creates its own network.
+     */
+    uint8_t GetJoinRetryCount() const { return join_retry_count_; }
+
+    /**
      * @brief Expand all sync beacon slots to RX after missed beacons
      *
      * When beacons are missed (e.g., because the node's hop distance changed
@@ -1117,6 +1135,25 @@ class NetworkService : public INetworkService {
                                               uint8_t pending_slot_count = 0);
 
     /**
+     * @brief Pick the discovery slot of the next join attempt
+     *
+     * Discovery slots pair up as request/response. A direct join requests in
+     * a random even slot so the network manager answers in the next one; a
+     * sponsored join starts in the first slot, since relaying it to the
+     * network manager and back takes the whole discovery band.
+     */
+    void ScheduleJoinAttempt();
+
+    /// Random number of superframes to wait before retrying a join
+    uint8_t DrawJoinBackoff() const;
+
+    /// Whether the join request is relayed by a sponsor
+    bool IsSponsoredJoin() const;
+
+    /// Forget join attempts, once joined or no longer joining
+    void ResetJoinRetryState();
+
+    /**
      * @brief Forward a join request to the network manager
      * 
      * Implements dynamic discovery slot forwarding: temporarily switches 
@@ -1358,9 +1395,22 @@ class NetworkService : public INetworkService {
         2;  ///< Consecutive receptions to re-activate
 
     // Join retry backoff (Slotted ALOHA)
-    uint8_t join_retry_count_ = 0;  ///< Number of join retries so far
+    /// Progress of the join attempt of the current superframe
+    enum class JoinAttempt : uint8_t {
+        kIdle,       ///< No attempt pending
+        kScheduled,  ///< Waiting for its discovery slot
+        kSent,       ///< JOIN_REQUEST queued, waiting for the response
+    };
+    static constexpr uint8_t kMaxJoinBackoffExponent =
+        2;  ///< Backoff window caps at 2^2 superframes
+    static constexpr uint32_t kJoinTimeoutSuperframes =
+        13;  ///< First superframe plus three attempts at the full window
+    uint8_t join_retry_count_ = 0;  ///< Consecutive unanswered join attempts
     uint8_t join_backoff_remaining_ =
         0;  ///< Superframes to skip before next retry
+    JoinAttempt join_attempt_ = JoinAttempt::kIdle;
+    uint8_t join_request_disc_index_ =
+        0;  ///< Discovery slot of the scheduled attempt
 
     // Periodic cleanup
     uint32_t last_cleanup_time_ = 0;  ///< Last time route cleanup was performed

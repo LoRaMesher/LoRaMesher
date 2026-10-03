@@ -1,8 +1,29 @@
 # TODO-017: Joiners retry in lockstep and collide (dense-mesh formation fails at SF10–SF12)
 
-Status: 🔴 OPEN. Analysed 2026-09-24/25, **not changed yet**. Priority: P1 (CI stays red
-until fixed). This file is a self-contained handoff for a new session: read it top to
-bottom before touching code.
+Status: ✅ DONE (2026-10-03). Priority: P1. Design and rationale:
+[`docs/design/join_contention.md`](../docs/design/join_contention.md). The analysis below is
+kept for history.
+
+## Resolution
+
+- Direct joins send the JOIN_REQUEST in a random even discovery slot `d_{2i}`,
+  `i ∈ [0, depth]`; the NM answers in `d_{2i+1}`. Sponsored joins use `d0`. The request is
+  queued by `NetworkService::HandleDiscoverySlotStart()`, called from
+  `LoRaMeshProtocol::OnSlotTransition` with the slot's position in the discovery band.
+- A lone joiner still sends in the superframe it heard the beacon in.
+- A request unanswered by the next superframe start increments `join_retry_count_` and
+  backs off `GetRandom() % 2^min(retry, 2)` superframes (+1 for sponsored joins).
+- `join_retry_count_` survives FAULT_RECOVERY → DISCOVERY → JOINING; reset on ACCEPTED,
+  `CreateNetwork`, `ResetNetworkState`. RETRY_LATER keeps it.
+- `GetJoinTimeout()` = 13 superframes.
+- Tests: `test_unit_network_coverage/join_contention_test.cpp` (unit),
+  `test_routing/join_contention_test.cpp` (7 simultaneous joiners at SF10–SF12, lone joiner).
+
+Corrections to the analysis below: only **SF10–SF12** fit 2 subslots (SF7 5, SF8 5, SF9 4),
+not "SF8+"; `SetJoiningSlots` marks d0 as DISCOVERY_TX, but any queued DISCOVERY_TX message
+also leaves through the DISCOVERY_RX fallback, and the NM listens in every discovery slot.
+The fixture's seed line is now `Reproduce with LORAMESHER_TEST_SEED=N` (no bracket prefix,
+which PlatformIO's gtest parser mistook for a status line).
 
 ---
 

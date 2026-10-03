@@ -682,9 +682,10 @@ Result NetworkService::StartJoining(AddressType /* manager_address */,
     network_found_ = true;
     network_creator_ = false;
 
-    // Reset join retry backoff
-    join_retry_count_ = 0;
-    join_backoff_remaining_ = 1;
+    // The retry count is kept across rejoins, so joiners that timed out
+    // together come back after different backoffs.
+    join_attempt_ = JoinAttempt::kIdle;
+    join_backoff_remaining_ = (join_retry_count_ > 0) ? DrawJoinBackoff() : 0;
 
     // Record discovery start time
     joining_start_time_ = GetRTOS().getTickCount();
@@ -700,8 +701,38 @@ Result NetworkService::StartJoining(AddressType /* manager_address */,
         return slot_result;
     }
 
-    // Join the network
-    return SendJoinRequest(network_manager_, config_.default_data_slots);
+    if (join_backoff_remaining_ == 0) {
+        ScheduleJoinAttempt();
+    }
+    return Result::Success();
+}
+
+void NetworkService::ScheduleJoinAttempt() {
+    uint16_t pairs = IsSponsoredJoin()
+                         ? 1
+                         : static_cast<uint16_t>(current_network_depth_) + 1;
+    join_request_disc_index_ =
+        (pairs > 1) ? static_cast<uint8_t>(2 * (GetRTOS().GetRandom() % pairs))
+                    : 0;
+    join_attempt_ = JoinAttempt::kScheduled;
+    LOG_DEBUG("Join request scheduled in discovery slot %d",
+              join_request_disc_index_);
+}
+
+uint8_t NetworkService::DrawJoinBackoff() const {
+    uint8_t exponent =
+        std::clamp<uint8_t>(join_retry_count_, 1, kMaxJoinBackoffExponent);
+    return static_cast<uint8_t>(GetRTOS().GetRandom() % (1u << exponent));
+}
+
+bool NetworkService::IsSponsoredJoin() const {
+    return selected_sponsor_ != 0 && selected_sponsor_ != network_manager_;
+}
+
+void NetworkService::ResetJoinRetryState() {
+    join_retry_count_ = 0;
+    join_backoff_remaining_ = 0;
+    join_attempt_ = JoinAttempt::kIdle;
 }
 
 bool NetworkService::IsNetworkFound() const {
@@ -986,6 +1017,7 @@ Result NetworkService::CreateNetwork() {
     election_priority_ = ComputeElectionPriority();
     surrendered_in_election_ = false;
     surrender_discovery_retries_ = 0;
+    ResetJoinRetryState();
 
     // Generate stable network_id_ if not already set (e.g. from a prior beacon)
     if (network_id_ == 0) {
@@ -1647,6 +1679,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
 
         // Move to normal operation first so UpdateNetworkNode allows adding local node
         SetState(ProtocolState::NORMAL_OPERATION);
+        ResetJoinRetryState();
 
         // Joining a network completes any pending surrender (merge succeeded).
         surrendered_in_election_ = false;
@@ -1668,12 +1701,11 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
             selected_sponsor_ = 0;
         }
     } else if (status == JoinResponseStatus::RETRY_LATER) {
-        LOG_INFO("Join request deferred (NM busy), will retry next superframe");
-        // NM received our request but is busy processing another join.
-        // Set a short backoff (1 superframe) and reset retry count since
-        // the message was delivered successfully - this isn't a collision.
-        join_backoff_remaining_ = 1;
-        join_retry_count_ = 0;
+        LOG_INFO("Join request deferred (NM busy), will retry later");
+        // Delivered, so not counted as unanswered; deferred joiners spread
+        // their retries over the backoff window.
+        join_attempt_ = JoinAttempt::kIdle;
+        join_backoff_remaining_ = DrawJoinBackoff();
     } else {
         LOG_WARNING("Join rejected with status %d", static_cast<int>(status));
 
@@ -2574,7 +2606,8 @@ uint32_t NetworkService::GetJoinTimeout() {
         return 60000;
     }
 
-    return superframe_service_->GetSuperframeDuration() * 3;
+    return superframe_service_->GetSuperframeDuration() *
+           kJoinTimeoutSuperframes;
 }
 
 namespace {
@@ -2963,32 +2996,32 @@ Result NetworkService::HandleSuperframeStart() {
             "slot 0");
 
     } else if (state_ == ProtocolState::JOINING) {
-        // Exponential backoff for join retries (Slotted ALOHA)
-        if (join_backoff_remaining_ > 0) {
-            join_backoff_remaining_--;
-            LOG_DEBUG("Join backoff: %d superframes remaining",
-                      join_backoff_remaining_);
-        } else {
-            Result join_req_result =
-                SendJoinRequest(network_manager_, config_.default_data_slots);
-            if (!join_req_result) {
-                LOG_ERROR("Failed to resend JoinRequest: %s",
-                          join_req_result.GetErrorMessage().c_str());
+        // A direct join is answered within the superframe of its request, so
+        // a request still unanswered now has been lost (Slotted ALOHA).
+        if (join_attempt_ == JoinAttempt::kSent) {
+            if (message_queue_service_->HasMessage(MessageType::JOIN_REQUEST)) {
+                message_queue_service_->RemoveMessage(
+                    MessageType::JOIN_REQUEST);
             }
-            join_retry_count_++;
-            // Binary exponential backoff capped at 4 superframes to ensure
-            // convergence in dense networks (e.g., 9 nodes, 5 subslots).
-            uint8_t max_backoff = std::min(
-                static_cast<uint8_t>(
-                    1 << std::min(join_retry_count_, static_cast<uint8_t>(2))),
-                static_cast<uint8_t>(4));
-
-            // Always wait at least 1 superframe so the sponsor has time to deliver
-            // the JOIN_RESPONSE before the joining node retransmits
+            if (join_retry_count_ < UINT8_MAX) {
+                join_retry_count_++;
+            }
+            // A relayed response can still arrive during the next superframe
             join_backoff_remaining_ =
-                1 + GetRTOS().GetRandom() % (max_backoff + 1);
-            LOG_DEBUG("Join retry #%d, next backoff: %d superframes",
-                      join_retry_count_, join_backoff_remaining_);
+                DrawJoinBackoff() + (IsSponsoredJoin() ? 1 : 0);
+            join_attempt_ = JoinAttempt::kIdle;
+            LOG_DEBUG(
+                "Join attempt unanswered (retry #%d), backoff: %d superframes",
+                join_retry_count_, join_backoff_remaining_);
+        }
+
+        if (join_attempt_ == JoinAttempt::kScheduled) {
+            // Its discovery slot did not occur (resync or a smaller band)
+            ScheduleJoinAttempt();
+        } else if (join_backoff_remaining_ > 0) {
+            join_backoff_remaining_--;
+        } else {
+            ScheduleJoinAttempt();
         }
 
     } else if (state_ == ProtocolState::NORMAL_OPERATION) {
@@ -3025,6 +3058,23 @@ Result NetworkService::HandleSuperframeStart() {
     }
 
     return Result::Success();
+}
+
+void NetworkService::HandleDiscoverySlotStart(uint8_t discovery_index) {
+    if (state_ != ProtocolState::JOINING ||
+        join_attempt_ != JoinAttempt::kScheduled ||
+        discovery_index != join_request_disc_index_) {
+        return;
+    }
+
+    Result result =
+        SendJoinRequest(network_manager_, config_.default_data_slots);
+    if (!result) {
+        LOG_ERROR("Failed to send JoinRequest: %s",
+                  result.GetErrorMessage().c_str());
+        return;
+    }
+    join_attempt_ = JoinAttempt::kSent;
 }
 
 Result NetworkService::ApplyPendingJoin() {
@@ -3339,6 +3389,7 @@ void NetworkService::ResetNetworkState() {
 
     // Clear join data
     pending_joins_.clear();
+    ResetJoinRetryState();
 
     message_cache_.Reset();
 
