@@ -19,6 +19,7 @@
 #include <optional>
 #include <queue>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "hardware/SPIMock.hpp"
@@ -69,6 +70,17 @@ inline uint32_t TestSeedFromEnvironmentValue(const char* value) {
  */
 inline uint32_t TestSeedFromEnvironment() {
     return TestSeedFromEnvironmentValue(std::getenv("LORAMESHER_TEST_SEED"));
+}
+
+/**
+ * @brief Directory for per-test log files
+ *
+ * LORAMESHER_TEST_LOG_DIR when set, otherwise "test_logs" relative to the
+ * current directory.
+ */
+inline std::string TestLogDirectoryFromEnvironment() {
+    const char* value = std::getenv("LORAMESHER_TEST_LOG_DIR");
+    return (value != nullptr && value[0] != '\0') ? value : "test_logs";
 }
 
 /**

@@ -61,12 +61,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
     uint32_t test_seed_ = kDefaultTestSeed;
 
     // File logging support
-    std::unique_ptr<FileLogHandler> file_log_handler_;
-    std::unique_ptr<LogHandler> original_log_handler_;
+    FileLogHandler* file_log_handler_ = nullptr;  ///< Owned by LOG while set
     std::string log_directory_;
 
     LoRaMeshTestFixture()
-        : time_controller_(virtual_network_), log_directory_("test_logs") {}
+        : time_controller_(virtual_network_),
+          log_directory_(TestLogDirectoryFromEnvironment()) {}
 
     void SetUp() override {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
@@ -91,8 +91,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
                    "timeout lines in the test log";
         }
         if (HasFailure()) {
-            std::cout << "[   SEED   ] Reproduce with LORAMESHER_TEST_SEED="
-                      << test_seed_ << std::endl;
+            // No "[ ... ]" prefix: PlatformIO parses those as gtest status lines
+            std::cout << "Reproduce with LORAMESHER_TEST_SEED=" << test_seed_
+                      << std::endl;
         }
 
         // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
@@ -996,11 +997,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
         try {
             // Create file log handler
-            file_log_handler_ =
+            auto handler =
                 std::make_unique<FileLogHandler>(log_filename, false, true);
+            file_log_handler_ = handler.get();
 
             // Set the file handler as the active logger
-            LOG.SetHandler(std::move(file_log_handler_));
+            LOG.SetHandler(std::move(handler));
 
             // Log test start
             LOG_INFO("=== Test Started: %s ===", test_name.c_str());
@@ -1024,11 +1026,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
             // Get the log filename before cleanup
             std::string log_filename = file_log_handler_->GetFilename();
 
-            // Reset to default console handler
+            // Reset to default console handler, which destroys the file handler
             LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
-
-            // Clean up file handler
-            file_log_handler_.reset();
+            file_log_handler_ = nullptr;
 
             // Print log file location for user
             std::cout << "Test log saved to: " << log_filename << std::endl;
