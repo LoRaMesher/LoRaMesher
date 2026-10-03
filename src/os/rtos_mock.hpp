@@ -205,7 +205,9 @@ class RTOSMock : public RTOS {
      * the same instant are processed task wake-ups first (ordered by task key),
      * then timers, then @p source events. Tasks therefore observe their exact
      * deadlines regardless of @p ms, and tasks due at the same instant never
-     * run concurrently.
+     * run concurrently. An instant with more than kMaxEventsPerInstant events
+     * is counted as a reblock timeout and ends the call at that instant, so no
+     * later deadline is skipped.
      *
      * @param ms Number of milliseconds to advance
      * @param source Optional external event source interleaved with task
@@ -289,10 +291,9 @@ class RTOSMock : public RTOS {
                 reblock_timeouts_.fetch_add(1, std::memory_order_relaxed);
                 LOG_ERROR(
                     "MOCK: more than %u events at virtual time %llu ms; "
-                    "skipping to %llu ms",
-                    kMaxEventsPerInstant, (unsigned long long)instant,
-                    (unsigned long long)target);
-                break;
+                    "stopping there",
+                    kMaxEventsPerInstant, (unsigned long long)instant);
+                return instant;
             }
         }
 

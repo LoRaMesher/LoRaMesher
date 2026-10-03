@@ -471,6 +471,61 @@ TEST_F(RTOSMockTimeTest, SuspendFromTaskDoesNotStallVirtualTime) {
 }
 
 /**
+ * @brief advanceTime stops at an instant with too many events instead of
+ * skipping the deadlines after it
+ */
+TEST_F(RTOSMockTimeTest, EventLimitStopsAtTheOverloadedInstant) {
+    class RepeatingSource : public os::RTOSMock::VirtualEventSource {
+       public:
+        explicit RepeatingSource(uint64_t at) : at_(at) {}
+
+        std::optional<uint64_t> NextEventTime() override {
+            if (count_ > os::RTOSMock::kMaxEventsPerInstant) {
+                return std::nullopt;
+            }
+            return at_;
+        }
+
+        void ProcessNextEvent(uint64_t) override { ++count_; }
+
+       private:
+        uint64_t at_;
+        uint32_t count_ = 0;
+    };
+
+    struct Param {
+        std::atomic<bool> started{false};
+        std::atomic<uint32_t> woke_at{0};
+    } param;
+
+    auto task_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        param->started = true;
+        GetRTOS().delay(50);
+        param->woke_at = GetRTOS().getTickCount();
+        GetRTOS().delay(100000);
+    };
+
+    const uint32_t t0 = rtos_->getTickCount();
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "Sleeper", 2048, &param, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !param.started; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    RepeatingSource source(t0 + 10);
+    rtosMock_->advanceTime(100, &source);
+    rtosMock_->advanceTime(100);
+
+    EXPECT_EQ(param.woke_at, t0 + 50);
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 1u);
+    rtosMock_->resetReblockTimeoutCount();
+}
+
+/**
  * @brief A task that does not block again after waking is counted as a
  * reblock timeout
  */
