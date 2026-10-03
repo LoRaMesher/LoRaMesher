@@ -526,6 +526,70 @@ TEST_F(RTOSMockTimeTest, EventLimitStopsAtTheOverloadedInstant) {
 }
 
 /**
+ * @brief Tasks with the same name keep distinct, creation-ordered keys across
+ * a switch to virtual time
+ */
+TEST_F(RTOSMockTimeTest, SameNameTasksKeepCreationOrderAcrossModeSwitch) {
+    struct State {
+        std::mutex mutex;
+        std::vector<std::string> order;
+        std::atomic<bool> released{false};
+        std::atomic<int> ready{0};
+    } state;
+
+    struct Param {
+        State* state;
+        const char* name;
+    };
+
+    Param a{&state, "A"};
+    Param b{&state, "B"};
+
+    auto task_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        param->state->ready++;
+        while (!param->state->released) {
+            GetRTOS().WaitForNotify(UINT32_MAX);
+        }
+        GetRTOS().delay(100);
+        {
+            std::lock_guard<std::mutex> lock(param->state->mutex);
+            param->state->order.push_back(param->name);
+        }
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task_a = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "t", 2048, &a, 1, &task_a));
+    taskHandles_.push_back(task_a);
+    for (int i = 0; i < 100 && state.ready < 1; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+
+    // B registers its delay before A does, so only the task keys can put A,
+    // created first, ahead of B.
+    state.released = true;
+    os::TaskHandle_t task_b = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "t", 2048, &b, 1, &task_b));
+    taskHandles_.push_back(task_b);
+    for (int i = 0; i < 100 && state.ready < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtos_->NotifyTask(task_a, 0);
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(100);
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    EXPECT_EQ(state.order, (std::vector<std::string>{"A", "B"}));
+}
+
+/**
  * @brief A task that does not block again after waking is counted as a
  * reblock timeout
  */

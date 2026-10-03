@@ -170,11 +170,6 @@ class RTOSMock : public RTOS {
             timeMode_ = mode;
         }  // timeMutex_ released here
 
-        if (debug_case == 2) {
-            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
-            task_name_counts_.clear();
-        }
-
         // Log AFTER releasing timeMutex_ to avoid M1→M2 lock-order inversion.
         if (debug_case == 1) {
             LOG_DEBUG(
@@ -406,7 +401,7 @@ class RTOSMock : public RTOS {
             task_info.name = task_name;
             uint32_t index = task_name_counts_[order_base]++;
             char suffix[16];
-            snprintf(suffix, sizeof(suffix), "#%06u", index);
+            snprintf(suffix, sizeof(suffix), "#%010u", index);
             task_info.order_key = order_base + suffix;
             task_info.stack_size = stackSize;
             task_info.priority = priority;
@@ -2658,8 +2653,8 @@ class RTOSMock : public RTOS {
     /// thread exits. Guarded by tasksMutex_.
     std::list<std::map<std::thread*, TaskInfo>::node_type> detached_tasks_;
     mutable std::timed_mutex tasksMutex_;
-    /// Tasks created per (creator node address, task name) since the last
-    /// switch to virtual time; guarded by tasksMutex_
+    /// Tasks created per (creator node address, task name); keys of tasks
+    /// with the same name order by creation. Guarded by tasksMutex_
     std::map<std::string, uint32_t> task_name_counts_;
     std::vector<void (*)()> registeredISRs_;
     std::mutex isrMutex_;
