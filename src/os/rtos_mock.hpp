@@ -2636,7 +2636,9 @@ class RTOSMock : public RTOS {
         std::atomic<uint32_t> peak_stack_used{0};
     };
 
-    TimeMode timeMode_;  ///< Current time mode (real or virtual)
+    /// Current time mode (real or virtual); written under timeMutex_, read
+    /// without it by task threads
+    std::atomic<TimeMode> timeMode_;
     uint64_t
         virtualTimeMs_;  ///< Virtual time counter in milliseconds (written under timeMutex_)
     std::atomic<uint64_t> virtualTimeMsAtomic_{
