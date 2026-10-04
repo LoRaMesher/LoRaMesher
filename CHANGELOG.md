@@ -76,6 +76,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   winner.
 - Network formation: nodes that start joining together no longer collide in
   lockstep, so dense networks form at SF10–SF12.
+- Network Manager election: the election backoff expires at its own deadline
+  instead of the next superframe start, and waiting nodes listen on every
+  slot, so two candidates no longer claim together and both become manager.
 
 ## [1.0.0] - 2026-05-15
 

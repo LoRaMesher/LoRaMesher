@@ -83,6 +83,20 @@ class LoRaMeshTestFixture : public ::testing::Test {
 #endif
     }
 
+    /**
+     * @brief Pin the seed instead of LORAMESHER_TEST_SEED
+     *
+     * Call before creating nodes, to keep a known scenario as a regression.
+     */
+    void UseTestSeed(uint32_t seed) {
+        test_seed_ = seed;
+        RecordProperty("seed", static_cast<int>(test_seed_));
+        virtual_network_.SetSeed(test_seed_);
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            mock->SeedRandom(test_seed_);
+        }
+    }
+
     void TearDown() override {
         if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
             EXPECT_EQ(mock->getReblockTimeoutCount(), 0u)

@@ -3038,23 +3038,7 @@ Result NetworkService::HandleSuperframeStart() {
             ExpandSyncBeaconListening();
         }
     } else if (state_ == ProtocolState::FAULT_RECOVERY) {
-        // Decrement election backoff if one is pending
-        if (election_end_time_ != 0) {
-            uint32_t now = GetRTOS().getTickCount();
-            if (now >= election_end_time_) {
-                LOG_INFO(
-                    "Election backoff expired (priority=%d), entering "
-                    "NM_ELECTION",
-                    election_priority_);
-                election_end_time_ = 0;
-                // Switch to discovery slots so the NM_CLAIM is sent through
-                // the DISCOVERY_RX fallback TX path in this same slot
-                SetDiscoverySlots();
-                SendNMClaim();  // queue claim for next DISCOVERY_TX slot
-                nm_election_start_time_ = GetRTOS().getTickCount();
-                SetState(ProtocolState::NM_ELECTION);
-            }
-        }
+        CheckElectionBackoff();
     }
 
     return Result::Success();
@@ -3475,11 +3459,39 @@ void NetworkService::StartElectionBackoff() {
 
     election_end_time_ = GetRTOS().getTickCount() + backoff_ms;
 
+    // Without beacons the old schedule is stale; listen on every slot so a
+    // higher-priority NM_CLAIM is heard whenever it is sent
+    SetDiscoverySlots();
+
     LOG_INFO(
         "Election backoff started: priority=%d, delay=%ums "
         "(role_bonus=%u addr_bonus=%u jitter=%u)",
         election_priority_, backoff_ms, role_bonus_ms, addr_bonus_ms,
         jitter_ms);
+}
+
+uint32_t NetworkService::GetElectionBackoffRemaining() const {
+    if (election_end_time_ == 0) {
+        return 0;
+    }
+    uint32_t now = GetRTOS().getTickCount();
+    return (now < election_end_time_) ? (election_end_time_ - now) : 0;
+}
+
+void NetworkService::CheckElectionBackoff() {
+    if (state_ != ProtocolState::FAULT_RECOVERY || election_end_time_ == 0 ||
+        GetElectionBackoffRemaining() > 0) {
+        return;
+    }
+    LOG_INFO("Election backoff expired (priority=%d), entering NM_ELECTION",
+             election_priority_);
+    election_end_time_ = 0;
+    // With discovery slots the NM_CLAIM leaves in the next slot through the
+    // DISCOVERY_RX fallback
+    SetDiscoverySlots();
+    SendNMClaim();
+    nm_election_start_time_ = GetRTOS().getTickCount();
+    SetState(ProtocolState::NM_ELECTION);
 }
 
 Result NetworkService::SendNMClaim() {

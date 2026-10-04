@@ -2109,13 +2109,15 @@ election_delay = kElectionListenWindowMs (5 000 ms)           // mandatory anti-
 
 `NODE_ONLY` nodes never enter election (`election_delay = 0` = disabled).
 
-**When the timer expires**:
-1. `SetDiscoverySlots()` — switches slot table to DISCOVERY_RX so NM_CLAIM can be sent immediately
-2. Queues NM_CLAIM in DISCOVERY_TX; transmitted in the same slot via DISCOVERY_RX fallback
-3. Transitions to NM_ELECTION and waits `2 × slot_duration` for counter-claims
+**While the timer runs**, the slot table is all DISCOVERY_RX (`SetDiscoverySlots()`), so the node
+hears an NM_CLAIM sent in any slot.
+
+**When the timer expires** (checked at the exact deadline, not at the next superframe start):
+1. Queues NM_CLAIM in DISCOVERY_TX; transmitted in the next slot via DISCOVERY_RX fallback
+2. Transitions to NM_ELECTION and waits `2 × slot_duration` for counter-claims
 
 **On receiving NM_CLAIM** (in FAULT_RECOVERY or NM_ELECTION):
-- If their `election_priority` < ours → surrender: cancel backoff, `StartDiscovery()`
+- If their `election_priority` < ours → surrender: cancel backoff, enter DISCOVERY and join the winner
 - Otherwise ignore
 
 **Election priority** (lower = wins):

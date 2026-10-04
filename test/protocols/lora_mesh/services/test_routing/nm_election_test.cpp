@@ -159,6 +159,79 @@ class NMElectionTests : public RoutingTestFixture {
             return nm_count == 1 && normal_count == expected_normal;
         });
     }
+
+    /**
+     * @brief NM plus two AUTO nodes in a full mesh; after the NM fails,
+     * exactly one AUTO node becomes NM and the other joins it
+     */
+    void ExpectTwoAutoNodesElectOneWinner() {
+        // Large address gap to make addr_bonus difference significant:
+        //   Node2 (0x1001): addr_bonus = 5000 * 1 / 256 ≈   20 ms
+        //   Node3 (0x1080): addr_bonus = 5000 * 128 / 256 = 2500 ms
+        auto& nm_node = CreateNode("NM", 0x1000, NodeRole::NETWORK_MANAGER);
+        auto& node2 = CreateNode("Node2", 0x1001, NodeRole::AUTO);
+        auto& node3 = CreateNode("Node3", 0x1080, NodeRole::AUTO);
+
+        // Full mesh
+        SetLinkStatus(nm_node, node2, true);
+        SetLinkStatus(nm_node, node3, true);
+        SetLinkStatus(node2, node3, true);
+
+        ASSERT_TRUE(StartNode(nm_node));
+        ASSERT_TRUE(StartNode(node2));
+        ASSERT_TRUE(StartNode(node3));
+
+        // Phase 1: initial network formation
+        std::vector<TestNode*> all_nodes = {&nm_node, &node2, &node3};
+        ASSERT_TRUE(WaitForNetworkFormation(all_nodes, 2))
+            << "Initial network formation failed";
+
+        std::cout << "=== Initial network formed ===" << std::endl;
+
+        // Phase 2: NM failure
+        SimulateNodeFailure(nm_node);
+
+        // Phase 3: wait for election to settle (one winner + one joiner)
+        std::vector<TestNode*> survivors = {&node2, &node3};
+        bool network_reformed = WaitForElectionAndReformation(survivors, 1);
+
+        // Determine winner for diagnostic output
+        TestNode* winner = nullptr;
+        TestNode* joiner = nullptr;
+        for (auto* node : survivors) {
+            if (node->protocol->GetState() == ProtocolState::NETWORK_MANAGER)
+                winner = node;
+            else if (node->protocol->GetState() ==
+                     ProtocolState::NORMAL_OPERATION)
+                joiner = node;
+        }
+
+        std::cout << "=== Post-election states ===" << std::endl;
+        for (auto* node : survivors) {
+            std::cout << "  " << node->name << " (0x" << std::hex
+                      << node->address << std::dec << "): state="
+                      << static_cast<int>(node->protocol->GetState())
+                      << std::endl;
+        }
+
+        ASSERT_TRUE(network_reformed)
+            << "Network did not reform within timeout. "
+               "Node2 state="
+            << static_cast<int>(node2.protocol->GetState())
+            << " Node3 state=" << static_cast<int>(node3.protocol->GetState());
+
+        ASSERT_NE(winner, nullptr) << "No NETWORK_MANAGER found after election";
+        ASSERT_NE(joiner, nullptr)
+            << "No NORMAL_OPERATION node found after election";
+
+        // The joiner must recognise the winner as NM
+        EXPECT_EQ(joiner->protocol->GetNetworkManager(), winner->address)
+            << joiner->name << " should recognise " << winner->name << " as NM";
+
+        // The winner must recognise itself as NM
+        EXPECT_EQ(winner->protocol->GetNetworkManager(), winner->address)
+            << winner->name << " should be its own NM";
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -322,71 +395,16 @@ TEST_F(NMElectionTests, NodeOnly_NeverElects) {
  * - The other reaches NORMAL_OPERATION under the winner
  */
 TEST_F(NMElectionTests, TwoAutoNodes_ExactlyOneWinsElection) {
-    // Large address gap to make addr_bonus difference significant:
-    //   Node2 (0x1001): addr_bonus = 5000 * 1 / 256 ≈   20 ms
-    //   Node3 (0x1080): addr_bonus = 5000 * 128 / 256 = 2500 ms
-    auto& nm_node = CreateNode("NM", 0x1000, NodeRole::NETWORK_MANAGER);
-    auto& node2 = CreateNode("Node2", 0x1001, NodeRole::AUTO);
-    auto& node3 = CreateNode("Node3", 0x1080, NodeRole::AUTO);
+    ExpectTwoAutoNodesElectOneWinner();
+}
 
-    // Full mesh
-    SetLinkStatus(nm_node, node2, true);
-    SetLinkStatus(nm_node, node3, true);
-    SetLinkStatus(node2, node3, true);
-
-    ASSERT_TRUE(StartNode(nm_node));
-    ASSERT_TRUE(StartNode(node2));
-    ASSERT_TRUE(StartNode(node3));
-
-    // Phase 1: initial network formation
-    std::vector<TestNode*> all_nodes = {&nm_node, &node2, &node3};
-    ASSERT_TRUE(WaitForNetworkFormation(all_nodes, 2))
-        << "Initial network formation failed";
-
-    std::cout << "=== Initial network formed ===" << std::endl;
-
-    // Phase 2: NM failure
-    SimulateNodeFailure(nm_node);
-
-    // Phase 3: wait for election to settle (one winner + one joiner)
-    std::vector<TestNode*> survivors = {&node2, &node3};
-    bool network_reformed = WaitForElectionAndReformation(survivors, 1);
-
-    // Determine winner for diagnostic output
-    TestNode* winner = nullptr;
-    TestNode* joiner = nullptr;
-    for (auto* node : survivors) {
-        if (node->protocol->GetState() == ProtocolState::NETWORK_MANAGER)
-            winner = node;
-        else if (node->protocol->GetState() == ProtocolState::NORMAL_OPERATION)
-            joiner = node;
-    }
-
-    std::cout << "=== Post-election states ===" << std::endl;
-    for (auto* node : survivors) {
-        std::cout << "  " << node->name << " (0x" << std::hex << node->address
-                  << std::dec
-                  << "): state=" << static_cast<int>(node->protocol->GetState())
-                  << std::endl;
-    }
-
-    ASSERT_TRUE(network_reformed)
-        << "Network did not reform within timeout. "
-           "Node2 state="
-        << static_cast<int>(node2.protocol->GetState())
-        << " Node3 state=" << static_cast<int>(node3.protocol->GetState());
-
-    ASSERT_NE(winner, nullptr) << "No NETWORK_MANAGER found after election";
-    ASSERT_NE(joiner, nullptr)
-        << "No NORMAL_OPERATION node found after election";
-
-    // The joiner must recognise the winner as NM
-    EXPECT_EQ(joiner->protocol->GetNetworkManager(), winner->address)
-        << joiner->name << " should recognise " << winner->name << " as NM";
-
-    // The winner must recognise itself as NM
-    EXPECT_EQ(winner->protocol->GetNetworkManager(), winner->address)
-        << winner->name << " should be its own NM";
+/**
+ * @brief Seed 17 makes both AUTO nodes' election backoffs end within the
+ * same superframe; exactly one must still win
+ */
+TEST_F(NMElectionTests, TwoAutoNodes_BackoffsEndingInOneSuperframe) {
+    UseTestSeed(17);
+    ExpectTwoAutoNodesElectOneWinner();
 }
 
 // ---------------------------------------------------------------------------

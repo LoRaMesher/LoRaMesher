@@ -1024,6 +1024,21 @@ class NetworkService : public INetworkService {
     void StartElectionBackoff();
 
     /**
+     * @brief Milliseconds until the pending election backoff expires
+     *
+     * @return 0 when it has expired or no election is pending
+     */
+    uint32_t GetElectionBackoffRemaining() const;
+
+    /**
+     * @brief Enter NM_ELECTION once the election backoff has expired
+     *
+     * Queues this node's NM_CLAIM. Called by the protocol task when the
+     * backoff deadline passes, and at each superframe start.
+     */
+    void CheckElectionBackoff();
+
+    /**
      * @brief Process a received NM_CLAIM message
      *
      * @param message The received NM_CLAIM message

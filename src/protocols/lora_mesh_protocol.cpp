@@ -800,9 +800,12 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                // Keep polling so we notice election_end_time_ expiry
-                timeout_ms =
-                    std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                // Wake exactly when the election backoff expires
+                timeout_ms = std::min(
+                    timeout_ms, protocol->network_service_->IsElectionPending()
+                                    ? protocol->network_service_
+                                          ->GetElectionBackoffRemaining()
+                                    : protocol->GetDiscoveryTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
                 timeout_ms = std::min(
@@ -851,9 +854,13 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
                         case lora_mesh::INetworkService::ProtocolState::
                             FAULT_RECOVERY:
-                            // Election countdown is handled by HandleSuperframeStart.
-                            // For NODE_ONLY nodes (no election), restart discovery.
-                            if (!protocol->network_service_
+                            // An expired election backoff moves to NM_ELECTION;
+                            // without an election (NODE_ONLY), restart discovery.
+                            protocol->network_service_->CheckElectionBackoff();
+                            if (protocol->network_service_->GetState() ==
+                                    lora_mesh::INetworkService::ProtocolState::
+                                        FAULT_RECOVERY &&
+                                !protocol->network_service_
                                      ->IsElectionPending()) {
                                 LOG_WARNING(
                                     "FAULT_RECOVERY: no election pending, "
@@ -945,8 +952,13 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
 
                 case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                    // For NODE_ONLY nodes (no election pending), restart discovery
-                    if (!protocol->network_service_->IsElectionPending()) {
+                    // An expired election backoff moves to NM_ELECTION;
+                    // without an election (NODE_ONLY), restart discovery.
+                    protocol->network_service_->CheckElectionBackoff();
+                    if (protocol->network_service_->GetState() ==
+                            lora_mesh::INetworkService::ProtocolState::
+                                FAULT_RECOVERY &&
+                        !protocol->network_service_->IsElectionPending()) {
                         LOG_WARNING(
                             "FAULT_RECOVERY timeout - restarting discovery");
                         result = protocol->StartDiscovery();
