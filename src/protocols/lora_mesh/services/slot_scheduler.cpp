@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <string>
 
 #include "utils/logger.hpp"
 
@@ -22,11 +23,40 @@ Result SlotScheduler::UpdateSlotTableIfDirty(const Context& ctx, bool force) {
     if (!force && !slot_table_dirty_) {
         return Result::Success();
     }
-    return UpdateSlotTable_Impl(ctx);
+    return RebuildSlotTable(ctx);
+}
+
+void SlotScheduler::Reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    slot_count_ = 0;
+}
+
+std::vector<SlotScheduler::SlotAllocation> SlotScheduler::GetSlotTable()
+    const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {slot_table_.begin(), slot_table_.begin() + slot_count_};
+}
+
+void SlotScheduler::ForEachSlot(
+    const std::function<void(const SlotAllocation&)>& visitor) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (size_t i = 0; i < slot_count_; ++i) {
+        visitor(slot_table_[i]);
+    }
+}
+
+uint16_t SlotScheduler::GetSlotCount() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return slot_count_;
+}
+
+uint8_t SlotScheduler::GetAllocatedControlSlots() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return allocated_control_slots_;
 }
 
 SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
-    const Context& ctx, const std::vector<NetworkNodeRoute>& nodes) {
+    const Context& ctx, const std::vector<NetworkNodeRoute>& nodes) const {
     SlotPlan plan;
 
     // Use max_hops from received sync beacons
@@ -45,26 +75,25 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
                 max_index = node.control_slot_index;
             }
         }
-        allocated_control_slots_ = static_cast<uint8_t>(
+        plan.control_slots = static_cast<uint8_t>(
             std::min<uint16_t>(static_cast<uint16_t>(max_index) + 1,
                                static_cast<uint16_t>(ctx.max_network_nodes)));
     } else {
         // Non-NM: use authoritative node_count from sync beacon, clamped to the
         // configured maximum so a corrupt beacon can't inflate the control band.
-        allocated_control_slots_ =
+        plan.control_slots =
             std::min<uint8_t>(ctx.beacon_node_count, ctx.max_network_nodes);
     }
 
     // Every control index owns default_data_slots consecutive data slots, so
     // the data band size depends only on network-wide agreed values.
     plan.total_data_slots = static_cast<uint8_t>(
-        std::min<uint16_t>(static_cast<uint16_t>(allocated_control_slots_) *
+        std::min<uint16_t>(static_cast<uint16_t>(plan.control_slots) *
                                ctx.default_data_slots,
                            ctx.max_data_slots));
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
-    allocated_discovery_slots_ =
-        static_cast<uint16_t>((max_hops_count + 1) * 2);
+    plan.discovery_slots = static_cast<uint16_t>((max_hops_count + 1) * 2);
 
     // Add sync beacon slots 1 per hop layer
     plan.sync_beacon_slots = static_cast<uint16_t>(max_hops_count + 1);
@@ -72,8 +101,8 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
     // Calculate active slots (non-sleep). Computed in a wider type so the sum
     // cannot silently wrap uint8_t even if an input slipped past the clamps.
     plan.total_active_slots = static_cast<uint16_t>(
-        plan.sync_beacon_slots + allocated_control_slots_ +
-        allocated_discovery_slots_ + plan.total_data_slots);
+        plan.sync_beacon_slots + plan.control_slots + plan.discovery_slots +
+        plan.total_data_slots);
 
     plan.total_superframe_slots =
         std::max<uint16_t>(ctx.number_of_slots_per_superframe, kMinSlots);
@@ -86,7 +115,7 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
         // NM is the worst case: it transmits sync beacon + routing table + data.
 
         // Calculate total NM TX time using Time-on-Air for each packet
-        plan.tx_time_ms = host_.calculate_nm_tx_time(allocated_control_slots_,
+        plan.tx_time_ms = host_.calculate_nm_tx_time(plan.control_slots,
                                                      ctx.default_data_slots);
 
         // Compute superframe size: total_tx_time / (slot_duration * duty_cycle)
@@ -140,21 +169,18 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
               plan.total_superframe_slots, ctx.target_duty_cycle * 100.0f);
     LOG_DEBUG("Active slots %d: sync %d, control %d, discovery %d, data %d",
               plan.total_active_slots, plan.sync_beacon_slots,
-              allocated_control_slots_, allocated_discovery_slots_,
-              plan.total_data_slots);
+              plan.control_slots, plan.discovery_slots, plan.total_data_slots);
     LOG_DEBUG("SLEEP slots %d | actual TX duty cycle: %.2f%%", plan.sleep_slots,
               plan.actual_tx_duty_cycle * 100.0f);
 
-    slot_count_ = plan.total_superframe_slots;
+    plan.slot_count = plan.total_superframe_slots;
 
-    // Ensure we never shrink below the NM-announced superframe size.
-    // A stale/incomplete local routing table (e.g. after ApplyPendingJoin) can
-    // compute fewer total slots than the NM expects, causing premature superframe
-    // end and a 1000ms slot-skip on CalculateNextEventTimeout().
-    if (slot_count_ < ctx.number_of_slots_per_superframe) {
-        LOG_DEBUG("Clamping slot_count_ from %d to NM-announced %d",
-                  slot_count_, ctx.number_of_slots_per_superframe);
-        slot_count_ = ctx.number_of_slots_per_superframe;
+    // Never shrink below the NM-announced superframe size: an incomplete local
+    // routing table can compute fewer slots than the rest of the network uses.
+    if (plan.slot_count < ctx.number_of_slots_per_superframe) {
+        LOG_DEBUG("Clamping slot count from %d to NM-announced %d",
+                  plan.slot_count, ctx.number_of_slots_per_superframe);
+        plan.slot_count = ctx.number_of_slots_per_superframe;
     }
 
     return plan;
@@ -187,9 +213,13 @@ AddressType SlotScheduler::FindDataSlotOwner(
     return owner;
 }
 
-void SlotScheduler::FillSlotTable(const Context& ctx,
-                                  const std::vector<NetworkNodeRoute>& nodes,
-                                  const SlotPlan& plan) {
+void SlotScheduler::FillSlotTableLocked(
+    const Context& ctx, const std::vector<NetworkNodeRoute>& nodes,
+    const SlotPlan& plan, uint8_t our_hop_distance) {
+    allocated_control_slots_ = plan.control_slots;
+    allocated_discovery_slots_ = plan.discovery_slots;
+    slot_count_ = plan.slot_count;
+
     // Single slot_index advances through all allocation phases
     size_t slot_index = 0;
     auto AllocateSlot = [&](SlotAllocation::SlotType type,
@@ -197,9 +227,6 @@ void SlotScheduler::FillSlotTable(const Context& ctx,
         slot_table_[slot_index] = SlotAllocation(slot_index, type, addr);
         slot_index++;
     };
-
-    // Determine our hop distance from Network Manager
-    uint8_t our_hop_distance = host_.get_hop_distance_to_nm();
 
     // ── Phase 1: Sync beacon slots (hop-layered forwarding) ──────────────────
     for (size_t hop_layer = 0;
@@ -270,26 +297,27 @@ void SlotScheduler::FillSlotTable(const Context& ctx,
     }
 }
 
-Result SlotScheduler::UpdateSlotTable_Impl(const Context& ctx) {
-    // Clear existing table
-    slot_count_ = 0;
-
+Result SlotScheduler::RebuildSlotTable(const Context& ctx) {
     const std::vector<NetworkNodeRoute> nodes = host_.get_routing_nodes();
-    SlotPlan plan = ComputeBandSizes(ctx, nodes);
-    FillSlotTable(ctx, nodes, plan);
+    const uint8_t our_hop_distance = host_.get_hop_distance_to_nm();
+    const SlotPlan plan = ComputeBandSizes(ctx, nodes);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        FillSlotTableLocked(ctx, nodes, plan, our_hop_distance);
+    }
 
-    LogSlotTable(ctx);
+    LogSlotTable(ctx, our_hop_distance);
 
     LOG_INFO(
         "Updated slot table: %d total (%d active: %d sync + %d ctrl + %d disc "
         "+ %d data, %d sleep, %.1f%% TX duty cycle)",
         plan.total_superframe_slots, plan.total_active_slots,
-        plan.sync_beacon_slots, allocated_control_slots_,
-        allocated_discovery_slots_, plan.total_data_slots, plan.sleep_slots,
+        plan.sync_beacon_slots, plan.control_slots, plan.discovery_slots,
+        plan.total_data_slots, plan.sleep_slots,
         plan.actual_tx_duty_cycle * 100.0f);
 
     // Notify superframe service of new slot table
-    Result result = host_.notify_superframe(slot_count_);
+    Result result = host_.notify_superframe(plan.slot_count);
     if (!result) {
         LOG_ERROR("Failed to update superframe service with new slot table");
         return result;
@@ -299,15 +327,18 @@ Result SlotScheduler::UpdateSlotTable_Impl(const Context& ctx) {
     return Result::Success();
 }
 
-void SlotScheduler::LogSlotTable(const Context& ctx) const {
+void SlotScheduler::LogSlotTable(const Context& ctx,
+                                 uint8_t our_hop_distance) const {
 #if LORAMESHER_LOG_LEVEL > 0
     (void)ctx;
+    (void)our_hop_distance;
     return;
 #else
     // 256 slots * 3 chars + row prefixes + header + detail ≈ 1024 max
-    static char buf[1024];
+    constexpr size_t kBufSize = 1024;
     constexpr size_t kSlotsPerRow = 20;
-    constexpr size_t kBufSize = sizeof(buf);
+    std::string text(kBufSize, '\0');
+    char* buf = text.data();
 
     auto Abbrev = [](SlotAllocation::SlotType t) -> const char* {
         switch (t) {
@@ -347,8 +378,9 @@ void SlotScheduler::LogSlotTable(const Context& ctx) const {
             off += std::min(static_cast<size_t>(n), kBufSize - off);
     };
 
+    std::lock_guard<std::mutex> lock(mutex_);
     Append("SlotTable[%u] NM=%04X hop=%u:\n", slot_count_, ctx.network_manager,
-           host_.get_hop_distance_to_nm());
+           our_hop_distance);
 
     // Grid rows, 20 slots per row
     for (size_t row_start = 0; row_start < slot_count_;
@@ -404,7 +436,7 @@ void SlotScheduler::LogSlotTable(const Context& ctx) const {
 }
 
 Result SlotScheduler::SetDiscoverySlots() {
-    // Clear existing discovery slots
+    std::lock_guard<std::mutex> lock(mutex_);
     allocated_discovery_slots_ = static_cast<uint16_t>(
         std::max(ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT,
                  static_cast<uint32_t>(slot_count_)));
@@ -444,7 +476,8 @@ Result SlotScheduler::SetJoiningSlots(const Context& ctx) {
     size_t discovery_tx_added = 0;
     size_t active_slots = 0;
 
-    for (auto& slot : ActiveSlots()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& slot : ActiveSlotsLocked()) {
         switch (slot.type) {
             case SlotAllocation::SlotType::SYNC_BEACON_RX:
                 // Keep sync beacon slots active for synchronization
@@ -519,6 +552,7 @@ Result SlotScheduler::SetJoiningSlots(const Context& ctx) {
 void SlotScheduler::ExpandSyncBeaconListening(const Context& ctx) {
     const uint16_t sync_beacon_slots =
         static_cast<uint16_t>(ctx.current_network_depth + 1);
+    std::lock_guard<std::mutex> lock(mutex_);
     const uint16_t limit = std::min(sync_beacon_slots, slot_count_);
 
     for (uint16_t i = 0; i < limit; i++) {
@@ -548,6 +582,7 @@ void SlotScheduler::RestoreSyncBeaconTxSlot(const Context& ctx) {
         return;
     }
     uint16_t tx_index = static_cast<uint16_t>(our_hop_distance);
+    std::lock_guard<std::mutex> lock(mutex_);
     if (tx_index >= slot_count_) {
         return;
     }
@@ -564,10 +599,9 @@ void SlotScheduler::RestoreSyncBeaconTxSlot(const Context& ctx) {
 
 bool SlotScheduler::ScheduleDiscoverySlotForwarding(
     AddressType network_manager) {
-    // Find the next DISCOVERY_RX slot and temporarily convert it to TX
-    // When next slot allocation the DISCOVERY_TX slot will be replaced by
-    // a DISCOVERY_RX as previously set.
-    for (auto& slot : ActiveSlots()) {
+    // Convert the next DISCOVERY_RX slot to TX; the next rebuild restores it.
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& slot : ActiveSlotsLocked()) {
         if (slot.type == SlotAllocation::SlotType::DISCOVERY_RX) {
             // Temporarily convert this slot to TX for forwarding
             slot.type = SlotAllocation::SlotType::DISCOVERY_TX;
@@ -585,6 +619,7 @@ bool SlotScheduler::ScheduleDiscoverySlotForwarding(
 }
 
 bool SlotScheduler::IsTDMANeighbor(AddressType address) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (size_t i = 0; i < slot_count_; ++i) {
         if (slot_table_[i].type == SlotAllocation::SlotType::RX &&
             slot_table_[i].target_address == address) {

@@ -9,7 +9,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "protocols/lora_mesh/services/slot_scheduler.hpp"
@@ -245,7 +247,7 @@ struct SchedulerRig {
         return ctx;
     }
 
-    std::span<const SlotAllocation> Build(AddressType network_manager) {
+    std::vector<SlotAllocation> Build(AddressType network_manager) {
         EXPECT_TRUE(
             scheduler->UpdateSlotTableIfDirty(Context(network_manager), true)
                 .IsSuccess());
@@ -451,6 +453,58 @@ TEST_F(SlotSchedulerTest, NmDataBandIsControlSlotsTimesDataSlots) {
     }
     EXPECT_EQ(tx, ctx.default_data_slots);
     EXPECT_EQ(rx, 3u * ctx.default_data_slots);
+}
+
+/**
+ * @brief A slot-table snapshot taken during concurrent rebuilds is never torn.
+ *
+ * One thread keeps rebuilding the table with alternating superframe sizes
+ * while another reads it, as the application thread does through the public
+ * API. Every snapshot must be one complete layout.
+ */
+TEST_F(SlotSchedulerTest, SnapshotIsConsistentDuringConcurrentRebuilds) {
+    constexpr uint8_t kSmallFrame = 40;
+    constexpr uint8_t kLargeFrame = 60;
+    auto MakeContext = [this](uint8_t frame_slots) {
+        SlotScheduler::Context ctx = NmContext();
+        ctx.node_address = 2;
+        ctx.in_network_manager_state = false;
+        ctx.network_creator = false;
+        ctx.my_control_slot_index = 1;
+        ctx.beacon_node_count = 2;
+        ctx.number_of_slots_per_superframe = frame_slots;
+        return ctx;
+    };
+    const SlotScheduler::Context small = MakeContext(kSmallFrame);
+    const SlotScheduler::Context large = MakeContext(kLargeFrame);
+    for (const auto& ctx : {large, small}) {
+        ASSERT_TRUE(scheduler_->UpdateSlotTableIfDirty(ctx, true).IsSuccess());
+        const auto table = scheduler_->GetSlotTable();
+        ASSERT_EQ(table.size(), ctx.number_of_slots_per_superframe);
+        ASSERT_EQ(table.back().type, SlotType::DISCOVERY_RX);
+    }
+
+    constexpr int kRebuilds = 2000;
+    std::atomic<int> rebuilds{0};
+    std::thread writer([&]() {
+        for (int i = 0; i < kRebuilds; ++i) {
+            scheduler_->UpdateSlotTableIfDirty(i % 2 ? small : large, true);
+            rebuilds.fetch_add(1);
+        }
+    });
+
+    size_t torn = 0;
+    while (rebuilds.load() < kRebuilds) {
+        const auto table = scheduler_->GetSlotTable();
+        const bool complete_size =
+            table.size() == kSmallFrame || table.size() == kLargeFrame;
+        if (!complete_size || table.back().type != SlotType::DISCOVERY_RX) {
+            ++torn;
+        }
+    }
+    writer.join();
+
+    EXPECT_EQ(torn, 0u);
 }
 
 }  // namespace

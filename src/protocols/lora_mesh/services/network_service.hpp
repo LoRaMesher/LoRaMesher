@@ -916,11 +916,24 @@ class NetworkService : public INetworkService {
     /**
      * @brief Get current slot table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const {
         return slot_scheduler_->GetSlotTable();
+    }
+
+    /**
+     * @brief Visit every active slot allocation without copying the table
+     *
+     * @param visitor Called once per slot in slot order; must not call back
+     *                into the slot table
+     */
+    void ForEachSlot(
+        const std::function<
+            void(const types::protocols::lora_mesh::SlotAllocation&)>& visitor)
+        const {
+        slot_scheduler_->ForEachSlot(visitor);
     }
 
     // Discovery methods

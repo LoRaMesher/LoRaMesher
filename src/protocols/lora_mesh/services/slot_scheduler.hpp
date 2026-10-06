@@ -1,6 +1,6 @@
 /**
  * @file slot_scheduler.hpp
- * @brief TDMA slot-table scheduler extracted from NetworkService.
+ * @brief TDMA slot-table scheduler.
  *
  * Owns the superframe slot table and all of the slot-shaping operations
  * (rebuild, discovery/joining layouts, sync-beacon listening expansion,
@@ -12,9 +12,11 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
@@ -37,9 +39,10 @@ static const uint8_t kMinSlots = 16;
 /**
  * @brief Owns and shapes the TDMA slot table for a single node.
  *
- * All operations run on the protocol task, so no internal synchronization is
- * required (matching the previously lock-free slot-table access in
- * NetworkService).
+ * The table is rebuilt and reshaped on the protocol task and read from both
+ * the protocol task and the application thread, so every access to it is
+ * guarded by an internal mutex. Host closures are never invoked while that
+ * mutex is held, so the scheduler's lock is always the innermost one.
  */
 class SlotScheduler {
    public:
@@ -86,6 +89,12 @@ class SlotScheduler {
         std::function<Result(uint16_t total_slots)> notify_superframe;
     };
 
+    /**
+     * @brief Construct a scheduler bound to its owning coordinator.
+     *
+     * @param host Closures used to read coordinator state and publish the
+     *             resulting superframe size.
+     */
     explicit SlotScheduler(Host host);
 
     // --- Dirty tracking / rebuild ------------------------------------------
@@ -94,7 +103,7 @@ class SlotScheduler {
     void MarkDirty() { slot_table_dirty_ = true; }
 
     /// Clear the slot table (used when the node leaves/resets the network).
-    void Reset() { slot_count_ = 0; }
+    void Reset();
 
     /// Rebuild when dirty, or unconditionally when @p force is set.
     Result UpdateSlotTableIfDirty(const Context& ctx, bool force);
@@ -121,22 +130,36 @@ class SlotScheduler {
     /// True if @p address has an RX slot allocated to it (TDMA reachable).
     bool IsTDMANeighbor(AddressType address) const;
 
-    /// Span over the active slot allocations (valid for object lifetime).
-    std::span<const SlotAllocation> GetSlotTable() const {
-        return {slot_table_.data(), slot_count_};
-    }
+    /**
+     * @brief Consistent copy of the active slot allocations.
+     *
+     * @return Snapshot of the table; never reflects a partial rebuild.
+     */
+    std::vector<SlotAllocation> GetSlotTable() const;
+
+    /**
+     * @brief Visit every active slot allocation without copying the table.
+     *
+     * The table is locked for the duration of the visit, so @p visitor must
+     * not call back into the scheduler.
+     *
+     * @param visitor Called once per slot, in slot order.
+     */
+    void ForEachSlot(
+        const std::function<void(const SlotAllocation&)>& visitor) const;
 
     /// Number of valid slots in the slot table.
-    uint16_t GetSlotCount() const { return slot_count_; }
+    uint16_t GetSlotCount() const;
 
     /// Number of control slots allocated in the slot table.
-    uint8_t GetAllocatedControlSlots() const {
-        return allocated_control_slots_;
-    }
+    uint8_t GetAllocatedControlSlots() const;
 
    private:
     /// Aggregated sizing produced by ComputeBandSizes(), consumed downstream.
     struct SlotPlan {
+        uint8_t control_slots = 0;
+        uint16_t discovery_slots = 0;
+        uint16_t slot_count = 0;
         uint16_t sync_beacon_slots = 0;
         uint8_t total_data_slots = 0;
         uint16_t total_active_slots = 0;
@@ -146,17 +169,20 @@ class SlotScheduler {
         float actual_tx_duty_cycle = 0.0f;
     };
 
-    Result UpdateSlotTable_Impl(const Context& ctx);
+    /// Rebuild the table from the current routing nodes and @p ctx.
+    Result RebuildSlotTable(const Context& ctx);
 
-    /// Compute band sizes + superframe length; sets allocated_*_slots_ and
-    /// slot_count_. Returns the derived plan used to fill the table.
+    /// Compute band sizes and superframe length from the inputs alone.
     SlotPlan ComputeBandSizes(const Context& ctx,
-                              const std::vector<NetworkNodeRoute>& nodes);
+                              const std::vector<NetworkNodeRoute>& nodes) const;
 
-    /// Fill the slot table phases (sync / control / data / sleep / discovery).
-    void FillSlotTable(const Context& ctx,
-                       const std::vector<NetworkNodeRoute>& nodes,
-                       const SlotPlan& plan);
+    /**
+     * @brief Fill the slot table phases (sync / control / data / sleep /
+     *        discovery) and adopt @p plan's band sizes. Requires mutex_.
+     */
+    void FillSlotTableLocked(const Context& ctx,
+                             const std::vector<NetworkNodeRoute>& nodes,
+                             const SlotPlan& plan, uint8_t our_hop_distance);
 
     /**
      * @brief Active direct neighbour holding @p control_index, or 0 if none.
@@ -169,16 +195,19 @@ class SlotScheduler {
         uint8_t control_index);
 
     /// Emit a debug rendering of the current slot table.
-    void LogSlotTable(const Context& ctx) const;
+    void LogSlotTable(const Context& ctx, uint8_t our_hop_distance) const;
 
-    /// Mutable span over the active slot allocations.
-    std::span<SlotAllocation> ActiveSlots() {
+    /// Mutable span over the active slot allocations. Requires mutex_.
+    std::span<SlotAllocation> ActiveSlotsLocked() {
         return {slot_table_.data(), slot_count_};
     }
 
     static constexpr size_t kMaxSlots = 256;
 
     Host host_;
+
+    /// Guards the slot table, its size and the allocated band sizes.
+    mutable std::mutex mutex_;
 
     /// Fixed-size slot table — max 256 slots, no heap allocation.
     std::array<SlotAllocation, kMaxSlots> slot_table_{};
@@ -188,8 +217,8 @@ class SlotScheduler {
     uint16_t allocated_discovery_slots_ =
         ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
-    /// Set when any input to the slot table changes. Protocol-task only.
-    bool slot_table_dirty_ = true;
+    /// Set when any input to the slot table changes.
+    std::atomic<bool> slot_table_dirty_{true};
 };
 
 }  // namespace lora_mesh

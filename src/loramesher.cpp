@@ -491,7 +491,7 @@ NetworkStatus LoraMesher::GetNetworkStatus() const {
     return status;
 }
 
-std::span<const types::protocols::lora_mesh::SlotAllocation>
+std::vector<types::protocols::lora_mesh::SlotAllocation>
 LoraMesher::GetSlotTable() const {
     auto mesh_protocol = GetLoRaMeshProtocol();
     if (!mesh_protocol) {

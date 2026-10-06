@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -266,9 +267,10 @@ class LoraMesher {
     /**
      * @brief Get current slot allocation table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations (empty when the
+     *         mesh protocol is not running)
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const;
 
     /**

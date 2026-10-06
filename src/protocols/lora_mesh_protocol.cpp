@@ -1096,14 +1096,14 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
     SlotAllocation::SlotType slot_type = SlotAllocation::SlotType::SLEEP;
     uint8_t discovery_index = 0;
 
-    for (const auto& allocation : GetSlotTable()) {
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
         if (allocation.slot_number == current_slot) {
             slot_type = allocation.type;
         } else if (allocation.slot_number < current_slot &&
                    allocation.IsDiscoverySlot()) {
             discovery_index++;
         }
-    }
+    });
 
     LOG_INFO("Slot %d transition: type=%s start=%u%s", current_slot,
              slot_utils::SlotTypeToString(slot_type).c_str(),
