@@ -8,8 +8,8 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
-#include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "types/messages/base_header.hpp"
+#include "types/protocols/lora_mesh/protocol_state.hpp"
 
 namespace loramesher {
 
@@ -36,7 +36,7 @@ struct RouteEntry {
  * @brief Network status information for application access
  */
 struct NetworkStatus {
-    loramesher::protocols::lora_mesh::INetworkService::ProtocolState
+    loramesher::types::protocols::lora_mesh::ProtocolState
         current_state;                 ///< Current protocol state
     AddressType network_manager;       ///< Network manager address
     uint16_t current_slot;             ///< Current slot number

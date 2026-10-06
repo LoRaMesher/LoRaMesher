@@ -42,9 +42,11 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromBaseMessage(
     auto entry_count_opt = deserializer.ReadUint8();
     auto source_capabilities = deserializer.ReadUint8();
     auto source_allocated_data_slots = deserializer.ReadUint8();
+    auto source_control_slot_index = deserializer.ReadUint8();
 
     if (!network_manager || !table_version || !entry_count_opt ||
-        !source_capabilities || !source_allocated_data_slots) {
+        !source_capabilities || !source_allocated_data_slots ||
+        !source_control_slot_index) {
         LOG_ERROR("Failed to read routing table header fields");
         return std::nullopt;
     }
@@ -76,10 +78,10 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromBaseMessage(
         entries[i] = *entry;
     }
 
-    RoutingTableHeader header(message.GetDestination(), message.GetSource(),
-                              *network_manager, *table_version, entry_count,
-                              *source_capabilities,
-                              *source_allocated_data_slots);
+    RoutingTableHeader header(
+        message.GetDestination(), message.GetSource(), *network_manager,
+        *table_version, entry_count, *source_capabilities,
+        *source_allocated_data_slots, *source_control_slot_index);
 
     return RoutingTableMessage(header, std::span<const RoutingTableEntry>(
                                            entries.data(), entry_count));
@@ -88,7 +90,8 @@ std::optional<RoutingTableMessage> RoutingTableMessage::CreateFromBaseMessage(
 std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     AddressType dest, AddressType src, AddressType network_manager_addr,
     uint8_t table_version, const std::vector<RoutingTableEntry>& entries,
-    uint8_t source_capabilities, uint8_t source_allocated_data_slots) {
+    uint8_t source_capabilities, uint8_t source_allocated_data_slots,
+    uint8_t source_control_slot_index) {
 
     // Check if the number of entries fits
     if (entries.size() > kMaxRoutingEntries) {
@@ -100,15 +103,17 @@ std::optional<RoutingTableMessage> RoutingTableMessage::Create(
     // Create the header with the correct number of entries
     RoutingTableHeader header(dest, src, network_manager_addr, table_version,
                               static_cast<uint8_t>(entries.size()),
-                              source_capabilities, source_allocated_data_slots);
+                              source_capabilities, source_allocated_data_slots,
+                              source_control_slot_index);
 
     LOG_DEBUG(
         "Created routing table message "
         "src: 0x%04X, dest: 0x%04X, NM: 0x%04X, "
-        "table v.: %d, entry count: %d, caps: 0x%02X, data_slots: %d",
+        "table v.: %d, entry count: %d, caps: 0x%02X, data_slots: %d, "
+        "ctrl_idx: %d",
         src, dest, network_manager_addr, table_version,
         static_cast<int>(entries.size()), source_capabilities,
-        source_allocated_data_slots);
+        source_allocated_data_slots, source_control_slot_index);
 
     return RoutingTableMessage(header, entries);
 }
@@ -201,6 +206,10 @@ uint8_t RoutingTableMessage::GetSourceAllocatedDataSlots() const {
     return header_.GetSourceAllocatedDataSlots();
 }
 
+uint8_t RoutingTableMessage::GetSourceControlSlotIndex() const {
+    return header_.GetSourceControlSlotIndex();
+}
+
 uint8_t RoutingTableMessage::GetReceptionQualityFor(
     AddressType node_address) const {
     // Return reception_quality if the sender has direct reception data.
@@ -247,6 +256,7 @@ BaseMessage RoutingTableMessage::ToBaseMessage() const {
     serializer.WriteUint8(header_.GetEntryCount());
     serializer.WriteUint8(header_.GetSourceCapabilities());
     serializer.WriteUint8(header_.GetSourceAllocatedDataSlots());
+    serializer.WriteUint8(header_.GetSourceControlSlotIndex());
 
     // Serialize all network node routes
     for (uint8_t i = 0; i < entry_count_; ++i) {

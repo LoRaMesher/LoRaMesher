@@ -8,7 +8,9 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <vector>
 
+#include "config/task_config.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "lora_mesh/services/message_queue_service.hpp"
 #include "lora_mesh/services/network_service.hpp"
@@ -132,6 +134,48 @@ class LoRaMeshProtocol : public Protocol {
      * @return Result Success or error
      */
     Result SendBroadcast(std::span<const uint8_t> data);
+
+    /**
+     * @brief Send user data with acknowledged (reliable) delivery
+     * @return Assigned message id, or {0,0} on failure
+     */
+    reliability::MessageId SendReliable(AddressType destination,
+                                        const std::vector<uint8_t>& data,
+                                        uint8_t max_retries,
+                                        uint32_t timeout_ms = 0);
+
+    /**
+     * @brief Send data to a group via membership-gated flooding
+     */
+    Result SendGroup(AddressType group, std::span<const uint8_t> data);
+
+    /**
+     * @brief Send data to a group collecting per-recipient acknowledgements
+     * @return Assigned message id, or {0,0} on failure
+     */
+    reliability::MessageId SendGroupReliable(AddressType group,
+                                             std::span<const uint8_t> data,
+                                             uint8_t max_retries,
+                                             uint32_t window_ms);
+
+    /** @brief Join a logical group (local membership) */
+    Result JoinGroup(AddressType group);
+
+    /** @brief Leave a logical group */
+    Result LeaveGroup(AddressType group);
+
+    /** @brief Whether this node is a member of the given group */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /** @brief Get the groups this node belongs to */
+    std::vector<AddressType> GetGroups() const;
+
+    /** @brief Register the reliable-delivery outcome callback */
+    void SetDeliveryCallback(reliability::DeliveryCallback callback);
+
+    /** @brief Register the inbound callback reporting id and hop count */
+    void SetDataReceivedExCallback(
+        lora_mesh::NetworkService::DataReceivedExCallback callback);
 
     /**
      * @brief Pause all protocol services
@@ -261,18 +305,12 @@ class LoRaMeshProtocol : public Protocol {
     uint8_t GetNodeCapabilities(AddressType node_address) const;
 
     /**
-     * @brief Get all network nodes with their routing information
+     * @brief Get a snapshot of all network nodes with their routing information
      *
-     * Note: Caller must be careful with concurrent access as this returns
-     * a reference to the internal vector.
-     *
-     * @return const std::vector<NetworkNodeRoute>& Reference to all nodes
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const;
-
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const;
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNetworkNodes()
+        const;
 
     /**
      * @brief Request a runtime change of this node's role.
@@ -332,9 +370,9 @@ class LoRaMeshProtocol : public Protocol {
     /**
      * @brief Get current slot table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const {
         return network_service_->GetSlotTable();
     }
@@ -416,17 +454,6 @@ class LoRaMeshProtocol : public Protocol {
     void OnStateChange(lora_mesh::INetworkService::ProtocolState new_state);
 
     /**
-     * @brief Handle network topology change
-     * 
-     * @param route_updated Whether the route was updated, if false, the route is stale
-     * @param destination Destination address of the route
-     * @param next_hop Next hop address for the route
-     * @param hop_count Number of hops to destination
-     */
-    void OnNetworkTopologyChange(bool route_updated, AddressType destination,
-                                 AddressType next_hop, uint8_t hop_count);
-
-    /**
      * @brief Process messages for current slot type
      * 
      * @param slot_type Type of current slot
@@ -499,6 +526,13 @@ class LoRaMeshProtocol : public Protocol {
         types::protocols::lora_mesh::SlotAllocation::SlotType slot_type,
         const lora_mesh::SubslotConfig& config, uint16_t identifier);
 
+    /// Selects the subslot identifier for a given assignment strategy:
+    /// ADDRESS_MODULO uses the node address, RANDOM a hardware-random value,
+    /// and ADDRESS_HASH a nonlinear mix of the node address with the current
+    /// superframe counter so that addresses congruent modulo the subslot count
+    /// diverge across superframes instead of colliding every frame.
+    uint16_t ComputeSubslotIdentifier(const lora_mesh::SubslotConfig& config);
+
     // Services
     std::shared_ptr<lora_mesh::MessageQueueService> message_queue_service_;
     std::shared_ptr<lora_mesh::SuperframeService> superframe_service_;
@@ -524,6 +558,9 @@ class LoRaMeshProtocol : public Protocol {
     // Subslot scheduling state
     bool in_subslotted_slot_ =
         false;  ///< True during subslotted slots (radio stays in RX)
+    bool in_rx_slot_ =
+        false;  ///< True during RX listening slots (CONTROL_RX/RX/SYNC_BEACON_RX);
+                ///< radio stays in RX for the whole slot to catch every sender
     uint32_t current_slot_arrival_time_ms_ =
         0;  ///< GetTimeInSlot() at slot boundary (from SlotTransitionData)
 
@@ -532,7 +569,12 @@ class LoRaMeshProtocol : public Protocol {
     std::atomic<NodeRole> pending_role_{NodeRole::AUTO};
 
     // Constants
-    static constexpr uint32_t TASK_PRIORITY = 3;
+    // Kept below the radio-event (15) and superframe (14) tasks so radio I/O
+    // and slot timing still preempt routing work, but above app/MQTT tasks so
+    // the protocol task is not starved (which delays reception handling and
+    // per-slot radio arming).
+    static constexpr uint32_t TASK_PRIORITY =
+        config::TaskPriorities::kNormalPriority;
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
         16;  ///< Protocol notification queue size

@@ -5,8 +5,8 @@
  * Targets uncovered lines:
  * - LoRaMeshProtocol: setActionReceive failure, Configure network service
  *   failure, StartDiscovery null guard, GetTimeUntilNextDataSlot edge cases,
- *   GetDataSlotsPerSuperframe null guard, OnNetworkTopologyChange route_updated
- *   path, CreateServiceConfig (non-DEBUG), NotifyProtocolTask null guard
+ *   GetDataSlotsPerSuperframe null guard, route update callback,
+ *   CreateServiceConfig (non-DEBUG), NotifyProtocolTask null guard
  * - SuperframeService: GetTotalSlots, UpdateSlotDuration, GetUpdateInterval,
  *   IsAutoAdvanceEnabled, SetDiscoveryJitter/GetDiscoveryJitter,
  *   StopSuperframe while not running, StartSuperframe while already running,

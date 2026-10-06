@@ -13,7 +13,7 @@ namespace loramesher {
   * @brief Header for JOIN_REQUEST messages
   *
   * Extends BaseHeader with join request specific fields:
-  * battery level and requested data slots.
+  * requested data slots, routing, and sponsor information.
   */
 class JoinRequestHeader : public BaseHeader {
    public:
@@ -27,24 +27,16 @@ class JoinRequestHeader : public BaseHeader {
       *
       * @param dest Destination address (typically broadcast or network manager)
       * @param src Source address
-      * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
       * @param next_hop Next hop for message forwarding (0 for direct)
       * @param additional_info_size To store the payload size in the base message
       * @param sponsor_address Sponsor node address (0 for no sponsor)
       * @param hop_count Number of hops from joining node (0 for direct)
       */
-    JoinRequestHeader(AddressType dest, AddressType src, uint8_t battery_level,
+    JoinRequestHeader(AddressType dest, AddressType src,
                       uint8_t requested_slots, AddressType next_hop = 0,
                       uint8_t additional_info_size = 0,
                       AddressType sponsor_address = 0, uint8_t hop_count = 0);
-
-    /**
-      * @brief Gets the battery level
-      * 
-      * @return uint8_t The battery level (0-100%)
-      */
-    uint8_t GetBatteryLevel() const { return battery_level_; }
 
     /**
       * @brief Gets the requested data slots
@@ -82,11 +74,10 @@ class JoinRequestHeader : public BaseHeader {
     /**
       * @brief Sets the join request specific information
       *
-      * @param battery_level Battery level (0-100%)
       * @param requested_slots Number of data slots requested
       * @return Result Success if setting succeeded, error code otherwise
       */
-    Result SetJoinRequestInfo(uint8_t battery_level, uint8_t requested_slots);
+    Result SetJoinRequestInfo(uint8_t requested_slots);
 
     /**
      * @brief Sets the requested data slots
@@ -130,8 +121,7 @@ class JoinRequestHeader : public BaseHeader {
       * @return size_t Size of the join request header fields in bytes
       */
     static constexpr size_t JoinRequestFieldsSize() {
-        return sizeof(uint8_t) +      // Battery level
-               sizeof(uint8_t) +      // Requested slots
+        return sizeof(uint8_t) +      // Requested slots
                sizeof(AddressType) +  // Next hop
                sizeof(AddressType) +  // Sponsor address
                sizeof(uint8_t);       // Hop count
@@ -147,7 +137,6 @@ class JoinRequestHeader : public BaseHeader {
     }
 
    private:
-    uint8_t battery_level_ = 100;  ///< Battery level (0-100%)
     uint8_t requested_slots_ = 1;  ///< Requested number of data slots
     AddressType next_hop_ = 0;     ///< Next hop for message forwarding
     AddressType sponsor_address_ =

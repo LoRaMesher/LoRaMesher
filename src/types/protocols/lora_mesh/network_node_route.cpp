@@ -38,17 +38,26 @@ uint8_t NetworkNodeRoute::LinkQualityStats::CalculateQuality() const {
         return static_cast<uint8_t>((bottleneck * 7 + average * 3) / 10);
     }
 
-    // Unidirectional link: received 3+ routing tables from peer
-    // but peer never lists us — they cannot hear us.
-    // Return 1 (minimum quality): a link we cannot transmit on has
-    // maximum ETX cost (65535). This lets the entries loop find an
-    // indirect route via relay. Using 1 instead of 0 avoids the
+    // Unidirectional link: return 1 (minimum quality) so a link we cannot
+    // transmit on has maximum ETX cost (65535) and the entries loop can find
+    // an indirect route via a relay. 1 instead of 0 avoids the
     // "unknown/unset" semantics of quality=0.
-    if (messages_expected >= 3) {
+    if (IsUnidirectional()) {
         return 1;
     }
 
     return local_quality;
+}
+
+bool NetworkNodeRoute::LinkQualityStats::IsUnidirectional() const {
+    return remote_link_quality == 0 && remote_absent_streak > 0 &&
+           messages_expected >= kMinSamplesForQuality;
+}
+
+void NetworkNodeRoute::LinkQualityStats::RecordLocalBroadcast() {
+    if (messages_received > 0 && local_broadcasts < UINT8_MAX) {
+        local_broadcasts++;
+    }
 }
 
 void NetworkNodeRoute::LinkQualityStats::Reset() {
@@ -60,6 +69,8 @@ void NetworkNodeRoute::LinkQualityStats::Reset() {
     last_rssi = 0.0f;
     last_snr = 0.0f;
     window.Reset();
+    remote_absent_streak = 0;
+    local_broadcasts = 0;
     // Don't reset last_message_time or remote_link_quality
 }
 
@@ -99,19 +110,54 @@ void NetworkNodeRoute::LinkQualityStats::ReceivedMessage(uint32_t current_time,
     window.Received();
 }
 
-void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(uint8_t quality) {
-    remote_link_quality = quality;
+void NetworkNodeRoute::LinkQualityStats::UpdateRemoteQuality(
+    uint8_t quality, uint8_t absent_threshold) {
+    if (quality > 0) {
+        // Peer's current slice lists us as a reception. Smooth the value with
+        // an asymmetric EWMA: rise slowly so a single optimistic slice cannot
+        // spike the cost across a route-selection boundary (flap source); fall
+        // quickly so genuine degradation still reroutes promptly.
+        if (remote_link_quality == 0) {
+            remote_link_quality = quality;
+        } else {
+            uint16_t alpha = (quality >= remote_link_quality)
+                                 ? kRemoteUpAlpha
+                                 : kRemoteDownAlpha;
+            uint32_t blended =
+                (static_cast<uint32_t>(alpha) * quality +
+                 static_cast<uint32_t>(256 - alpha) * remote_link_quality) /
+                256;
+            remote_link_quality = static_cast<uint8_t>(blended);
+        }
+        remote_absent_streak = 0;
+        return;
+    }
+
+    // Our entry was absent from this slice. A peer that has not yet had the
+    // chance to receive enough of our tables cannot list us, so its omission
+    // is not evidence.
+    if (local_broadcasts < kUnidirectionalGraceBroadcasts) {
+        return;
+    }
+
+    // Hold the last known value until the peer's table has had a full
+    // rotation cycle (plus margin) to broadcast it; only then treat the link
+    // as unidirectional/degraded.
+    if (remote_absent_streak < 255) {
+        remote_absent_streak++;
+    }
+    if (remote_absent_streak >= absent_threshold) {
+        remote_link_quality = 0;
+    }
 }
 
 // NetworkNodeRoute implementation
 NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint32_t time)
     : routing_entry(addr, 0, 0, 0, 0), last_seen(time), last_updated(time) {}
 
-NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
-                                   uint32_t time, bool is_manager, uint8_t caps,
-                                   uint8_t slots)
+NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint32_t time,
+                                   bool is_manager, uint8_t caps, uint8_t slots)
     : routing_entry(addr, 0, 0, slots, caps),
-      battery_level(battery),
       last_seen(time),
       is_network_manager(is_manager),
       next_hop(0),
@@ -119,16 +165,15 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
       is_active(true) {
     // LOG_DEBUG(
     //     "New routing entry created with address 0x%04X, "
-    //     "battery %d%%, manager %s, slots %d",
-    //     addr, battery, is_manager ? "yes" : "no", slots);
+    //     "manager %s, slots %d",
+    //     addr, is_manager ? "yes" : "no", slots);
 }
 
-NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
-                                   uint32_t time, bool is_manager, uint8_t caps,
-                                   uint8_t slots, uint8_t hops)
+NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint32_t time,
+                                   bool is_manager, uint8_t caps, uint8_t slots,
+                                   uint8_t hops)
     : routing_entry(addr, hops, LinkQualityStats::kProvisionalQuality, slots,
                     caps),
-      battery_level(battery),
       last_seen(time),
       is_network_manager(is_manager),
       next_hop(addr),  // Simple default: next hop is the node itself
@@ -136,8 +181,8 @@ NetworkNodeRoute::NetworkNodeRoute(AddressType addr, uint8_t battery,
       is_active(true) {
     // LOG_DEBUG(
     //     "New routing entry created with address 0x%04X, "
-    //     "battery %d%%, manager %s, slots %d, hops %d",
-    //     addr, battery, is_manager ? "yes" : "no", slots, hops);
+    //     "manager %s, slots %d, hops %d",
+    //     addr, is_manager ? "yes" : "no", slots, hops);
 }
 
 NetworkNodeRoute::NetworkNodeRoute(AddressType dest, AddressType next,
@@ -197,16 +242,10 @@ void NetworkNodeRoute::UpdateLastSeen(uint32_t current_time) {
     last_seen = current_time;
 }
 
-bool NetworkNodeRoute::UpdateNodeInfo(uint8_t battery, bool is_manager,
-                                      uint8_t caps, uint8_t data_slots,
+bool NetworkNodeRoute::UpdateNodeInfo(bool is_manager, uint8_t caps,
+                                      uint8_t data_slots,
                                       uint32_t current_time) {
     bool changed = false;
-
-    // Update battery level if valid and different
-    if (battery <= 100 && battery_level != battery) {
-        battery_level = battery;
-        changed = true;
-    }
 
     // Update network manager status
     if (is_network_manager != is_manager) {
@@ -237,6 +276,11 @@ bool NetworkNodeRoute::UpdateRouteInfo(AddressType new_next_hop,
                                        uint8_t new_link_quality,
                                        uint32_t current_time) {
     bool changed = false;
+
+    if (next_hop != new_next_hop || routing_entry.hop_count != new_hop_count) {
+        // Round-trip samples describe the previous path.
+        path_rtt = PathRtt{};
+    }
 
     if (next_hop != new_next_hop) {
         next_hop = new_next_hop;
@@ -298,19 +342,6 @@ bool NetworkNodeRoute::UpdateFromRoutingTableEntry(
     is_active = true;
 
     return changed;
-}
-
-bool NetworkNodeRoute::UpdateBatteryLevel(uint8_t new_battery,
-                                          uint32_t current_time) {
-    if (new_battery > 100) {
-        return false;  // Invalid battery level
-    }
-    if (battery_level != new_battery) {
-        battery_level = new_battery;
-        last_seen = current_time;  // Update last seen time on battery change
-        return true;               // Battery level changed
-    }
-    return false;  // No change
 }
 
 bool NetworkNodeRoute::UpdateAllocatedSlots(uint8_t new_slots,
@@ -379,7 +410,6 @@ void NetworkNodeRoute::ResetLinkStats() {
 Result NetworkNodeRoute::Serialize(utils::ByteSerializer& serializer) const {
     // Node identity and status information
     serializer.WriteUint16(routing_entry.destination);
-    serializer.WriteUint8(battery_level);
     serializer.WriteUint32(last_seen);
     serializer.WriteUint8(is_network_manager ? 1 : 0);
 
@@ -396,7 +426,6 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
 
     // Read node identity and status information
     auto address = deserializer.ReadUint16();
-    auto battery_level = deserializer.ReadUint8();
     auto last_seen = deserializer.ReadUint32();
     auto is_manager_raw = deserializer.ReadUint8();
 
@@ -406,8 +435,8 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
     auto is_active_raw = deserializer.ReadUint8();
 
     // Check if all reads were successful
-    if (!address || !battery_level || !last_seen || !is_manager_raw ||
-        !next_hop || !last_updated || !is_active_raw) {
+    if (!address || !last_seen || !is_manager_raw || !next_hop ||
+        !last_updated || !is_active_raw) {
         return std::nullopt;
     }
 
@@ -416,7 +445,6 @@ std::optional<NetworkNodeRoute> NetworkNodeRoute::Deserialize(
 
     // Set node identity and status
     node_route.routing_entry = RoutingTableEntry(*address, 0, 0, 0, 0);
-    node_route.battery_level = *battery_level;
     node_route.last_seen = *last_seen;
     node_route.is_network_manager = (*is_manager_raw != 0);
 

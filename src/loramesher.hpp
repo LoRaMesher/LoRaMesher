@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -22,9 +23,22 @@
 
 namespace loramesher {
 
+/// Options for reliable unicast sends.
+struct ReliableOptions {
+    uint32_t timeout_ms = 0;  ///< 0 = derive from hop count and superframe
+    uint8_t max_retries = 3;
+};
+
+/// Options for group sends.
+struct GroupSendOptions {
+    bool request_acks = false;
+    uint32_t window_ms = 8000;
+    uint8_t max_retries = 0;
+};
+
 /**
  * @brief Main class of the LoraMesher library
- * 
+ *
  * Provides a unified interface for hardware and protocol management,
  * message handling, and network operations.
  */
@@ -191,6 +205,51 @@ class LoraMesher {
      */
     void SetDataCallback(DataReceivedCallback callback);
 
+    // Reliable delivery and group multicast
+
+    /// Stable per-message identifier exposed to the application.
+    using MessageId = protocols::reliability::MessageId;
+    /// Reliable-delivery outcome reported to the delivery callback.
+    using DeliveryResult = protocols::reliability::DeliveryResult;
+    /// Delivery outcome callback type.
+    using DeliveryCallback = protocols::reliability::DeliveryCallback;
+    /// Inbound callback reporting message id and hop count.
+    using DataReceivedExCallback =
+        protocols::lora_mesh::NetworkService::DataReceivedExCallback;
+
+    /**
+     * @brief Send data reliably (acknowledged) to a destination
+     * @return Assigned message id, or {0,0} on failure
+     */
+    MessageId SendReliable(AddressType destination,
+                           const std::vector<uint8_t>& data,
+                           ReliableOptions options = {});
+
+    /**
+     * @brief Send data to a group, optionally collecting acknowledgements
+     * @return Assigned message id, or {0,0} on failure
+     */
+    MessageId SendGroup(AddressType group, std::span<const uint8_t> data,
+                        GroupSendOptions options = {});
+
+    /** @brief Join a logical group */
+    Result JoinGroup(AddressType group);
+
+    /** @brief Leave a logical group */
+    Result LeaveGroup(AddressType group);
+
+    /** @brief Whether this node is a member of the given group */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /** @brief Get the groups this node belongs to */
+    std::vector<AddressType> GetGroups() const;
+
+    /** @brief Register the reliable-delivery outcome callback */
+    void SetDeliveryCallback(DeliveryCallback callback);
+
+    /** @brief Register an inbound callback reporting id and hop count */
+    void SetDataCallbackEx(DataReceivedExCallback callback);
+
     /**
      * @brief Get current routing table with raw entry data
      *
@@ -208,9 +267,10 @@ class LoraMesher {
     /**
      * @brief Get current slot allocation table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations (empty when the
+     *         mesh protocol is not running)
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const;
 
     /**

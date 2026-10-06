@@ -198,6 +198,80 @@ TEST(SubslotSchedulerTest, ComputeTimingLargeSlotDuration) {
 }
 
 // ============================================================================
+// ComputeTiming - ToA-aware (message-sized) subslots
+// ============================================================================
+
+TEST(SubslotSchedulerTest, HighToaCollapsesToSingleSubslot) {
+    // SF12: a 2850 ms slot can hold only one ~2107 ms transmission, so the
+    // 5-subslot config must collapse to a single subslot at slot start.
+    SubslotConfig config;
+    config.num_subslots = 5;
+    config.guard_time_ms = 10;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
+
+    // Two different addresses both land in the only feasible subslot (0).
+    auto a = SubslotScheduler::ComputeTiming(2850, config, 0x006C, 2107);
+    auto b = SubslotScheduler::ComputeTiming(2850, config, 0x1484, 2107);
+
+    EXPECT_TRUE(a.is_valid);
+    EXPECT_EQ(a.assigned_subslot, 0);
+    EXPECT_EQ(a.tx_start_offset_ms, config.guard_time_ms);
+    EXPECT_TRUE(b.is_valid);
+    EXPECT_EQ(b.assigned_subslot, 0);
+    EXPECT_EQ(b.tx_start_offset_ms, config.guard_time_ms);
+    // The transmission completes within the slot.
+    EXPECT_LE(a.tx_start_offset_ms + 2107u, 2850u);
+}
+
+TEST(SubslotSchedulerTest, LowToaKeepsAllSubslots) {
+    // Small message relative to the slot: all 5 subslots remain usable and
+    // spread the transmissions, matching the original equal-division layout.
+    SubslotConfig config;
+    config.num_subslots = 5;
+    config.guard_time_ms = 10;
+    config.strategy = SubslotAssignment::HOP_BASED;
+
+    auto with_toa = SubslotScheduler::ComputeTiming(1000, config, 4, 100);
+    auto without_toa = SubslotScheduler::ComputeTiming(1000, config, 4);
+
+    EXPECT_TRUE(with_toa.is_valid);
+    EXPECT_EQ(with_toa.assigned_subslot, 4);
+    EXPECT_EQ(with_toa.tx_start_offset_ms, without_toa.tx_start_offset_ms);
+    EXPECT_EQ(with_toa.tx_window_ms, without_toa.tx_window_ms);
+    // Each subslot window holds the message.
+    EXPECT_GE(with_toa.tx_window_ms, 100u);
+}
+
+TEST(SubslotSchedulerTest, ToaLargerThanSlotIsInfeasible) {
+    SubslotConfig config;
+    config.num_subslots = 5;
+    config.guard_time_ms = 10;
+
+    // A 1200 ms message cannot fit a 1000 ms slot at all.
+    auto timing = SubslotScheduler::ComputeTiming(1000, config, 0, 1200);
+    EXPECT_FALSE(timing.is_valid);
+}
+
+TEST(SubslotSchedulerTest, ModerateToaCapsSubslotCount) {
+    // Slot fits ~3 message-sized windows: count collapses from 5 to 3 and the
+    // assignment wraps within the feasible window count.
+    SubslotConfig config;
+    config.num_subslots = 5;
+    config.guard_time_ms = 10;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
+
+    // toa=300, guard=10 => per-subslot 310; (1000-30)/310 = 3 windows.
+    auto t0 = SubslotScheduler::ComputeTiming(1000, config, 0, 300);
+    auto t3 = SubslotScheduler::ComputeTiming(1000, config, 3, 300);
+
+    ASSERT_TRUE(t0.is_valid);
+    ASSERT_TRUE(t3.is_valid);
+    // identifier 3 % 3 effective subslots == 0 -> same subslot as identifier 0.
+    EXPECT_EQ(t3.assigned_subslot, t0.assigned_subslot);
+    EXPECT_GE(t0.tx_window_ms, 300u);
+}
+
+// ============================================================================
 // ValidateConfig
 // ============================================================================
 

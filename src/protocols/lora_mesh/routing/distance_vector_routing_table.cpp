@@ -73,9 +73,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
     uint8_t source_link_quality = CalculateComprehensiveLinkQuality(source);
     uint8_t actual_link_quality = std::min(link_quality, source_link_quality);
 
-    // Check hop limit (assume max 10 hops as reasonable default)
-    constexpr uint8_t MAX_HOPS = 10;
-    if (hop_count > MAX_HOPS) {
+    if (hop_count > max_hops_) {
         return false;
     }
 
@@ -152,6 +150,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
                     destination, node_it->routing_entry.capabilities,
                     capabilities, source);
                 node_it->routing_entry.capabilities = capabilities;
+                RememberCapabilities(destination, capabilities, hop_count);
                 route_changed = true;
             }
 
@@ -171,6 +170,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
             (node_it->routing_entry.capabilities == 0 ||
              node_it->next_hop == source)) {
             node_it->routing_entry.capabilities = capabilities;
+            RememberCapabilities(destination, capabilities, hop_count);
             route_changed = true;
         }
     } else {
@@ -187,14 +187,17 @@ bool DistanceVectorRoutingTable::UpdateRoute(
             destination, source, hop_count, actual_link_quality, current_time);
         new_node.routing_entry.allocated_data_slots = allocated_data_slots;
 
-        // For new nodes, store capabilities only if non-zero
+        // For new nodes, store capabilities only if non-zero, otherwise restore
+        // the last-known value so an aged-out node does not revert to unknown.
         // Source becomes the next_hop, so future updates will only be accepted from this source
         if (capabilities != 0) {
             new_node.routing_entry.capabilities = capabilities;
+            RememberCapabilities(destination, capabilities, hop_count);
             LOG_DEBUG("New node 0x%04X via 0x%04X: caps=0x%02X", destination,
                       source, capabilities);
         } else {
-            new_node.routing_entry.capabilities = 0;
+            new_node.routing_entry.capabilities =
+                RecallCapabilities(destination);
             LOG_DEBUG("New node 0x%04X via 0x%04X: capabilities unknown",
                       destination, source);
         }
@@ -250,9 +253,11 @@ bool DistanceVectorRoutingTable::AddNode(
     }
 }
 
-bool DistanceVectorRoutingTable::UpdateNode(
-    AddressType node_address, uint8_t battery_level, bool is_network_manager,
-    uint8_t allocated_data_slots, uint8_t capabilities, uint32_t current_time) {
+bool DistanceVectorRoutingTable::UpdateNode(AddressType node_address,
+                                            bool is_network_manager,
+                                            uint8_t allocated_data_slots,
+                                            uint8_t capabilities,
+                                            uint32_t current_time) {
     std::lock_guard<std::mutex> lock(table_mutex_);
 
     // Don't add self-entries via this method
@@ -263,9 +268,9 @@ bool DistanceVectorRoutingTable::UpdateNode(
     auto node_it = GetNode(node_address);
     if (node_it != nodes_.end()) {
         // Update existing node
-        bool changed = node_it->UpdateNodeInfo(
-            battery_level, is_network_manager, capabilities,
-            allocated_data_slots, current_time);
+        bool changed =
+            node_it->UpdateNodeInfo(is_network_manager, capabilities,
+                                    allocated_data_slots, current_time);
 
         LOG_DEBUG("Updated node 0x%04X in routing table (caps=0x%02X)",
                   node_address, capabilities);
@@ -282,8 +287,8 @@ bool DistanceVectorRoutingTable::UpdateNode(
 
         // Create new node with NetworkNodeRoute
         types::protocols::lora_mesh::NetworkNodeRoute new_node(
-            node_address, battery_level, current_time, is_network_manager,
-            capabilities, allocated_data_slots);
+            node_address, current_time, is_network_manager, capabilities,
+            allocated_data_slots);
 
         // For new nodes, assume they're direct neighbors initially
         new_node.next_hop = node_address;
@@ -374,10 +379,21 @@ bool DistanceVectorRoutingTable::IsNodePresent(AddressType address) const {
     return GetNode(address) != nodes_.end();
 }
 
-const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-DistanceVectorRoutingTable::GetNodes() const {
-    // Note: Caller must be careful with concurrent access
-    return nodes_;
+std::optional<types::protocols::lora_mesh::NetworkNodeRoute>
+DistanceVectorRoutingTable::FindNode(AddressType node_address) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(node_address);
+    if (it == nodes_.end()) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+void DistanceVectorRoutingTable::ForEachNode(const NodeVisitor& visitor) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    for (const auto& node : nodes_) {
+        visitor(node);
+    }
 }
 
 std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
@@ -409,6 +425,84 @@ std::vector<RoutingTableEntry> DistanceVectorRoutingTable::GetRoutingEntries(
     }
 
     return entries;
+}
+
+std::vector<RoutingTableEntry>
+DistanceVectorRoutingTable::GetNextBroadcastSlice(AddressType exclude_address,
+                                                  size_t max_entries) {
+
+    std::lock_guard<std::mutex> lock(table_mutex_);
+
+    // Partition advertisable routes into capability-bearing ("priority") and
+    // normal sets, preserving table order. Priority entries are included in
+    // every broadcast so capability information reaches far nodes without
+    // waiting for a full rotation; normal entries rotate through the remaining
+    // per-slice budget.
+    std::vector<RoutingTableEntry> priority;
+    std::vector<RoutingTableEntry> normal;
+    priority.reserve(nodes_.size());
+    normal.reserve(nodes_.size());
+    for (const auto& node : nodes_) {
+        if (!node.is_active ||
+            node.routing_entry.destination == exclude_address ||
+            node.routing_entry.destination == node_address_) {
+            continue;
+        }
+        if (node.routing_entry.capabilities != 0) {
+            priority.push_back(node.ToRoutingTableEntry());
+        } else {
+            normal.push_back(node.ToRoutingTableEntry());
+        }
+    }
+
+    if ((priority.empty() && normal.empty()) || max_entries == 0) {
+        next_broadcast_offset_ = 0;
+        next_priority_offset_ = 0;
+        return {};
+    }
+
+    // Reserve at least one slot for the normal rotation whenever normal routes
+    // exist, so priority entries can never starve it.
+    size_t priority_budget = priority.size();
+    if (!normal.empty()) {
+        priority_budget = std::min<size_t>(priority_budget, max_entries - 1);
+    }
+    priority_budget = std::min(priority_budget, max_entries);
+
+    std::vector<RoutingTableEntry> slice;
+    slice.reserve(max_entries);
+
+    // Emit priority entries, rotating only when they exceed the per-slice budget.
+    if (priority_budget > 0) {
+        if (priority.size() <= priority_budget) {
+            slice.insert(slice.end(), priority.begin(), priority.end());
+            next_priority_offset_ = 0;
+        } else {
+            if (next_priority_offset_ >= priority.size()) {
+                next_priority_offset_ = 0;
+            }
+            for (size_t i = 0; i < priority_budget; ++i) {
+                slice.push_back(
+                    priority[(next_priority_offset_ + i) % priority.size()]);
+            }
+            next_priority_offset_ =
+                (next_priority_offset_ + priority_budget) % priority.size();
+        }
+    }
+
+    // Fill the remaining budget from the rotating normal window.
+    const size_t normal_budget = max_entries - slice.size();
+    if (!normal.empty() && normal_budget > 0) {
+        if (next_broadcast_offset_ >= normal.size()) {
+            next_broadcast_offset_ = 0;
+        }
+        const size_t start = next_broadcast_offset_;
+        const size_t end = std::min(start + normal_budget, normal.size());
+        slice.insert(slice.end(), normal.begin() + start, normal.begin() + end);
+        next_broadcast_offset_ = (end >= normal.size()) ? 0 : end;
+    }
+
+    return slice;
 }
 
 uint8_t DistanceVectorRoutingTable::GetLinkQuality(
@@ -466,9 +560,17 @@ void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     route_callback_ = callback;
 }
 
+void DistanceVectorRoutingTable::SetMaxHops(uint8_t max_hops) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    max_hops_ = max_hops;
+}
+
 void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     max_nodes_ = max_nodes;
+    if (max_nodes_ > 0) {
+        nodes_.reserve(max_nodes_);
+    }
 
     // If we now exceed the limit, remove oldest nodes
     while (max_nodes_ > 0 && nodes_.size() > max_nodes_) {
@@ -478,9 +580,36 @@ void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {
     }
 }
 
+std::optional<types::protocols::lora_mesh::PathRtt>
+DistanceVectorRoutingTable::GetPathRtt(AddressType destination) const {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(destination);
+    if (it == nodes_.end()) {
+        return std::nullopt;
+    }
+    return it->path_rtt;
+}
+
+bool DistanceVectorRoutingTable::SetPathRtt(
+    AddressType destination, const types::protocols::lora_mesh::PathRtt& rtt) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    auto it = GetNode(destination);
+    if (it == nodes_.end()) {
+        return false;
+    }
+    it->path_rtt = rtt;
+    return true;
+}
+
 bool DistanceVectorRoutingTable::SetControlSlotIndex(
     AddressType node_address, uint8_t control_slot_index) {
     std::lock_guard<std::mutex> lock(table_mutex_);
+    // Reject out-of-range indices (0xFF is the valid "unassigned" sentinel) so a
+    // corrupted value can never inflate the control band of the TDMA schedule.
+    if (control_slot_index != 0xFF && max_nodes_ > 0 &&
+        control_slot_index >= max_nodes_) {
+        return false;
+    }
     auto it = GetNode(node_address);
     if (it == nodes_.end()) {
         return false;
@@ -498,9 +627,12 @@ void DistanceVectorRoutingTable::Clear() {
     }
 
     nodes_.clear();
+    remembered_capabilities_.fill(RememberedCapability{});
     lookup_count_ = 0;
     update_count_ = 0;
     last_cleanup_time_ = 0;
+    next_broadcast_offset_ = 0;
+    next_priority_offset_ = 0;
 
     LOG_INFO("Cleared routing table for node 0x%04X", node_address_);
 }
@@ -656,11 +788,18 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
     }
 }
 
+void DistanceVectorRoutingTable::NotifyLocalRoutingBroadcast() {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    for (auto& node : nodes_) {
+        node.link_stats.RecordLocalBroadcast();
+    }
+}
+
 bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
     AddressType source_address, std::span<const RoutingTableEntry> entries,
     uint32_t reception_timestamp, uint8_t local_link_quality, uint8_t max_hops,
     uint8_t source_capabilities, uint8_t source_allocated_data_slots,
-    float rssi, float snr) {
+    float rssi, float snr, uint8_t remote_absent_threshold) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     update_count_++;
 
@@ -678,7 +817,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Update direct link statistics (always tracks the physical link)
         source_node_it->link_stats.ReceivedMessage(reception_timestamp, rssi,
                                                    snr);
-        source_node_it->link_stats.UpdateRemoteQuality(local_link_quality);
+        source_node_it->link_stats.UpdateRemoteQuality(local_link_quality,
+                                                       remote_absent_threshold);
         source_node_it->last_seen = reception_timestamp;
         uint8_t direct_quality = source_node_it->link_stats.CalculateQuality();
 
@@ -689,10 +829,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             source_node_it->link_stats.ewma_quality, direct_quality,
             source_node_it->link_stats.messages_expected,
             source_node_it->link_stats.messages_received,
-            (local_link_quality == 0 &&
-             source_node_it->link_stats.messages_expected >= 3)
-                ? " [UNIDIRECTIONAL]"
-                : "",
+            source_node_it->link_stats.IsUnidirectional() ? " [UNIDIRECTIONAL]"
+                                                          : "",
             (source_node_it->link_stats.messages_received <
              types::protocols::lora_mesh::NetworkNodeRoute::LinkQualityStats::
                  kMinSamplesForQuality)
@@ -702,6 +840,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // Always update capabilities for direct neighbor (source of the message)
         if (source_node_it->routing_entry.capabilities != source_capabilities) {
             source_node_it->routing_entry.capabilities = source_capabilities;
+            RememberCapabilities(source_address, source_capabilities, 1);
             routing_changed = true;
             LOG_DEBUG("Updated capabilities for direct neighbor 0x%04X: 0x%02X",
                       source_address, source_capabilities);
@@ -732,19 +871,26 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
         // existing indirect route: the indirect path may still deliver
         // packets while the direct one never will.
         bool direct_confirmed_unidirectional =
-            source_node_it->link_stats.remote_link_quality == 0 &&
-            source_node_it->link_stats.messages_expected >= 3;
+            source_node_it->link_stats.IsUnidirectional();
 
-        // Don't displace an indirect route on provisional quality alone.
+        // Don't displace a working indirect route on provisional quality
+        // alone. A route with unusable cost, or whose next hop is not an
+        // active direct neighbour, is not working.
         bool direct_quality_trusted =
             source_node_it->link_stats.messages_received >=
             types::protocols::lora_mesh::NetworkNodeRoute::LinkQualityStats::
                 kMinSamplesForQuality;
+        auto prev_hop_it = GetNode(prev_next_hop);
+        bool current_route_usable = current_cost < UINT16_MAX &&
+                                    prev_hop_it != nodes_.end() &&
+                                    prev_hop_it->IsDirectNeighbor() &&
+                                    prev_hop_it->next_hop == prev_next_hop;
 
         bool use_direct =
             was_inactive || prev_next_hop == source_address ||
-            (direct_cost <= current_cost && direct_quality_trusted &&
-             !direct_confirmed_unidirectional);
+            (!direct_confirmed_unidirectional &&
+             (!current_route_usable ||
+              (direct_cost <= current_cost && direct_quality_trusted)));
 
         if (use_direct) {
             source_node_it->routing_entry.link_quality = direct_quality;
@@ -752,6 +898,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 source_node_it->next_hop != source_address) {
                 source_node_it->next_hop = source_address;
                 source_node_it->routing_entry.hop_count = 1;
+                source_node_it->path_rtt = {};
                 routing_changed = true;
 
                 NotifyRouteUpdate(true, source_address, source_address, 1);
@@ -788,9 +935,7 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
 
         if (!WouldExceedLimit()) {  // Check again after potential removal
             types::protocols::lora_mesh::NetworkNodeRoute new_node(
-                source_address, 100,
-                reception_timestamp  // Assume 100% battery for new nodes
-            );
+                source_address, reception_timestamp);
             new_node.next_hop = source_address;
             new_node.routing_entry.hop_count = 1;
             new_node.routing_entry.link_quality = local_link_quality;
@@ -828,6 +973,19 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
             node.routing_entry.link_quality = source_link_quality;
             routing_changed = true;
         }
+    }
+
+    // Advertised routes are usable only through a source that is an active
+    // direct neighbour.
+    auto source_route_it = GetNode(source_address);
+    if (source_route_it == nodes_.end() ||
+        !source_route_it->IsDirectNeighbor() ||
+        source_route_it->next_hop != source_address) {
+        LOG_DEBUG(
+            "Ignoring %zu advertised routes from 0x%04X: not an active direct "
+            "neighbour",
+            entries.size(), source_address);
+        return routing_changed;
     }
 
     // Process each routing entry from the message
@@ -949,6 +1107,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                         dest, node_it->routing_entry.capabilities,
                         entry.capabilities, source_address);
                     node_it->routing_entry.capabilities = entry.capabilities;
+                    RememberCapabilities(dest, entry.capabilities,
+                                         hop_count_via_source);
                     changed = true;
                 }
 
@@ -967,6 +1127,8 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
                 (node_it->routing_entry.capabilities == 0 ||
                  node_it->next_hop == source_address)) {
                 node_it->routing_entry.capabilities = entry.capabilities;
+                RememberCapabilities(dest, entry.capabilities,
+                                     hop_count_via_source);
                 routing_changed = true;
             }
 
@@ -992,13 +1154,16 @@ bool DistanceVectorRoutingTable::ProcessRoutingTableMessage(
 
             // For new nodes, we learn capabilities from whoever told us about them
             // Since source_address is the next_hop, this is consistent with our rule
-            // Only store non-zero capabilities
+            // Only store non-zero capabilities; otherwise restore the last-known
+            // value so an aged-out node does not revert to unknown.
             if (entry.capabilities == 0) {
-                new_node.routing_entry.capabilities = 0;
+                new_node.routing_entry.capabilities = RecallCapabilities(dest);
                 LOG_DEBUG("New node 0x%04X via 0x%04X: capabilities unknown",
                           dest, source_address);
             } else {
                 // Keep the capability from the entry (already set above via entry assignment)
+                RememberCapabilities(dest, entry.capabilities,
+                                     hop_count_via_source);
                 LOG_DEBUG("New node 0x%04X via 0x%04X: caps=0x%02X", dest,
                           source_address, entry.capabilities);
             }
@@ -1036,6 +1201,54 @@ DistanceVectorRoutingTable::GetNode(AddressType node_address) const {
             const types::protocols::lora_mesh::NetworkNodeRoute& node) {
             return node.routing_entry.destination == node_address;
         });
+}
+
+void DistanceVectorRoutingTable::RememberCapabilities(AddressType destination,
+                                                      uint8_t capabilities,
+                                                      uint8_t hop_count) {
+    if (capabilities == 0) {
+        return;
+    }
+
+    // Update the slot if this address is already remembered.
+    for (auto& slot : remembered_capabilities_) {
+        if (slot.valid && slot.address == destination) {
+            slot.capabilities = capabilities;
+            slot.hop_count = hop_count;
+            return;
+        }
+    }
+
+    // Otherwise claim a free slot.
+    for (auto& slot : remembered_capabilities_) {
+        if (!slot.valid) {
+            slot = {destination, capabilities, hop_count, true};
+            return;
+        }
+    }
+
+    // Full: evict the farthest remembered node only if the newcomer is closer,
+    // keeping the closest capability-bearing nodes.
+    auto farthest = remembered_capabilities_.begin();
+    for (auto it = remembered_capabilities_.begin();
+         it != remembered_capabilities_.end(); ++it) {
+        if (it->hop_count > farthest->hop_count) {
+            farthest = it;
+        }
+    }
+    if (hop_count < farthest->hop_count) {
+        *farthest = {destination, capabilities, hop_count, true};
+    }
+}
+
+uint8_t DistanceVectorRoutingTable::RecallCapabilities(
+    AddressType destination) const {
+    for (const auto& slot : remembered_capabilities_) {
+        if (slot.valid && slot.address == destination) {
+            return slot.capabilities;
+        }
+    }
+    return 0;
 }
 
 bool DistanceVectorRoutingTable::WouldExceedLimit() const {
@@ -1106,13 +1319,38 @@ void DistanceVectorRoutingTable::NotifyRouteUpdate(bool route_added,
     }
 }
 
+void DistanceVectorRoutingTable::SetLogRoutingCapabilities(bool enable) {
+    log_capabilities_ = enable;
+}
+
+std::string DistanceVectorRoutingTable::FormatRouteEntry(
+    const types::protocols::lora_mesh::NetworkNodeRoute& node,
+    bool include_caps) {
+    char buf[160];
+    if (include_caps) {
+        std::snprintf(
+            buf, sizeof(buf),
+            "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d "
+            "cap=0x%02X slots=%d",
+            node.routing_entry.destination, node.next_hop,
+            node.routing_entry.hop_count, node.routing_entry.link_quality,
+            node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0,
+            node.routing_entry.capabilities,
+            node.routing_entry.allocated_data_slots);
+    } else {
+        std::snprintf(
+            buf, sizeof(buf),
+            "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d",
+            node.routing_entry.destination, node.next_hop,
+            node.routing_entry.hop_count, node.routing_entry.link_quality,
+            node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0);
+    }
+    return std::string(buf);
+}
+
 void DistanceVectorRoutingTable::LogRouteEntry(
     const types::protocols::lora_mesh::NetworkNodeRoute& node) {
-    LOG_DEBUG(
-        "RTENTRY dest=0x%04X via=0x%04X hops=%d quality=%d active=%d nm=%d",
-        node.routing_entry.destination, node.next_hop,
-        node.routing_entry.hop_count, node.routing_entry.link_quality,
-        node.is_active ? 1 : 0, node.is_network_manager ? 1 : 0);
+    LOG_DEBUG("%s", FormatRouteEntry(node, log_capabilities_).c_str());
 }
 
 }  // namespace lora_mesh
