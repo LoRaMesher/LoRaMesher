@@ -42,6 +42,7 @@
             "test_logs",
             "experiments",
             "todos",
+            "CLAUDE.md",
             ".github",
             "log_analyzer.html",
             "sample_log.txt",

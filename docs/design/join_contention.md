@@ -1,6 +1,6 @@
 # Join Contention — Design Rationale
 
-Status: implemented (2026-10). Closes TODO-017 (`todos/join_contention.md`). CI symptom:
+Status: implemented (2026-10). Closes TODO-017. CI symptom:
 `LinkQualitySlicingTests.DenseMeshLinkQualityStable/SF10..SF12` (1 NM + 7 simultaneous
 joiners, full mesh) never formed the network.
 
