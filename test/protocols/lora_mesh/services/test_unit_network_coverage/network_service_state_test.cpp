@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -435,6 +436,41 @@ TEST_F(NetworkServiceStateCoverageTest, ApplyRoleChangeAutoToNodeOnly) {
     Result r = service_->ApplyRoleChange(NodeRole::NODE_ONLY);
     EXPECT_TRUE(r) << r.GetErrorMessage();
     EXPECT_EQ(service_->GetNodeRole(), NodeRole::NODE_ONLY);
+}
+
+// ─── Concurrency: application sends during protocol state changes ──────────
+
+/**
+ * @brief Application-thread sends race the protocol task's state updates.
+ *
+ * Run under the ThreadSanitizer environment (test_native_tsan) to detect
+ * unsynchronized access to the protocol state and configuration.
+ */
+TEST_F(NetworkServiceStateCoverageTest, SendsAreSafeDuringStateChanges) {
+    Configure();
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    service_->SetNetworkManager(0x2002);
+
+    constexpr int kIterations = 200;
+    std::atomic<bool> done{false};
+    std::thread protocol([&]() {
+        bool manager = false;
+        while (!done.load()) {
+            service_->SetState(
+                manager ? INetworkService::ProtocolState::NETWORK_MANAGER
+                        : INetworkService::ProtocolState::NORMAL_OPERATION);
+            service_->SetNetworkManager(manager ? 0x1001 : 0x2002);
+            manager = !manager;
+        }
+    });
+
+    const std::vector<uint8_t> payload = {1, 2, 3};
+    for (int i = 0; i < kIterations; ++i) {
+        (void)service_->SendReliable(0x3003, payload, /*max_retries=*/0);
+        (void)service_->GetNetworkManagerAddress();
+    }
+    done.store(true);
+    protocol.join();
 }
 
 }  // namespace test

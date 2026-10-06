@@ -97,9 +97,11 @@ NetworkService::NetworkService(
                state_ == ProtocolState::NETWORK_MANAGER;
     };
     reliable_host.max_hops = [this]() {
+        std::lock_guard<std::mutex> lock(network_mutex_);
         return config_.max_hops;
     };
     reliable_host.max_packet_size = [this]() -> uint16_t {
+        std::lock_guard<std::mutex> lock(network_mutex_);
         return static_cast<uint16_t>(config_.max_packet_size);
     };
     reliable_host.hops_to_dest = [this](AddressType dest) -> uint8_t {
@@ -751,7 +753,7 @@ Result NetworkService::ProcessReceivedMessage(const BaseMessage& message,
         "%d, "
         "timestamp: %u) ***",
         static_cast<int>(message.GetType()), message.GetSource(),
-        message.GetDestination(), static_cast<int>(state_),
+        message.GetDestination(), static_cast<int>(state_.load()),
         reception_timestamp);
 
     // Route message to appropriate handler based on type
@@ -865,7 +867,10 @@ Result NetworkService::Configure(const NetworkConfig& config) {
     }
 
     // Apply configuration
-    config_ = config;
+    {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        config_ = config;
+    }
     node_address_ = config.node_address;
     node_role_ = config.node_role;
     if (routing_table_) {
@@ -1392,7 +1397,7 @@ Result NetworkService::SendJoinRequest(AddressType manager_address,
     LOG_DEBUG(
         "Join request - Current state: %d, Network manager: 0x%04X, Message "
         "type: %d",
-        static_cast<int>(state_), network_manager_,
+        static_cast<int>(state_.load()), network_manager_.load(),
         static_cast<int>(join_request->ToBaseMessage().GetType()));
 
     return Result::Success();
@@ -1403,7 +1408,7 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     LOG_INFO(
         "*** PROCESSING JOIN_REQUEST from 0x%04X (state: %d, network_manager: "
         "0x%04X) ***",
-        message.GetSource(), static_cast<int>(state_), network_manager_);
+        message.GetSource(), static_cast<int>(state_.load()), network_manager_.load());
     LOG_DEBUG("Processing JOIN_REQUEST from 0x%04X", message.GetSource());
 
     auto join_request_opt = JoinRequestMessage::CreateFromBaseMessage(message);
@@ -1970,7 +1975,7 @@ Result NetworkService::SendData(AddressType destination,
     if (state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::NETWORK_MANAGER) {
         LOG_WARNING("Cannot send data in state %d, not in normal operation",
-                    static_cast<int>(state_));
+                    static_cast<int>(state_.load()));
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Cannot send data outside normal operation");
     }
@@ -2166,7 +2171,7 @@ Result NetworkService::SendBroadcast(std::span<const uint8_t> data) {
     if (state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::NETWORK_MANAGER) {
         LOG_WARNING("Cannot broadcast in state %d, not in normal operation",
-                    static_cast<int>(state_));
+                    static_cast<int>(state_.load()));
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Cannot broadcast outside normal operation");
     }
@@ -2661,7 +2666,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::FAULT_RECOVERY &&
         state_ != ProtocolState::NM_ELECTION) {
-        LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_));
+        LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_.load()));
         return Result::Success();
     }
 
@@ -3125,7 +3130,8 @@ Result NetworkService::ForwardJoinRequest(
     const JoinRequestMessage& join_request) {
     if (state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::NETWORK_MANAGER) {
-        LOG_WARNING("Ignoring join request in state: %d", state_);
+        LOG_WARNING("Ignoring join request in state: %d",
+                    static_cast<int>(state_.load()));
         return Result::Success();
     }
 
@@ -3140,7 +3146,7 @@ Result NetworkService::ForwardJoinRequest(
         next_hop = network_manager_;
         LOG_WARNING(
             "No route to network manager 0x%04X, attempting direct connection",
-            network_manager_);
+            network_manager_.load());
         // TODO: This should be an error and remove the actual message.
     }
 
@@ -3176,7 +3182,7 @@ Result NetworkService::ForwardJoinRequest(
     LOG_INFO(
         "Forwarded join request from 0x%04X to network manager 0x%04X via "
         "next hop 0x%04X (sponsor: 0x%04X, hop_count: %d)",
-        forwarded_request->GetSource(), network_manager_, next_hop,
+        forwarded_request->GetSource(), network_manager_.load(), next_hop,
         forwarded_request->GetHeader().GetSponsorAddress(),
         forwarded_request->GetHopCount());
 
@@ -3187,7 +3193,8 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
     const JoinResponseMessage& join_response) {
     if (state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::NETWORK_MANAGER) {
-        LOG_WARNING("Ignoring join response forwarding in state: %d", state_);
+        LOG_WARNING("Ignoring join response forwarding in state: %d",
+                    static_cast<int>(state_.load()));
         return Result::Success();
     }
 
@@ -3269,7 +3276,8 @@ Result NetworkService::ForwardJoinResponse(
     const JoinResponseMessage& join_response) {
     if (state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::NETWORK_MANAGER) {
-        LOG_WARNING("Ignoring join response forwarding in state: %d", state_);
+        LOG_WARNING("Ignoring join response forwarding in state: %d",
+                    static_cast<int>(state_.load()));
         return Result::Success();
     }
 
@@ -3624,7 +3632,7 @@ Result NetworkService::ApplyRoleChange(NodeRole new_role) {
     }
 
     LOG_INFO("Role change: %d -> %d (state=%d)", static_cast<int>(old_role),
-             static_cast<int>(new_role), static_cast<int>(state_));
+             static_cast<int>(new_role), static_cast<int>(state_.load()));
 
     node_role_ = new_role;
     config_.node_role = new_role;

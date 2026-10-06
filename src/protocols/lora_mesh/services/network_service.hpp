@@ -6,6 +6,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -1362,11 +1363,13 @@ class NetworkService : public INetworkService {
     // Network state
     std::unique_ptr<IRoutingTable> routing_table_;
 
-    NetworkConfig config_;
+    NetworkConfig config_;  ///< Written under network_mutex_
     RouteUpdateCallback route_update_callback_;
     DataReceivedCallback data_received_callback_;
-    ProtocolState state_;
-    AddressType network_manager_ = 0;
+    /// Written by the protocol task, read by application-thread sends.
+    std::atomic<ProtocolState> state_;
+    /// Written by the protocol task, read by application-thread sends.
+    std::atomic<AddressType> network_manager_{0};
     bool network_found_;
     bool network_creator_;
     bool is_synchronized_;
@@ -1489,7 +1492,16 @@ class NetworkService : public INetworkService {
     /// Sync-beacon transmit/forward path (build, forward, time-stamp beacons).
     std::unique_ptr<SyncBeaconService> sync_beacon_service_;
 
-    // Thread safety
+    /**
+     * @brief Guards config_, the local node attributes and compound
+     *        routing-table updates.
+     *
+     * Lock order, outermost first: ReliableMessaging's mutex, network_mutex_,
+     * the routing table's mutex, then the slot scheduler's and the message
+     * queue's mutexes. No path holding an inner lock calls back into an outer
+     * component, and user callbacks are never invoked while network_mutex_ is
+     * held.
+     */
     mutable std::mutex network_mutex_;
 };
 
