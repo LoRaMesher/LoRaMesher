@@ -118,6 +118,17 @@ TEST_F(ReliableMessagingTest, FailedGroupSendReleasesItsWindow) {
     EXPECT_EQ(outcomes_[0].outcome, reliability::Outcome::GroupWindowClosed);
 }
 
+TEST_F(ReliableMessagingTest, SendReliableRejectsNonUnicastDestinations) {
+    for (AddressType destination :
+         {kGroup, kBroadcastAddress, AddressType{0}}) {
+        EXPECT_EQ(messaging_->SendReliable(destination, payload_, 0, 0).source,
+                  0u)
+            << std::hex << destination;
+    }
+    EXPECT_EQ(messaging_->GetReliablePendingCount(), 0u);
+    EXPECT_EQ(enqueued_, 0);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

@@ -441,6 +441,12 @@ reliability::MessageId ReliableMessaging::SendReliable(
     uint8_t max_retries, uint32_t timeout_override_ms) {
     constexpr reliability::MessageId kInvalidId{0, 0};
 
+    if (!IsUnicastAddress(destination)) {
+        LOG_WARNING("Reliable destination 0x%04X is not a unicast address",
+                    destination);
+        return kInvalidId;
+    }
+
     if (destination == host_.node_address) {
         LOG_WARNING("Cannot send reliable data to self");
         return kInvalidId;

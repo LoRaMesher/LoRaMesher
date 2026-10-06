@@ -601,17 +601,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * 
      * @return bool True if configuration is valid
      */
-    bool IsValid() const override {
-        return hello_interval_ >= 5000 &&     // At least 5s interval
-               hello_interval_ <= 3600000 &&  // Maximum 1 hour
-               route_timeout_ >
-                   hello_interval_ &&  // Route timeout must be greater than hello interval
-               max_hops_ > 0 &&  // At least 1 hop
-               max_hops_ <= kMaxHopsLimit &&
-               guard_time_ms_ >= 10 &&    // At least 10ms guard time
-               guard_time_ms_ <= 500 &&   // Maximum 500ms guard time
-               wake_up_guard_ms_ <= 500;  // Maximum 500ms wake-up guard
-    }
+    bool IsValid() const override { return Validate().empty(); }
 
     /**
      * @brief Validate the configuration and return error message if invalid
@@ -619,6 +609,11 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @return std::string Empty string if valid, otherwise error description
      */
     std::string Validate() const override {
+        // Group addresses and broadcast are destinations, never node identities.
+        if (node_address_ != 0 && !IsUnicastAddress(node_address_)) {
+            return "Node address must be unicast (0x0001-0x7FFF) or 0 for "
+                   "auto-assignment";
+        }
         if (hello_interval_ < 5000) {
             return "Hello interval too short (minimum 5s)";
         }

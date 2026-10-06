@@ -293,6 +293,26 @@ TEST_F(LoRaMeshConfigTest, ValidateDefaultValues) {
     EXPECT_EQ(cfg.getNodeCapabilities(), 0u);
 }
 
+TEST_F(LoRaMeshConfigTest, ValidateRejectsNonUnicastNodeAddress) {
+    for (AddressType address : {AddressType{0x8000}, AddressType{0xFFFE},
+                                AddressType{0xFFFF}}) {
+        config_.setNodeAddress(address);
+        EXPECT_FALSE(config_.IsValid()) << std::hex << address;
+        EXPECT_EQ(config_.Validate(),
+                  "Node address must be unicast (0x0001-0x7FFF) or 0 for "
+                  "auto-assignment")
+            << std::hex << address;
+    }
+}
+
+TEST_F(LoRaMeshConfigTest, ValidateAcceptsUnicastOrAutoNodeAddress) {
+    for (AddressType address :
+         {AddressType{0}, AddressType{0x0001}, AddressType{0x7FFF}}) {
+        config_.setNodeAddress(address);
+        EXPECT_EQ(config_.Validate(), "") << std::hex << address;
+    }
+}
+
 TEST_F(LoRaMeshConfigTest, ValidateHelloIntervalTooShort) {
     config_.setHelloInterval(4000);
     config_.setRouteTimeout(180000);
