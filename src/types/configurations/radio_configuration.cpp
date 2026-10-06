@@ -73,7 +73,7 @@ RadioConfig RadioConfig::CreateDefaultSx1262() {
 }
 
 RadioConfig RadioConfig::CreateDefaultSx1268() {
-    return RadioConfig{RadioType::kSx1268};
+    return RadioConfig{RadioType::kSx1268, 433.0, 7, 125.0, 5, 20};
 }
 
 std::string RadioConfig::getRadioTypeString() const {

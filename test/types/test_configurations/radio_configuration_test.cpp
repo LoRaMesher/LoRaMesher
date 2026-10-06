@@ -76,6 +76,13 @@ TEST_F(RadioConfigCoverageTest, CreateDefaultSx1268IsValid) {
     EXPECT_EQ(c.getRadioTypeString(), "SX1268");
 }
 
+TEST_F(RadioConfigCoverageTest, CreateDefaultSx1268IsInsideTheChipBand) {
+    // The SX1268 covers 410-810 MHz.
+    RadioConfig c = RadioConfig::CreateDefaultSx1268();
+    EXPECT_GE(c.getFrequency(), 410.0f);
+    EXPECT_LE(c.getFrequency(), 810.0f);
+}
+
 TEST_F(RadioConfigCoverageTest, GetRadioTypeStringAllValues) {
     RadioConfig sx1276 = RadioConfig::CreateDefaultSx1276();
     EXPECT_EQ(sx1276.getRadioTypeString(), "SX1276");

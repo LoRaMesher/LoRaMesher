@@ -67,7 +67,8 @@ class RadioConfig {
     static RadioConfig CreateDefaultSx1262();
 
     /**
-     * @brief Create default configuration for SX1268
+     * @brief Create default configuration for SX1268 (433 MHz; the chip
+     *        covers 410-810 MHz)
      * @return RadioConfig Optimized configuration for SX1268
      */
     static RadioConfig CreateDefaultSx1268();
