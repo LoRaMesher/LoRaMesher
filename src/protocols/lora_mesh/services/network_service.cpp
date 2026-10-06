@@ -1410,7 +1410,8 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
     LOG_INFO(
         "*** PROCESSING JOIN_REQUEST from 0x%04X (state: %d, network_manager: "
         "0x%04X) ***",
-        message.GetSource(), static_cast<int>(state_.load()), network_manager_.load());
+        message.GetSource(), static_cast<int>(state_.load()),
+        network_manager_.load());
     LOG_DEBUG("Processing JOIN_REQUEST from 0x%04X", message.GetSource());
 
     auto join_request_opt = JoinRequestMessage::CreateFromBaseMessage(message);
@@ -2668,7 +2669,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         state_ != ProtocolState::NORMAL_OPERATION &&
         state_ != ProtocolState::FAULT_RECOVERY &&
         state_ != ProtocolState::NM_ELECTION) {
-        LOG_DEBUG("Ignoring sync beacon in state %d", static_cast<int>(state_.load()));
+        LOG_DEBUG("Ignoring sync beacon in state %d",
+                  static_cast<int>(state_.load()));
         return Result::Success();
     }
 

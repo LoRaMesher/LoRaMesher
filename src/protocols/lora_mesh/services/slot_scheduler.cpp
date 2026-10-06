@@ -31,8 +31,7 @@ void SlotScheduler::Reset() {
     slot_count_ = 0;
 }
 
-std::vector<SlotScheduler::SlotAllocation> SlotScheduler::GetSlotTable()
-    const {
+std::vector<SlotScheduler::SlotAllocation> SlotScheduler::GetSlotTable() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return {slot_table_.begin(), slot_table_.begin() + slot_count_};
 }
@@ -87,10 +86,9 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
 
     // Every control index owns default_data_slots consecutive data slots, so
     // the data band size depends only on network-wide agreed values.
-    plan.total_data_slots = static_cast<uint8_t>(
-        std::min<uint16_t>(static_cast<uint16_t>(plan.control_slots) *
-                               ctx.default_data_slots,
-                           ctx.max_data_slots));
+    plan.total_data_slots = static_cast<uint8_t>(std::min<uint16_t>(
+        static_cast<uint16_t>(plan.control_slots) * ctx.default_data_slots,
+        ctx.max_data_slots));
 
     // Add discovery slots, (max hops + 1) * 2 to get a full round trip message to the request
     plan.discovery_slots = static_cast<uint16_t>((max_hops_count + 1) * 2);
@@ -100,9 +98,9 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
 
     // Calculate active slots (non-sleep). Computed in a wider type so the sum
     // cannot silently wrap uint8_t even if an input slipped past the clamps.
-    plan.total_active_slots = static_cast<uint16_t>(
-        plan.sync_beacon_slots + plan.control_slots + plan.discovery_slots +
-        plan.total_data_slots);
+    plan.total_active_slots =
+        static_cast<uint16_t>(plan.sync_beacon_slots + plan.control_slots +
+                              plan.discovery_slots + plan.total_data_slots);
 
     plan.total_superframe_slots =
         std::max<uint16_t>(ctx.number_of_slots_per_superframe, kMinSlots);
