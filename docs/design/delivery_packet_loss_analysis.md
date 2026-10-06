@@ -1,9 +1,9 @@
 # Delivery Packet-Loss Analysis — where the ~25% 1-hop loss comes from
 
-Status: **fixed (2026-09-23)** — commits `0b872de` (index-based data band),
-`3b87bf2` (routing-header `source_control_slot_index`), `e96a7e7` (stress-test
-alignment assertion). Supersedes the Jul 2026 "half-duplex + collisions"
-explanation.
+Status: **fixed (2026-09-23)** — index-based data band
+(`SlotScheduler`), routing-header `source_control_slot_index`, and a stress-test
+alignment assertion (`CountTdmaMisalignments()`). Supersedes the earlier
+"half-duplex + collisions" explanation.
 
 ## Result (stress test, `default_data_slots=2`)
 
@@ -14,13 +14,18 @@ explanation.
 | 25n before | ~75% | 0% | not measured | 1.28 |
 | 25n after  | 100.0% (200/200) | 0% (0/14) | 0 | 4.6 |
 
-The 1-hop criterion is met. Multi-hop reliable/group delivery at 25 nodes is
-still ~0% — a separate issue (`todos/reliable_multihop_ack_zero.md`); the higher
-25n relay queue is likely its retries and group floods and should be rechecked
-once that is fixed. Remaining link-level collisions (~8%) are counted at every
-listener and include sync-beacon forwards in shared hop-layer slots.
+The 1-hop criterion is met by this fix. The 0% multi-hop reliable delivery at
+25 nodes in the table above was a separate problem (fixed reliable timeouts
+shorter than the multi-hop ACK return time); its root cause and fix are in
+[`reliable_delivery_at_scale.md`](reliable_delivery_at_scale.md). With the
+adaptive reliable timeout the stress test reports reliable **14/14** for both
+`10n_uniform` and `25n_uniform`, and the 25n relay queue final-q drops from 4.6
+to 2.5 (the excess was reliable retries). Group-ACK completeness at 25 nodes
+(~28%) remains open and is tracked in `todos/branch_review_followups.md`
+(TODO-016). Remaining link-level collisions (~8%) are counted at every listener
+and include sync-beacon forwards in shared hop-layer slots.
 
-Success criterion (from user): **every originated packet delivered within some
+Success criterion: **every originated packet delivered within some
 bounded number of superframes, and no queue grows unboundedly. Latency is NOT a
 criterion.**
 
@@ -38,7 +43,7 @@ its own TX, after which the radio sleeps) where the sender has TX.
 
 The frame length, sync band and control band are agreed network-wide (they come
 from the sync beacon and each node's NM-assigned `control_slot_index`). The data
-band was not: `SlotScheduler::BuildOrderedNodes` took this node's *own* routing
+band was not: the former `SlotScheduler::BuildOrderedNodes` took this node's *own* routing
 table plus itself, sorted NM-first then by address, and `FillSlotTable` gave each
 node `allocated_data_slots` consecutive slots in that order. Any difference in
 the local node set, order or per-node counts shifts every later node's slots.

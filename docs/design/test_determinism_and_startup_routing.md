@@ -1,8 +1,8 @@
 # Deterministic Tests and Start-up Routing Transients — Design Rationale
 
-Status: in progress (2026-09-24). Follows the CI investigation of
-`feature/load-aware-slot-allocation`. User directive: tests must not depend on luck —
-each test pins a worst-case scenario that must pass every time.
+Status: **implemented (2026-09).** Both parts below are in the code: the start-up
+routing fixes (§1) and the deterministic test harness (§2). Principle: tests must not
+depend on luck — each test pins a worst-case scenario that must pass every time.
 
 ## 1. Start-up routing transient (full mesh)
 
@@ -10,7 +10,7 @@ Observed in `GroupAckTests.GroupNoDuplicateDeliveryUnderFlood` (~1 in 5 runs): a
 in a 4-node full mesh is left with no active hop-1 routes for ~2 superframes after
 joining, so its slot table has no data RX slots and a one-shot group flood is lost.
 
-Mechanism (all code predates the branch: ac199ca, d6a52d2):
+Mechanism:
 1. **False UNIDIRECTIONAL verdict.** A peer reports `reception_quality` for us only
    after 3 of our tables (`NetworkNodeRoute::ToRoutingTableEntry`), but we declare the
    link unidirectional once we have heard the peer 3 times with `remote == 0`
@@ -33,7 +33,7 @@ Fix direction:
   not an active direct neighbour, even while provisional.
 - Routes are not installed via a source that was not accepted as a direct neighbour.
 
-Result (fdc995d): peer tables that omit us count toward the unidirectional verdict only
+Result: peer tables that omit us count toward the unidirectional verdict only
 after `kUnidirectionalGraceBroadcasts = kMinSamplesForQuality + 1` of our own routing
 broadcasts since first contact (recorded at actual transmit via
 `IRoutingTable::NotifyLocalRoutingBroadcast`); `LinkQualityStats::IsUnidirectional()` is the
@@ -60,7 +60,7 @@ Seeding the RTOS mock's RNG (fixture seeds 42) does not make runs repeatable:
 - **Silent reblock timeouts.** A reblock timeout logs and continues with tasks mid-work.
 - **Variable epoch.** Virtual time starts from the real clock.
 
-Plan:
+Design:
 1. Per-node RNG **in the test harness only**: `RTOSMock::GetRandom()` draws from a
    generator owned by the calling task's node (seeded from the fixture seed and the node
    address), so the library keeps calling `GetRTOS().GetRandom()` unchanged and ESP32
@@ -71,3 +71,21 @@ Plan:
    the time advance, fixed virtual epoch, reblock timeout fails the test.
 3. `LORAMESHER_TEST_SEED`: fixture seed from the environment (printed on failure);
    sweep seeds to find worst cases and pin them in regression tests.
+
+Result: all three items are implemented in `src/os/rtos_mock.hpp` and
+`test/utils/network_testing_impl.hpp`:
+- Each node has its own random stream; `GetRandom()` draws from the calling node's stream,
+  including when called from the test thread on a node's behalf.
+- Virtual time advances event by event to the next wake deadline; same-instant waits are
+  woken one at a time.
+- Packets are delivered at the exact end of their air time, and collisions are decided by
+  air-time overlap.
+- Virtual time starts at a fixed epoch (`RTOSMock::kVirtualEpochMs`); packet loss is drawn
+  from a seeded stream.
+- A reblock timeout (or an instant with too many events) fails the test in the fixture's
+  `TearDown`; `VirtualNetwork` guards its node table, links and loss settings with a mutex
+  so transmit threads and the test thread do not race on them.
+- `LORAMESHER_TEST_SEED` selects the fixture seed (default in
+  `network_testing_impl.hpp`); the integration fixture prints the seed on failure, and a
+  test can pin a seed instead of reading the environment
+  (`lora_mesh_test_fixture.hpp`).

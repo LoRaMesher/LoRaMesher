@@ -8,7 +8,7 @@
 
 - `BaseMessage` payload is a fixed `uint8_t payload_data_[255]` + `uint8_t payload_size_` —
   no per-message heap for the payload itself (`base_message.hpp:233`, `kMaxPayloadSize=255`).
-- `NetworkService::slot_table_` is `std::array<SlotAllocation,256>` — no heap.
+- `SlotScheduler::slot_table_` is `std::array<SlotAllocation,256>` — no heap.
 - `message_cache_` (32), `reliable_dest_`, `group_windows_`, `groups_` (8) are fixed arrays.
 - Radio RX uses a single static `rx_buffer_[256]`.
 - Message queues are fixed arrays indexed by slot type.

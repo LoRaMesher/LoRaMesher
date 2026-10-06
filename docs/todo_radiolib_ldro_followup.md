@@ -18,11 +18,13 @@ value, so nodes drift out of sync and drop messages. Present in RadioLib
 
 ## What we shipped as the interim fix
 
-- **Wrapper workaround** in all four radio modules
-  (`src/hardware/radiolib/radiolib_modules/sx1278.cpp`, `sx1276.cpp`,
-  `sx1262.cpp`, `sx1268.cpp`): re-apply `setBandwidth(config.getBandwidth())`
-  right after `radio_module_->begin(...)` so RadioLib recomputes the LDRO/ToA
-  state for the configured spreading factor. Version-independent.
+- **Wrapper workaround** in the shared radio-module base
+  `RadioLibModuleBase::Begin()`
+  (`src/hardware/radiolib/radiolib_modules/radiolib_module_base.hpp`), which
+  all four chips (`sx1262.hpp`, `sx1268.hpp`, `sx1276.hpp`, `sx1278.hpp`)
+  inherit: re-apply `setBandwidth(config.getBandwidth())` right after
+  `ModemBegin(config)` so RadioLib recomputes the LDRO/ToA state for the
+  configured spreading factor. Version-independent.
 - **Own Semtech ToA helper** `src/utils/lora_airtime.hpp`
   (`ShouldEnableLdro`, `CalculateTimeOnAirMs`).
 - **Runtime self-check** `RadioLibRadio::CheckTimeOnAirConsistency()` — warns
@@ -42,7 +44,8 @@ value, so nodes drift out of sync and drop messages. Present in RadioLib
    `platformio.ini` (`jgromes/RadioLib#7.6.0`) and `library.json` to that
    version.
 3. **Remove the wrapper workaround.** Delete the `setBandwidth()` re-apply block
-   from the four `radiolib_modules/*.cpp` `Begin()` methods. Confirm
+   that follows `ModemBegin(config)` in `RadioLibModuleBase::Begin()`
+   (`radiolib_modules/radiolib_module_base.hpp`). Confirm
    `getTimeOnAir(24)` at SF12/BW125 still reports ~1810 ms with the workaround
    gone (i.e. RadioLib now does it correctly on its own).
 4. **Keep the self-check** (`CheckTimeOnAirConsistency`) — it is cheap and

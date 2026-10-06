@@ -13,10 +13,20 @@ deterministic fix design so it can be implemented later.
   (`src/protocols/lora_mesh/services/network_service.cpp`, NETWORK_MANAGER foreign-beacon branch) — is
   skipped when the flag is false. A foreign beacon is logged and ignored; the two networks coexist.
 - **Only the cross-network merge trigger is gated.** Same-network NM election (`NM_CLAIM` during
-  `NM_ELECTION` / `FAULT_RECOVERY`, exercised by `nm_election_test.cpp`) is untouched and still works.
-- **Tests skipped:** `NMMergeTests.BasicNetworkMerge` and `NMMergeTests.AutoRoleNMYieldsToConfiguredNM`
-  in `test/protocols/lora_mesh/services/test_routing_nm_merge/nm_merge_test.cpp` call `GTEST_SKIP()`
-  referencing this doc.
+  `NM_ELECTION` / `FAULT_RECOVERY`, exercised by `nm_election_test.cpp`) is untouched and still works,
+  except for the one surrender scenario listed below whose setup relies on two separately formed
+  networks meeting.
+- **Tests skipped:** each of these calls `GTEST_SKIP()` with a message referencing this doc (the tests
+  do not read `kNetworkMergeEnabled` directly, so the skips must be removed by hand):
+
+  | Test | File |
+  |---|---|
+  | `NMMergeTests.BasicNetworkMerge` | `test/protocols/lora_mesh/services/test_routing_nm_merge/nm_merge_test.cpp` |
+  | `NMMergeTests.AutoRoleNMYieldsToConfiguredNM` | `test/protocols/lora_mesh/services/test_routing_nm_merge/nm_merge_test.cpp` |
+  | `NMElectionTests.ConfiguredNM_SurrendersInElection_JoinsNotCreates` | `test/protocols/lora_mesh/services/test_routing/nm_election_test.cpp` |
+  | `NetworkServiceCoverageTest.ProcessForeignSyncBeaconAsNMTriggersNMClaim` | `test/protocols/lora_mesh/services/test_unit_network_coverage/network_service_coverage_test.cpp` |
+
+  Find them with `grep -rn "Network merge disabled" test/`.
 - **Kept in place:** the sticky-surrender behaviour (commit `10cd536`) in `PerformDiscovery` /
   `ProcessJoinResponse` / `CreateNetwork` — dormant for merge (no surrender happens while merge is off),
   still correct for normal election. The `ProcessSlotRequest` capabilities fix (commit `a720249`) is
@@ -26,13 +36,14 @@ deterministic fix design so it can be implemented later.
 
 1. Implement the deterministic detection fix (Part 1 below) and the correctness fix (Part 2).
 2. Set `kNetworkMergeEnabled = true`.
-3. Remove the `GTEST_SKIP()` lines from the two merge tests and delete the brittle manual phase-alignment
-   hack (`nm_merge_test.cpp` ~lines 211-223 and ~349-361).
+3. Remove the `GTEST_SKIP()` lines from all four tests listed above and delete the brittle manual
+   phase-alignment hacks (the "Align NM_B's start…" blocks in `nm_merge_test.cpp` and the matching
+   block in `nm_election_test.cpp`).
 4. Validate per "Verification" below.
 
 ---
 
-## Root cause (verified by a 6-agent analysis)
+## Root cause
 
 1. **Permanent phase lock.** The desktop mock uses ONE shared virtual clock with zero drift
    (`src/os/rtos_mock.hpp`). Two networks that compute the same superframe length (`kMinSlots=16`) are
@@ -62,8 +73,8 @@ Make the NM's foreign-detection RX window POSITION sweep across the superframe, 
 deterministic superframe counter, so over a bounded number of superframes it visits every offset and is
 GUARANTEED to catch a foreign NM's beacon for ANY fixed phase — no drift, no randomness.
 
-- In `UpdateSlotTable` (`network_service.cpp`), the `discovery_reserve` `DISCOVERY_RX` slots are currently
-  pinned to the superframe TAIL (Phase 5). Instead place that RX block at a rotating offset **within the
+- In `SlotScheduler::FillSlotTableLocked` (`slot_scheduler.cpp`), the `discovery_reserve` `DISCOVERY_RX`
+  slots are currently pinned to the superframe TAIL. Instead place that RX block at a rotating offset **within the
   elastic SLEEP region** (never colliding with fixed SYNC/CONTROL/DATA slots):
   `offset = (superframe_index * step + address_term) % (sleep_span - reserve + 1)`. The `address_term`
   (from `node_address_`) de-syncs the two NMs' sweeps so they are not in lockstep (avoids the
@@ -74,25 +85,27 @@ GUARANTEED to catch a foreign NM's beacon for ANY fixed phase — no drift, no r
 - Once a foreign beacon is caught, the existing path runs unchanged: `ProcessSyncBeacon` NM-branch →
   `HandleForeignBeacon` → `SendNMClaim` → `ProcessNMClaim` (loser yields). Both NMs sweep, so the
   `NM_CLAIM` exchange completes deterministically within the bound.
-- Then delete the manual phase-alignment hack in both tests; re-validate `MergeBudgetMs`
-  (`test/.../test_integration/lora_mesh_test_fixture.hpp`) against the new deterministic bound.
+- Then delete the manual phase-alignment hacks; re-validate `NMMergeTests::MergeBudgetMs`
+  (`nm_merge_test.cpp`) against the new deterministic bound.
 - Edge case: a foreign beacon offset that permanently lands on one of OUR TX slots (sweep is confined to
   the sleep region — ~2-3 TX slots in a 2-node frame). The address-derived sweep start, plus the fact
   that detection only needs to succeed in ONE direction to start the claim exchange, should cover it. If
   empirics show a residual gap, add a small deterministic per-address superframe-phase offset so the two
   networks' beacons never permanently coincide with each other's TX slots.
 
-Files: `network_service.cpp` (`UpdateSlotTable`, `HandleSuperframeStart`, `SetDiscoverySlots`),
-`network_service.hpp`, `superframe_service.{hpp,cpp}` (expose superframe index), `nm_merge_test.cpp`
-(delete hack), `lora_mesh_test_fixture.hpp` (`MergeBudgetMs`). Re-check
-`comprehensive_slot_allocation_test.cpp` for any DISCOVERY_RX position assertions.
+Files: `slot_scheduler.{hpp,cpp}` (`FillSlotTableLocked`, `SetDiscoverySlots`, a new in-place
+reposition accessor), `network_service.{hpp,cpp}` (`HandleSuperframeStart`),
+`superframe_service.{hpp,cpp}` (expose superframe index), `nm_merge_test.cpp` (delete hack,
+`MergeBudgetMs`), `nm_election_test.cpp` (delete hack). Re-check
+`test_unit_core_services/comprehensive_slot_allocation_test.cpp` and
+`test_unit_slot_scheduler/slot_scheduler_test.cpp` for any DISCOVERY_RX position assertions.
 
 ### Part 2 — Correctness: the rightful (higher-priority) NM must always win
 Deterministic detection (Part 1) makes the loser reliably hear the `NM_CLAIM` and yield, which already
 removes most of the wrong-winner basin (the loser stops beaconing; orphaned members fault-recover onto the
 winner). On top of that, guarantee correctness explicitly:
 - Smallest first: when an NM detects a foreign network, widen its RX listening for a few superframes
-  (reuse `ExpandSyncBeaconListening`, `network_service.cpp`) — an event-scoped "merge wide-listen" so the
+  (reuse `SlotScheduler::ExpandSyncBeaconListening`) — an event-scoped "merge wide-listen" so the
   claim exchange + member resync complete deterministically.
 - Only if Part 1 + wide-listen don't fully guarantee a member converges to the true winner: add an
   election-priority byte to `SYNC_BEACON` (`sync_beacon_header.*`) so a NORMAL_OPERATION member adopts a

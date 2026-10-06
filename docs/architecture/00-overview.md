@@ -1,9 +1,10 @@
 # LoRaMesher Architecture — Overview
 
-> Status: **review draft** (2026-06). Captures the current architecture, its deviations,
-> and the target end-state. No code has changed yet; this set drives the refactor in
-> `06-refactor-roadmap.md`. Every quantitative claim here was verified directly against the
-> source (`wc -l`, `grep`, `diff`) — see each doc's "Validation" note.
+> Captures the architecture, its deviations, and the target end-state; this set drives the
+> refactor in `06-refactor-roadmap.md`. The refactor is under way — WS-1 and WS-2 are done and
+> WS-5 is partly done; see the **Status** table in `06-refactor-roadmap.md` for the current
+> state of every workstream. Quantitative claims were verified against the source (`wc -l`,
+> `grep`, `diff`) — see each doc's "Validation" note.
 
 ## What LoRaMesher is
 
@@ -13,8 +14,9 @@ LoRa mesh networks. It runs on **ESP32** (Arduino + FreeRTOS + RadioLib drivers)
 constrained and heap fragmentation has caused field crashes, so memory discipline is a
 first-class concern (see `05-memory-model.md`).
 
-`src/` is ~37k LOC. The single largest file, `network_service.cpp`, is 4,713 lines and
-concentrates nine responsibilities; decomposing it is the core of the roadmap.
+`src/` is ~38k LOC. The single largest file, `network_service.cpp`, concentrated nine
+responsibilities in 4,713 lines when the review started; decomposing it is the core of the
+roadmap. With `ReliableMessaging` and `SlotScheduler` extracted it is 3,724 lines today.
 
 ## Target layered architecture
 
@@ -51,7 +53,10 @@ Dependencies point **downward only**. A lower layer must never `#include` a high
 - *Hardware/OS* are swappable implementations hidden behind `IRadio` / `os::RTOS`.
 - *Utils* depend on nothing in the project.
 
-## Where the code deviates today (summary)
+## Deviations found by the review (summary)
+
+Baseline figures from the start of the refactor; whether each is resolved is tracked in the
+`06-refactor-roadmap.md` Status table.
 
 | # | Deviation | Evidence | Fixed by |
 |---|---|---|---|
@@ -60,7 +65,7 @@ Dependencies point **downward only**. A lower layer must never `#include` a high
 | 3 | 4 radio modules are duplicate copies (~1,350 L) | normalized `diff` = 0 (`04-…`) | WS-1 |
 | 4 | 14 message types repeat serialization boilerplate (~2,177 L) | per-file inspection (`03-…`) | WS-3 |
 | 5 | TX/forward path triple-copies every message | RAM trace (`05-…`) | WS-4 |
-| 6 | Dead code: 3 unused interface stubs + `LinkQualityMetrics` | grep (no callers) | WS-5 ph.1 |
+| 6 | Dead code: 3 unused interface stubs, `LinkQualityMetrics`, no-op/stub `NetworkService` methods | grep (no callers) | WS-5 ph.1 |
 | 7 | `lora_mesh_protocol.cpp` (1,696 L) mixes 3 concerns; `protocol_configuration.hpp` (909 L) | file size | deferred follow-ups |
 
 ## The behavior-preservation invariant
@@ -72,17 +77,16 @@ backoffs depend on exact ordering. Therefore:
    semantic.
 2. `loramesher.hpp`'s public API and `LoRaMeshProtocol::GetNetworkServiceForTest()` stay
    stable until the explicit interface-segregation phase (WS-6).
-3. The 118 `test_unit_network_coverage` cases are the characterization net; they must stay
-   green across every phase with no assertion edits (only call-site renames when a method
-   moves).
+3. The `test_unit_network_coverage` suite is the characterization net; it must stay green
+   across every phase with no assertion edits (only call-site renames when a method moves).
 4. Slow integration suites (`test_routing`, `test_tdma`, `test_sync_beacon_subslot`,
    `test_routing_nm_merge`, `test_routing_role_change`) run as phase exit gates, never inside
-   a red→green loop (the full `test_routing` suite is ~95 min).
+   a red→green loop (the full `test_routing` suite is very slow).
 
 ## The reference pattern: closure-injected components
 
-`protocols/reliability/reliable_delivery.{hpp,cpp}` (168 L cpp) is the model every extracted
-component imitates:
+`protocols/reliability/reliable_delivery.{hpp,cpp}` (268 / 242 L) is the model every extracted
+component imitates (`ReliableMessaging`, `SlotScheduler` and `SyncBeaconService` follow it):
 
 - **No heap, no virtual dispatch.** Fixed-capacity arrays for pending state.
 - Constructed from a **`Host`** struct of `std::function` closures (`now_ms`, `send_attempt`,
@@ -100,4 +104,5 @@ points. See `02-network-service-decomposition.md` for how state ownership is spl
 - `03-message-serialization.md` — message duplication catalogue + consolidation design.
 - `04-hardware-radio-modules.md` — the verified radio-driver duplication + template design.
 - `05-memory-model.md` — end-to-end per-message RAM trace + copy-chain elimination.
-- `06-refactor-roadmap.md` — the sequenced, test-first execution plan with gates.
+- `06-refactor-roadmap.md` — the Status table and the sequenced, test-first execution plan.
+- `07-decisions-and-extraction-spec.md` — decision log and the component extraction spec.

@@ -1,7 +1,15 @@
 # Hardware Radio Modules — verified duplication & template design
 
-> The four `radiolib_modules/sx12xx.{hpp,cpp}` drivers are the highest-confidence,
-> lowest-risk consolidation target in the codebase. Drives WS-1 (done first).
+> The four `radiolib_modules/sx12xx.{hpp,cpp}` drivers were the highest-confidence,
+> lowest-risk consolidation target in the codebase. Drove WS-1, which is **done**: the
+> analysis below describes the original duplicated drivers.
+>
+> **As implemented:** `radiolib_modules/radiolib_module_base.hpp` (472 L) holds
+> `RadioLibModuleBase<RadioLibType>` plus the two family layers (`RadioLibSx126xModule`,
+> `RadioLibSx127xModule`) in the same header; `sx1262.hpp`, `sx1268.hpp`, `sx1276.hpp` and
+> `sx1278.hpp` (~34 L each) are thin leaves. The per-chip `.cpp` files are removed, and there
+> are no separate `sx126x_family.hpp` / `sx127x_family.hpp` files as the checklist below
+> originally proposed.
 
 ## The finding (verified by `diff`)
 

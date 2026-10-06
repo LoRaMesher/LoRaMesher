@@ -1,19 +1,24 @@
 # NetworkService Decomposition
 
-> `network_service.cpp` = **4,713 lines**, `.hpp` = 1,512 lines. It is the coordinator of
-> the mesh, but it also *implements* nine distinct responsibilities. This doc inventories
-> them, defines what becomes its own component, and — critically — specifies who owns which
-> state so the split preserves behavior. Drives WS-5 in the roadmap.
+> When the review started, `network_service.cpp` was **4,713 lines** (`.hpp` 1,512). It is the
+> coordinator of the mesh, but it also *implemented* nine distinct responsibilities. This doc
+> inventories them, defines what becomes its own component, and — critically — specifies who
+> owns which state so the split preserves behavior. Drives WS-5 in the roadmap.
+>
+> Today `network_service.cpp` is 3,724 lines (`.hpp` 1,511): responsibilities 1 and 8 are
+> extracted, 2 is partly extracted. The inventory below is the baseline; per-phase progress is
+> in the Status table of `06-refactor-roadmap.md`.
 
 ## Why decompose
 
 - No single method can be reasoned about in isolation: `slot_table_` is mutated by slot
   scheduling **and** sync-beacon handling **and** join handling.
-- Three methods exceed 200 lines (`UpdateSlotTable` 276, `ProcessSyncBeacon` 280,
-  `ProcessJoinRequest` 209) — untestable as units.
+- Three methods exceeded 200 lines (`UpdateSlotTable` 276, `ProcessSyncBeacon` 280,
+  `ProcessJoinRequest` 209) — untestable as units. `UpdateSlotTable` has since been decomposed
+  inside `SlotScheduler`; `ProcessSyncBeacon` (287 L) and `ProcessJoinRequest` (206 L) remain.
 - Every behavioral fix risks an unrelated subsystem.
 
-## The nine responsibilities
+## The nine responsibilities (baseline)
 
 | # | Responsibility | ~LOC | Largest methods | State it owns |
 |---|---|---|---|---|
@@ -25,7 +30,7 @@
 | 6 | **Data flow** | 225 | `ProcessDataMessage`(97), `SendData`(81), `ForwardDataMessage` | message cache |
 | 7 | **Broadcast / multicast** | 211 | `ProcessGroupMessage`(62), `SendGroupReliable`(64), broadcast send/process/forward | message cache, group membership |
 | 8 | **Reliable delivery adapter** | 191 | `SendReliableAttempt`, `ProcessAckMessage`, `EnqueueAck`, `OnReliableOutcome` | `reliable_`, `reliable_dest_` (shadow), `group_windows_`, `groups_`, `group_count_`, `delivery_callback_` |
-| 9 | **Link quality** | 72 | `CalculateLinkStability`, `CalculateTimeOnAir`, … | (stateless; + dead `LinkQualityMetrics` / `NetworkService::CalculateComprehensiveLinkQuality`) |
+| 9 | **Link quality** | 72 | `CalculateLinkStability`, `CalculateTimeOnAir`, … | (stateless; + dead `LinkQualityMetrics` / `NetworkService::CalculateComprehensiveLinkQuality`, since removed; `CalculateLinkStability` has no callers and is still present) |
 
 ## State ownership model (the key to a safe split)
 
@@ -58,13 +63,17 @@ All follow the `reliability::ReliableDelivery` model: a `Host` of closures + a c
 struct, no heap, no virtual dispatch. All are **private members of `NetworkService`**, which
 remains the facade.
 
-| Component | New files (`services/`) | Wraps responsibility | Depends on |
-|---|---|---|---|
-| `ReliableMessaging` | `reliable_messaging.{hpp,cpp}` | 8 | closures: `now_ms`, `send_attempt`, `deliver_to_app`, `enqueue_ack`, `next_seq` |
-| `SlotScheduler` | `slot_scheduler.{hpp,cpp}` | 1 | `ISuperframeService*`, routing read accessor, `now_ms`, `SlotContext` const-ref |
-| `SyncBeaconService` | `sync_beacon_service.{hpp,cpp}` | 2 | `SlotScheduler&`, `enqueue`, `transition_to`, `apply_route_from_message`, `set_synchronized` |
-| `JoinService` | `join_service.{hpp,cpp}` | 3 | `SlotScheduler&`, `enqueue`, `transition_to`, NM-param helper, context |
-| `NmElectionService` | `nm_election_service.{hpp,cpp}` | 4 | `enqueue`, `apply_role_change`, context |
+| Component | Files (`services/`) | Wraps responsibility | Depends on | State |
+|---|---|---|---|---|
+| `ReliableMessaging` | `reliable_messaging.{hpp,cpp}` | 8 (+ group receive from 7) | `Host` closures (send attempt, enqueue, next hop, deliver to app, …) | ✅ exists |
+| `SlotScheduler` | `slot_scheduler.{hpp,cpp}` | 1 | per-call `Context` snapshot + `Host` closures (routing nodes, hop distance, slot duration, NM TX time, notify superframe) | ✅ exists |
+| `SyncBeaconService` | `sync_beacon_service.{hpp,cpp}` | 2 | per-call `Context` snapshot, superframe + queue services, `Host` | 🟡 transmit/forward only |
+| `JoinService` | `join_service.{hpp,cpp}` | 3 | `SlotScheduler&`, `enqueue`, `transition_to`, NM-param helper, context | ⬜ planned |
+| `NmElectionService` | `nm_election_service.{hpp,cpp}` | 4 | `enqueue`, `apply_role_change`, context | ⬜ planned |
+
+`MessageCache` (`services/message_cache.hpp`) is a small shared helper rather than a
+responsibility component: it owns the per-node sequence counter and the `(source, seq)` dedup
+cache used by the data, broadcast and group paths.
 
 Responsibilities 5/6/7 (routing/data/broadcast glue) and 9 (stateless link-quality) **stay**
 as thin coordinator methods once the Phase-2 helpers and `ReliableMessaging` absorb their
@@ -82,11 +91,17 @@ duplication. Re-evaluate only if they re-bloat.
 6. Extract `JoinService`.
 7. Extract `NmElectionService`.
 
-Each extraction phase is test-first with a new `test_unit_<component>/` GoogleTest dir, and
-re-runs the 118 `test_unit_network_coverage` characterization cases to prove delegation is
-behavior-preserving. End-state: `NetworkService` ≈ 700 L coordinator + 5 focused components.
+Each extraction phase is test-first with unit tests for the new component
+(`test_unit_slot_scheduler/`; `ReliableMessaging` tests live in
+`test/protocols/reliability/test_reliability/`), and re-runs the `test_unit_network_coverage`
+characterization suite to prove delegation is behavior-preserving. End-state: `NetworkService`
+≈ 700 L coordinator + 5 focused components.
 
 ## Validation
-- Method/line figures from direct inspection of `network_service.cpp` (4,713 L confirmed).
-- Dead-code claims confirmed by grep: the three `i_*_service.hpp` stubs and
-  `CalculateComprehensiveLinkQuality` have no external references.
+- Baseline method/line figures from direct inspection of `network_service.cpp` at 4,713 L;
+  current figures from `wc -l` and the method extents in today's file.
+- Dead-code claims confirmed by grep. The three `i_*_service.hpp` stubs and
+  `NetworkService::CalculateComprehensiveLinkQuality` are deleted. Still present and dead or
+  no-op: `SlotTableToSuperframe`, `UpdateNetworkTopology`, `NotifySuperframeOfNetworkChanges`,
+  `CalculateLinkStability`, `SendSlotRequest`, and the commented-out bodies of
+  `ProcessSlotAllocation` / `BroadcastSlotAllocation`.

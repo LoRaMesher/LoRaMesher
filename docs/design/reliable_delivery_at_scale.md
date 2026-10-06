@@ -1,6 +1,6 @@
 # Reliable Delivery at Scale — Design Rationale
 
-Status: **implemented (2026-09-23)** — commit `54cf983`; PROTOCOL_SPEC §3.2.6
+Status: **implemented (2026-09-23)** — PROTOCOL_SPEC §3.2.6
 and §7.2 updated. Tracks TODO-014.
 
 ## Result (stress test, library adaptive timeout)
