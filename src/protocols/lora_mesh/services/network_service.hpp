@@ -927,10 +927,9 @@ class NetworkService : public INetworkService {
      * @param visitor Called once per slot in slot order; must not call back
      *                into the slot table
      */
-    void ForEachSlot(
-        const std::function<
-            void(const types::protocols::lora_mesh::SlotAllocation&)>& visitor)
-        const {
+    void ForEachSlot(const std::function<
+                     void(const types::protocols::lora_mesh::SlotAllocation&)>&
+                         visitor) const {
         slot_scheduler_->ForEachSlot(visitor);
     }
 

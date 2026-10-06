@@ -294,8 +294,8 @@ TEST_F(LoRaMeshConfigTest, ValidateDefaultValues) {
 }
 
 TEST_F(LoRaMeshConfigTest, ValidateRejectsNonUnicastNodeAddress) {
-    for (AddressType address : {AddressType{0x8000}, AddressType{0xFFFE},
-                                AddressType{0xFFFF}}) {
+    for (AddressType address :
+         {AddressType{0x8000}, AddressType{0xFFFE}, AddressType{0xFFFF}}) {
         config_.setNodeAddress(address);
         EXPECT_FALSE(config_.IsValid()) << std::hex << address;
         EXPECT_EQ(config_.Validate(),
