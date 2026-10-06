@@ -219,9 +219,13 @@ class Logger {
 
     /**
      * @brief Set a custom log handler.
+     *
      * @param handler Unique pointer to the log handler implementation.
+     * @return The handler it replaces, so the caller decides when it is
+     *         destroyed; null if none was set or the logger lock could not be
+     *         taken (in which case @p handler is discarded).
      */
-    void SetHandler(std::unique_ptr<LogHandler> handler);
+    std::unique_ptr<LogHandler> SetHandler(std::unique_ptr<LogHandler> handler);
 
     /**
      * @brief Log a pre-formatted message (bypasses vsnprintf buffer limit).
