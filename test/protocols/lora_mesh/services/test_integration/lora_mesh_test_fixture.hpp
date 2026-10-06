@@ -1040,9 +1040,11 @@ class LoRaMeshTestFixture : public ::testing::Test {
             // Get the log filename before cleanup
             std::string log_filename = file_log_handler_->GetFilename();
 
-            // Reset to default console handler, which destroys the file handler
-            LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
+            // Restore the console handler, then close the file handler here
+            std::unique_ptr<LogHandler> file_handler =
+                LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
             file_log_handler_ = nullptr;
+            file_handler.reset();
 
             // Print log file location for user
             std::cout << "Test log saved to: " << log_filename << std::endl;
