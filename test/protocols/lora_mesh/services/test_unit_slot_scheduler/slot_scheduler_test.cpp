@@ -3,8 +3,7 @@
  * @brief Standalone unit tests for the SlotScheduler component.
  *
  * Drives SlotScheduler through a hand-built Context/Host harness (no
- * NetworkService), locking in the slot-shaping contract that the WS-5 ph.4
- * extraction relies on.
+ * NetworkService) to pin down its slot-shaping contract.
  */
 #include <gtest/gtest.h>
 

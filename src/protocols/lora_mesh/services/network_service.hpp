@@ -47,9 +47,9 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons
 
-/// Cross-network NM merge (Path A) is disabled: its phase-dependent detection
-/// made the merge tests flaky and could converge to the wrong NM. Re-enable
-/// only once the deterministic fix lands — see docs/todo_network_merge.md.
+/// Cross-network NM merge (Path A) is disabled: its detection depends on the
+/// TDMA phase of the two networks and can converge to the wrong NM. See
+/// docs/todo_network_merge.md.
 static constexpr bool kNetworkMergeEnabled = false;
 
 /// Discovery windows a surrendered node keeps listening for the election
@@ -58,15 +58,11 @@ static constexpr bool kNetworkMergeEnabled = false;
 /// worst-case TDMA phase-alignment + join handshake between two networks.
 static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
 
-// kExpandListeningThreshold is defined in slot_scheduler.hpp (included above).
-
-/// Minimum listen window before election fires (ms). 2 superframes @ 500ms ea.
+/// Minimum listen window before an election fires (ms).
 static constexpr uint32_t kElectionListenWindowMs = 5000;
 
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
-
-// kMinSlots is defined in slot_scheduler.hpp (included above).
 
 /**
  * @brief Unified implementation of network service

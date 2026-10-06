@@ -285,8 +285,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     /**
      * @brief Set the maximum packet size
      *
-     * Marks the value as explicitly user-set so ApplySfDerivedDefaults()
-     * preserves it (and only emits a warning if it exceeds the SF-safe cap).
+     * Marks the value as explicitly user-set, so LoRaMeshProtocol::Configure()
+     * warns when it exceeds the SF-safe cap that ApplySfDerivedDefaults()
+     * clamps it to.
      *
      * @param size Maximum packet size
      */

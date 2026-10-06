@@ -513,7 +513,7 @@ AddressType NetworkService::FindNextHop(AddressType destination) const {
 
     // A next_hop that isn't a TDMA neighbour at all has no slot to
     // transmit on — it must be replaced unconditionally if an
-    // alternative exists. This preserves the pre-penalty safety.
+    // alternative exists.
     if (!best_is_tdma) {
         if (fallback != 0) {
             LOG_WARNING(
@@ -1143,10 +1143,10 @@ Result NetworkService::PerformTimingSynchronization(
         "%s sync beacon timing: duration %d ms, slots %d, slot_duration %d ms",
         context_name.c_str(), superframe_duration, total_slots, slot_duration);
 
-    // Skip the disruptive stop/sync/start cycle when drift is small and config
-    // unchanged. The stop/start truncates the active slot to ~5ms, causing 9.7%
-    // outlier rate on SYNC_BEACON_RX. Normal crystal drift (~0.3ms/superframe)
-    // is well within the guard_time/2 threshold.
+    // Skip the disruptive stop/sync/start cycle when drift is small and the
+    // config is unchanged: the stop/start truncates the active slot. Normal
+    // crystal drift (~0.3ms/superframe) is well within the guard_time/2
+    // threshold.
     bool config_unchanged =
         (total_slots == number_of_slots_per_superframe_) &&
         (slot_duration == superframe_service_->GetSlotDuration());
@@ -2869,7 +2869,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         UpdateNetworkNode(source, is_network_manager,
                           config_.default_data_slots);
 
-        // CRITICAL FIX: Perform timing synchronization BEFORE transitioning to JOINING
+        // Adopt the Network Manager's superframe timing for the join schedule
         Result sync_result = PerformTimingSynchronization(
             sync_beacon, reception_timestamp, "Discovery");
         if (!sync_result.IsSuccess()) {
@@ -2893,10 +2893,9 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     }
 
     // Capture forwarding decision and slot duration before stopping the
-    // superframe service, so we can queue the beacon inside the pre_start_action
-    // callback (while the service is still stopped) — eliminating the race where
-    // the update task fires the SYNC_BEACON_TX slot handler before
-    // ForwardSyncBeacon() has had a chance to enqueue the beacon.
+    // superframe service, so the beacon is queued inside the pre_start_action
+    // callback (while the service is still stopped) and the update task cannot
+    // reach the SYNC_BEACON_TX slot before ForwardSyncBeacon() has queued it.
     bool should_forward = ShouldForwardSyncBeacon(sync_beacon);
     uint32_t slot_duration = sync_beacon.GetSlotDuration();
 

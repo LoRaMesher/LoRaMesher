@@ -1,14 +1,14 @@
 /**
  * @file sync_beacon_service.hpp
- * @brief Sync-beacon transmit/forward path extracted from NetworkService.
+ * @brief Sync-beacon transmit/forward path.
  *
- * Owns the cohesive, side-effect-free sync-beacon TX behaviour: building an
- * original beacon (Network Manager), forwarding a received beacon, deciding
- * whether to forward, and stamping the propagation-delay field right before
- * transmission. It mutates no coordinator state; the coordinator supplies a
- * read-only @ref Context snapshot and a single @ref Host callback
- * (restore_tx_slot). The already-dependency-injected superframe and
- * message-queue services are held directly.
+ * Owns the sync-beacon TX behaviour: building an original beacon (Network
+ * Manager), forwarding a received beacon, deciding whether to forward, and
+ * stamping the propagation-delay field right before transmission. The
+ * coordinator supplies a read-only @ref Context snapshot and a single
+ * @ref Host callback (restore_tx_slot), the only way this service changes
+ * coordinator state. The superframe and message-queue services are held
+ * directly.
  *
  * The RX orchestration (`ProcessSyncBeacon`) intentionally stays in
  * NetworkService: it mutates network parameters that routing/election/join also
