@@ -533,22 +533,25 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     // the request-acks flag rather than a unicast.
     reliability::MessageId id{};
     Result result = RunLocked([&]() {
+        auto free_window =
+            std::find_if(group_windows_.begin(), group_windows_.end(),
+                         [](const GroupWindow& window) { return !window.valid; });
+        if (free_window == group_windows_.end()) {
+            return Result(LoraMesherErrorCode::kQueueFull,
+                          "Every group acknowledgement window is open");
+        }
         auto seq = AllocateMessageSeq(group, /*group_stream=*/true);
         if (!seq) {
             return Result(LoraMesherErrorCode::kQueueFull,
                           "Reliable group stream is busy");
         }
         id = {host_.node_address, *seq, group};
+        // The window is registered first so that an outcome reported while
+        // tracking (an attempt that fails outright) releases it.
+        *free_window = {true, id.seq, group, host_.now_ms() + window_ms};
         Result tracked = reliable_.Track(id, data, policy);
-        if (tracked.IsSuccess()) {
-            // Register the acknowledgement-collection window.
-            uint32_t deadline = host_.now_ms() + window_ms;
-            for (auto& window : group_windows_) {
-                if (!window.valid) {
-                    window = {true, id.seq, group, deadline};
-                    break;
-                }
-            }
+        if (!tracked.IsSuccess()) {
+            free_window->valid = false;
         }
         return tracked;
     });
@@ -688,6 +691,14 @@ void ReliableMessaging::CloseExpiredGroupWindows() {
 
 void ReliableMessaging::OnReliableOutcome(
     const reliability::DeliveryResult& result) {
+    if (IsGroupAddress(result.id.dest) &&
+        result.outcome != reliability::Outcome::Delivered) {
+        // The group send has ended; its acknowledgement window is free.
+        GroupWindow* window = FindGroupWindow(result.id.seq);
+        if (window != nullptr && window->group == result.id.dest) {
+            window->valid = false;
+        }
+    }
     if (outcome_batch_ == nullptr ||
         outcome_batch_->count >= outcome_batch_->results.size()) {
         LOG_ERROR("Reliable outcome for seq=%u dropped", result.id.seq);
