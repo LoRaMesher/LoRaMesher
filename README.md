@@ -289,7 +289,7 @@ auto mesher = LoraMesher::Builder()
     .Build();
 ```
 
-All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — when they meet, the merge protocol forces one to step down, costing ~5 superframes of disruption (the same trade-off is documented for runtime `SetNodeRole()` demotions).
+All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — automatic merging of two networks is currently disabled (see `PROTOCOL_SPEC.md` §10.6.9), so their networks stay separate.
 
 **Approximate time from boot to a fully joined node** (at SF7 / BW 125 kHz with the default 10-slot, 10 s discovery-phase superframes):
 
