@@ -30,9 +30,14 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   node-count cap.
 - SX1278 and SX1268 radios in the radio factory.
 - Deterministic (address-hash) sync-beacon subslot assignment.
+- `IRoutingTable::SetMaxHops()`: the routing table accepts routes up to the
+  configured `max_hops` (custom routing tables must implement it).
 - Network stress test suite (`test_network_stress`).
 
 ### Changed
+- Wire format: new message types `DATA_RELIABLE`, `DATA_GROUP` and `ACK`
+  (with a 6-byte ACK payload: acknowledged sequence, flags, echoed
+  timestamp); see `PROTOCOL_SPEC.md` §3.2.6 and §7.2.
 - TDMA data slots are assigned by control-slot index, and `ROUTE_TABLE`
   headers carry the sender's control-slot index (6 → 7 bytes).
 - `default_data_slots` defaults to 2 (was 1) and must be the same on every
@@ -41,10 +46,29 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   and subslots are sized from time-on-air.
 - `LoRaMeshProtocol::GetNetworkNodes()` returns a snapshot copy;
   `GetNetworkNodesCopy()` is removed.
+- `GetSlotTable()` (`LoraMesher` and `LoRaMeshProtocol`) returns a
+  `std::vector<SlotAllocation>` snapshot instead of a `std::span` into the
+  live table.
+- A node address must be unicast (`0x0001`–`0x7FFF`, or 0 to auto-assign);
+  `LoRaMeshProtocolConfig::Validate()` rejects group and broadcast addresses,
+  and `SendReliable()` refuses non-unicast destinations.
+- Addresses generated from the hardware ID are folded into the unicast range:
+  a MAC whose derived address had the top bit set now yields that address
+  with the top bit cleared.
+- The sync-beacon subslot assignment defaults to `ADDRESS_HASH` (was
+  `ADDRESS_MODULO`).
+- `RadioType::kSx1268` is inserted before `kMockRadio`, shifting
+  `kMockRadio`'s numeric value.
+- `RTOS::CreateTask()` takes the stack size in bytes on every FreeRTOS port.
+- The interfaces `IJoinService`, `INetworkDiscoveryService` and
+  `ISlotManagementService` are removed (they had no implementation).
+- Stopping the protocol abandons pending reliable messages and reports each
+  one through the delivery callback (`Failed`, or `GroupWindowClosed` for a
+  group send).
 - Route-update callbacks run while the routing table is locked and must not
   call back into the routing table or the network service.
-- `battery_level` is removed from `JOIN_REQUEST`, `NM_CLAIM` and routing
-  messages.
+- `battery_level` is removed from `JOIN_REQUEST` and `NM_CLAIM` (and from
+  `JoinRequestMessage::Create()` / `NMClaimMessage::Create()`).
 - Cross-network Network Manager merge is disabled.
 - Joining: a node sends its `JOIN_REQUEST` in a random even discovery slot
   (sponsored joins in the first one) and the Network Manager answers in the
@@ -54,14 +78,24 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 ### Fixed
 - ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
   tasks ran with a quarter of the configured stack and the stack monitor
-  reported four times the real free space. Stack sizes are now real bytes.
+  reported four times the real free space. The configured sizes now state
+  the real stacks (the effective stack of each task is unchanged), and the
+  monitor reports bytes.
 - Reliable delivery: retransmissions reach distant destinations under load; a
   message is no longer acknowledged but dropped after the sequence number
   wraps; an attempt that can never be queued fails instead of retrying
   forever; ACKs are accepted only from the destination; deadlines survive the
   32-bit tick wrap.
-- Thread safety: send APIs are safe to call from the application thread, and
-  the routing table is only read under its lock.
+- Thread safety: send APIs are safe to call from the application thread, the
+  routing table is only read under its lock, and the slot table, protocol
+  state and Network Manager address are synchronized with the protocol task.
+- Stop/Start: a network reset no longer deadlocks when a state-change or
+  route callback calls back into the library, clears election, sponsor and
+  sync-beacon state, and keeps the packet sequence counter so neighbours do
+  not drop the restarted node's first packets as duplicates.
+- Reliable group sends: a send whose attempts could not be queued no longer
+  leaves its acknowledgement window open and permanently uses up a pending
+  slot.
 - Routing: route flapping on marginal links is damped; link quality holds
   across sliced broadcasts; gateways stay reachable for far nodes at SF12;
   links are not judged unidirectional before the peer could hear this node.
@@ -71,7 +105,11 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   routing table honours the configured `max_network_nodes`; sync beacons with
   an impossible schedule are discarded.
 - Radio: the receiver stays on for the whole listening slot; time-on-air is
-  correct at high SF (LDRO).
+  correct at high SF (LDRO); long SF12 frames are no longer rejected by the
+  time-on-air sanity check; the SX1268 defaults to 433 MHz (inside its
+  410–810 MHz band).
+- Routing: routes longer than 10 hops are accepted up to the configured
+  `max_hops` (at most 16).
 - A Network Manager that surrendered in a merge stays committed to joining the
   winner.
 - Network formation: nodes that start joining together no longer collide in
@@ -79,6 +117,7 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - Network Manager election: the election backoff expires at its own deadline
   instead of the next superframe start, and waiting nodes listen on every
   slot, so two candidates no longer claim together and both become manager.
+  Election timers stay correct across the 32-bit tick wrap.
 
 ## [1.0.0] - 2026-05-15
 
