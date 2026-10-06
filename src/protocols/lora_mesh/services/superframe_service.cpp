@@ -655,9 +655,8 @@ bool SuperframeService::CreateUpdateTask() {
 
     bool task_created =
         GetRTOS().CreateTask(UpdateTaskFunction, "SuperframeUpdate",
-                             config::TaskConfig::kSuperframeStackSize /
-                                 config::TaskConfig::kStackBytesPerWord,
-                             this, TASK_PRIORITY, &update_task_handle_);
+                             config::TaskConfig::kSuperframeStackSize, this,
+                             TASK_PRIORITY, &update_task_handle_);
 
     if (task_created) {
         LOG_DEBUG("Superframe update task created");
