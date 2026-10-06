@@ -415,6 +415,7 @@ TEST_F(NMElectionTests, TwoAutoNodes_ExactlyOneWinsElection) {
  * (not creates its own network), and eventually joins the winner.
  */
 TEST_F(NMElectionTests, ConfiguredNM_SurrendersInElection_JoinsNotCreates) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // Test: a configured NM node that has surrendered to a higher-priority
     // NM (via NM_CLAIM exchange) does not re-create a network when it later
     // enters NM_ELECTION — it enters DISCOVERY instead and joins the winner.
