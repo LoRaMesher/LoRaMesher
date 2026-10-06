@@ -539,9 +539,9 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     // the request-acks flag rather than a unicast.
     reliability::MessageId id{};
     Result result = RunLocked([&]() {
-        auto free_window =
-            std::find_if(group_windows_.begin(), group_windows_.end(),
-                         [](const GroupWindow& window) { return !window.valid; });
+        auto free_window = std::find_if(
+            group_windows_.begin(), group_windows_.end(),
+            [](const GroupWindow& window) { return !window.valid; });
         if (free_window == group_windows_.end()) {
             return Result(LoraMesherErrorCode::kQueueFull,
                           "Every group acknowledgement window is open");
