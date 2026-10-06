@@ -96,6 +96,17 @@ TEST_F(LoggerTest, FlushDispatchesToHandler) {
     EXPECT_GT(raw->flushes_, before);
 }
 
+TEST_F(LoggerTest, SetHandlerReturnsTheReplacedHandler) {
+    auto first = std::make_unique<CountingLogHandler>();
+    auto* first_raw = first.get();
+    LOG.SetHandler(std::move(first));
+
+    std::unique_ptr<LogHandler> previous =
+        LOG.SetHandler(std::make_unique<CountingLogHandler>());
+
+    EXPECT_EQ(previous.get(), first_raw);
+}
+
 TEST_F(LoggerTest, SetHandlerToNullDoesNotCrashOnSubsequentLog) {
     LOG.SetHandler(nullptr);
     EXPECT_NO_THROW(LOG.Info("after-null-handler"));
