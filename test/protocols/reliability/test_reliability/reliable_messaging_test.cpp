@@ -26,8 +26,8 @@ constexpr uint32_t kSuperframeMs = 1000;
 class ReliableMessagingTest : public ::testing::Test {
    protected:
     void SetUp() override {
-        messaging_ = std::make_unique<ReliableMessaging>(message_cache_,
-                                                         MakeHost());
+        messaging_ =
+            std::make_unique<ReliableMessaging>(message_cache_, MakeHost());
         messaging_->SetDeliveryCallback(
             [this](const reliability::DeliveryResult& result) {
                 outcomes_.push_back(result);
