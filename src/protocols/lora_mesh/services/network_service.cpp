@@ -877,6 +877,7 @@ Result NetworkService::Configure(const NetworkConfig& config) {
         routing_table_->SetLogRoutingCapabilities(
             config.log_routing_capabilities);
         routing_table_->SetMaxNodes(config.max_network_nodes);
+        routing_table_->SetMaxHops(config.max_hops);
     }
     target_duty_cycle_ = config.target_duty_cycle;
     min_sleep_fraction_ = config.min_sleep_fraction;

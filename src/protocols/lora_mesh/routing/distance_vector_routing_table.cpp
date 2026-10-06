@@ -73,9 +73,7 @@ bool DistanceVectorRoutingTable::UpdateRoute(
     uint8_t source_link_quality = CalculateComprehensiveLinkQuality(source);
     uint8_t actual_link_quality = std::min(link_quality, source_link_quality);
 
-    // Check hop limit (assume max 10 hops as reasonable default)
-    constexpr uint8_t MAX_HOPS = 10;
-    if (hop_count > MAX_HOPS) {
+    if (hop_count > max_hops_) {
         return false;
     }
 
@@ -560,6 +558,11 @@ void DistanceVectorRoutingTable::SetRouteUpdateCallback(
     RouteUpdateCallback callback) {
     std::lock_guard<std::mutex> lock(table_mutex_);
     route_callback_ = callback;
+}
+
+void DistanceVectorRoutingTable::SetMaxHops(uint8_t max_hops) {
+    std::lock_guard<std::mutex> lock(table_mutex_);
+    max_hops_ = max_hops;
 }
 
 void DistanceVectorRoutingTable::SetMaxNodes(size_t max_nodes) {

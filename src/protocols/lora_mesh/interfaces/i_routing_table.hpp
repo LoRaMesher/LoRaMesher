@@ -270,6 +270,13 @@ class IRoutingTable {
     virtual void SetMaxNodes(size_t max_nodes) = 0;
 
     /**
+     * @brief Set the largest hop count a route may have
+     *
+     * @param max_hops Routes longer than this are rejected
+     */
+    virtual void SetMaxHops(uint8_t max_hops) = 0;
+
+    /**
      * @brief Set the control slot index for a node (NM-local tracking)
      *
      * @param node_address Address of the node

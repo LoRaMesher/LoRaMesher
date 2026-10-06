@@ -125,6 +125,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
 
     void SetMaxNodes(size_t max_nodes) override;
 
+    void SetMaxHops(uint8_t max_hops) override;
+
     std::optional<types::protocols::lora_mesh::PathRtt> GetPathRtt(
         AddressType destination) const override;
 
@@ -263,6 +265,8 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     static constexpr uint8_t kMaxInactiveProbes = 32;
     /// Minimum quality to re-activate a probing neighbor (~25% PDR)
     static constexpr uint8_t kReactivationQualityThreshold = 64;
+    /// Longest accepted route until SetMaxHops() is called
+    static constexpr uint8_t kDefaultMaxHops = 10;
 
     // Member variables
 
@@ -271,6 +275,7 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
         nodes_;                           ///< Routing table
     size_t max_nodes_;                    ///< Maximum number of nodes
+    uint8_t max_hops_ = kDefaultMaxHops;  ///< Longest accepted route
     RouteUpdateCallback route_callback_;  ///< Route update callback
     /// When true, RTENTRY log lines include capabilities and data-slot fields.
     bool log_capabilities_ = false;

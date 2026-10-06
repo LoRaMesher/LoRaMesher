@@ -308,6 +308,24 @@ TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRespectsMaxHops) {
     EXPECT_TRUE(table.IsNodePresent(kNeighbor1));
 }
 
+TEST_F(RoutingTableUnitTest, UpdateRouteHonoursConfiguredMaxHops) {
+    constexpr AddressType kNeighbor = 0x2000;
+    constexpr AddressType kFarNode = 0x3000;
+    AddDirectNeighbor(kNeighbor);
+
+    routing_table_->SetMaxHops(16);
+    EXPECT_TRUE(routing_table_->UpdateRoute(kNeighbor, kFarNode, 16, 200, 0, 0,
+                                            kCurrentTime));
+    EXPECT_TRUE(routing_table_->IsNodePresent(kFarNode));
+
+    routing_table_->Clear();
+    AddDirectNeighbor(kNeighbor);
+    routing_table_->SetMaxHops(4);
+    EXPECT_FALSE(routing_table_->UpdateRoute(kNeighbor, kFarNode, 5, 200, 0, 0,
+                                             kCurrentTime));
+    EXPECT_FALSE(routing_table_->IsNodePresent(kFarNode));
+}
+
 TEST_F(RoutingTableUnitTest, ProcessRoutingMessageRejectsHopCountOverflow) {
     auto table = DistanceVectorRoutingTable(kLocalAddress);
 
