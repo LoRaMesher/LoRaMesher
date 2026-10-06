@@ -1,0 +1,736 @@
+/**
+ * @file reliable_messaging.cpp
+ * @brief Implementation of the group multicast + reliable-delivery subsystem
+ */
+
+#include "reliable_messaging.hpp"
+
+#include <algorithm>
+#include <type_traits>
+
+#include "protocols/reliability/rtt_estimator.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
+#include "types/messages/loramesher/data_header.hpp"
+#include "types/messages/loramesher/group_message.hpp"
+#include "types/messages/message_type.hpp"
+#include "utils/byte_operations.h"
+#include "utils/logger.hpp"
+#include "utils/time_utils.hpp"
+
+namespace loramesher {
+namespace protocols {
+namespace lora_mesh {
+
+namespace {
+using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+}  // namespace
+
+ReliableMessaging::ReliableMessaging(MessageCache& message_cache, Host host)
+    : message_cache_(message_cache),
+      host_(std::move(host)),
+      reliable_(BuildReliableHost(),
+                [this](const reliability::DeliveryResult& result) {
+                    OnReliableOutcome(result);
+                }) {}
+
+reliability::Host ReliableMessaging::BuildReliableHost() {
+    reliability::Host host;
+    host.send_attempt = [this](const reliability::AttemptRequest& request) {
+        return SendReliableAttempt(request);
+    };
+    host.now_ms = [this]() {
+        return host_.now_ms ? host_.now_ms() : 0u;
+    };
+    return host;
+}
+
+template <typename Fn>
+auto ReliableMessaging::RunLocked(Fn&& fn) {
+    OutcomeBatch batch;
+    if constexpr (std::is_void_v<std::invoke_result_t<Fn>>) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            outcome_batch_ = &batch;
+            fn();
+            outcome_batch_ = nullptr;
+        }
+        DispatchOutcomes(batch);
+    } else {
+        std::invoke_result_t<Fn> result;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            outcome_batch_ = &batch;
+            result = fn();
+            outcome_batch_ = nullptr;
+        }
+        DispatchOutcomes(batch);
+        return result;
+    }
+}
+
+void ReliableMessaging::DispatchOutcomes(const OutcomeBatch& batch) {
+    if (batch.count == 0) {
+        return;
+    }
+    reliability::DeliveryCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callback = delivery_callback_;
+    }
+    if (!callback) {
+        return;
+    }
+    for (size_t i = 0; i < batch.count; ++i) {
+        callback(batch.results[i]);
+    }
+}
+
+// --- Group (multicast) membership ---
+
+Result ReliableMessaging::JoinGroup(AddressType group) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Address is not a group address");
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (uint8_t i = 0; i < group_count_; ++i) {
+        if (groups_[i] == group) {
+            return Result::Success();
+        }
+    }
+    if (group_count_ >= kMaxGroups) {
+        return Result(LoraMesherErrorCode::kBufferOverflow,
+                      "Group membership table is full");
+    }
+    groups_[group_count_++] = group;
+    LOG_INFO("Joined group 0x%04X", group);
+    return Result::Success();
+}
+
+Result ReliableMessaging::LeaveGroup(AddressType group) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Address is not a group address");
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (uint8_t i = 0; i < group_count_; ++i) {
+        if (groups_[i] == group) {
+            groups_[i] = groups_[group_count_ - 1];
+            group_count_--;
+            LOG_INFO("Left group 0x%04X", group);
+            return Result::Success();
+        }
+    }
+    return Result::Success();
+}
+
+bool ReliableMessaging::IsMemberOfGroup(AddressType group) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return IsMemberOfGroupLocked(group);
+}
+
+bool ReliableMessaging::IsMemberOfGroupLocked(AddressType group) const {
+    for (uint8_t i = 0; i < group_count_; ++i) {
+        if (groups_[i] == group) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<AddressType> ReliableMessaging::GetGroups() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return std::vector<AddressType>(groups_.begin(),
+                                    groups_.begin() + group_count_);
+}
+
+// --- Group send / receive ---
+
+Result ReliableMessaging::SendGroup(AddressType group,
+                                    std::span<const uint8_t> data) {
+    if (!IsGroupAddress(group)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Destination is not a group address");
+    }
+
+    if (!host_.in_operational_state()) {
+        LOG_WARNING("Cannot send group data in current state");
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot send group data outside normal operation");
+    }
+
+    if (data.size() + BaseHeader::Size() + GroupMessage::kGroupFieldsSize >
+        host_.max_packet_size()) {
+        LOG_WARNING("Group payload %zu B exceeds MTU", data.size());
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Group payload exceeds max packet size");
+    }
+
+    uint8_t seq = message_cache_.NextSeq();
+    uint8_t ttl =
+        (host_.max_hops() > 0)
+            ? static_cast<uint8_t>(std::min(2u * host_.max_hops(), 255u))
+            : kDefaultTTL;
+
+    message_cache_.Record(host_.node_address, seq);
+
+    auto group_msg = GroupMessage::Create(group, host_.node_address, ttl,
+                                          /*flags=*/0, seq, data);
+    if (!group_msg) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create group message");
+    }
+
+    LOG_INFO("Sending GROUP to 0x%04X (ttl=%u, seq=%u, payload_size=%zu)",
+             group, ttl, seq, data.size());
+
+    auto base_msg = std::make_unique<BaseMessage>(group_msg->ToBaseMessage());
+    return host_.enqueue(SlotType::TX, std::move(base_msg));
+}
+
+bool ReliableMessaging::AcceptReliable(AddressType source,
+                                       reliability::StreamKind kind,
+                                       uint8_t msg_seq, uint32_t send_ts) {
+    const uint32_t restart_regression_ms = MaxReliableTimeout();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return delivery_windows_.Accept(source, kind, msg_seq, send_ts,
+                                    restart_regression_ms);
+}
+
+Result ReliableMessaging::ProcessGroupMessage(
+    const BaseMessage& message, uint32_t /* reception_timestamp */) {
+    auto group_msg_opt = GroupMessage::CreateFromBaseMessage(message);
+    if (!group_msg_opt) {
+        LOG_ERROR("Failed to deserialize group message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize group message");
+    }
+
+    const GroupMessage& group_msg = *group_msg_opt;
+    AddressType source = group_msg.GetSource();
+    AddressType group = group_msg.GetGroup();
+    uint8_t seq_num = group_msg.GetSeqNum();
+    uint8_t ttl = group_msg.GetTTL();
+
+    // Ignore our own group messages heard back
+    if (source == host_.node_address) {
+        return Result::Success();
+    }
+
+    // De-duplication prevents flood loops and duplicate delivery
+    if (!message_cache_.RecordIfNew(source, seq_num)) {
+        LOG_DEBUG("Dropping duplicate GROUP from 0x%04X seq=%u", source,
+                  seq_num);
+        return Result::Success();
+    }
+
+    const bool member = IsMemberOfGroup(group);
+    std::span<const uint8_t> payload = group_msg.GetPayload();
+    uint8_t delivered_seq = seq_num;
+    bool deliver = member;
+
+    if (group_msg.RequestAcks()) {
+        auto prefix = reliability::ReliablePrefix::Read(payload);
+        if (!prefix) {
+            LOG_ERROR("Reliable GROUP from 0x%04X seq=%u lacks framing prefix",
+                      source, seq_num);
+            return Result(LoraMesherErrorCode::kSerializationError,
+                          "Malformed reliable group payload");
+        }
+        payload = payload.subspan(reliability::ReliablePrefix::kSize);
+        delivered_seq = prefix->msg_seq;
+        if (member) {
+            // Every copy is acknowledged; the message is delivered once.
+            EnqueueAck(source, prefix->msg_seq, /*was_group=*/true,
+                       prefix->send_ts);
+            deliver = AcceptReliable(source, reliability::StreamKind::kGroup,
+                                     prefix->msg_seq, prefix->send_ts);
+        }
+    }
+
+    if (deliver) {
+        LOG_INFO("GROUP 0x%04X delivered from 0x%04X (seq=%u)", group, source,
+                 delivered_seq);
+        host_.deliver_to_app(source, delivered_seq, group, ttl, payload);
+    }
+
+    // Relay the flood regardless of local membership
+    if (ttl > 1) {
+        return ForwardGroupMessage(group_msg);
+    }
+
+    return Result::Success();
+}
+
+Result ReliableMessaging::ForwardGroupMessage(const GroupMessage& original) {
+    auto forwarded = GroupMessage::CreateForwarded(original);
+    if (!forwarded) {
+        LOG_WARNING("GROUP TTL expired during forwarding, dropping");
+        return Result::Success();
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(forwarded->ToBaseMessage());
+    return host_.enqueue(SlotType::TX, std::move(base_msg));
+}
+
+// --- Reliable unicast/group delivery ---
+
+uint32_t ReliableMessaging::ComputeReliableTimeout(AddressType dest) const {
+    uint8_t hops = host_.hops_to_dest ? host_.hops_to_dest(dest) : 1;
+    if (hops == 0) {
+        hops = 1;
+    }
+
+    uint32_t superframe_ms =
+        host_.superframe_duration ? host_.superframe_duration() : 0;
+    if (superframe_ms == 0) {
+        superframe_ms = 1000;
+    }
+
+    // Round trip ≈ 2 hops, plus one superframe of slot-phase guard.
+    uint32_t timeout = (2u * hops + 1u) * superframe_ms;
+    return timeout < kTimeoutFloorMs ? kTimeoutFloorMs : timeout;
+}
+
+uint32_t ReliableMessaging::SuperframeOrDefault() const {
+    uint32_t superframe_ms =
+        host_.superframe_duration ? host_.superframe_duration() : 0;
+    return superframe_ms != 0 ? superframe_ms : 1000;
+}
+
+uint32_t ReliableMessaging::MaxReliableTimeout() const {
+    uint32_t max_hops = host_.max_hops ? host_.max_hops() : 0;
+    if (max_hops == 0) {
+        max_hops = 1;
+    }
+    uint64_t max_ms = static_cast<uint64_t>(max_hops) *
+                      kMaxTimeoutSuperframesPerHop * SuperframeOrDefault();
+    return static_cast<uint32_t>(std::min<uint64_t>(
+        std::max<uint64_t>(max_ms, kTimeoutFloorMs), UINT32_MAX));
+}
+
+uint32_t ReliableMessaging::ComputeAdaptiveTimeout(AddressType dest) const {
+    types::protocols::lora_mesh::PathRtt rtt;
+    if (host_.get_path_rtt) {
+        rtt = host_.get_path_rtt(dest).value_or(rtt);
+    }
+    return reliability::ComputeRto(rtt, ComputeReliableTimeout(dest),
+                                   kTimeoutFloorMs, MaxReliableTimeout());
+}
+
+void ReliableMessaging::RecordRttSample(AddressType peer, uint32_t echo_ts) {
+    if (!host_.get_path_rtt || !host_.set_path_rtt) {
+        return;
+    }
+    const uint32_t now = host_.now_ms();
+    if (!utils::TimeReached(now, echo_ts)) {
+        return;
+    }
+    auto rtt = host_.get_path_rtt(peer);
+    if (!rtt) {
+        return;
+    }
+    reliability::AddRttSample(*rtt, now - echo_ts);
+    host_.set_path_rtt(peer, *rtt);
+}
+
+Result ReliableMessaging::SendReliableAttempt(
+    const reliability::AttemptRequest& request) {
+    const reliability::MessageId& id = request.id;
+    const AddressType dest = id.dest;
+    std::span<const uint8_t> payload = request.payload;
+
+    uint8_t ttl =
+        (host_.max_hops() > 0)
+            ? static_cast<uint8_t>(std::min(2u * host_.max_hops(), 255u))
+            : kDefaultTTL;
+
+    // Build wire payload: [msg_seq:1][send_ts:4][application payload]
+    reliability::ReliablePrefix prefix{id.seq, host_.now_ms()};
+    std::vector<uint8_t> wire(reliability::ReliablePrefix::kSize +
+                              payload.size());
+    utils::ByteSerializer serializer(wire.data(), wire.size());
+    prefix.Write(serializer);
+    if (!payload.empty()) {
+        serializer.WriteBytes(payload.data(), payload.size());
+    }
+
+    // Every attempt is a new link-layer packet with its own sequence, so
+    // relays that forwarded an earlier attempt forward this one too.
+    const uint8_t link_seq = message_cache_.NextSeq();
+    message_cache_.Record(host_.node_address, link_seq);
+
+    std::unique_ptr<BaseMessage> base_msg;
+    if (IsGroupAddress(dest)) {
+        auto group_msg = GroupMessage::Create(dest, host_.node_address, ttl,
+                                              GroupMessage::kFlagRequestAcks,
+                                              link_seq, wire);
+        if (!group_msg) {
+            return Result(LoraMesherErrorCode::kMemoryError,
+                          "Failed to create reliable group message");
+        }
+        base_msg = std::make_unique<BaseMessage>(group_msg->ToBaseMessage());
+    } else {
+        AddressType next_hop = host_.find_next_hop(dest);
+        if (next_hop == 0) {
+            next_hop = dest;
+        }
+        auto data_msg =
+            DataMessage::Create(dest, host_.node_address, next_hop, wire, ttl,
+                                link_seq, MessageType::DATA_RELIABLE);
+        if (!data_msg) {
+            return Result(LoraMesherErrorCode::kMemoryError,
+                          "Failed to create reliable data message");
+        }
+        base_msg = std::make_unique<BaseMessage>(data_msg->ToBaseMessage());
+    }
+
+    return host_.enqueue(SlotType::TX, std::move(base_msg));
+}
+
+std::optional<uint8_t> ReliableMessaging::AllocateMessageSeq(
+    AddressType dest, bool group_stream) {
+    uint8_t* next = nullptr;
+    if (group_stream) {
+        if (!group_stream_started_) {
+            group_next_seq_ = RandomSeq();
+            group_stream_started_ = true;
+        }
+        next = &group_next_seq_;
+    } else {
+        SeqStream* stream = FindOrCreateSeqStream(dest);
+        if (stream == nullptr) {
+            return std::nullopt;
+        }
+        next = &stream->next;
+    }
+
+    const uint8_t seq = *next;
+    // Every unacknowledged message must stay inside the receiver window.
+    if (reliable_.PendingSeqSpan(group_stream, dest, seq) >=
+        reliability::DeliveryWindows::kWindow) {
+        return std::nullopt;
+    }
+    *next = static_cast<uint8_t>(seq + 1);
+    return seq;
+}
+
+ReliableMessaging::SeqStream* ReliableMessaging::FindOrCreateSeqStream(
+    AddressType dest) {
+    SeqStream* free_stream = nullptr;
+    for (auto& stream : seq_streams_) {
+        if (stream.valid && stream.dest == dest) {
+            return &stream;
+        }
+        if (!stream.valid && free_stream == nullptr) {
+            free_stream = &stream;
+        }
+    }
+    if (free_stream != nullptr) {
+        *free_stream = {true, dest, RandomSeq()};
+    }
+    return free_stream;
+}
+
+uint8_t ReliableMessaging::RandomSeq() const {
+    return host_.random ? static_cast<uint8_t>(host_.random()) : 0;
+}
+
+reliability::MessageId ReliableMessaging::SendReliable(
+    AddressType destination, const std::vector<uint8_t>& data,
+    uint8_t max_retries, uint32_t timeout_override_ms) {
+    constexpr reliability::MessageId kInvalidId{0, 0};
+
+    if (!IsUnicastAddress(destination)) {
+        LOG_WARNING("Reliable destination 0x%04X is not a unicast address",
+                    destination);
+        return kInvalidId;
+    }
+
+    if (destination == host_.node_address) {
+        LOG_WARNING("Cannot send reliable data to self");
+        return kInvalidId;
+    }
+
+    if (!host_.in_operational_state()) {
+        LOG_WARNING("Cannot send reliable data in current state");
+        return kInvalidId;
+    }
+
+    const size_t overhead = BaseHeader::Size() + DataHeader::DataFieldsSize() +
+                            reliability::ReliablePrefix::kSize;
+    if (data.size() + overhead > host_.max_packet_size() ||
+        data.size() > reliability::ReliableDelivery::MaxReliablePayload()) {
+        LOG_WARNING("Reliable payload %zu B exceeds capacity", data.size());
+        return kInvalidId;
+    }
+
+    reliability::Policy policy;
+    policy.max_retries = max_retries;
+    policy.collect_multiple = false;
+    policy.requeue_delay_ms = SuperframeOrDefault();
+    if (timeout_override_ms != 0) {
+        // An explicit timeout is used as-is for every attempt.
+        policy.timeout_ms = timeout_override_ms;
+    } else {
+        policy.timeout_ms = ComputeAdaptiveTimeout(destination);
+        policy.exponential_backoff = true;
+        policy.max_timeout_ms = MaxReliableTimeout();
+    }
+
+    reliability::MessageId id{};
+    Result result = RunLocked([&]() {
+        auto seq = AllocateMessageSeq(destination, /*group_stream=*/false);
+        if (!seq) {
+            return Result(LoraMesherErrorCode::kQueueFull,
+                          "Reliable stream to destination is busy");
+        }
+        id = {host_.node_address, *seq, destination};
+        return reliable_.Track(
+            id, std::span<const uint8_t>(data.data(), data.size()), policy);
+    });
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to track reliable message to 0x%04X: %s", destination,
+                  result.GetErrorMessage().c_str());
+        return kInvalidId;
+    }
+
+    LOG_INFO("Sending reliable DATA to 0x%04X (seq=%u, timeout=%u, retries=%u)",
+             destination, id.seq, policy.timeout_ms, max_retries);
+    return id;
+}
+
+reliability::MessageId ReliableMessaging::SendGroupReliable(
+    AddressType group, std::span<const uint8_t> data, uint8_t max_retries,
+    uint32_t window_ms) {
+    constexpr reliability::MessageId kInvalidId{0, 0};
+
+    if (!IsGroupAddress(group)) {
+        LOG_WARNING("SendGroupReliable destination 0x%04X is not a group",
+                    group);
+        return kInvalidId;
+    }
+
+    if (!host_.in_operational_state()) {
+        LOG_WARNING("Cannot send reliable group data in current state");
+        return kInvalidId;
+    }
+
+    const size_t overhead = BaseHeader::Size() +
+                            GroupMessage::kGroupFieldsSize +
+                            reliability::ReliablePrefix::kSize;
+    if (data.size() + overhead > host_.max_packet_size() ||
+        data.size() > reliability::ReliableDelivery::MaxReliablePayload()) {
+        LOG_WARNING("Reliable group payload %zu B exceeds capacity",
+                    data.size());
+        return kInvalidId;
+    }
+
+    reliability::Policy policy;
+    // Attempts are spread evenly over the window, at most one per superframe.
+    policy.timeout_ms =
+        std::max(window_ms / (static_cast<uint32_t>(max_retries) + 1),
+                 SuperframeOrDefault());
+    policy.max_retries = max_retries;
+    policy.collect_multiple = true;
+    policy.requeue_delay_ms = SuperframeOrDefault();
+
+    // A group destination makes each attempt a flooded group message with
+    // the request-acks flag rather than a unicast.
+    reliability::MessageId id{};
+    Result result = RunLocked([&]() {
+        auto free_window =
+            std::find_if(group_windows_.begin(), group_windows_.end(),
+                         [](const GroupWindow& window) { return !window.valid; });
+        if (free_window == group_windows_.end()) {
+            return Result(LoraMesherErrorCode::kQueueFull,
+                          "Every group acknowledgement window is open");
+        }
+        auto seq = AllocateMessageSeq(group, /*group_stream=*/true);
+        if (!seq) {
+            return Result(LoraMesherErrorCode::kQueueFull,
+                          "Reliable group stream is busy");
+        }
+        id = {host_.node_address, *seq, group};
+        // The window is registered first so that an outcome reported while
+        // tracking (an attempt that fails outright) releases it.
+        *free_window = {true, id.seq, group, host_.now_ms() + window_ms};
+        Result tracked = reliable_.Track(id, data, policy);
+        if (!tracked.IsSuccess()) {
+            free_window->valid = false;
+        }
+        return tracked;
+    });
+    if (!result.IsSuccess()) {
+        LOG_ERROR("Failed to track reliable group to 0x%04X: %s", group,
+                  result.GetErrorMessage().c_str());
+        return kInvalidId;
+    }
+
+    LOG_INFO("Sending reliable GROUP to 0x%04X (seq=%u, window=%u)", group,
+             id.seq, window_ms);
+    return id;
+}
+
+void ReliableMessaging::EnqueueAck(AddressType dest, uint8_t acked_seq,
+                                   bool was_group, uint32_t echo_ts) {
+    AddressType next_hop = host_.find_next_hop(dest);
+    if (next_hop == 0) {
+        next_hop = dest;
+    }
+
+    uint8_t ttl =
+        (host_.max_hops() > 0)
+            ? static_cast<uint8_t>(std::min(2u * host_.max_hops(), 255u))
+            : kDefaultTTL;
+
+    AckPayload ack;
+    ack.acked_seq = acked_seq;
+    ack.flags = was_group ? AckPayload::kFlagWasGroup : 0;
+    ack.echo_timestamp = echo_ts;
+    auto ack_bytes = ack.Serialize();
+    std::vector<uint8_t> payload(ack_bytes.begin(), ack_bytes.end());
+
+    // ACKs are not de-duplicated and are matched by acked_seq in the payload,
+    // so the message seq_num is unused; keep it at 0.
+    auto ack_msg =
+        DataMessage::Create(dest, host_.node_address, next_hop, payload, ttl,
+                            /*seq_num=*/0, MessageType::ACK);
+    if (!ack_msg) {
+        LOG_ERROR("Failed to create ACK for 0x%04X seq=%u", dest, acked_seq);
+        return;
+    }
+
+    auto base_msg = std::make_unique<BaseMessage>(ack_msg->ToBaseMessage());
+    Result queue_result = host_.enqueue(SlotType::TX, std::move(base_msg));
+    if (!queue_result) {
+        LOG_ERROR("Failed to queue ACK for 0x%04X: %s", dest,
+                  queue_result.GetErrorMessage().c_str());
+    }
+}
+
+Result ReliableMessaging::ProcessAckMessage(const BaseMessage& message) {
+    auto ack_msg_opt = DataMessage::CreateFromBaseMessage(message);
+    if (!ack_msg_opt) {
+        LOG_ERROR("Failed to deserialize ACK message");
+        return Result(LoraMesherErrorCode::kSerializationError,
+                      "Failed to deserialize ACK message");
+    }
+
+    const DataMessage& ack_msg = *ack_msg_opt;
+    AddressType next_hop = ack_msg.GetNextHop();
+    AddressType final_dest = ack_msg.GetDestination();
+    AddressType acker = ack_msg.GetSource();
+    uint8_t ttl = ack_msg.GetTTL();
+
+    if (acker == host_.node_address) {
+        return Result::Success();
+    }
+
+    // Link-layer filter: only act on ACKs for which we are the next hop.
+    if (next_hop != host_.node_address) {
+        return Result::Success();
+    }
+
+    if (final_dest == host_.node_address) {
+        auto ack = AckPayload::Deserialize(ack_msg.GetPayload());
+        if (!ack) {
+            LOG_ERROR("Malformed ACK payload from 0x%04X", acker);
+            return Result(LoraMesherErrorCode::kSerializationError,
+                          "Malformed ACK payload");
+        }
+        // Every acknowledgement carries a round-trip sample, even one that
+        // arrives after the message was given up on.
+        RecordRttSample(acker, ack->echo_timestamp);
+        bool matched = RunLocked([&]() {
+            reliability::MessageId id{host_.node_address, ack->acked_seq,
+                                      acker};
+            if (ack->WasGroup()) {
+                const GroupWindow* window = FindGroupWindow(ack->acked_seq);
+                if (window == nullptr) {
+                    return false;
+                }
+                id.dest = window->group;
+            }
+            return reliable_.OnAck(id, acker, ack->echo_timestamp);
+        });
+        LOG_DEBUG("ACK from 0x%04X for seq=%u matched=%d", acker,
+                  ack->acked_seq, matched);
+        return Result::Success();
+    }
+
+    // Forward the ACK toward the original sender.
+    if (ttl <= 1) {
+        LOG_WARNING("ACK TTL expired toward 0x%04X, dropping", final_dest);
+        return Result::Success();
+    }
+    return host_.forward_data_message(ack_msg);
+}
+
+void ReliableMessaging::ProcessReliableTimers() {
+    RunLocked([this]() {
+        reliable_.Tick();
+        CloseExpiredGroupWindows();
+    });
+}
+
+ReliableMessaging::GroupWindow* ReliableMessaging::FindGroupWindow(
+    uint8_t seq) {
+    for (auto& window : group_windows_) {
+        if (window.valid && window.seq == seq) {
+            return &window;
+        }
+    }
+    return nullptr;
+}
+
+void ReliableMessaging::CloseExpiredGroupWindows() {
+    uint32_t now = host_.now_ms();
+    for (auto& window : group_windows_) {
+        if (window.valid && utils::TimeReached(now, window.deadline_ms)) {
+            window.valid = false;
+            reliable_.CloseGroup(
+                {host_.node_address, window.seq, window.group});
+        }
+    }
+}
+
+void ReliableMessaging::OnReliableOutcome(
+    const reliability::DeliveryResult& result) {
+    if (IsGroupAddress(result.id.dest) &&
+        result.outcome != reliability::Outcome::Delivered) {
+        // The group send has ended; its acknowledgement window is free.
+        GroupWindow* window = FindGroupWindow(result.id.seq);
+        if (window != nullptr && window->group == result.id.dest) {
+            window->valid = false;
+        }
+    }
+    if (outcome_batch_ == nullptr ||
+        outcome_batch_->count >= outcome_batch_->results.size()) {
+        LOG_ERROR("Reliable outcome for seq=%u dropped", result.id.seq);
+        return;
+    }
+    outcome_batch_->results[outcome_batch_->count++] = result;
+}
+
+void ReliableMessaging::Reset() {
+    RunLocked([this]() {
+        reliable_.AbortAll();
+        group_windows_.fill(GroupWindow{});
+    });
+}
+
+void ReliableMessaging::SetDeliveryCallback(
+    reliability::DeliveryCallback callback) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    delivery_callback_ = std::move(callback);
+}
+
+size_t ReliableMessaging::GetReliablePendingCount() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return reliable_.PendingCount();
+}
+
+}  // namespace lora_mesh
+}  // namespace protocols
+}  // namespace loramesher
