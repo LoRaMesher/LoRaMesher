@@ -204,6 +204,16 @@ void ReliableDelivery::CloseGroup(MessageId id) {
     Finish(*entry, Outcome::GroupWindowClosed);
 }
 
+void ReliableDelivery::AbortAll() {
+    for (auto& entry : entries_) {
+        if (entry.valid) {
+            Finish(entry, entry.policy.collect_multiple
+                              ? Outcome::GroupWindowClosed
+                              : Outcome::Failed);
+        }
+    }
+}
+
 uint8_t ReliableDelivery::PendingSeqSpan(bool group_stream, AddressType dest,
                                          uint8_t seq) const {
     uint8_t span = 0;

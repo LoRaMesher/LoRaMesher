@@ -473,6 +473,71 @@ TEST_F(NetworkServiceStateCoverageTest, SendsAreSafeDuringStateChanges) {
     protocol.join();
 }
 
+// ─── ResetNetworkState ──────────────────────────────────────────────────────
+
+/**
+ * @brief The state-change callback fired by a reset may call back into the
+ *        service.
+ */
+TEST_F(NetworkServiceStateCoverageTest, ResetCallbackMayReenterService) {
+    Configure();
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    service_->SetStateChangeCallback([this](INetworkService::ProtocolState) {
+        (void)service_->GetLocalNodeCapabilities();
+    });
+
+    std::atomic<bool> finished{false};
+    std::thread resetter([&]() {
+        service_->ResetNetworkState();
+        finished.store(true);
+    });
+    for (int i = 0; i < 500 && !finished.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    if (!finished.load()) {
+        // The reset deadlocked: leave the blocked service alive so tear-down
+        // does not destroy a mutex that is still held.
+        resetter.detach();
+        (void)service_.release();
+        FAIL() << "ResetNetworkState deadlocked in the state-change callback";
+    }
+    resetter.join();
+}
+
+/**
+ * @brief A reset abandons pending reliable messages and clears election state.
+ */
+TEST_F(NetworkServiceStateCoverageTest, ResetLeavesNoStaleProtocolState) {
+    Configure();
+    ASSERT_TRUE(superframe_->StartSuperframe());
+    ASSERT_TRUE(service_->CreateNetwork());
+
+    std::vector<reliability::DeliveryResult> outcomes;
+    service_->SetDeliveryCallback(
+        [&outcomes](const reliability::DeliveryResult& result) {
+            outcomes.push_back(result);
+        });
+    const std::vector<uint8_t> payload = {1, 2, 3};
+    ASSERT_NE(service_->SendReliable(0x3003, payload, 2).source, 0u);
+    ASSERT_EQ(service_->GetReliablePendingCount(), 1u);
+
+    service_->SetState(INetworkService::ProtocolState::FAULT_RECOVERY);
+    service_->StartElectionBackoff();
+    ASSERT_TRUE(service_->IsElectionPending());
+
+    service_->ResetNetworkState();
+    superframe_->StopSuperframe();
+
+    EXPECT_EQ(service_->GetReliablePendingCount(), 0u);
+    ASSERT_EQ(outcomes.size(), 1u);
+    EXPECT_EQ(outcomes[0].outcome, reliability::Outcome::Failed);
+    EXPECT_FALSE(service_->IsElectionPending());
+    EXPECT_EQ(service_->GetElectionBackoffRemaining(), 0u);
+    EXPECT_EQ(service_->GetState(),
+              INetworkService::ProtocolState::INITIALIZING);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

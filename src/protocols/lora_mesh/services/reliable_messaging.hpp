@@ -1,6 +1,6 @@
 /**
  * @file reliable_messaging.hpp
- * @brief Group multicast + reliable-delivery subsystem extracted from NetworkService
+ * @brief Group multicast and reliable-delivery subsystem
  *
  * Owns the end-to-end reliable unicast/group delivery state machine
  * (reliability::ReliableDelivery), group (multicast) membership, and the
@@ -11,7 +11,10 @@
  * Threading: sends run on the application thread while timers and received
  * acknowledgements run on the protocol task. All state is guarded by an
  * internal mutex; delivery outcomes are reported after it is released, so a
- * delivery callback may call back into this component.
+ * delivery callback may call back into this component. Host closures, by
+ * contrast, may run while the mutex is held (a transmission attempt is built
+ * and queued under it), so they must not call back into this component; the
+ * mutex is therefore outermost relative to every lock the host takes.
  */
 
 #pragma once
@@ -52,6 +55,9 @@ class ReliableMessaging {
 
     /**
      * @brief Cross-cutting dependencies bound to the owning NetworkService
+     *
+     * Closures may be invoked with this component's mutex held and must not
+     * call back into it.
      */
     struct Host {
         AddressType node_address = 0;      ///< Local node address
@@ -154,6 +160,16 @@ class ReliableMessaging {
 
     /// @return number of reliable messages currently awaiting acknowledgement.
     size_t GetReliablePendingCount() const;
+
+    /**
+     * @brief Abandon every tracked message and acknowledgement window
+     *
+     * Each pending message is reported through the delivery callback. Group
+     * membership, sequence streams and receive de-duplication state are kept,
+     * so a restarted node neither reuses a sequence its peers still hold nor
+     * re-delivers a message it already delivered.
+     */
+    void Reset();
 
     /**
      * @brief De-duplicate delivery of a received reliable message

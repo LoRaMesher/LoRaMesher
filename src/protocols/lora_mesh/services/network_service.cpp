@@ -3355,37 +3355,56 @@ bool NetworkService::ScheduleDiscoverySlotForwarding() {
 }
 
 void NetworkService::ResetNetworkState() {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    const size_t node_count = routing_table_->GetSize();
+    const size_t slot_count = slot_scheduler_->GetSlotCount();
 
-    // Store count before clearing for logging
-    size_t node_count = routing_table_->GetSize();
-    size_t slot_count = slot_scheduler_->GetSlotCount();
-
-    // Clear network topology data
+    // Clearing the routing table and abandoning pending reliable messages
+    // report through user callbacks, so network_mutex_ is not held here.
     routing_table_->Clear();
     slot_scheduler_->Reset();
+    MarkSlotTableDirty();
+    pending_slot_table_rebuild_ = false;
+    reliable_messaging_->Reset();
+    message_cache_.Reset();
 
-    // Reset state variables
+    {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        local_allocated_data_slots_ = 0;
+    }
+
+    // Network membership
     network_found_ = false;
     network_creator_ = false;
     is_synchronized_ = false;
     network_manager_ = 0;
-    local_allocated_data_slots_ = 0;
+    network_id_ = 0;
+    selected_sponsor_ = 0;
     my_control_slot_index_ = 0xFF;
 
-    // Reset timing variables
+    // Values learned from sync beacons
+    current_network_depth_ = 0;
+    number_of_slots_per_superframe_ = 0;
+    beacon_node_count_ = 1;
+    no_received_sync_beacon_count_ = 0;
+    last_sync_beacon_received_ = 0;
+
+    // Timers
     discovery_start_time_ = 0;
     joining_start_time_ = 0;
     last_sync_time_ = 0;
     last_cleanup_time_ = 0;
 
-    // Clear join data
+    // Joining
     pending_joins_.clear();
     ResetJoinRetryState();
 
-    message_cache_.Reset();
+    // Network Manager election
+    election_end_time_ = 0;
+    election_priority_ = 0xFF;
+    nm_election_start_time_ = 0;
+    surrendered_in_election_ = false;
+    surrender_discovery_retries_ = 0;
 
-    // Reset to initial state
     SetState(ProtocolState::INITIALIZING);
 
     LOG_DEBUG("Network state reset - cleared %zu nodes and %zu slots",

@@ -205,6 +205,12 @@ class ReliableDelivery {
      */
     void CloseGroup(MessageId id);
 
+    /**
+     * @brief Stop tracking every message, reporting each one as Failed, or as
+     *        GroupWindowClosed with its responder count for a group window.
+     */
+    void AbortAll();
+
     /// Number of currently tracked messages.
     size_t PendingCount() const;
 

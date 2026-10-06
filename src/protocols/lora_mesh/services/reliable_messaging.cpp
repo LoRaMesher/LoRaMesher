@@ -696,6 +696,13 @@ void ReliableMessaging::OnReliableOutcome(
     outcome_batch_->results[outcome_batch_->count++] = result;
 }
 
+void ReliableMessaging::Reset() {
+    RunLocked([this]() {
+        reliable_.AbortAll();
+        group_windows_.fill(GroupWindow{});
+    });
+}
+
 void ReliableMessaging::SetDeliveryCallback(
     reliability::DeliveryCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
