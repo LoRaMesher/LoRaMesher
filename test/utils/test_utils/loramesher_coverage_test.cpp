@@ -257,6 +257,44 @@ TEST_F(LoraMesherCoverageTest, GetDataSlotsPerSuperframe) {
 }
 
 // ---------------------------------------------------------------------------
+// GetSuperframeDuration()
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief GetSuperframeDuration() is a whole number of slots once running and
+ *        matches the protocol value.
+ */
+TEST_F(LoraMesherCoverageTest, GetSuperframeDurationIsWholeSlots) {
+    auto mesher = CreateMeshMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    auto protocol = mesher->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+
+    uint32_t slot = protocol->GetSlotDuration();
+    uint32_t superframe = mesher->GetSuperframeDuration();
+    ASSERT_GT(slot, 0u);
+    EXPECT_GT(superframe, slot);
+    EXPECT_EQ(superframe % slot, 0u);
+    EXPECT_EQ(protocol->GetSuperframeDuration(), superframe);
+
+    StopAndReset(mesher);
+}
+
+/**
+ * @brief GetSuperframeDuration() returns 0 when the active protocol is not
+ *        LoRaMesh.
+ */
+TEST_F(LoraMesherCoverageTest, GetSuperframeDurationNoMeshProtocol) {
+    auto mesher = CreatePingPongMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    EXPECT_EQ(mesher->GetSuperframeDuration(), 0u);
+
+    StopAndReset(mesher);
+}
+
+// ---------------------------------------------------------------------------
 // Send() fallback for PingPong protocol — loramesher.cpp lines 177-186
 // ---------------------------------------------------------------------------
 
