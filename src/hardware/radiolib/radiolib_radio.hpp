@@ -390,6 +390,10 @@ class RadioLibRadio : public IRadio {
     std::array<uint32_t, 256> toa_cache_ms_{};
 
     void RefreshToACache();
+
+    /// Warn if the driver's cached time-on-air is shorter than the Semtech
+    /// reference for the current configuration (e.g. a stale LDRO state).
+    void CheckTimeOnAirConsistency() const;
 };
 
 /**
