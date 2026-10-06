@@ -20,7 +20,7 @@
 
 A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-vector routing protocol. Uses [RadioLib](https://github.com/jgromes/RadioLib) for radio communication and FreeRTOS for task scheduling.
 
-> **Coming from 0.0.x?** The 1.0.0 release is a full rewrite — see [MIGRATION.md](MIGRATION.md) for the porting guide. Per-version changes live in [CHANGELOG.md](CHANGELOG.md); the wire protocol is documented in [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md).
+> **Upgrading?** 2.0.0 changes the wire format (flash every node together) and 1.0.0 was a full rewrite of 0.0.x — see [MIGRATION.md](MIGRATION.md) for both upgrade paths. Per-version changes live in [CHANGELOG.md](CHANGELOG.md); the wire protocol is documented in [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md).
 
 ---
 
@@ -44,6 +44,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Coverage](#profiling--code-coverage-llvm)
   - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
+  - [Network Stress Test](#network-stress-test)
 - [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
@@ -288,7 +289,7 @@ auto mesher = LoraMesher::Builder()
     .Build();
 ```
 
-All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — when they meet, the merge protocol forces one to step down, costing ~5 superframes of disruption (the same trade-off is documented for runtime `SetNodeRole()` demotions).
+All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — automatic merging of two networks is currently disabled (see `PROTOCOL_SPEC.md` §10.6.9), so their networks stay separate.
 
 **Approximate time from boot to a fully joined node** (at SF7 / BW 125 kHz with the default 10-slot, 10 s discovery-phase superframes):
 
@@ -369,6 +370,29 @@ pio test -e test_native --list-tests
 ```
 
 > Run as a background task — integration tests take several minutes.
+
+#### Faster local runs (optional)
+
+The commands above work unchanged. Most of the time goes into building, not running: each of
+the 25 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
+recompiles all of `src/` (~100 s per suite, while most suites run in seconds). Optional
+settings that cut this down (measured on WSL2, repo on `/mnt/d`):
+
+| Setting | Effect |
+|---|---|
+| `ccache` on `PATH` (`sudo apt install ccache`) | Used automatically by `scripts/extra_script.py`; ~99% of the recompiles become cache hits: ~100 s → ~47 s per suite |
+| `export PLATFORMIO_BUILD_DIR=$HOME/.cache/loramesher-pio` | Build output on the Linux filesystem, where objects are reused between suites: 39–48 s per suite with ccache |
+| `export LORAMESHER_TEST_LOG_DIR=/tmp/loramesher-test-logs` | Per-test log files (`<Suite>_<Test>.log`, default `./test_logs`) go to a fast location |
+
+**Windows:** if the repo lives on a Windows drive, running PlatformIO natively on Windows (with
+an MSYS2 `clang64` toolchain on `PATH`) avoids the WSL file-system penalty. `test_native`
+(ASAN/UBSAN) and `test_native_profile` both build and pass there; `test_integration` took 28 s
+for build + run versus ~121 s from WSL on `/mnt/d`. When switching between WSL and Windows, give
+each its own `PLATFORMIO_BUILD_DIR` and `PLATFORMIO_LIBDEPS_DIR`. `test_native_tsan` and
+`test_native_xray` are Linux-only; CI runs on Linux.
+
+Failing integration tests print `Reproduce with LORAMESHER_TEST_SEED=N`; set that variable to
+replay the same deterministic run.
 
 ### CMake
 
@@ -502,6 +526,45 @@ clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp  # sin
 ```
 
 Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others (see `.clang-tidy`).
+
+---
+
+### Network Stress Test
+
+`test/protocols/lora_mesh/services/test_network_stress/` runs a simulated multi-hop mesh under mixed traffic and reports delivery, latency, queue depth and TDMA schedule alignment.
+
+**Topology:** clusters of 5 nodes (one head + 4 leaves in a star) whose heads form a backbone line; the Network Manager is the centre head. **Traffic:** non-reliable leaf→head telemetry, reliable unicast across the backbone, and reliable group sends from the Network Manager.
+
+| Cell | Nodes | Worst-case hops | Asserts | Approx. run time |
+|------|-------|-----------------|---------|------------------|
+| `10n_uniform` | 10 | 3 | Pass/fail on 1-hop delivery, relay queue, TDMA alignment | ~1 min |
+| `25n_uniform` | 25 | 6 | TDMA alignment only (other metrics reported); **opt-in** | ~5–10 min |
+
+Build the suite once, then run a single cell directly (the full suite runs every cell):
+
+```bash
+# Build only (library + suite)
+pio test -e test_native -f "protocols/lora_mesh/services/test_network_stress" --without-testing
+
+# Run one cell, writing the (multi-MB, verbose) output to a file
+.pio/build/test_native/program --gtest_filter='*10n_uniform' > stress.log 2>&1
+
+# The 25-node cell is skipped unless explicitly enabled (it is not run in CI)
+LORAMESHER_STRESS_FULL=1 .pio/build/test_native/program --gtest_filter='*25n_uniform' > stress25.log 2>&1
+
+# Extract the results
+grep -aE "STRESS SCORECARD|^(reliable|non-reliable|group|relay|collision|TDMA|superframe|VERDICT)|##METRICS##|##MISALIGNED##|  OK |FAILED" stress.log
+```
+
+**Reading the output:**
+
+- **Scorecard:** delivery ratio per traffic class, reliable RTT and one-way latency, relay TX-queue depth (max / mean of the final quarter; queue capacity is 10), link collision rate, TDMA misalignments (a count, 0 when every neighbour listens in every slot a node transmits), superframe length and convergence time, and a `HEALTHY` / `COLLAPSED` verdict.
+- `##METRICS## {...}`: the same values as one JSON line, for scripting.
+- `##DATA## N<i> | ...`: each node's data band after settling — `T` = own TX slot, `R<j>` = listening to node `j`.
+- `##ALLOC## N<i> ...`: per-node TX / RX / sleep slot counts and frame length.
+- `##MISALIGNED## slot <s>: ...`: a slot where a node transmits but a neighbour is not listening to it.
+
+**Tips:** always redirect to a file and search it with `grep -a` (the log contains colour codes); do not edit sources while a build is running; allow a long timeout for the 25-node cell. The fixture writes per-test logs to `test_logs/` in the current directory — on WSL, run the binary from a Linux directory (not `/mnt/<drive>`), since slow log writes there make the tests stall.
 
 ---
 
