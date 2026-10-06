@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
@@ -1027,7 +1028,7 @@ class NetworkService : public INetworkService {
     /**
      * @brief Returns true if an NM election backoff is currently in progress
      */
-    bool IsElectionPending() const { return election_end_time_ != 0; }
+    bool IsElectionPending() const { return election_deadline_ms_.has_value(); }
 
     /**
      * @brief Initiate NM election backoff (called when entering FAULT_RECOVERY)
@@ -1447,12 +1448,12 @@ class NetworkService : public INetworkService {
     uint32_t last_cleanup_time_ = 0;  ///< Last time route cleanup was performed
 
     // NM election state
-    uint32_t election_end_time_ =
-        0;  ///< Tick count when election backoff expires (0 = none)
+    /// Tick count when the election backoff expires (empty when none)
+    std::optional<uint32_t> election_deadline_ms_;
     uint8_t election_priority_ =
         0xFF;  ///< Our election priority (lower = higher priority)
-    uint32_t nm_election_start_time_ =
-        0;  ///< Tick count when NM_ELECTION began
+    /// Tick count when NM_ELECTION began (empty when not electing)
+    std::optional<uint32_t> nm_election_start_ms_;
     bool surrendered_in_election_ =
         false;  ///< True if this node yielded to a higher-priority claimant
     uint8_t surrender_discovery_retries_ =

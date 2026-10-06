@@ -14,6 +14,7 @@
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/configurations/protocol_configuration.hpp"
+#include "utils/time_utils.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
@@ -662,7 +663,7 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
 
     // Record discovery start time
     discovery_start_time_ = GetRTOS().getTickCount();
-    nm_election_start_time_ = 0;
+    nm_election_start_ms_.reset();
 
     LOG_INFO("Starting network discovery, timeout: %d ms, current time: %d ms",
              discovery_timeout_ms, discovery_start_time_);
@@ -2488,12 +2489,12 @@ Result NetworkService::PerformJoining(uint32_t timeout_ms) {
 uint32_t NetworkService::GetNMElectionTimeout() const {
     uint32_t window_ms =
         superframe_service_ ? 2 * superframe_service_->GetSlotDuration() : 2000;
-    if (nm_election_start_time_ == 0) {
+    if (!nm_election_start_ms_) {
         return window_ms;
     }
-    uint32_t end_time = nm_election_start_time_ + window_ms;
-    uint32_t now = GetRTOS().getTickCount();
-    return (now < end_time) ? (end_time - now) : 0;
+    const uint32_t end_time = *nm_election_start_ms_ + window_ms;
+    const uint32_t now = GetRTOS().getTickCount();
+    return utils::TimeReached(now, end_time) ? 0 : end_time - now;
 }
 
 Result NetworkService::PerformNMElection() {
@@ -2744,11 +2745,11 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         // Cancel any pending election — a live NM is broadcasting
         if ((state_ == ProtocolState::FAULT_RECOVERY ||
              state_ == ProtocolState::NM_ELECTION) &&
-            election_end_time_ != 0) {
+            election_deadline_ms_) {
             LOG_INFO(
                 "Cancelling NM election: received sync beacon from NM 0x%04X",
                 beacon_nm);
-            election_end_time_ = 0;
+            election_deadline_ms_.reset();
         }
 
         // Store max_hops from the sync beacon for slot allocation calculations
@@ -3400,9 +3401,9 @@ void NetworkService::ResetNetworkState() {
     ResetJoinRetryState();
 
     // Network Manager election
-    election_end_time_ = 0;
+    election_deadline_ms_.reset();
     election_priority_ = 0xFF;
-    nm_election_start_time_ = 0;
+    nm_election_start_ms_.reset();
     surrendered_in_election_ = false;
     surrender_discovery_retries_ = 0;
 
@@ -3466,7 +3467,7 @@ uint8_t NetworkService::ComputeElectionPriority() const {
 
 void NetworkService::StartElectionBackoff() {
     if (node_role_ == NodeRole::NODE_ONLY) {
-        election_end_time_ = 0;  // NODE_ONLY never elects
+        election_deadline_ms_.reset();  // NODE_ONLY never elects
         return;
     }
 
@@ -3485,7 +3486,7 @@ void NetworkService::StartElectionBackoff() {
     uint32_t backoff_ms =
         listen_window_ms + role_bonus_ms + addr_bonus_ms + jitter_ms;
 
-    election_end_time_ = GetRTOS().getTickCount() + backoff_ms;
+    election_deadline_ms_ = GetRTOS().getTickCount() + backoff_ms;
 
     // Without beacons the old schedule is stale; listen on every slot so a
     // higher-priority NM_CLAIM is heard whenever it is sent
@@ -3499,26 +3500,28 @@ void NetworkService::StartElectionBackoff() {
 }
 
 uint32_t NetworkService::GetElectionBackoffRemaining() const {
-    if (election_end_time_ == 0) {
+    if (!election_deadline_ms_) {
         return 0;
     }
-    uint32_t now = GetRTOS().getTickCount();
-    return (now < election_end_time_) ? (election_end_time_ - now) : 0;
+    const uint32_t now = GetRTOS().getTickCount();
+    return utils::TimeReached(now, *election_deadline_ms_)
+               ? 0
+               : *election_deadline_ms_ - now;
 }
 
 void NetworkService::CheckElectionBackoff() {
-    if (state_ != ProtocolState::FAULT_RECOVERY || election_end_time_ == 0 ||
+    if (state_ != ProtocolState::FAULT_RECOVERY || !election_deadline_ms_ ||
         GetElectionBackoffRemaining() > 0) {
         return;
     }
     LOG_INFO("Election backoff expired (priority=%d), entering NM_ELECTION",
              election_priority_);
-    election_end_time_ = 0;
+    election_deadline_ms_.reset();
     // With discovery slots the NM_CLAIM leaves in the next slot through the
     // DISCOVERY_RX fallback
     SetDiscoverySlots();
     SendNMClaim();
-    nm_election_start_time_ = GetRTOS().getTickCount();
+    nm_election_start_ms_ = GetRTOS().getTickCount();
     SetState(ProtocolState::NM_ELECTION);
 }
 
@@ -3615,7 +3618,7 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             "Surrendering to higher-priority claimant 0x%04X (their=%d "
             "ours=%d)",
             claimant, their_priority, election_priority_);
-        election_end_time_ = 0;  // cancel our election
+        election_deadline_ms_.reset();  // cancel our election
         surrendered_in_election_ = true;
 
         // Store network_id from the claimant's beacon if available

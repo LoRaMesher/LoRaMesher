@@ -115,6 +115,25 @@ TEST_F(ElectionBackoffTest, PendingBackoffKeepsWaiting) {
     EXPECT_FALSE(message_queue_->HasMessage(MessageType::NM_CLAIM));
 }
 
+TEST_F(ElectionBackoffTest, BackoffSpanningTickWrapStillWaits) {
+    // Move the 32-bit tick counter to 3 s before it wraps; every backoff is
+    // longer than that, so its deadline lies past the wrap.
+    const uint32_t now = mock_->getTickCount();
+    mock_->advanceTime(UINT32_MAX - now - 3000);
+    EnterFaultRecovery();
+
+    EXPECT_GT(service_->GetElectionBackoffRemaining(), 3000u);
+    service_->CheckElectionBackoff();
+    EXPECT_EQ(service_->GetState(),
+              INetworkService::ProtocolState::FAULT_RECOVERY);
+
+    mock_->advanceTime(kBeyondAnyBackoffMs);
+    EXPECT_EQ(service_->GetElectionBackoffRemaining(), 0u);
+    service_->CheckElectionBackoff();
+    EXPECT_EQ(service_->GetState(),
+              INetworkService::ProtocolState::NM_ELECTION);
+}
+
 TEST_F(ElectionBackoffTest, WaitingNodeListensOnEverySlot) {
     EnterFaultRecovery();
 
