@@ -59,12 +59,17 @@ class MessageCache {
         return true;
     }
 
-    /// Clear the cache and restart the sequence counter.
+    /**
+     * @brief Clear the cache of received messages
+     *
+     * The sequence counter keeps counting: neighbours may still cache this
+     * node's recent packets, so restarting it would get new packets dropped
+     * as duplicates.
+     */
     void Reset() {
         std::lock_guard<std::mutex> lock(mutex_);
         entries_.fill({});
         head_ = 0;
-        seq_.store(0, std::memory_order_relaxed);
     }
 
    private:
