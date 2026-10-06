@@ -10,7 +10,9 @@ namespace radio {
 // Implementation class using the PIMPL idiom to hide test::MockRadio
 class MockRadio::Impl {
    public:
-    test::MockRadio mock;
+    // Calls without an expectation are expected (e.g. the time-on-air cache
+    // fill), so they are not reported as uninteresting
+    ::testing::NiceMock<test::MockRadio> mock;
 };
 
 // Constructor

@@ -6,16 +6,20 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "hardware/SPIMock.hpp"
@@ -36,6 +40,48 @@ using ::testing::A;
 
 namespace loramesher {
 namespace test {
+
+/// Seed used by the test harness when LORAMESHER_TEST_SEED is not set
+inline constexpr uint32_t kDefaultTestSeed = 42;
+
+/**
+ * @brief Parse a LORAMESHER_TEST_SEED value
+ *
+ * Accepts decimal, hexadecimal (0x) or octal (0) integers that fit in 32 bits.
+ *
+ * @param value Environment variable value, or nullptr when unset
+ * @return The parsed seed, or kDefaultTestSeed when unset or invalid
+ */
+inline uint32_t TestSeedFromEnvironmentValue(const char* value) {
+    if (value == nullptr || value[0] == '\0') {
+        return kDefaultTestSeed;
+    }
+    char* end = nullptr;
+    errno = 0;
+    unsigned long long parsed = std::strtoull(value, &end, 0);
+    if (errno != 0 || end == value || *end != '\0' || parsed > UINT32_MAX) {
+        return kDefaultTestSeed;
+    }
+    return static_cast<uint32_t>(parsed);
+}
+
+/**
+ * @brief Seed selected by the LORAMESHER_TEST_SEED environment variable
+ */
+inline uint32_t TestSeedFromEnvironment() {
+    return TestSeedFromEnvironmentValue(std::getenv("LORAMESHER_TEST_SEED"));
+}
+
+/**
+ * @brief Directory for per-test log files
+ *
+ * LORAMESHER_TEST_LOG_DIR when set, otherwise "test_logs" relative to the
+ * current directory.
+ */
+inline std::string TestLogDirectoryFromEnvironment() {
+    const char* value = std::getenv("LORAMESHER_TEST_LOG_DIR");
+    return (value != nullptr && value[0] != '\0') ? value : "test_logs";
+}
 
 /**
  * @brief Calculate Time-on-Air for LoRa transmission
@@ -141,10 +187,35 @@ class VirtualNetwork {
     /**
      * @brief Constructor
      */
-    VirtualNetwork() : current_time_(0), packet_loss_rate_(0.0f) {
-        // Initialize random number generator
-        std::random_device rd;
-        rng_ = std::mt19937(rd());
+    VirtualNetwork() : current_time_(0), packet_loss_rate_(0.0f) {}
+
+    /// Seed used by the global packet-loss decisions until SetSeed() is called
+    static constexpr uint32_t kDefaultSeed = 42;
+
+    /**
+     * @brief Set the seed of the global packet-loss decisions
+     *
+     * The same seed, topology and transmission sequence always drop the same
+     * packets.
+     *
+     * @param seed Seed value
+     */
+    void SetSeed(uint32_t seed) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        seed_ = seed;
+    }
+
+    /**
+     * @brief Drive the network clock from an external time source
+     *
+     * With a source set (e.g. the RTOS virtual clock), transmissions are
+     * stamped with the sender's current time and AdvanceTime() no longer moves
+     * the clock. Pass nullptr to return to the internal clock.
+     *
+     * @param source Function returning the current time in milliseconds
+     */
+    void SetTimeSource(std::function<uint32_t()> source) {
+        time_source_ = std::move(source);
     }
 
     /**
@@ -159,6 +230,7 @@ class VirtualNetwork {
 
     void RegisterNode(uint32_t address, IRadioReceiver* radio,
                       const RadioConfig& config) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         if (nodes_.find(address) != nodes_.end()) {
             std::cerr << "Node with address " << address
                       << " already registered" << std::endl;
@@ -177,7 +249,10 @@ class VirtualNetwork {
      * @param address Address of the node to remove
      */
     void UnregisterNode(uint32_t address) {
-        nodes_.erase(address);
+        {
+            std::lock_guard<std::mutex> lock(nodes_mutex_);
+            nodes_.erase(address);
+        }
         std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         sent_messages_.erase(address);
     }
@@ -198,13 +273,6 @@ class VirtualNetwork {
             sent_messages_[source].push_back(data);
         }
 
-        // Check if source exists
-        if (nodes_.find(source) == nodes_.end()) {
-            std::cerr << "Source node " << source << " not found in network"
-                      << std::endl;
-            return;
-        }
-
         std::string hex_data;
         if (data.size() > 0) {
             char hex_byte[4];  // Extra space for the format
@@ -216,13 +284,23 @@ class VirtualNetwork {
 
         LOG_DEBUG("Transmitting message from 0x%04X, hex: %s", source,
                   hex_data.c_str());
-        const auto& src_config = nodes_[source].radio_config;
+
+        std::unique_lock<std::mutex> nodes_lock(nodes_mutex_);
+        auto src_it = nodes_.find(source);
+        if (src_it == nodes_.end()) {
+            nodes_lock.unlock();
+            std::cerr << "Source node " << source << " not found in network"
+                      << std::endl;
+            return;
+        }
+        const RadioConfig& src_config = src_it->second.radio_config;
         uint32_t toa = CalculateLoRaTimeOnAir(
             static_cast<uint8_t>(data.size()), src_config.getSpreadingFactor(),
             static_cast<uint32_t>(src_config.getBandwidth() * 1000),
             src_config.getCodingRate(), src_config.getPreambleLength(), true,
             src_config.getCRC());
-        LOG_DEBUG("Time-on-Air for message: %u ms", toa);
+        const uint32_t now = GetCurrentTime();
+        std::vector<PendingMessage> arrivals;
 
         // Determine which nodes should receive the message
         for (auto& node_pair : nodes_) {
@@ -230,12 +308,11 @@ class VirtualNetwork {
 
             // Skip the source node
             if (dest_address == source) {
-                LOG_DEBUG("Skipping transmission to self (0x%04X)", source);
                 continue;
             }
 
             // Check if link is active
-            if (!IsLinkActive(source, dest_address)) {
+            if (!IsLinkActiveLocked(source, dest_address)) {
                 continue;
             }
 
@@ -245,18 +322,26 @@ class VirtualNetwork {
             }
 
             // Check for global packet loss
-            if (ShouldDropPacket()) {
+            if (ShouldDropPacket(source, dest_address)) {
                 continue;
             }
 
-            // Calculate delivery time
-            uint32_t delay = GetLinkDelay(source, dest_address);
-            uint32_t delivery_time = current_time_ + delay + toa;
-
-            // Queue the message for delivery with timing metadata
-            QueueMessageDelivery(source, dest_address, data, current_time_, toa,
-                                 delivery_time, rssi, snr);
+            PendingMessage msg;
+            msg.source = source;
+            msg.destination = dest_address;
+            msg.data = data;
+            msg.transmission_start_time = now;
+            msg.time_on_air = toa;
+            msg.arrival_start = now + GetLinkDelay(source, dest_address);
+            msg.delivery_time = msg.arrival_start + toa;
+            msg.rssi = rssi;
+            msg.snr = snr;
+            arrivals.push_back(std::move(msg));
         }
+        nodes_lock.unlock();
+
+        LOG_DEBUG("Time-on-Air for message: %u ms", toa);
+        QueueTransmission(source, now, toa, std::move(arrivals));
     }
 
     /**
@@ -368,6 +453,7 @@ class VirtualNetwork {
      * @param active Whether the link should be active
      */
     void SetLinkStatus(uint32_t node1, uint32_t node2, bool active) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         // Ensure bidirectional link update
         if (nodes_.find(node1) != nodes_.end()) {
             nodes_[node1].active_links[node2] = active;
@@ -385,6 +471,7 @@ class VirtualNetwork {
      * the reverse direction.
      */
     void SetDirectionalLink(uint32_t from, uint32_t to, bool active) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         if (nodes_.find(from) != nodes_.end()) {
             nodes_[from].active_links[to] = active;
         }
@@ -398,19 +485,8 @@ class VirtualNetwork {
      * @return true if link is active, false otherwise
      */
     bool IsLinkActive(uint32_t node1, uint32_t node2) const {
-        auto it1 = nodes_.find(node1);
-        if (it1 == nodes_.end())
-            return false;
-
-        auto& links = it1->second.active_links;
-        auto it2 = links.find(node2);
-
-        // If explicit link status not set, default to inactive
-        if (it2 == links.end()) {
-            return false;
-        }
-
-        return it2->second;
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        return IsLinkActiveLocked(node1, node2);
     }
 
     /**
@@ -422,6 +498,7 @@ class VirtualNetwork {
      */
     void SetMessageDelay(uint32_t node1, uint32_t node2,
                          uint32_t delay_ms = 50) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         // Ensure bidirectional delay update
         if (nodes_.find(node1) != nodes_.end()) {
             nodes_[node1].link_delays[node2] = delay_ms;
@@ -437,6 +514,7 @@ class VirtualNetwork {
      * @param rate Loss rate (0.0 = no loss, 1.0 = all packets lost)
      */
     void SetPacketLossRate(float rate) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         packet_loss_rate_ = std::min(1.0f, std::max(0.0f, rate));
     }
 
@@ -449,6 +527,7 @@ class VirtualNetwork {
      */
     void SetDirectionalLinkLoss(uint32_t from_addr, uint32_t to_addr,
                                 float rate) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
         auto it = nodes_.find(from_addr);
         if (it != nodes_.end()) {
             it->second.link_loss_rates[to_addr] =
@@ -475,17 +554,185 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Delivery time of the earliest pending message, if any
+     */
+    std::optional<uint32_t> NextDeliveryTime() const {
+        std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+        std::optional<uint32_t> next;
+        for (const auto& msg : pending_messages_) {
+            if (!next || msg.delivery_time < *next) {
+                next = msg.delivery_time;
+            }
+        }
+        return next;
+    }
+
+    /**
+     * @brief Resolve the earliest due message: deliver it, or drop it when it
+     * collided or its receiver cannot take it
+     *
+     * Due messages are resolved in (delivery time, transmission start,
+     * source, destination) order. A message collides when another arrival at
+     * the same receiver overlaps its on-air interval, whichever step either
+     * was delivered in. It is dropped when the receiver was itself
+     * transmitting during the arrival (half duplex) or its radio is not
+     * receiving at delivery time.
+     *
+     * @return true if the message was accepted by its receiver
+     */
+    bool DeliverNextMessage() {
+        PendingMessage msg;
+        bool collided = false;
+        bool receiver_transmitting = false;
+        {
+            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+            const uint32_t now = GetCurrentTime();
+            auto next = pending_messages_.end();
+            for (auto it = pending_messages_.begin();
+                 it != pending_messages_.end(); ++it) {
+                if (it->delivery_time <= now &&
+                    (next == pending_messages_.end() ||
+                     DeliversBefore(*it, *next))) {
+                    next = it;
+                }
+            }
+            if (next == pending_messages_.end()) {
+                return false;
+            }
+            msg = std::move(*next);
+            pending_messages_.erase(next);
+
+            for (const auto& other : arrivals_[msg.destination]) {
+                if (other.packet_id != msg.packet_id &&
+                    Overlaps(other, msg.arrival_start, msg.delivery_time)) {
+                    collided = true;
+                    LOG_WARNING(
+                        "[COLLISION] Messages from 0x%04X and 0x%04X collided "
+                        "at destination 0x%04X (windows: [%u-%u] vs [%u-%u])",
+                        msg.source, other.source, msg.destination,
+                        msg.arrival_start, msg.delivery_time, other.start,
+                        other.end);
+                    break;
+                }
+            }
+            for (const auto& own : transmissions_[msg.destination]) {
+                if (Overlaps(own, msg.arrival_start, msg.delivery_time)) {
+                    receiver_transmitting = true;
+                    break;
+                }
+            }
+            PruneAirLog(now);
+        }
+
+        if (collided) {
+            LOG_DEBUG(
+                "[COLLISION] Dropping message from 0x%04X to 0x%04X due to "
+                "collision",
+                msg.source, msg.destination);
+            std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+            collided_by_dest_[msg.destination]++;
+            return false;
+        }
+        if (receiver_transmitting) {
+            LOG_DEBUG(
+                "[%u ms] Message from 0x%04X dropped at 0x%04X - receiver "
+                "was transmitting",
+                GetCurrentTime(), msg.source, msg.destination);
+            RecordReceiverDrop(msg.destination);
+            return false;
+        }
+        return DeliverMessage(msg);
+    }
+
+    /**
      * @brief Get current simulation time
      * 
      * @return Current time in milliseconds
      */
-    uint32_t GetCurrentTime() const { return current_time_; }
+    uint32_t GetCurrentTime() const {
+        return time_source_ ? time_source_() : current_time_.load();
+    }
 
     uint32_t GetDroppedMessageCount() const {
         return dropped_message_count_.load();
     }
 
     void ResetDroppedMessageCount() { dropped_message_count_ = 0; }
+
+    /**
+     * @brief Get the number of messages dropped at a specific destination
+     *        because its radio was not in a receiving state.
+     *
+     * @param address Destination node address
+     * @return Count of drops at that node
+     */
+    uint32_t GetDroppedMessageCount(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+        auto it = dropped_by_dest_.find(address);
+        return (it == dropped_by_dest_.end()) ? 0u : it->second;
+    }
+
+    /**
+     * @brief Reset the per-destination dropped counter for a node.
+     */
+    void ResetDroppedMessageCount(uint32_t address) {
+        std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+        dropped_by_dest_[address] = 0;
+    }
+
+    /**
+     * @brief Get the number of messages a node has actually accepted
+     *        (delivered while its radio was receiving).
+     */
+    uint32_t GetReceivedMessageCount(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(received_by_dest_mutex_);
+        auto it = received_by_dest_.find(address);
+        return (it == received_by_dest_.end()) ? 0u : it->second;
+    }
+
+    /**
+     * @brief Reset the per-destination received counter for a node.
+     */
+    void ResetReceivedMessageCount(uint32_t address) {
+        std::lock_guard<std::mutex> lock(received_by_dest_mutex_);
+        received_by_dest_[address] = 0;
+    }
+
+    /**
+     * @brief Get the number of messages dropped at a specific destination
+     *        because their on-air windows collided with another transmission.
+     *
+     * @param address Destination node address
+     * @return Count of collision drops at that node
+     */
+    uint32_t GetCollisionCount(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+        auto it = collided_by_dest_.find(address);
+        return (it == collided_by_dest_.end()) ? 0u : it->second;
+    }
+
+    /**
+     * @brief Reset the per-destination collision counter for a node.
+     */
+    void ResetCollisionCount(uint32_t address) {
+        std::lock_guard<std::mutex> lock(collided_by_dest_mutex_);
+        collided_by_dest_[address] = 0;
+    }
+
+    /**
+     * @brief Get a node's current radio state (test introspection)
+     *
+     * @param address Node address
+     * @return Radio state, or kSleep if the node/radio is unknown
+     */
+    loramesher::radio::RadioState GetNodeRadioState(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        auto it = nodes_.find(address);
+        if (it == nodes_.end() || it->second.radio == nullptr) {
+            return loramesher::radio::RadioState::kSleep;
+        }
+        return it->second.radio->GetRadioState();
+    }
 
    private:
     /**
@@ -496,6 +743,11 @@ class VirtualNetwork {
         std::map<uint32_t, bool> active_links;
         std::map<uint32_t, uint32_t> link_delays;
         std::map<uint32_t, float> link_loss_rates;
+        /// Per-destination transmit counter driving the deterministic
+        /// error-diffusion drop pattern.
+        std::map<uint32_t, uint32_t> link_tx_counts;
+        /// Per-destination transmit counter driving the global-loss decisions
+        std::map<uint32_t, uint32_t> global_loss_counts;
         RadioConfig radio_config;
     };
 
@@ -503,52 +755,83 @@ class VirtualNetwork {
      * @brief Information about a pending message
      */
     struct PendingMessage {
-        uint32_t source;
-        uint32_t destination;
+        uint64_t packet_id = 0;  ///< Shared by all copies of one transmission
+        uint32_t source = 0;
+        uint32_t destination = 0;
         std::vector<uint8_t> data;
-        uint32_t transmission_start_time;  ///< When transmission started
-        uint32_t time_on_air;              ///< Duration of transmission in ms
-        uint32_t delivery_time;            ///< transmission_start + delay + toa
-        float rssi;
-        float snr;
-
-        /**
-         * @brief Get the end time of this transmission's on-air window
-         * @return Time when this transmission ends (start + toa)
-         */
-        uint32_t GetTransmissionEndTime() const {
-            return transmission_start_time + time_on_air;
-        }
-
-        /**
-         * @brief Check if this message's on-air window overlaps with another
-         * @param other The other pending message to check against
-         * @return true if the on-air windows overlap
-         */
-        bool OverlapsWith(const PendingMessage& other) const {
-            // Two windows overlap if: start_A < end_B AND start_B < end_A
-            return transmission_start_time < other.GetTransmissionEndTime() &&
-                   other.transmission_start_time < GetTransmissionEndTime();
-        }
+        uint32_t transmission_start_time = 0;  ///< When transmission started
+        uint32_t time_on_air = 0;    ///< Duration of transmission in ms
+        uint32_t arrival_start = 0;  ///< transmission_start + link delay
+        uint32_t delivery_time = 0;  ///< arrival_start + time_on_air
+        float rssi = 0.0f;
+        float snr = 0.0f;
     };
 
+    /**
+     * @brief A packet's on-air interval [start, end) at one node
+     */
+    struct AirInterval {
+        uint64_t packet_id;
+        uint32_t source;
+        uint32_t start;
+        uint32_t end;
+    };
+
+    /// How long past its end an air interval is kept for overlap checks
+    static constexpr uint32_t kAirLogRetentionMs = 60000;
+
+    /// Guards nodes_ (links, delays, loss settings and counters), the loss
+    /// rate and the seed; transmit threads and the test thread share them
+    mutable std::mutex nodes_mutex_;
     std::map<uint32_t, NodeInfo> nodes_;
     std::vector<PendingMessage> pending_messages_;
+    /// Arrivals per receiver, including those already delivered or dropped
+    std::map<uint32_t, std::vector<AirInterval>> arrivals_;
+    /// Own transmissions per node
+    std::map<uint32_t, std::vector<AirInterval>> transmissions_;
+    uint64_t next_packet_id_ = 0;
     mutable std::mutex
-        pending_messages_mutex_;  ///< Mutex for thread-safe access to pending_messages_
+        pending_messages_mutex_;  ///< Guards pending_messages_ and the air logs
     std::map<uint32_t, std::vector<std::vector<uint8_t>>>
         sent_messages_;  ///< Store sent messages per node
     mutable std::mutex
         sent_messages_mutex_;  ///< Mutex for thread-safe access to sent_messages_
-    uint32_t current_time_;
+    std::atomic<uint32_t> current_time_;
+    std::function<uint32_t()> time_source_;
     float packet_loss_rate_;
-    std::mt19937 rng_;
-    std::mt19937 link_loss_rng_{
-        42};  ///< Fixed seed for deterministic per-link loss
+    uint32_t seed_ = kDefaultSeed;
     std::atomic<uint32_t> dropped_message_count_{0};
+    std::map<uint32_t, uint32_t>
+        dropped_by_dest_;  ///< Drops per destination (radio not receiving)
+    mutable std::mutex dropped_by_dest_mutex_;
+    std::map<uint32_t, uint32_t>
+        received_by_dest_;  ///< Accepted deliveries per destination
+    mutable std::mutex received_by_dest_mutex_;
+    std::map<uint32_t, uint32_t>
+        collided_by_dest_;  ///< Collision drops per destination
+    mutable std::mutex collided_by_dest_mutex_;
 
     /**
-     * @brief Get delay between two nodes
+     * @brief Check if a link is active; caller holds nodes_mutex_
+     */
+    bool IsLinkActiveLocked(uint32_t node1, uint32_t node2) const {
+        auto it1 = nodes_.find(node1);
+        if (it1 == nodes_.end())
+            return false;
+
+        auto& links = it1->second.active_links;
+        auto it2 = links.find(node2);
+
+        // If explicit link status not set, default to inactive
+        if (it2 == links.end()) {
+            return false;
+        }
+
+        return it2->second;
+    }
+
+    /**
+     * @brief Get delay between two nodes; caller holds nodes_mutex_
      */
     uint32_t GetLinkDelay(uint32_t node1, uint32_t node2) const {
         auto it1 = nodes_.find(node1);
@@ -567,6 +850,16 @@ class VirtualNetwork {
 
     /**
      * @brief Check if packet should be dropped based on per-link loss rate
+     *
+     * Deterministic but decorrelated drop decision: the per-(link, packet
+     * index) tuple is avalanche-hashed to a pseudo-random value and compared
+     * against the loss rate. This keeps the long-run fraction at r while
+     * avoiding a regular pattern that would resonate with periodic traffic — a
+     * fixed-phase drop sequence can otherwise always coincide with a node's
+     * once-per-superframe routing broadcast, starving a neighbour of route
+     * updates. The per-link counter advances only with the link's own
+     * transmissions, so the decision is independent of thread scheduling.
+     * Caller holds nodes_mutex_.
      */
     bool ShouldDropPacketForLink(uint32_t from_addr, uint32_t to_addr) {
         auto it = nodes_.find(from_addr);
@@ -578,142 +871,114 @@ class VirtualNetwork {
             return false;
         if (loss_it->second >= 1.0f)
             return true;
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-        return dist(link_loss_rng_) < loss_it->second;
+        uint32_t n = it->second.link_tx_counts[to_addr]++;
+        uint32_t h = from_addr * 0x9E3779B1u ^ (to_addr * 0x85EBCA77u) ^
+                     (n * 0xC2B2AE3Du);
+        h ^= h >> 15;
+        h *= 0x2545F491u;
+        h ^= h >> 13;
+        return (h & 0xFFFFFFu) <
+               static_cast<uint32_t>(loss_it->second * 16777216.0f);
     }
 
     /**
      * @brief Check if packet should be dropped based on global loss rate
+     *
+     * The decision hashes (seed, link, per-link packet index), so it depends
+     * only on the seed and on the sequence of packets sent over the link.
      */
-    bool ShouldDropPacket() {
+    bool ShouldDropPacket(uint32_t from_addr, uint32_t to_addr) {
         if (packet_loss_rate_ <= 0.0f)
             return false;
         if (packet_loss_rate_ >= 1.0f)
             return true;
 
-        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-        return dist(rng_) < packet_loss_rate_;
+        auto it = nodes_.find(from_addr);
+        if (it == nodes_.end())
+            return false;
+        uint32_t n = it->second.global_loss_counts[to_addr]++;
+        uint64_t x = (static_cast<uint64_t>(seed_) << 32) ^
+                     (static_cast<uint64_t>(from_addr) << 16) ^ to_addr;
+        x ^= static_cast<uint64_t>(n) * 0x9E3779B97F4A7C15ull;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ull;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBull;
+        x ^= x >> 31;
+        return (x & 0xFFFFFFu) <
+               static_cast<uint32_t>(packet_loss_rate_ * 16777216.0f);
     }
 
     /**
-     * @brief Queue a message for delivery
+     * @brief Record a transmission and queue its arrivals for delivery
      */
-    void QueueMessageDelivery(uint32_t source, uint32_t destination,
-                              const std::vector<uint8_t>& data,
-                              uint32_t transmission_start_time,
-                              uint32_t time_on_air, uint32_t delivery_time,
-                              float rssi, float snr) {
-        PendingMessage msg;
-        msg.source = source;
-        msg.destination = destination;
-        msg.data = data;
-        msg.transmission_start_time = transmission_start_time;
-        msg.time_on_air = time_on_air;
-        msg.delivery_time = delivery_time;
-        msg.rssi = rssi;
-        msg.snr = snr;
-
-        {
-            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
-            pending_messages_.push_back(msg);
+    void QueueTransmission(uint32_t source, uint32_t start, uint32_t toa,
+                           std::vector<PendingMessage> arrivals) {
+        std::lock_guard<std::mutex> lock(pending_messages_mutex_);
+        const uint64_t packet_id = ++next_packet_id_;
+        transmissions_[source].push_back(
+            AirInterval{packet_id, source, start, start + toa});
+        for (auto& msg : arrivals) {
+            msg.packet_id = packet_id;
+            arrivals_[msg.destination].push_back(AirInterval{
+                packet_id, source, msg.arrival_start, msg.delivery_time});
+            LOG_DEBUG(
+                "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery "
+                "at %u ms (tx_start: %u, toa: %u)",
+                start, source, msg.destination, msg.delivery_time, start, toa);
+            pending_messages_.push_back(std::move(msg));
         }
+    }
 
-        LOG_DEBUG(
-            "[%u ms] - Queued message from 0x%04X to 0x%04X for delivery at %u "
-            "ms (tx_start: %u, toa: %u)",
-            current_time_, source, destination, delivery_time,
-            transmission_start_time, time_on_air);
+    static bool DeliversBefore(const PendingMessage& a,
+                               const PendingMessage& b) {
+        if (a.delivery_time != b.delivery_time)
+            return a.delivery_time < b.delivery_time;
+        if (a.transmission_start_time != b.transmission_start_time)
+            return a.transmission_start_time < b.transmission_start_time;
+        if (a.source != b.source)
+            return a.source < b.source;
+        return a.destination < b.destination;
+    }
+
+    static bool Overlaps(const AirInterval& interval, uint32_t start,
+                         uint32_t end) {
+        return interval.start < end && start < interval.end;
     }
 
     /**
-     * @brief Detect collisions among messages targeting the same destination
-     *
-     * @param messages Vector of messages for a single destination
-     * @return Vector of messages that did not collide (safe to deliver)
+     * @brief Drop air intervals that can no longer overlap a pending
+     * message; caller holds pending_messages_mutex_
      */
-    std::vector<PendingMessage> DetectAndFilterCollisions(
-        std::vector<PendingMessage>& messages) {
-        if (messages.size() <= 1) {
-            return messages;  // No collision possible with 0 or 1 message
-        }
-
-        // Track which messages are involved in collisions
-        std::vector<bool> collided(messages.size(), false);
-
-        // Check each pair of messages for overlapping on-air windows
-        for (size_t i = 0; i < messages.size(); ++i) {
-            for (size_t j = i + 1; j < messages.size(); ++j) {
-                if (messages[i].OverlapsWith(messages[j])) {
-                    // Both messages in the collision are affected
-                    collided[i] = true;
-                    collided[j] = true;
-
-                    LOG_WARNING(
-                        "[COLLISION] Messages from 0x%04X and 0x%04X collided "
-                        "at destination 0x%04X (windows: [%u-%u] vs [%u-%u])",
-                        messages[i].source, messages[j].source,
-                        messages[i].destination,
-                        messages[i].transmission_start_time,
-                        messages[i].GetTransmissionEndTime(),
-                        messages[j].transmission_start_time,
-                        messages[j].GetTransmissionEndTime());
-                }
+    void PruneAirLog(uint32_t now) {
+        auto prune = [now](std::map<uint32_t, std::vector<AirInterval>>& log) {
+            for (auto& [address, intervals] : log) {
+                std::erase_if(intervals, [now](const AirInterval& interval) {
+                    return interval.end + kAirLogRetentionMs < now;
+                });
             }
-        }
+        };
+        prune(arrivals_);
+        prune(transmissions_);
+    }
 
-        // Collect non-collided messages
-        std::vector<PendingMessage> non_collided;
-        for (size_t i = 0; i < messages.size(); ++i) {
-            if (!collided[i]) {
-                non_collided.push_back(messages[i]);
-            } else {
-                LOG_DEBUG(
-                    "[COLLISION] Dropping message from 0x%04X to 0x%04X due to "
-                    "collision",
-                    messages[i].source, messages[i].destination);
-            }
-        }
-
-        return non_collided;
+    void RecordReceiverDrop(uint32_t destination) {
+        ++dropped_message_count_;
+        std::lock_guard<std::mutex> lock(dropped_by_dest_mutex_);
+        ++dropped_by_dest_[destination];
     }
 
     /**
-     * @brief Process any pending messages that are due for delivery
+     * @brief Resolve every pending message whose delivery time has passed
      *
-     * This method groups messages by destination and performs collision
-     * detection. Messages with overlapping on-air windows at the same
-     * receiver are dropped (simulating real radio behavior).
+     * @return Number of messages accepted by their receivers
      */
     size_t ProcessPendingMessages() {
-        // Extract messages due for delivery under lock
-        std::vector<PendingMessage> messages_to_deliver;
-        {
-            std::lock_guard<std::mutex> lock(pending_messages_mutex_);
-            auto it = pending_messages_.begin();
-            while (it != pending_messages_.end()) {
-                if (it->delivery_time <= current_time_) {
-                    messages_to_deliver.push_back(*it);
-                    it = pending_messages_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
-
-        // Group messages by destination for collision detection
-        std::map<uint32_t, std::vector<PendingMessage>> by_destination;
-        for (auto& msg : messages_to_deliver) {
-            by_destination[msg.destination].push_back(msg);
-        }
-
-        // For each destination, detect collisions and deliver non-collided messages
         size_t delivered = 0;
-        for (auto& [dest, dest_messages] : by_destination) {
-            auto non_collided = DetectAndFilterCollisions(dest_messages);
-            for (const auto& msg : non_collided) {
-                if (DeliverMessage(msg)) {
-                    ++delivered;
-                }
+        for (auto next = NextDeliveryTime(); next && *next <= GetCurrentTime();
+             next = NextDeliveryTime()) {
+            if (DeliverNextMessage()) {
+                ++delivered;
             }
         }
         return delivered;
@@ -731,8 +996,17 @@ class VirtualNetwork {
         snprintf(addr_str, sizeof(addr_str), "0x%04X", msg.destination);
         GetRTOS().SetCurrentTaskNodeAddress(addr_str);
 
-        auto it = nodes_.find(msg.destination);
-        if (it == nodes_.end()) {
+        IRadioReceiver* radio = nullptr;
+        bool known = false;
+        {
+            std::lock_guard<std::mutex> lock(nodes_mutex_);
+            auto it = nodes_.find(msg.destination);
+            if (it != nodes_.end()) {
+                known = true;
+                radio = it->second.radio;
+            }
+        }
+        if (!known) {
             LOG_ERROR(
                 "Message delivery failed - Node 0x%04X not found in network",
                 msg.destination);
@@ -740,7 +1014,6 @@ class VirtualNetwork {
             return false;
         }
 
-        auto* radio = it->second.radio;
         if (!radio) {
             LOG_ERROR("Message delivery failed - Node 0x%04X radio not found",
                       msg.destination);
@@ -754,14 +1027,18 @@ class VirtualNetwork {
             LOG_DEBUG(
                 "[%u ms] Message from 0x%04X dropped at 0x%04X - receiver "
                 "unavailable (state=%d)",
-                current_time_, msg.source, msg.destination,
+                GetCurrentTime(), msg.source, msg.destination,
                 static_cast<int>(radio->GetRadioState()));
-            ++dropped_message_count_;
+            RecordReceiverDrop(msg.destination);
             GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
             return false;
         }
 
         radio->ReceiveMessage(msg.data, msg.rssi, msg.snr);
+        {
+            std::lock_guard<std::mutex> lock(received_by_dest_mutex_);
+            ++received_by_dest_[msg.destination];
+        }
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
         return true;
     }
@@ -778,7 +1055,13 @@ class VirtualTimeController {
      * @param network Reference to the virtual network
      */
     VirtualTimeController(VirtualNetwork& network)
-        : network_(network), current_time_(0) {
+        : network_(network),
+          current_time_(0)
+#ifdef LORAMESHER_BUILD_NATIVE
+          ,
+          network_events_(network)
+#endif
+    {
         // Register this instance as the global singleton
         instance_ = this;
 
@@ -788,6 +1071,9 @@ class VirtualTimeController {
         if (rtos_mock) {
             LOG_DEBUG("Setting RTOSMock to virtual time mode");
             rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+            network_.SetTimeSource([rtos_mock]() {
+                return static_cast<uint32_t>(rtos_mock->getVirtualTime());
+            });
         } else {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
@@ -801,6 +1087,7 @@ class VirtualTimeController {
         if (instance_ == this)
             instance_ = nullptr;
 #ifdef LORAMESHER_BUILD_NATIVE
+        network_.SetTimeSource(nullptr);
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
         if (rtos_mock) {
             rtos_mock->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
@@ -832,15 +1119,12 @@ class VirtualTimeController {
         ProcessTimeDependentEvents();
 
 #ifdef LORAMESHER_BUILD_NATIVE
-        network_.AdvanceTime(time_ms);
-
         os::RTOSMock* rtos_mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
 
-        if (rtos_mock) {
-            rtos_mock->advanceTime(time_ms);
-        } else {
+        if (!rtos_mock) {
             throw std::runtime_error("RTOS is not an RTOSMock instance");
         }
+        rtos_mock->advanceTime(time_ms, &network_events_);
 #else
         network_.AdvanceTime(time_ms);
 #endif  // LORAMESHER_BUILD_NATIVE
@@ -879,11 +1163,40 @@ class VirtualTimeController {
     }
 
    private:
+#ifdef LORAMESHER_BUILD_NATIVE
+    /**
+     * @brief Feeds the network's message deliveries into the RTOS event loop
+     */
+    class NetworkEventSource : public os::RTOSMock::VirtualEventSource {
+       public:
+        explicit NetworkEventSource(VirtualNetwork& network)
+            : network_(network) {}
+
+        std::optional<uint64_t> NextEventTime() override {
+            std::optional<uint32_t> next = network_.NextDeliveryTime();
+            if (!next) {
+                return std::nullopt;
+            }
+            return *next;
+        }
+
+        void ProcessNextEvent(uint64_t /*now*/) override {
+            network_.DeliverNextMessage();
+        }
+
+       private:
+        VirtualNetwork& network_;
+    };
+#endif  // LORAMESHER_BUILD_NATIVE
+
     // Singleton instance for static access
     static VirtualTimeController* instance_;
 
     VirtualNetwork& network_;
     uint32_t current_time_;
+#ifdef LORAMESHER_BUILD_NATIVE
+    NetworkEventSource network_events_;
+#endif
 
     /**
      * @brief Scheduled event structure
