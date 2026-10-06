@@ -409,6 +409,14 @@ class LoRaMeshProtocol : public Protocol {
     uint8_t GetDataSlotsPerSuperframe() const;
 
     /**
+     * @brief Get the duration of the current superframe
+     *
+     * @return uint32_t Superframe duration in milliseconds, or 0 if the
+     *         superframe service is not initialized
+     */
+    uint32_t GetSuperframeDuration() const;
+
+    /**
      * @brief Get number of messages pending in the TX queue
      *
      * @return size_t Number of messages waiting to be transmitted

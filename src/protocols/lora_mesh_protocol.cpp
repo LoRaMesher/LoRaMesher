@@ -1602,6 +1602,12 @@ uint8_t LoRaMeshProtocol::GetDataSlotsPerSuperframe() const {
     return count;
 }
 
+uint32_t LoRaMeshProtocol::GetSuperframeDuration() const {
+    if (!superframe_service_)
+        return 0;
+    return superframe_service_->GetSuperframeDuration();
+}
+
 size_t LoRaMeshProtocol::GetTxQueueSize() const {
     return message_queue_service_->GetQueueSize(
         types::protocols::lora_mesh::SlotAllocation::SlotType::TX);
