@@ -24,6 +24,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   and members still deliver it once.
 - `SetDataCallbackEx(const ReceivedData&)` reports each received message
   with its destination, sender sequence number and hops travelled.
+- `LoraMesher::GetSuperframeDuration()` returns the current superframe
+  duration in milliseconds, or 0 when the LoRaMesh protocol is not active
+  or not initialized.
 - `examples/reliable_example` and `examples/group_example`.
 - Routing-table broadcasts are sliced across superframes, so large tables fit
   in high-SF packets.

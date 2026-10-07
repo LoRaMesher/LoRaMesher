@@ -420,6 +420,13 @@ uint8_t LoraMesher::GetDataSlotsPerSuperframe() const {
     return protocol->GetDataSlotsPerSuperframe();
 }
 
+uint32_t LoraMesher::GetSuperframeDuration() const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetSuperframeDuration();
+}
+
 size_t LoraMesher::GetTxQueueSize() const {
     auto protocol = GetLoRaMeshProtocol();
     if (!protocol)

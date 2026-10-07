@@ -324,6 +324,14 @@ class LoraMesher {
     uint8_t GetDataSlotsPerSuperframe() const;
 
     /**
+     * @brief Get the duration of the current superframe
+     *
+     * @return uint32_t Superframe duration in milliseconds, or 0 if the active
+     *         protocol is not LoRaMesh or it has not been initialized
+     */
+    uint32_t GetSuperframeDuration() const;
+
+    /**
      * @brief Get number of messages pending in the TX queue
      *
      * @return size_t Number of messages waiting to be transmitted
