@@ -7,10 +7,10 @@
 
 #include <cstdint>
 #include <functional>
-#include <span>
 #include <vector>
 #include "types/messages/base_header.hpp"
 #include "types/protocols/lora_mesh/protocol_state.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 
