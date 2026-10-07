@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -22,9 +23,22 @@
 
 namespace loramesher {
 
+/// Options for reliable unicast sends.
+struct ReliableOptions {
+    uint32_t timeout_ms = 0;  ///< 0 = derive from hop count and superframe
+    uint8_t max_retries = 3;
+};
+
+/// Options for group sends.
+struct GroupSendOptions {
+    bool request_acks = false;
+    uint32_t window_ms = 8000;
+    uint8_t max_retries = 0;
+};
+
 /**
  * @brief Main class of the LoraMesher library
- * 
+ *
  * Provides a unified interface for hardware and protocol management,
  * message handling, and network operations.
  */
@@ -185,11 +199,83 @@ class LoraMesher {
 
     /**
      * @brief Set callback for received data messages
+     *
+     * Reports the source and payload of every message delivered to this node
+     * (unicast, group or broadcast). Use SetDataCallbackEx() to also get the
+     * destination, sequence number and hop count; when both are set, both
+     * fire.
+     *
      * @warning This callback should be small or transfer the message into another task for processing.
      *
      * @param callback Function to call when data is received
      */
     void SetDataCallback(DataReceivedCallback callback);
+
+    // Reliable delivery and group multicast
+
+    /// Stable per-message identifier exposed to the application.
+    using MessageId = protocols::reliability::MessageId;
+    /// Reliable-delivery outcome reported to the delivery callback.
+    using DeliveryResult = protocols::reliability::DeliveryResult;
+    /// Delivery outcome callback type.
+    using DeliveryCallback = protocols::reliability::DeliveryCallback;
+    /// Inbound callback reporting the message metadata.
+    using DataReceivedExCallback = loramesher::DataReceivedExCallback;
+
+    /**
+     * @brief Send data reliably (acknowledged) to a destination
+     * @return Assigned message id, or {0,0} on failure
+     */
+    MessageId SendReliable(AddressType destination,
+                           const std::vector<uint8_t>& data,
+                           ReliableOptions options = {});
+
+    /**
+     * @brief Send data to a group, optionally collecting acknowledgements
+     * @return Assigned message id, or {0,0} on failure
+     */
+    MessageId SendGroup(AddressType group, std::span<const uint8_t> data,
+                        GroupSendOptions options = {});
+
+    /** @brief Join a logical group */
+    Result JoinGroup(AddressType group);
+
+    /** @brief Leave a logical group */
+    Result LeaveGroup(AddressType group);
+
+    /** @brief Whether this node is a member of the given group */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /** @brief Get the groups this node belongs to */
+    std::vector<AddressType> GetGroups() const;
+
+    /**
+     * @brief Register the sender-side outcome callback
+     *
+     * Reports the result of each SendReliable() (Delivered with the
+     * acknowledging node and round-trip time, or Failed). For a SendGroup()
+     * that requests acknowledgements it reports Delivered once per member
+     * that acknowledges, then GroupWindowClosed with the number of members
+     * that acknowledged.
+     *
+     * @warning Runs on the protocol task; keep it short.
+     *
+     * @param callback Function to call with each outcome
+     */
+    void SetDeliveryCallback(DeliveryCallback callback);
+
+    /**
+     * @brief Set callback for received data messages, with metadata
+     *
+     * Same events as SetDataCallback(), reported as a ReceivedData: source,
+     * destination (this node, a group or broadcast), sender sequence number,
+     * hops travelled and payload. The payload is valid only during the call.
+     *
+     * @warning Runs on the protocol task; keep it short.
+     *
+     * @param callback Function to call when data is received
+     */
+    void SetDataCallbackEx(DataReceivedExCallback callback);
 
     /**
      * @brief Get current routing table with raw entry data
@@ -208,9 +294,10 @@ class LoraMesher {
     /**
      * @brief Get current slot allocation table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations (empty when the
+     *         mesh protocol is not running)
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const;
 
     /**

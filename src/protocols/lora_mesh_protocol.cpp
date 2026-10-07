@@ -106,10 +106,12 @@ Result LoRaMeshProtocol::Init(
     superframe_service_ = std::make_shared<lora_mesh::SuperframeService>();
     superframe_service_->SetNodeAddress(node_address);
 
-    // Create distance vector routing table
+    // Create distance vector routing table; NetworkService::Configure applies
+    // the configured node limit.
     auto routing_table =
         std::make_unique<lora_mesh::DistanceVectorRoutingTable>(
-            node_address, 50);  // max 50 nodes
+            node_address,
+            lora_mesh::INetworkService::NetworkConfig{}.max_network_nodes);
 
     // Create network service
     network_service_ = std::make_shared<lora_mesh::NetworkService>(
@@ -189,11 +191,9 @@ Result LoRaMeshProtocol::Init(
 
     // Network service route update callback
     network_service_->SetRouteUpdateCallback(
-        [this](bool updated, AddressType dest, AddressType next_hop,
-               uint8_t hops) {
+        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
             LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
                       updated ? "updated" : "removed", dest, next_hop, hops);
-            OnNetworkTopologyChange(updated, dest, next_hop, hops);
         });
 
     // State-change callback: wake up the protocol task immediately
@@ -240,20 +240,21 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     config_ = config;
     pending_role_.store(config.getNodeRole(), std::memory_order_release);
 
-    // Apply SF-derived max_packet_size default based on live radio settings.
-    // If the user explicitly set max_packet_size above the SF-safe cap, keep
-    // their value and warn so slot-duration inflation is traceable.
+    // Cap max_packet_size to the physical SF-safe limit for the live radio
+    // settings. A value above the cap (or the 255 default) is clamped so it
+    // can never produce a slot duration the radio cannot transmit within.
     if (hardware_) {
         uint8_t sf = hardware_->getSpreadingFactor();
         float bw_khz = hardware_->getBandwidth();
+        uint8_t requested = config_.getMaxPacketSize();
+        bool user_set = config_.IsMaxPacketSizeUserSet();
         uint8_t sf_safe = config_.ApplySfDerivedDefaults(sf, bw_khz);
-        if (config_.IsMaxPacketSizeUserSet() &&
-            config_.getMaxPacketSize() > sf_safe) {
+        if (user_set && requested > sf_safe) {
             LOG_WARNING(
-                "max_packet_size %u exceeds SF%u/BW%.0fkHz recommended cap %u; "
-                "slot duration will be inflated",
-                static_cast<unsigned>(config_.getMaxPacketSize()),
-                static_cast<unsigned>(sf), static_cast<double>(bw_khz),
+                "max_packet_size %u exceeds SF%u/BW%.0fkHz physical cap %u; "
+                "clamped to %u",
+                static_cast<unsigned>(requested), static_cast<unsigned>(sf),
+                static_cast<double>(bw_khz), static_cast<unsigned>(sf_safe),
                 static_cast<unsigned>(sf_safe));
         }
     }
@@ -272,6 +273,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     net_config.target_duty_cycle = config.getTargetDutyCycle();
     net_config.min_sleep_fraction = config.getMinSleepFraction();
     net_config.churn_margin_slots = config.getChurnMarginSlots();
+    net_config.log_routing_capabilities = config.getLogRoutingCapabilities();
     net_config.link_quality_ewma_alpha = config.getLinkQualityEwmaAlpha();
     net_config.consecutive_missed_for_inactivation =
         config.getConsecutiveMissedForInactivation();
@@ -441,6 +443,9 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
     switch (message.GetType()) {
         case MessageType::DATA:
         case MessageType::DATA_BROADCAST:
+        case MessageType::DATA_RELIABLE:
+        case MessageType::DATA_GROUP:
+        case MessageType::ACK:
             slot_type = SlotAllocation::SlotType::TX;
             break;
         case MessageType::ROUTE_TABLE:
@@ -488,6 +493,76 @@ Result LoRaMeshProtocol::SendBroadcast(std::span<const uint8_t> data) {
     }
 
     return network_service_->SendBroadcast(data);
+}
+
+reliability::MessageId LoRaMeshProtocol::SendReliable(
+    AddressType destination, const std::vector<uint8_t>& data,
+    uint8_t max_retries, uint32_t timeout_ms) {
+    if (!network_service_) {
+        return {0, 0};
+    }
+    return network_service_->SendReliable(destination, data, max_retries,
+                                          timeout_ms);
+}
+
+Result LoRaMeshProtocol::SendGroup(AddressType group,
+                                   std::span<const uint8_t> data) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->SendGroup(group, data);
+}
+
+reliability::MessageId LoRaMeshProtocol::SendGroupReliable(
+    AddressType group, std::span<const uint8_t> data, uint8_t max_retries,
+    uint32_t window_ms) {
+    if (!network_service_) {
+        return {0, 0};
+    }
+    return network_service_->SendGroupReliable(group, data, max_retries,
+                                               window_ms);
+}
+
+Result LoRaMeshProtocol::JoinGroup(AddressType group) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->JoinGroup(group);
+}
+
+Result LoRaMeshProtocol::LeaveGroup(AddressType group) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->LeaveGroup(group);
+}
+
+bool LoRaMeshProtocol::IsMemberOfGroup(AddressType group) const {
+    return network_service_ && network_service_->IsMemberOfGroup(group);
+}
+
+std::vector<AddressType> LoRaMeshProtocol::GetGroups() const {
+    if (!network_service_) {
+        return {};
+    }
+    return network_service_->GetGroups();
+}
+
+void LoRaMeshProtocol::SetDeliveryCallback(
+    reliability::DeliveryCallback callback) {
+    if (network_service_) {
+        network_service_->SetDeliveryCallback(std::move(callback));
+    }
+}
+
+void LoRaMeshProtocol::SetDataReceivedExCallback(
+    lora_mesh::NetworkService::DataReceivedExCallback callback) {
+    if (network_service_) {
+        network_service_->SetDataReceivedExCallback(std::move(callback));
+    }
 }
 
 Result LoRaMeshProtocol::Pause() {
@@ -646,12 +721,8 @@ uint8_t LoRaMeshProtocol::GetNodeCapabilities(AddressType node_address) const {
     return 0;
 }
 
-const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
+std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodes() const {
     return network_service_->GetNetworkNodes();
-}
-
-std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodesCopy() const {
-    return network_service_->GetNetworkNodesCopy();
 }
 
 Result LoRaMeshProtocol::RequestNodeRoleChange(NodeRole role) {
@@ -729,9 +800,12 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                // Keep polling so we notice election_end_time_ expiry
-                timeout_ms =
-                    std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                // Wake exactly when the election backoff expires
+                timeout_ms = std::min(
+                    timeout_ms, protocol->network_service_->IsElectionPending()
+                                    ? protocol->network_service_
+                                          ->GetElectionBackoffRemaining()
+                                    : protocol->GetDiscoveryTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
                 timeout_ms = std::min(
@@ -780,9 +854,13 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
                         case lora_mesh::INetworkService::ProtocolState::
                             FAULT_RECOVERY:
-                            // Election countdown is handled by HandleSuperframeStart.
-                            // For NODE_ONLY nodes (no election), restart discovery.
-                            if (!protocol->network_service_
+                            // An expired election backoff moves to NM_ELECTION;
+                            // without an election (NODE_ONLY), restart discovery.
+                            protocol->network_service_->CheckElectionBackoff();
+                            if (protocol->network_service_->GetState() ==
+                                    lora_mesh::INetworkService::ProtocolState::
+                                        FAULT_RECOVERY &&
+                                !protocol->network_service_
                                      ->IsElectionPending()) {
                                 LOG_WARNING(
                                     "FAULT_RECOVERY: no election pending, "
@@ -874,8 +952,13 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
 
                 case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                    // For NODE_ONLY nodes (no election pending), restart discovery
-                    if (!protocol->network_service_->IsElectionPending()) {
+                    // An expired election backoff moves to NM_ELECTION;
+                    // without an election (NODE_ONLY), restart discovery.
+                    protocol->network_service_->CheckElectionBackoff();
+                    if (protocol->network_service_->GetState() ==
+                            lora_mesh::INetworkService::ProtocolState::
+                                FAULT_RECOVERY &&
+                        !protocol->network_service_->IsElectionPending()) {
                         LOG_WARNING(
                             "FAULT_RECOVERY timeout - restarting discovery");
                         result = protocol->StartDiscovery();
@@ -899,6 +982,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
             }
         }
+
+        // Advance reliable-delivery retransmission timers (≤100 ms cadence).
+        protocol->network_service_->ProcessReliableTimers();
 
         // Yield to other tasks for responsive shutdown
         rtos.YieldTask();
@@ -931,15 +1017,18 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp, event->getRssi(),
                         event->getSnr());
-                    // During subslotted slots, stay in RX to catch more
-                    // transmissions from other subslots
-                    if (in_subslotted_slot_) {
+                    // Stay in RX for the rest of any listening window (a
+                    // subslotted slot or an RX/CONTROL_RX/SYNC_BEACON_RX slot)
+                    // so a later transmission in the same slot is still caught.
+                    // Sleeping after the first packet drops any neighbour whose
+                    // packet arrives later in the window.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
-                                "Failed to set radio to receive in "
-                                "subslotted slot: %s",
+                                "Failed to keep radio in receive during "
+                                "listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -953,15 +1042,15 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
-                    // After TX in subslotted slots, return to RX to catch
-                    // transmissions from later subslots
-                    if (in_subslotted_slot_) {
+                    // After TX in a listening window (subslotted or RX slot),
+                    // return to RX to catch later transmissions in the slot.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
                                 "Failed to set radio to receive after TX "
-                                "in subslotted slot: %s",
+                                "in listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -988,8 +1077,9 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
 
 void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
                                         bool new_superframe) {
-    // Reset subslotted slot flag at every slot transition
+    // Reset per-slot radio-window flags at every slot transition
     in_subslotted_slot_ = false;
+    in_rx_slot_ = false;
 
     // Finalize NM election once counter-claim window has closed
     if (network_service_->GetState() ==
@@ -1002,20 +1092,28 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         network_service_->HandleSuperframeStart();
     }
 
-    // Get current slot type from allocation table
+    // Get current slot type and its position within the discovery band
     SlotAllocation::SlotType slot_type = SlotAllocation::SlotType::SLEEP;
+    uint8_t discovery_index = 0;
 
-    for (const auto& allocation : GetSlotTable()) {
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
         if (allocation.slot_number == current_slot) {
             slot_type = allocation.type;
-            break;
+        } else if (allocation.slot_number < current_slot &&
+                   allocation.IsDiscoverySlot()) {
+            discovery_index++;
         }
-    }
+    });
 
     LOG_INFO("Slot %d transition: type=%s start=%u%s", current_slot,
              slot_utils::SlotTypeToString(slot_type).c_str(),
              superframe_service_->GetSlotStartTime(current_slot),
              new_superframe ? " (new superframe)" : "");
+
+    if (slot_type == SlotAllocation::SlotType::DISCOVERY_RX ||
+        slot_type == SlotAllocation::SlotType::DISCOVERY_TX) {
+        network_service_->HandleDiscoverySlotStart(discovery_index);
+    }
 
     // Process messages based on slot type
     ProcessSlotMessages(slot_type);
@@ -1030,40 +1128,6 @@ void LoRaMeshProtocol::OnStateChange(
     NotifyProtocolTask(ProtocolNotificationType::STATE_CHANGE);
 }
 
-void LoRaMeshProtocol::OnNetworkTopologyChange(bool route_updated,
-                                               AddressType destination,
-                                               AddressType next_hop,
-                                               uint8_t hop_count) {
-    if (!route_updated) {
-        LOG_DEBUG("Route removed: dest=0x%04X via=0x%04X hops=%d", destination,
-                  next_hop, hop_count);
-        return;  // No route update needed
-    }
-    // Network topology changed - may need to update slot allocations
-    // This would be handled by NetworkService internally
-    // LOG_DEBUG("Network topology changed");
-
-    // // switch for state change
-    // auto state = network_service_->GetState();
-    // switch (state) {
-    //     case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
-    //     case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
-    //         // Update slot allocations based on new topology
-    //         network_service_->UpdateSlotAllocations();
-    //     case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
-    //     case lora_mesh::INetworkService::ProtocolState::INITIALIZING:
-    //     case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-    //         break;
-
-    //     case lora_mesh::INetworkService::ProtocolState::JOINING:
-
-    //     default:
-    //         LOG_WARNING("Unhandled state for topology change: %d",
-    //                     static_cast<int>(state));
-    //         break;
-    // }
-}
-
 bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
                                     uint32_t additional_delay_ms) const {
     if (!hardware_ || !superframe_service_)
@@ -1073,12 +1137,12 @@ bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
     uint32_t time_in_slot = superframe_service_->GetTimeInSlot();
     uint32_t slot_duration = superframe_service_->GetSlotDuration();
 
-    // Guard against RadioLib overflow or SPI errors returning absurd values
+    // A packet whose airtime alone exceeds the slot can never fit; skip the
+    // TX rather than transmit and overrun into the following slot.
     if (toa_ms > slot_duration) {
-        LOG_ERROR(
-            "ToA sanity failed: %u ms for %u bytes (slot=%u). Using fallback.",
-            toa_ms, message_size, slot_duration);
-        toa_ms = static_cast<uint32_t>(message_size) * 10;
+        LOG_ERROR("ToA %u ms for %u bytes exceeds slot %u ms; skipping TX",
+                  toa_ms, message_size, slot_duration);
+        return false;
     }
 
     uint32_t needed =
@@ -1122,6 +1186,23 @@ Result LoRaMeshProtocol::TrySendGuardedMessage(
     return hardware_->SendMessage(*message);
 }
 
+uint16_t LoRaMeshProtocol::ComputeSubslotIdentifier(
+    const lora_mesh::SubslotConfig& config) {
+    switch (config.strategy) {
+        case lora_mesh::SubslotAssignment::RANDOM:
+            return static_cast<uint16_t>(GetRTOS().GetRandom());
+        case lora_mesh::SubslotAssignment::ADDRESS_HASH: {
+            uint32_t frame =
+                superframe_service_->GetSuperframeStats().superframes_completed;
+            return lora_mesh::SubslotScheduler::MixAddressFrame(node_address_,
+                                                                frame);
+        }
+        case lora_mesh::SubslotAssignment::ADDRESS_MODULO:
+        default:
+            return node_address_;
+    }
+}
+
 Result LoRaMeshProtocol::TrySendSubslottedMessage(
     SlotAllocation::SlotType slot_type, const lora_mesh::SubslotConfig& config,
     uint16_t identifier) {
@@ -1130,9 +1211,10 @@ Result LoRaMeshProtocol::TrySendSubslottedMessage(
         return Result::Success();
 
     uint8_t msg_size = static_cast<uint8_t>(message->GetTotalSize());
+    uint32_t msg_toa_ms = hardware_->getTimeOnAir(msg_size);
 
     auto subslot_timing = lora_mesh::SubslotScheduler::ComputeTiming(
-        superframe_service_->GetSlotDuration(), config, identifier);
+        superframe_service_->GetSlotDuration(), config, identifier, msg_toa_ms);
 
     bool use_subslot = false;
     if (subslot_timing.is_valid) {
@@ -1220,13 +1302,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             }
             in_subslotted_slot_ = true;
 
-            uint16_t identifier = node_address_;
-            if (config_.getDiscoverySubslotConfig().strategy ==
-                lora_mesh::SubslotAssignment::RANDOM) {
-                identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
-            }
+            const auto& discovery_subslot_config =
+                config_.getDiscoverySubslotConfig();
             result = TrySendSubslottedMessage(
-                slot_type, config_.getDiscoverySubslotConfig(), identifier);
+                slot_type, discovery_subslot_config,
+                ComputeSubslotIdentifier(discovery_subslot_config));
             if (!result) {
                 LOG_ERROR("Failed to send discovery message: %s",
                           result.GetErrorMessage().c_str());
@@ -1254,9 +1334,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                         result.GetErrorMessage().c_str());
                 }
                 in_subslotted_slot_ = true;
+                const auto& sync_subslot_config =
+                    config_.getSyncBeaconSubslotConfig();
                 result = TrySendSubslottedMessage(
-                    slot_type, config_.getSyncBeaconSubslotConfig(),
-                    node_address_);
+                    slot_type, sync_subslot_config,
+                    ComputeSubslotIdentifier(sync_subslot_config));
             }
             if (!result) {
                 LOG_ERROR("Failed to send sync beacon: %s",
@@ -1275,14 +1357,12 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
             // Fallback TX: join responses are queued as DISCOVERY_TX but the
             // joining node has no DISCOVERY_TX slot yet.
-            uint16_t identifier = node_address_;
-            if (config_.getDiscoverySubslotConfig().strategy ==
-                lora_mesh::SubslotAssignment::RANDOM) {
-                identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
-            }
+            const auto& discovery_subslot_config =
+                config_.getDiscoverySubslotConfig();
             result = TrySendSubslottedMessage(
                 SlotAllocation::SlotType::DISCOVERY_TX,
-                config_.getDiscoverySubslotConfig(), identifier);
+                discovery_subslot_config,
+                ComputeSubslotIdentifier(discovery_subslot_config));
             if (!result) {
                 LOG_ERROR("Failed to send discovery fallback TX: %s",
                           result.GetErrorMessage().c_str());
@@ -1298,6 +1378,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 LOG_ERROR("Failed to set radio to receive: %s",
                           result.GetErrorMessage().c_str());
             }
+            // An RX slot is a listening window that may carry more than one
+            // transmission (timing jitter can defer a neighbour's packet into
+            // this slot). Keep the radio in RX for the whole slot instead of
+            // sleeping after the first packet.
+            in_rx_slot_ = true;
             break;
 
         case SlotAllocation::SlotType::SLEEP:
@@ -1372,8 +1457,12 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
     service_config.network_config.guard_time_ms = config.getGuardTime();
+    service_config.network_config.log_routing_capabilities =
+        config.getLogRoutingCapabilities();
 
     // Message queue configuration
     service_config.message_queue_size = 10;
@@ -1402,7 +1491,9 @@ LoRaMeshProtocol::CreateServiceConfigForTest(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
 
     // Message queue configuration
     service_config.message_queue_size = 10;

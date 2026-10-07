@@ -178,6 +178,7 @@ class NMMergeTests : public RoutingTestFixture {
  * - Final state: NM_A is NETWORK_MANAGER, others are NORMAL_OPERATION
  */
 TEST_F(NMMergeTests, BasicNetworkMerge) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // --- Network A: NM_A (address 0x0001) + NodeA ---
     auto& nm_a = CreateNode("NM_A", 0x0001, NodeRole::NETWORK_MANAGER);
     auto& node_a = CreateNode("NodeA", 0x0002, NodeRole::NODE_ONLY);
@@ -190,7 +191,7 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
     // offset is permanent. A fixed seed makes the offset reproducible.
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     // Phase 1: Isolate both networks — no cross-links
     SetLinkStatus(nm_a, node_a, true);
@@ -313,10 +314,8 @@ TEST_F(NMMergeTests, BasicNetworkMerge) {
  *   is numerically lower (demonstrates role beats address)
  * - All nodes end up under NM_A after merge
  */
-// DISABLED: role-priority merge arbitration broken — see
-// todos/nm_merge_role_priority_yield.md. Re-enable by removing
-// the DISABLED_ prefix once the AUTO-vs-configured priority bug is fixed.
-TEST_F(NMMergeTests, DISABLED_AutoRoleNMYieldsToConfiguredNM) {
+TEST_F(NMMergeTests, AutoRoleNMYieldsToConfiguredNM) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // NM_A: configured NETWORK_MANAGER role, higher address
     // NM_A priority = 0 + (0x02>>1) = 1
     auto& nm_a = CreateNode("NM_A", 0x0002, NodeRole::NETWORK_MANAGER);
@@ -331,7 +330,7 @@ TEST_F(NMMergeTests, DISABLED_AutoRoleNMYieldsToConfiguredNM) {
     // offset is permanent. A fixed seed makes the offset reproducible.
     auto* rtos = dynamic_cast<os::RTOSMock*>(&GetRTOS());
     ASSERT_NE(rtos, nullptr);
-    rtos->SeedRandom(42);
+    rtos->SeedRandom(test_seed_);
 
     // Phase 1: Isolate both networks — no cross-links
     SetLinkStatus(nm_a, node_a, true);

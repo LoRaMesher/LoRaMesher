@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "types/error_codes/result.hpp"
@@ -95,15 +96,13 @@ class IRoutingTable {
      * @brief Update existing node information
      * 
      * @param node_address Node address to update
-     * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether node is network manager
      * @param allocated_data_slots Number of allocated data slots
      * @param capabilities Node capability flags
      * @param current_time Current timestamp
      * @return bool True if the node was updated
      */
-    virtual bool UpdateNode(AddressType node_address, uint8_t battery_level,
-                            bool is_network_manager,
+    virtual bool UpdateNode(AddressType node_address, bool is_network_manager,
                             uint8_t allocated_data_slots, uint8_t capabilities,
                             uint32_t current_time) = 0;
 
@@ -138,22 +137,24 @@ class IRoutingTable {
     virtual bool IsNodePresent(AddressType address) const = 0;
 
     /**
-     * @brief Find a node by address (const version)
-     * 
+     * @brief Find a node by address
+     *
      * @param node_address Address to search for
-     * @return Const iterator to the node, or end() if not found
+     * @return Copy of the node, or nullopt if it is not in the table
      */
-    virtual std::vector<
-        types::protocols::lora_mesh::NetworkNodeRoute>::const_iterator
-    GetNode(AddressType node_address) const = 0;
+    virtual std::optional<types::protocols::lora_mesh::NetworkNodeRoute>
+    FindNode(AddressType node_address) const = 0;
+
+    /// Visitor applied to each node by ForEachNode().
+    using NodeVisitor = std::function<void(
+        const types::protocols::lora_mesh::NetworkNodeRoute&)>;
 
     /**
-     * @brief Get all network nodes in the routing table
-     * 
-     * @return const std::vector<NetworkNodeRoute>& Reference to nodes vector
+     * @brief Apply @p visitor to every node while the table is locked
+     *
+     * The visitor must not call back into the routing table.
      */
-    virtual const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNodes() const = 0;
+    virtual void ForEachNode(const NodeVisitor& visitor) const = 0;
 
     /**
      * @brief Get a thread-safe copy of all network nodes
@@ -178,6 +179,23 @@ class IRoutingTable {
      */
     virtual std::vector<RoutingTableEntry> GetRoutingEntries(
         AddressType exclude_address) const = 0;
+
+    /**
+     * @brief Get the next slice of active routing entries for broadcast
+     *
+     * Returns up to @p max_entries entries starting at the internal
+     * rotation cursor; wraps to the beginning of the active set when the
+     * cursor reaches the end. Self entries and @p exclude_address are
+     * filtered out. Used by the sender to fragment the routing table
+     * across superframes when the full table cannot fit in a single
+     * radio frame.
+     *
+     * @param exclude_address Address to exclude (typically own address)
+     * @param max_entries Maximum entries to return in this slice
+     * @return std::vector<RoutingTableEntry> Slice of routing entries
+     */
+    virtual std::vector<RoutingTableEntry> GetNextBroadcastSlice(
+        AddressType exclude_address, size_t max_entries) = 0;
 
     /**
      * @brief Calculate link quality for a specific node
@@ -224,8 +242,22 @@ class IRoutingTable {
     // Configuration and callbacks
 
     /**
+     * @brief Enable or disable capability/data-slot fields in RTENTRY log lines.
+     *
+     * Off by default. When enabled, RTENTRY lines carry `cap=0x.. slots=..` so
+     * external tools can reconstruct gateway roles and per-node slot
+     * allocations from a capture. Default implementation is a no-op.
+     *
+     * @param enable Whether to include the extra fields
+     */
+    virtual void SetLogRoutingCapabilities(bool enable) { (void)enable; }
+
+    /**
      * @brief Set the route update callback
-     * 
+     *
+     * The callback runs synchronously while the routing table is locked, so it
+     * must not call back into the routing table or the network service.
+     *
      * @param callback Callback function to notify of route changes
      */
     virtual void SetRouteUpdateCallback(RouteUpdateCallback callback) = 0;
@@ -238,14 +270,48 @@ class IRoutingTable {
     virtual void SetMaxNodes(size_t max_nodes) = 0;
 
     /**
-     * @brief Set the control slot index for a node (NM-local tracking)
+     * @brief Set the largest hop count a route may have
+     *
+     * @param max_hops Routes longer than this are rejected
+     */
+    virtual void SetMaxHops(uint8_t max_hops) = 0;
+
+    /**
+     * @brief Set the control slot index for a node
+     *
+     * The data band assigns slots by control slot index, so a change
+     * requires the slot table to be rebuilt.
      *
      * @param node_address Address of the node
      * @param control_slot_index Assigned control slot index
-     * @return bool True if the node was found and updated
+     * @return bool True if the node is known, the index is in range and the
+     *         stored index changed
      */
     virtual bool SetControlSlotIndex(AddressType node_address,
                                      uint8_t control_slot_index) = 0;
+
+    /**
+     * @brief Round-trip-time estimate stored for a destination
+     *
+     * @param destination Destination address
+     * @return The estimate, or std::nullopt if the destination is unknown
+     */
+    virtual std::optional<types::protocols::lora_mesh::PathRtt> GetPathRtt(
+        AddressType destination) const = 0;
+
+    /**
+     * @brief Store the round-trip-time estimate for a destination
+     *
+     * The estimate is cleared automatically when the route's next hop or hop
+     * count changes.
+     *
+     * @param destination Destination address
+     * @param rtt Estimate to store
+     * @return bool True if the destination was found and updated
+     */
+    virtual bool SetPathRtt(
+        AddressType destination,
+        const types::protocols::lora_mesh::PathRtt& rtt) = 0;
 
     /**
      * @brief Clear all routes and nodes from the table
@@ -267,6 +333,15 @@ class IRoutingTable {
      * Called periodically to update expected message counts for link quality calculation
      */
     virtual void UpdateLinkStatistics() = 0;
+
+    /**
+     * @brief Record that this node broadcast its routing table
+     *
+     * Peers list us as a reception only after hearing several of our tables,
+     * so a peer's omission of us counts toward a unidirectional verdict only
+     * after enough local broadcasts since that peer was first heard.
+     */
+    virtual void NotifyLocalRoutingBroadcast() = 0;
 
     /**
      * @brief Set link quality parameters
@@ -293,6 +368,8 @@ class IRoutingTable {
      * @param max_hops Maximum allowed hop count
      * @param source_capabilities Capabilities bitmap of the source node
      * @param source_allocated_data_slots Number of allocated data slots for source node
+     * @param remote_absent_threshold Consecutive sliced broadcasts that may
+     *        omit our entry before the direct link is treated as unidirectional
      * @return bool True if any routes were updated
      */
     virtual bool ProcessRoutingTableMessage(
@@ -300,7 +377,7 @@ class IRoutingTable {
         uint32_t reception_timestamp, uint8_t local_link_quality,
         uint8_t max_hops, uint8_t source_capabilities = 0,
         uint8_t source_allocated_data_slots = 0, float rssi = 0.0f,
-        float snr = 0.0f) = 0;
+        float snr = 0.0f, uint8_t remote_absent_threshold = 1) = 0;
 };
 
 /**

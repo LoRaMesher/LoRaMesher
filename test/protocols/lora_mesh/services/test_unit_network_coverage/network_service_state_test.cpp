@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
@@ -157,7 +158,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimNMStateYields) {
               INetworkService::ProtocolState::NETWORK_MANAGER);
 
     // Send claim with priority 0 (highest) — forces svc2 to yield
-    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 100, 2, 0xBEEF);
+    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 2, 0xBEEF);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -177,7 +178,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimNMStateWins) {
               INetworkService::ProtocolState::NETWORK_MANAGER);
 
     // Claim with worst priority (0xFF) — we win and stay NM
-    auto claim_opt = NMClaimMessage::Create(0x2001, 0xFF, 100, 2, 0xBEEF);
+    auto claim_opt = NMClaimMessage::Create(0x2001, 0xFF, 2, 0xBEEF);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -197,7 +198,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimFaultRecoveryYields) {
     ASSERT_TRUE(service_->IsElectionPending());
 
     // Higher-priority claimant → we yield
-    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 100, 3, 0xABCD);
+    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 3, 0xABCD);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -222,7 +223,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimFaultRecoveryWins) {
     ASSERT_TRUE(svc->IsElectionPending());
 
     // Worse priority claimant → we win and keep election
-    auto claim_opt = NMClaimMessage::Create(0x9999, 0xFF, 100, 3, 0xABCD);
+    auto claim_opt = NMClaimMessage::Create(0x9999, 0xFF, 3, 0xABCD);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -239,7 +240,7 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimNMElectionYields) {
     service_->SetState(INetworkService::ProtocolState::NM_ELECTION);
     service_->StartElectionBackoff();
 
-    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 100, 5, 0x5678);
+    auto claim_opt = NMClaimMessage::Create(0x0001, 0, 5, 0x5678);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
@@ -435,6 +436,106 @@ TEST_F(NetworkServiceStateCoverageTest, ApplyRoleChangeAutoToNodeOnly) {
     Result r = service_->ApplyRoleChange(NodeRole::NODE_ONLY);
     EXPECT_TRUE(r) << r.GetErrorMessage();
     EXPECT_EQ(service_->GetNodeRole(), NodeRole::NODE_ONLY);
+}
+
+// ─── Concurrency: application sends during protocol state changes ──────────
+
+/**
+ * @brief Application-thread sends race the protocol task's state updates.
+ *
+ * Run under the ThreadSanitizer environment (test_native_tsan) to detect
+ * unsynchronized access to the protocol state and configuration.
+ */
+TEST_F(NetworkServiceStateCoverageTest, SendsAreSafeDuringStateChanges) {
+    Configure();
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    service_->SetNetworkManager(0x2002);
+
+    constexpr int kIterations = 200;
+    std::atomic<bool> done{false};
+    std::thread protocol([&]() {
+        bool manager = false;
+        while (!done.load()) {
+            service_->SetState(
+                manager ? INetworkService::ProtocolState::NETWORK_MANAGER
+                        : INetworkService::ProtocolState::NORMAL_OPERATION);
+            service_->SetNetworkManager(manager ? 0x1001 : 0x2002);
+            manager = !manager;
+        }
+    });
+
+    const std::vector<uint8_t> payload = {1, 2, 3};
+    for (int i = 0; i < kIterations; ++i) {
+        (void)service_->SendReliable(0x3003, payload, /*max_retries=*/0);
+        (void)service_->GetNetworkManagerAddress();
+    }
+    done.store(true);
+    protocol.join();
+}
+
+// ─── ResetNetworkState ──────────────────────────────────────────────────────
+
+/**
+ * @brief The state-change callback fired by a reset may call back into the
+ *        service.
+ */
+TEST_F(NetworkServiceStateCoverageTest, ResetCallbackMayReenterService) {
+    Configure();
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    service_->SetStateChangeCallback([this](INetworkService::ProtocolState) {
+        (void)service_->GetLocalNodeCapabilities();
+    });
+
+    std::atomic<bool> finished{false};
+    std::thread resetter([&]() {
+        service_->ResetNetworkState();
+        finished.store(true);
+    });
+    for (int i = 0; i < 500 && !finished.load(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    if (!finished.load()) {
+        // The reset deadlocked: leave the blocked service alive so tear-down
+        // does not destroy a mutex that is still held.
+        resetter.detach();
+        (void)service_.release();
+        FAIL() << "ResetNetworkState deadlocked in the state-change callback";
+    }
+    resetter.join();
+}
+
+/**
+ * @brief A reset abandons pending reliable messages and clears election state.
+ */
+TEST_F(NetworkServiceStateCoverageTest, ResetLeavesNoStaleProtocolState) {
+    Configure();
+    ASSERT_TRUE(superframe_->StartSuperframe());
+    ASSERT_TRUE(service_->CreateNetwork());
+
+    std::vector<reliability::DeliveryResult> outcomes;
+    service_->SetDeliveryCallback(
+        [&outcomes](const reliability::DeliveryResult& result) {
+            outcomes.push_back(result);
+        });
+    const std::vector<uint8_t> payload = {1, 2, 3};
+    ASSERT_NE(service_->SendReliable(0x3003, payload, 2).source, 0u);
+    ASSERT_EQ(service_->GetReliablePendingCount(), 1u);
+
+    service_->SetState(INetworkService::ProtocolState::FAULT_RECOVERY);
+    service_->StartElectionBackoff();
+    ASSERT_TRUE(service_->IsElectionPending());
+
+    service_->ResetNetworkState();
+    superframe_->StopSuperframe();
+
+    EXPECT_EQ(service_->GetReliablePendingCount(), 0u);
+    ASSERT_EQ(outcomes.size(), 1u);
+    EXPECT_EQ(outcomes[0].outcome, reliability::Outcome::Failed);
+    EXPECT_FALSE(service_->IsElectionPending());
+    EXPECT_EQ(service_->GetElectionBackoffRemaining(), 0u);
+    EXPECT_EQ(service_->GetState(),
+              INetworkService::ProtocolState::INITIALIZING);
 }
 
 }  // namespace test
