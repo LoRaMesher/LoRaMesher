@@ -23,7 +23,7 @@ jobs:
         for example in simple_example reliable_example group_example; do
           (
             cd "examples/$example"
-            sed -i 's|https://github.com/LoRaMesher/LoRaMesher#new_loramesher|symlink://../../|' platformio.ini
+            sed -i 's|https://github.com/LoRaMesher/LoRaMesher#[^[:space:]]*|symlink://../../|' platformio.ini
             pio run -e ttgo-lora32-v1
           )
         done
