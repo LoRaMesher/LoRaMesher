@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <vector>
 #include "types/messages/base_header.hpp"
 #include "types/protocols/lora_mesh/protocol_state.hpp"
@@ -52,5 +53,25 @@ struct NetworkStatus {
  */
 using DataReceivedCallback =
     std::function<void(AddressType source, const std::vector<uint8_t>& data)>;
+
+/**
+ * @brief Message delivered to the application, with its routing metadata
+ */
+struct ReceivedData {
+    AddressType source = 0;  ///< Originating node
+    /// This node's address, a group address (IsGroupAddress()) or broadcast
+    AddressType dest = 0;
+    uint8_t seq = 0;   ///< Sender's sequence number in the stream to @c dest
+    uint8_t hops = 0;  ///< Hops travelled (1 for a direct neighbour)
+    /// Payload bytes; valid only during the callback, copy them to keep them
+    std::span<const uint8_t> payload;
+};
+
+/**
+ * @brief Data callback type that also reports the message metadata
+ *
+ * @note Recommendation: Forward to separate task for processing
+ */
+using DataReceivedExCallback = std::function<void(const ReceivedData& message)>;
 
 }  // namespace loramesher

@@ -375,10 +375,9 @@ TEST_F(GroupAckTests, MessageIdsAreStableAndObservable) {
 
     std::vector<protocols::reliability::MessageId> received_ids;
     Net(*nodes[1])->SetDataReceivedExCallback(
-        [&received_ids](AddressType, protocols::reliability::MessageId id,
-                        uint8_t hops, const std::vector<uint8_t>&) {
-            EXPECT_GE(hops, 1u);
-            received_ids.push_back(id);
+        [&received_ids](const ReceivedData& msg) {
+            EXPECT_GE(msg.hops, 1u);
+            received_ids.push_back({msg.source, msg.seq, msg.dest});
         });
 
     ClearAllReceivedMessages();

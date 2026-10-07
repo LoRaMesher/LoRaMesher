@@ -131,33 +131,32 @@ class NetworkStressTest : public RoutingTestFixture,
     void WireCallbacks() {
         for (auto* node : topo_) {
             TestNode* n = node;
-            Net(*n)->SetDataReceivedExCallback(
-                [this, n](AddressType /*source*/, MessageId /*id*/,
-                          uint8_t hops, const std::vector<uint8_t>& data) {
-                    StressPayload pl = StressPayload::Decode(data);
-                    if (!pl.valid) {
-                        return;
+            Net(*n)->SetDataReceivedExCallback([this,
+                                                n](const ReceivedData& msg) {
+                StressPayload pl = StressPayload::Decode(std::vector<uint8_t>(
+                    msg.payload.begin(), msg.payload.end()));
+                if (!pl.valid) {
+                    return;
+                }
+                if (pl.cls == TrafficClass::kNonReliable &&
+                    pl.dest != n->address) {
+                    return;
+                }
+                uint32_t now = GetRTOS().getTickCount();
+                uint32_t latency =
+                    now >= pl.send_time_ms ? now - pl.send_time_ms : 0;
+                std::lock_guard<std::mutex> lock(metrics_mu_);
+                if (pl.cls == TrafficClass::kNonReliable) {
+                    uint64_t key =
+                        (static_cast<uint64_t>(pl.sender) << 32) | pl.seq;
+                    if (metrics_.non_reliable_seen.insert(key).second) {
+                        metrics_.non_reliable_latency_ms.push_back(latency);
                     }
-                    if (pl.cls == TrafficClass::kNonReliable &&
-                        pl.dest != n->address) {
-                        return;
-                    }
-                    uint32_t now = GetRTOS().getTickCount();
-                    uint32_t latency =
-                        now >= pl.send_time_ms ? now - pl.send_time_ms : 0;
-                    std::lock_guard<std::mutex> lock(metrics_mu_);
-                    if (pl.cls == TrafficClass::kNonReliable) {
-                        uint64_t key =
-                            (static_cast<uint64_t>(pl.sender) << 32) | pl.seq;
-                        if (metrics_.non_reliable_seen.insert(key).second) {
-                            metrics_.non_reliable_latency_ms.push_back(latency);
-                        }
-                    } else if (pl.cls == TrafficClass::kGroup) {
-                        metrics_.group_member_receipts++;
-                        metrics_.group_recv_latency_ms.push_back(latency);
-                    }
-                    (void)hops;
-                });
+                } else if (pl.cls == TrafficClass::kGroup) {
+                    metrics_.group_member_receipts++;
+                    metrics_.group_recv_latency_ms.push_back(latency);
+                }
+            });
 
             // Replace the fixture delivery callback so we can also timestamp
             // reliable deliveries for the RTT-slope collapse signal.

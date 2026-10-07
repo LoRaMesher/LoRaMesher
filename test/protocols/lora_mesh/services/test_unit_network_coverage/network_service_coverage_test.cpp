@@ -17,6 +17,7 @@
 #include "protocols/lora_mesh/services/superframe_service.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/messages/loramesher/data_message.hpp"
+#include "types/messages/loramesher/group_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
 #include "types/messages/loramesher/nm_claim_message.hpp"
@@ -1840,12 +1841,10 @@ TEST_F(NetworkServiceCoverageTest, ReliableDeliveredOnceAckedPerAttempt) {
     int deliveries = 0;
     uint8_t delivered_seq = 0;
     std::vector<uint8_t> delivered_payload;
-    service_->SetDataReceivedExCallback([&](AddressType,
-                                            reliability::MessageId id, uint8_t,
-                                            const std::vector<uint8_t>& data) {
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
         deliveries++;
-        delivered_seq = id.seq;
-        delivered_payload = data;
+        delivered_seq = msg.seq;
+        delivered_payload.assign(msg.payload.begin(), msg.payload.end());
     });
 
     // Two attempts of message 7: distinct link seqs, same message seq.
@@ -1975,8 +1974,7 @@ TEST_F(NetworkServiceCoverageTest, ReliableMsgSeqDoesNotBlockBestEffortData) {
     service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
     int deliveries = 0;
     service_->SetDataReceivedExCallback(
-        [&](AddressType, reliability::MessageId, uint8_t,
-            const std::vector<uint8_t>&) { deliveries++; });
+        [&](const ReceivedData&) { deliveries++; });
 
     InjectData(*service_, 20, ReliablePayload(9, {0x01}),
                MessageType::DATA_RELIABLE);
@@ -1985,12 +1983,71 @@ TEST_F(NetworkServiceCoverageTest, ReliableMsgSeqDoesNotBlockBestEffortData) {
     EXPECT_EQ(deliveries, 2);
 }
 
+TEST_F(NetworkServiceCoverageTest, ExtendedCallbackReportsUnicastMetadata) {
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kNodeAddress;
+    cfg.max_hops = 5;  // Initial TTL 10.
+    ASSERT_TRUE(service_->Configure(cfg));
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    int deliveries = 0;
+    ReceivedData received;
+    std::vector<uint8_t> payload;
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        deliveries++;
+        received = msg;
+        payload.assign(msg.payload.begin(), msg.payload.end());
+    });
+
+    auto msg = DataMessage::Create(kNodeAddress, kOtherNode, kNodeAddress,
+                                   {0x0A, 0x0B}, /*ttl=*/9, /*seq=*/42,
+                                   MessageType::DATA);
+    ASSERT_TRUE(msg.has_value());
+    ASSERT_TRUE(
+        service_->ProcessReceivedMessage(msg->ToBaseMessage(), 0).IsSuccess());
+
+    ASSERT_EQ(deliveries, 1);
+    EXPECT_EQ(received.source, kOtherNode);
+    EXPECT_EQ(received.dest, kNodeAddress);
+    EXPECT_EQ(received.seq, 42u);
+    EXPECT_EQ(received.hops, 2u);
+    EXPECT_EQ(payload, std::vector<uint8_t>({0x0A, 0x0B}));
+}
+
+TEST_F(NetworkServiceCoverageTest, ExtendedCallbackReportsGroupDestination) {
+    constexpr AddressType kGroup = 0x8001;
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    ASSERT_TRUE(service_->JoinGroup(kGroup));
+
+    int deliveries = 0;
+    ReceivedData received;
+    std::vector<uint8_t> payload;
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        deliveries++;
+        received = msg;
+        payload.assign(msg.payload.begin(), msg.payload.end());
+    });
+
+    const std::vector<uint8_t> data = {0x5A};
+    auto msg = GroupMessage::Create(kGroup, kOtherNode, /*ttl=*/10,
+                                    /*flags=*/0, /*seq_num=*/5, data);
+    ASSERT_TRUE(msg.has_value());
+    ASSERT_TRUE(
+        service_->ProcessReceivedMessage(msg->ToBaseMessage(), 0).IsSuccess());
+
+    ASSERT_EQ(deliveries, 1);
+    EXPECT_EQ(received.source, kOtherNode);
+    EXPECT_EQ(received.dest, kGroup);
+    EXPECT_TRUE(IsGroupAddress(received.dest));
+    EXPECT_EQ(payload, data);
+}
+
 TEST_F(NetworkServiceCoverageTest, ReliableSeqReusedAfterAFullWindowIsNew) {
     service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
     std::vector<std::vector<uint8_t>> delivered;
-    service_->SetDataReceivedExCallback(
-        [&](AddressType, reliability::MessageId, uint8_t,
-            const std::vector<uint8_t>& data) { delivered.push_back(data); });
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        delivered.emplace_back(msg.payload.begin(), msg.payload.end());
+    });
 
     InjectData(*service_, 1, ReliablePayload(7, {0x01}, 1000),
                MessageType::DATA_RELIABLE);
