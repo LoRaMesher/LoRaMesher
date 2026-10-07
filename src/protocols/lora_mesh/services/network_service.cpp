@@ -1987,16 +1987,14 @@ Result NetworkService::SendData(AddressType destination,
     // Enforce the per-packet MTU for the active radio settings. The slot is
     // sized to ToA(max_packet_size); a larger packet could never be
     // transmitted and would otherwise be re-queued every superframe forever.
-    const size_t data_header_overhead =
+    constexpr size_t kDataHeaderSize =
         BaseHeader::Size() + DataHeader::DataFieldsSize();
-    if (data.size() + data_header_overhead > config_.max_packet_size) {
-        size_t mtu = (config_.max_packet_size > data_header_overhead)
-                         ? config_.max_packet_size - data_header_overhead
-                         : 0;
+    if (data.size() + kDataHeaderSize > config_.max_packet_size) {
         LOG_WARNING(
-            "DATA payload %zu B exceeds MTU %zu B (max_packet_size=%u); "
+            "DATA payload %zu B + %zu B header exceeds max_packet_size %u; "
             "rejected",
-            data.size(), mtu, static_cast<unsigned>(config_.max_packet_size));
+            data.size(), kDataHeaderSize,
+            static_cast<unsigned>(config_.max_packet_size));
         return Result(LoraMesherErrorCode::kInvalidParameter,
                       "Payload exceeds max packet size for current SF");
     }
