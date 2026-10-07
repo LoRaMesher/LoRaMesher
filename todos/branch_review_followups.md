@@ -36,8 +36,6 @@ priority within each section.
 - **`ReliableDelivery::OnAck()` reports any echoed timestamp.** A garbled or
   future `echo_ts` reports an RTT near 2^32 ms to the application. Clamp it,
   as `RecordRttSample()` already does.
-- **`HOP_BASED` subslot assignment passes the node address** instead of the
-  hop count (`LoRaMeshProtocol::ComputeSubslotIdentifier`).
 - **Callback setters are unsynchronized.** `SetRouteUpdateCallback`,
   `SetDataReceivedCallback(Ex)`, `SetStateChangeCallback` and
   `SetLogRoutingCapabilities` assign while the protocol task may read them.

@@ -57,6 +57,8 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   with the top bit cleared.
 - The sync-beacon subslot assignment defaults to `ADDRESS_HASH` (was
   `ADDRESS_MODULO`).
+- `SubslotAssignment::HOP_BASED` is removed; `SubslotConfig` defaults to
+  `ADDRESS_HASH`.
 - `RadioType::kSx1268` is inserted before `kMockRadio`, shifting
   `kMockRadio`'s numeric value.
 - `RTOS::CreateTask()` takes the stack size in bytes on every FreeRTOS port.

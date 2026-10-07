@@ -28,6 +28,7 @@ configuration and addressing, and in the lower-level `LoRaMeshProtocol` API.
 | `default_data_slots` | default 1 | default 2; **must be identical on every node** (the data band is laid out from it) |
 | `max_data_slots` | — | new: total data-slot budget of the superframe (default 100); `setMaxDataSlots()` or the last `LoRaMeshProtocolConfig` constructor argument |
 | `max_packet_size` | as configured | capped to the physical limit of the spreading factor |
+| `SubslotConfig::strategy` | `HOP_BASED` available (struct default) | `HOP_BASED` removed; use `ADDRESS_HASH` (struct and sync-beacon default) or `ADDRESS_MODULO` |
 
 If you set `default_data_slots` explicitly, set the same value on every node.
 
