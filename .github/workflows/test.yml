@@ -224,7 +224,7 @@ jobs:
       if: >
         always() &&
         github.event_name == 'push' &&
-        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/new_loramesher')
+        github.ref == 'refs/heads/main'
       uses: schneegans/dynamic-badges-action@v1.8.0
       with:
         auth: ${{ secrets.GIST_TOKEN }}
