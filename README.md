@@ -32,6 +32,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Initialization](#initialization)
   - [Receiving Packets](#receiving-packets)
   - [Sending Packets](#sending-packets)
+  - [Reliable and Group Messaging](#reliable-and-group-messaging)
   - [Timing-Aware Sending (TDMA)](#timing-aware-sending-tdma)
   - [Diagnostics & Advanced](#diagnostics--advanced)
   - [Deployment Tips](#deployment-tips)
@@ -81,6 +82,8 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 | `examples/simple_example` | First time with the library — minimal Builder + callback flow |
 | `examples/queued_receive_example` | RX should be handled in a separate FreeRTOS task instead of inside the callback |
 | `examples/battery_optimized_example` | Battery-powered nodes that sleep between TDMA slots |
+| `examples/reliable_example` | Messages must be acknowledged — `SendReliable()` with delivery outcomes |
+| `examples/group_example` | One message to many nodes — `JoinGroup()` / `SendGroup()` with member acknowledgements |
 
 ---
 
@@ -152,6 +155,15 @@ mesher->SetDataCallback(OnDataReceived);
 
 For a ready-made pattern that pushes incoming payloads onto a queue and drains them from a dedicated FreeRTOS task, see `examples/queued_receive_example/`.
 
+To also get the destination (this node, a group or broadcast), the sender's sequence number and the hops travelled, register `SetDataCallbackEx()`. It reports the same messages as one `ReceivedData`; when both callbacks are set, both fire:
+
+```cpp
+mesher->SetDataCallbackEx([](const ReceivedData& message) {
+    // message.source, message.dest, message.seq, message.hops
+    // message.payload is valid only during the callback
+});
+```
+
 ---
 
 ### Sending Packets
@@ -169,6 +181,38 @@ if (!rb) { /* ... */ }
 ```
 
 Both `Send` and `SendBroadcast` are `[[nodiscard]]` — always check the returned `Result`. Common failure modes (node not yet synchronized, no TX slot allocated, unknown destination) come back as distinct error codes; use [`IsReadyToSend()`](#diagnostics--advanced) to probe before sending.
+
+---
+
+### Reliable and Group Messaging
+
+`SendReliable()` asks the destination to acknowledge the message and retransmits until it does or the retries run out. `SendGroup()` floods one message to every member of a group (`0x8000`–`0xFFFE`), optionally collecting the members' acknowledgements. Both return a `MessageId` (`id.source == 0` means the send was rejected), and `SetDeliveryCallback()` later reports what happened to it:
+
+```cpp
+mesher->SetDeliveryCallback([](const LoraMesher::DeliveryResult& result) {
+    // Delivered:         result.by acknowledged, result.rtt_ms round trip
+    //                    (once per member for an acknowledged group send)
+    // Failed:            no acknowledgement after all retries
+    // GroupWindowClosed: group window ended, result.ack_count members answered
+});
+
+LoraMesher::MessageId id = mesher->SendReliable(dst, payload, ReliableOptions{});
+
+mesher->JoinGroup(0x8001);
+GroupSendOptions group_options;
+group_options.request_acks = true;
+LoraMesher::MessageId gid = mesher->SendGroup(0x8001, payload, group_options);
+```
+
+The three callbacks report different things:
+
+| Callback | Reports |
+|---|---|
+| `SetDataCallback(source, data)` | Messages received by this node |
+| `SetDataCallbackEx(const ReceivedData&)` | The same messages, with destination, sequence number and hops |
+| `SetDeliveryCallback(const DeliveryResult&)` | What happened to this node's `SendReliable()` / acknowledged `SendGroup()` |
+
+See `examples/reliable_example` and `examples/group_example`.
 
 ---
 

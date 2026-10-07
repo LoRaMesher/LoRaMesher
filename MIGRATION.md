@@ -93,9 +93,12 @@ Only relevant if you use the protocol object directly instead of `LoraMesher`.
 - Group multicast: `JoinGroup` / `LeaveGroup` and
   `SendGroup(group, data, GroupSendOptions)`, optionally acknowledged, with
   per-responder outcomes and `max_retries` re-floods.
-- `SetDataCallbackEx(...)` also delivers the sender's `MessageId` and hop
-  count. A `MessageId` identifies a message by source, sequence and
-  destination.
+- `SetDataCallbackEx(const ReceivedData&)` reports the same messages as
+  `SetDataCallback`, with the destination (this node, a group or broadcast),
+  the sender's sequence number and the hops travelled. A `MessageId`
+  identifies a sent message by source, sequence and destination.
+- `examples/reliable_example` and `examples/group_example` show the reliable
+  and group APIs.
 
 ## 0.0.x → 1.0.0
 

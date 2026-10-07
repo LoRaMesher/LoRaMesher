@@ -18,11 +18,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install platformio
 
-    - name: Build ESP32 Example
+    - name: Build ESP32 Examples
       run: |
-        cd examples/simple_example
-        sed -i 's|lib_deps =.*|lib_deps = symlink://../../|' platformio.ini
-        pio run -e ttgo-lora32-v1
+        for example in simple_example reliable_example group_example; do
+          (
+            cd "examples/$example"
+            sed -i 's|https://github.com/LoRaMesher/LoRaMesher#new_loramesher|symlink://../../|' platformio.ini
+            pio run -e ttgo-lora32-v1
+          )
+        done
 
   build:
     runs-on: ubuntu-24.04

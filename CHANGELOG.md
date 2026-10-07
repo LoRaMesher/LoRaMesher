@@ -22,8 +22,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   group send reports every responder and closes with the responder count;
   `GroupSendOptions::max_retries` re-floods the message inside the ACK window,
   and members still deliver it once.
-- `SetDataCallbackEx(...)` also delivers the sender's `MessageId` and the hop
-  count.
+- `SetDataCallbackEx(const ReceivedData&)` reports each received message
+  with its destination, sender sequence number and hops travelled.
+- `examples/reliable_example` and `examples/group_example`.
 - Routing-table broadcasts are sliced across superframes, so large tables fit
   in high-SF packets.
 - `max_data_slots` configuration: the data-slot budget is separate from the
