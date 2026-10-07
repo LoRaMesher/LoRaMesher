@@ -1,19 +1,117 @@
-# Migration Guide: 0.0.x → 1.0.0
+# Migration Guide
+
+- [1.x → 2.0.0](#1x--200)
+- [0.0.x → 1.0.0](#00x--100)
+
+For protocol-level details (state machine, message formats, TDMA superframe,
+routing), see [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md). For the full release
+summary, see [CHANGELOG.md](CHANGELOG.md).
+
+## 1.x → 2.0.0
+
+The application API of 1.x keeps compiling against 2.0.0 (see
+[`GetSlotTable()`](#getslottable) for the one call whose result must be stored
+differently); the changes that need attention are on the air, in the
+configuration and addressing, and in the lower-level `LoRaMeshProtocol` API.
+
+> **Network upgrade is all-or-nothing.** 2.0.0 changes the wire format:
+> `ROUTE_TABLE` headers carry the sender's control-slot index (header fields
+> grow from 6 to 7 bytes), TDMA data slots are assigned by control-slot index,
+> `JOIN_REQUEST` and `NM_CLAIM` no longer carry a battery level, and the new
+> `DATA_RELIABLE`, `DATA_GROUP` and `ACK` messages exist. 1.x and 2.x nodes
+> cannot share a network — flash every node in one window.
+
+### Configuration
+
+| Setting | 1.x | 2.0.0 |
+|---|---|---|
+| `default_data_slots` | default 1 | default 2; **must be identical on every node** (the data band is laid out from it) |
+| `max_data_slots` | — | new: total data-slot budget of the superframe (default 100); `setMaxDataSlots()` or the last `LoRaMeshProtocolConfig` constructor argument |
+| `max_packet_size` | as configured | capped to the physical limit of the spreading factor |
+| `SubslotConfig::strategy` | `HOP_BASED` available (struct default) | `HOP_BASED` removed; use `ADDRESS_HASH` (struct and sync-beacon default) or `ADDRESS_MODULO` |
+
+If you set `default_data_slots` explicitly, set the same value on every node.
+
+### Addressing
+
+- A configured node address must be unicast: `0x0001`–`0x7FFF`, or `0` to
+  auto-assign. `0x8000`–`0xFFFE` are group addresses and `0xFFFF` is
+  broadcast; configuring one of them now fails validation.
+- Addresses generated from the hardware ID are folded into the unicast range.
+  A device whose 1.x address was `0x8000` or above gets that address with the
+  top bit cleared — update any pre-designated Network Manager address or
+  stored peer address that was derived on such a device.
+- `SendReliable()` accepts unicast destinations only; use
+  `SendGroup(..., GroupSendOptions)` with `request_acks` for groups.
+
+### Radio
+
+- `RadioConfig::CreateDefaultSx1268()` now uses 433 MHz (the SX1268 covers
+  410–810 MHz); 1.x used 869.9 MHz, which the chip cannot tune to.
+- `RadioType::kSx1268` was inserted before `kMockRadio`. Code that stores or
+  compares `RadioType` numerically must be updated.
+
+### `GetSlotTable()`
+
+`LoraMesher::GetSlotTable()` returns a `std::vector<SlotAllocation>` snapshot
+instead of a `std::span` into the live table. Store the result by value:
+
+```cpp
+auto table = mesher->GetSlotTable();        // OK: owns the snapshot
+// std::span<const SlotAllocation> t = mesher->GetSlotTable();  // dangles
+```
+
+### Network Manager merge
+
+1.x merged two independently formed networks when they came into range. In
+2.0.0 cross-network merge is disabled: a node that already belongs to a network
+ignores another network's beacons. Pre-designate one Network Manager (see
+*Deployment Tips* in the README) so a deployment forms a single network.
+
+### `LoRaMeshProtocol` API
+
+Only relevant if you use the protocol object directly instead of `LoraMesher`.
+
+- `GetNetworkNodes()` returns a snapshot copy of the routing table;
+  `GetNetworkNodesCopy()` is removed — call `GetNetworkNodes()` instead.
+- Route-update callbacks (`SetRouteUpdateCallback`) run while the routing table
+  is locked: they must not call back into the routing table or the network
+  service.
+- `GetSlotTable()` returns a `std::vector` snapshot (see above).
+- A custom `IRoutingTable` must implement `SetMaxHops(uint8_t)`.
+- `JoinRequestMessage::Create()` and `NMClaimMessage::Create()` no longer take
+  a battery level.
+- The unimplemented interfaces `IJoinService`, `INetworkDiscoveryService` and
+  `ISlotManagementService` are removed.
+- `RTOS::CreateTask()` takes the stack size in bytes on every FreeRTOS port.
+
+### New in 2.0.0
+
+- Reliable unicast: `SendReliable(dst, data, ReliableOptions)` returns a
+  `MessageId`; `SetDeliveryCallback(...)` reports delivered (with round-trip
+  time) or failed.
+- Group multicast: `JoinGroup` / `LeaveGroup` and
+  `SendGroup(group, data, GroupSendOptions)`, optionally acknowledged, with
+  per-responder outcomes and `max_retries` re-floods.
+- `SetDataCallbackEx(const ReceivedData&)` reports the same messages as
+  `SetDataCallback`, with the destination (this node, a group or broadcast),
+  the sender's sequence number and the hops travelled. A `MessageId`
+  identifies a sent message by source, sequence and destination.
+- `examples/reliable_example` and `examples/group_example` show the reliable
+  and group APIs.
+
+## 0.0.x → 1.0.0
 
 LoRaMesher 1.0.0 is a complete rewrite. The public API, configuration model,
 and wire protocol have all changed — your `0.0.x` sketch will not compile
 against 1.0.0, and a `0.0.x` node cannot talk to a 1.0.0 node on the air. This
 guide walks through what to update in user code.
 
-For protocol-level details (state machine, message formats, TDMA superframe,
-routing), see [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md). For the full release
-summary, see [CHANGELOG.md](CHANGELOG.md).
-
 > **Network upgrade is all-or-nothing.** Wire formats are incompatible. Plan
 > to flash every node in a deployment in one window — mixed-version networks
 > will not form.
 
-## At a glance
+### At a glance
 
 | Concern | 0.0.x (`v0.0.11-legacy`) | 1.0.0 |
 |---|---|---|
@@ -30,7 +128,7 @@ summary, see [CHANGELOG.md](CHANGELOG.md).
 | Errors | silent `void` returns | `[[nodiscard]] Result` |
 | Payload type | `AppPacket<UserStruct>` (templated) | `std::vector<uint8_t>` (serialize yourself) |
 
-## 1. Initialization
+### 1. Initialization
 
 The singleton is gone, configuration is now three composed objects, and
 `begin()` + `start()` collapse into a single `Builder().Build()` + `Start()`.
@@ -89,7 +187,7 @@ Notes:
   to restart.
 - Board pinouts are documented in `README.md` under *Common board presets*.
 
-## 2. Sending
+### 2. Sending
 
 `createPacketAndSend<T>(dst, ptr, n)` is replaced by `Send(dst, vector)` for
 unicast and `SendBroadcast(vector)` for broadcast. Both return `Result` and
@@ -134,7 +232,7 @@ vTaskDelay(pdMS_TO_TICKS(wait_ms));
 auto r = mesher->Send(dst, payload);
 ```
 
-## 3. Receiving
+### 3. Receiving
 
 The task-handle + `ulTaskNotifyTake` + queue-poll + `deletePacket` pattern is
 replaced by a single callback registration.
@@ -177,7 +275,7 @@ mesher->SetDataCallback(OnDataReceived);
 You no longer need to call `deletePacket(...)` — payload lifetime is owned
 by the library and the buffer is valid for the duration of the callback.
 
-## 4. Configuration mapping
+### 4. Configuration mapping
 
 | 0.0.x field | 1.0.0 location |
 |---|---|
@@ -198,7 +296,7 @@ Anything mesh-protocol related (timeouts, role, slot counts) lives on
 `LoRaMeshProtocolConfig`. Defaults match the documented behavior; override
 per-field as needed.
 
-## 5. Removed APIs
+### 5. Removed APIs
 
 | Removed (0.0.x) | Replacement (1.0.0) |
 |---|---|
@@ -215,7 +313,7 @@ per-field as needed.
 | `AppPacket<T>` templated user packet | flat `std::vector<uint8_t>`; serialize on top |
 | `BROADCAST_ADDR` macro | `SendBroadcast(...)` (no destination needed) |
 
-## 6. New capabilities worth adopting
+### 6. New capabilities worth adopting
 
 These have no 0.0.x equivalent — once your sketch compiles, look at the
 [`README.md` API Usage](README.md#api-usage) section for full details:
@@ -235,7 +333,7 @@ These have no 0.0.x equivalent — once your sketch compiles, look at the
   cuts time-to-network from ~30 s to immediate; see the *Deployment Tips*
   section in `README.md`.
 
-## 7. Protocol incompatibility
+### 7. Protocol incompatibility
 
 The 1.0.0 wire format introduces TDMA superframes, sponsor-based join, NM
 election with merge handling, and link-quality-weighted routing. **A 0.0.x
@@ -247,7 +345,7 @@ Plan deployments accordingly:
 - See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) for the wire format, state
   machine, and timing rules.
 
-## Reference: complete before/after
+### Reference: complete before/after
 
 A complete 0.0.x → 1.0.0 conversion of the canonical "broadcast a counter"
 example is the difference between `examples/Counter/` on the

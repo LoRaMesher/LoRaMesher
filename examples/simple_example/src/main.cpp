@@ -57,6 +57,11 @@ using namespace loramesher;
 std::unique_ptr<LoraMesher> mesher = nullptr;
 uint8_t counter_address = 0;  // Cycles through routing table destinations
 
+/// Time between iterations of loop(). A node's TX data slots also carry the
+/// messages it forwards for other nodes, so in larger or deeper networks keep
+/// this well above the superframe duration.
+constexpr uint32_t kLoopIntervalMs = 10000;
+
 // =============================================================================
 // Callbacks
 // =============================================================================
@@ -228,12 +233,13 @@ void loop() {
     printRoutingTable();
     printNetworkStatus();
 
-    bool sent = sendTestMessage();
-    auto routes = mesher->GetRoutingTable();
+    // Send only once the previous message, and any messages this node
+    // forwards, have left the TX queue; then transmit in the next TX data slot.
+    if (mesher->GetTxQueueSize() == 0) {
+        delay(mesher->GetTimeUntilNextDataSlot());
+        sendTestMessage();
+    }
 
-    // Wait before next iteration
-    // Longer delay when there are more routes to avoid congestion
-    // TODO: Wait until next data slot available
-    delay(sent ? 10000 * routes.size() : 10000);
+    delay(kLoopIntervalMs);
 }
 #endif
