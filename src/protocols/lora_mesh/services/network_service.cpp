@@ -2079,12 +2079,13 @@ uint8_t NetworkService::HopsFromTtl(uint8_t remaining_ttl) const {
 void NetworkService::DeliverToApp(AddressType source, uint8_t seq,
                                   AddressType dest, uint8_t hops,
                                   std::span<const uint8_t> payload) {
-    std::vector<uint8_t> data(payload.begin(), payload.end());
     if (data_received_callback_) {
-        data_received_callback_(source, data);
+        data_received_callback_(
+            source, std::vector<uint8_t>(payload.begin(), payload.end()));
     }
     if (data_received_ex_callback_) {
-        data_received_ex_callback_(source, {source, seq, dest}, hops, data);
+        data_received_ex_callback_(
+            ReceivedData{source, dest, seq, hops, payload});
     }
 }
 

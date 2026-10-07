@@ -173,7 +173,7 @@ class LoRaMeshProtocol : public Protocol {
     /** @brief Register the reliable-delivery outcome callback */
     void SetDeliveryCallback(reliability::DeliveryCallback callback);
 
-    /** @brief Register the inbound callback reporting id and hop count */
+    /** @brief Register the inbound callback reporting the message metadata */
     void SetDataReceivedExCallback(
         lora_mesh::NetworkService::DataReceivedExCallback callback);
 

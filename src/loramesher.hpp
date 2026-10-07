@@ -199,6 +199,12 @@ class LoraMesher {
 
     /**
      * @brief Set callback for received data messages
+     *
+     * Reports the source and payload of every message delivered to this node
+     * (unicast, group or broadcast). Use SetDataCallbackEx() to also get the
+     * destination, sequence number and hop count; when both are set, both
+     * fire.
+     *
      * @warning This callback should be small or transfer the message into another task for processing.
      *
      * @param callback Function to call when data is received
@@ -213,9 +219,8 @@ class LoraMesher {
     using DeliveryResult = protocols::reliability::DeliveryResult;
     /// Delivery outcome callback type.
     using DeliveryCallback = protocols::reliability::DeliveryCallback;
-    /// Inbound callback reporting message id and hop count.
-    using DataReceivedExCallback =
-        protocols::lora_mesh::NetworkService::DataReceivedExCallback;
+    /// Inbound callback reporting the message metadata.
+    using DataReceivedExCallback = loramesher::DataReceivedExCallback;
 
     /**
      * @brief Send data reliably (acknowledged) to a destination
@@ -244,10 +249,31 @@ class LoraMesher {
     /** @brief Get the groups this node belongs to */
     std::vector<AddressType> GetGroups() const;
 
-    /** @brief Register the reliable-delivery outcome callback */
+    /**
+     * @brief Register the sender-side outcome callback
+     *
+     * Reports the result of each SendReliable() (Delivered with the
+     * acknowledging node and round-trip time, or Failed) and of each
+     * SendGroup() that requests acknowledgements (GroupWindowClosed with the
+     * number of members that acknowledged).
+     *
+     * @warning Runs on the protocol task; keep it short.
+     *
+     * @param callback Function to call with each outcome
+     */
     void SetDeliveryCallback(DeliveryCallback callback);
 
-    /** @brief Register an inbound callback reporting id and hop count */
+    /**
+     * @brief Set callback for received data messages, with metadata
+     *
+     * Same events as SetDataCallback(), reported as a ReceivedData: source,
+     * destination (this node, a group or broadcast), sender sequence number,
+     * hops travelled and payload. The payload is valid only during the call.
+     *
+     * @warning Runs on the protocol task; keep it short.
+     *
+     * @param callback Function to call when data is received
+     */
     void SetDataCallbackEx(DataReceivedExCallback callback);
 
     /**

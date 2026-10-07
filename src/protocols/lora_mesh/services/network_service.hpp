@@ -22,6 +22,7 @@
 #include "protocols/lora_mesh/services/slot_scheduler.hpp"
 #include "protocols/lora_mesh/services/sync_beacon_service.hpp"
 #include "protocols/reliability/reliable_delivery.hpp"
+#include "types/application/application_types.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
 #include "types/messages/loramesher/ack_payload.hpp"
 #include "types/messages/loramesher/broadcast_message.hpp"
@@ -616,16 +617,15 @@ class NetworkService : public INetworkService {
     void SetDeliveryCallback(reliability::DeliveryCallback callback);
 
     /**
-     * @brief Inbound data callback carrying message id and hop count
+     * @brief Inbound data callback carrying the message metadata
      */
-    using DataReceivedExCallback =
-        std::function<void(AddressType source, reliability::MessageId id,
-                           uint8_t hops, const std::vector<uint8_t>& data)>;
+    using DataReceivedExCallback = loramesher::DataReceivedExCallback;
 
     /**
-     * @brief Register an inbound callback that also reports id and hop count
+     * @brief Register an inbound callback that also reports the destination,
+     *        sequence number and hop count
      *
-     * The legacy SetDataReceivedCallback continues to work; both fire.
+     * SetDataReceivedCallback keeps working; when both are set, both fire.
      *
      * @param callback Callback invoked on application delivery
      */
