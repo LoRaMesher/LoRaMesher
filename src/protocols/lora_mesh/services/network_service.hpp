@@ -1278,6 +1278,24 @@ class NetworkService : public INetworkService {
     }
 
     /**
+     * @brief Build the callbacks through which ReliableMessaging reaches this
+     *        service (queue, routing, delivery, configuration and clock).
+     */
+    ReliableMessaging::Host MakeReliableMessagingHost();
+
+    /**
+     * @brief Build the callbacks through which the slot scheduler reads
+     *        routing state and updates the superframe.
+     */
+    SlotScheduler::Host MakeSlotSchedulerHost();
+
+    /**
+     * @brief Build the callbacks through which the sync-beacon service
+     *        reaches this service.
+     */
+    SyncBeaconService::Host MakeSyncBeaconHost();
+
+    /**
      * @brief Build a read-only context snapshot for the slot scheduler.
      */
     SlotScheduler::Context MakeSlotContext() const;
