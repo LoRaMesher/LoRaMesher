@@ -277,11 +277,15 @@ class IRoutingTable {
     virtual void SetMaxHops(uint8_t max_hops) = 0;
 
     /**
-     * @brief Set the control slot index for a node (NM-local tracking)
+     * @brief Set the control slot index for a node
+     *
+     * The data band assigns slots by control slot index, so a change
+     * requires the slot table to be rebuilt.
      *
      * @param node_address Address of the node
      * @param control_slot_index Assigned control slot index
-     * @return bool True if the node was found and updated
+     * @return bool True if the node is known, the index is in range and the
+     *         stored index changed
      */
     virtual bool SetControlSlotIndex(AddressType node_address,
                                      uint8_t control_slot_index) = 0;
