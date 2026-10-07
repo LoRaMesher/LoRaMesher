@@ -71,41 +71,49 @@ NetworkService::NetworkService(
     config_.node_address = node_address;
     node_address_ = node_address;
 
-    ReliableMessaging::Host reliable_host;
-    reliable_host.node_address = node_address_;
-    reliable_host.now_ms = []() {
+    reliable_messaging_ = std::make_unique<ReliableMessaging>(
+        message_cache_, MakeReliableMessagingHost());
+    slot_scheduler_ = std::make_unique<SlotScheduler>(MakeSlotSchedulerHost());
+    sync_beacon_service_ = std::make_unique<SyncBeaconService>(
+        superframe_service_, message_queue_service_, MakeSyncBeaconHost());
+}
+
+ReliableMessaging::Host NetworkService::MakeReliableMessagingHost() {
+    ReliableMessaging::Host host;
+    host.node_address = node_address_;
+    host.now_ms = []() {
         return GetRTOS().getTickCount();
     };
-    reliable_host.enqueue =
+    host.enqueue =
         [this](types::protocols::lora_mesh::SlotAllocation::SlotType slot,
                std::unique_ptr<BaseMessage> msg) {
             return message_queue_service_->AddMessageToQueue(slot,
                                                              std::move(msg));
         };
-    reliable_host.find_next_hop = [this](AddressType dest) {
+    host.find_next_hop = [this](AddressType dest) {
         return FindNextHop(dest);
     };
-    reliable_host.forward_data_message = [this](const DataMessage& msg) {
+    host.forward_data_message = [this](const DataMessage& msg) {
         return ForwardDataMessage(msg);
     };
-    reliable_host.deliver_to_app = [this](AddressType src, uint8_t seq,
-                                          AddressType dest, uint8_t ttl,
-                                          std::span<const uint8_t> payload) {
+    host.deliver_to_app = [this](AddressType src, uint8_t seq, AddressType dest,
+                                 uint8_t ttl,
+                                 std::span<const uint8_t> payload) {
         DeliverToApp(src, seq, dest, HopsFromTtl(ttl), payload);
     };
-    reliable_host.in_operational_state = [this]() {
+    host.in_operational_state = [this]() {
         return state_ == ProtocolState::NORMAL_OPERATION ||
                state_ == ProtocolState::NETWORK_MANAGER;
     };
-    reliable_host.max_hops = [this]() {
+    host.max_hops = [this]() {
         std::lock_guard<std::mutex> lock(network_mutex_);
         return config_.max_hops;
     };
-    reliable_host.max_packet_size = [this]() -> uint16_t {
+    host.max_packet_size = [this]() -> uint16_t {
         std::lock_guard<std::mutex> lock(network_mutex_);
         return static_cast<uint16_t>(config_.max_packet_size);
     };
-    reliable_host.hops_to_dest = [this](AddressType dest) -> uint8_t {
+    host.hops_to_dest = [this](AddressType dest) -> uint8_t {
         if (routing_table_) {
             auto node = routing_table_->FindNode(dest);
             if (node && node->routing_entry.hop_count > 0) {
@@ -114,41 +122,42 @@ NetworkService::NetworkService(
         }
         return 1;
     };
-    reliable_host.superframe_duration = [this]() -> uint32_t {
+    host.superframe_duration = [this]() -> uint32_t {
         return superframe_service_
                    ? superframe_service_->GetSuperframeDuration()
                    : 0;
     };
-    reliable_host.get_path_rtt = [this](AddressType dest) {
+    host.get_path_rtt = [this](AddressType dest) {
         return routing_table_->GetPathRtt(dest);
     };
-    reliable_host.random = []() {
+    host.random = []() {
         return GetRTOS().GetRandom();
     };
-    reliable_host.set_path_rtt =
-        [this](AddressType dest,
-               const types::protocols::lora_mesh::PathRtt& rtt) {
-            return routing_table_->SetPathRtt(dest, rtt);
-        };
-    reliable_messaging_ = std::make_unique<ReliableMessaging>(
-        message_cache_, std::move(reliable_host));
+    host.set_path_rtt = [this](
+                            AddressType dest,
+                            const types::protocols::lora_mesh::PathRtt& rtt) {
+        return routing_table_->SetPathRtt(dest, rtt);
+    };
+    return host;
+}
 
-    SlotScheduler::Host slot_host;
-    slot_host.get_routing_nodes = [this]() {
+SlotScheduler::Host NetworkService::MakeSlotSchedulerHost() {
+    SlotScheduler::Host host;
+    host.get_routing_nodes = [this]() {
         return routing_table_->GetNodesCopy();
     };
-    slot_host.get_hop_distance_to_nm = [this]() {
+    host.get_hop_distance_to_nm = [this]() {
         return GetHopDistanceToNM();
     };
-    slot_host.get_slot_duration = [this]() -> uint32_t {
+    host.get_slot_duration = [this]() -> uint32_t {
         return superframe_service_ ? superframe_service_->GetSlotDuration()
                                    : 1000;
     };
-    slot_host.calculate_nm_tx_time = [this](uint8_t control_slots,
-                                            uint8_t data_slots) {
+    host.calculate_nm_tx_time = [this](uint8_t control_slots,
+                                       uint8_t data_slots) {
         return CalculateNMTxTimeMs(control_slots, data_slots);
     };
-    slot_host.notify_superframe = [this](uint16_t total_slots) -> Result {
+    host.notify_superframe = [this](uint16_t total_slots) -> Result {
         if (!superframe_service_) {
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Superframe service not available");
@@ -156,14 +165,15 @@ NetworkService::NetworkService(
         return superframe_service_->UpdateSuperframeConfig(total_slots, 0,
                                                            false);
     };
-    slot_scheduler_ = std::make_unique<SlotScheduler>(std::move(slot_host));
+    return host;
+}
 
-    SyncBeaconService::Host sync_host;
-    sync_host.restore_tx_slot = [this]() {
+SyncBeaconService::Host NetworkService::MakeSyncBeaconHost() {
+    SyncBeaconService::Host host;
+    host.restore_tx_slot = [this]() {
         RestoreSyncBeaconTxSlot();
     };
-    sync_beacon_service_ = std::make_unique<SyncBeaconService>(
-        superframe_service_, message_queue_service_, std::move(sync_host));
+    return host;
 }
 
 SlotScheduler::Context NetworkService::MakeSlotContext() const {
