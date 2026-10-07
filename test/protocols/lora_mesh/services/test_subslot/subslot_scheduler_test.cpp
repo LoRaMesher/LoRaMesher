@@ -18,13 +18,12 @@ using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
 // ComputeTiming - Basic Functionality
 // ============================================================================
 
-TEST(SubslotSchedulerTest, ComputeTimingHopBasedSubslot0) {
+TEST(SubslotSchedulerTest, ComputeTimingSubslot0) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
-    // Network Manager at hop 0
     auto timing = SubslotScheduler::ComputeTiming(1000, config, 0);
 
     EXPECT_TRUE(timing.is_valid);
@@ -33,13 +32,12 @@ TEST(SubslotSchedulerTest, ComputeTimingHopBasedSubslot0) {
     EXPECT_EQ(timing.tx_start_offset_ms, 10);
 }
 
-TEST(SubslotSchedulerTest, ComputeTimingHopBasedSubslot1) {
+TEST(SubslotSchedulerTest, ComputeTimingSubslot1) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
-    // Node at hop 1
     auto timing = SubslotScheduler::ComputeTiming(1000, config, 1);
 
     EXPECT_TRUE(timing.is_valid);
@@ -82,7 +80,7 @@ TEST(SubslotSchedulerTest, DifferentSubslotsDoNotOverlap) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
     for (uint16_t i = 0; i < config.num_subslots; ++i) {
         auto timing_i = SubslotScheduler::ComputeTiming(1000, config, i);
@@ -105,7 +103,7 @@ TEST(SubslotSchedulerTest, AllSubslotsFitWithinSlot) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
     uint32_t slot_duration = 1000;
 
@@ -118,13 +116,13 @@ TEST(SubslotSchedulerTest, AllSubslotsFitWithinSlot) {
     }
 }
 
-TEST(SubslotSchedulerTest, HopBasedWrapsAround) {
+TEST(SubslotSchedulerTest, IdentifierWrapsAround) {
     SubslotConfig config;
     config.num_subslots = 3;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
-    // Hop 3 wraps to subslot 0
+    // Identifier 3 wraps to subslot 0
     auto timing3 = SubslotScheduler::ComputeTiming(1000, config, 3);
     auto timing0 = SubslotScheduler::ComputeTiming(1000, config, 0);
 
@@ -168,7 +166,7 @@ TEST(SubslotSchedulerTest, ComputeTimingSingleSubslot) {
     SubslotConfig config;
     config.num_subslots = 1;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
     auto timing = SubslotScheduler::ComputeTiming(1000, config, 0);
 
@@ -183,7 +181,7 @@ TEST(SubslotSchedulerTest, ComputeTimingLargeSlotDuration) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 50;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
     auto timing = SubslotScheduler::ComputeTiming(5000, config, 2);
 
@@ -229,7 +227,7 @@ TEST(SubslotSchedulerTest, LowToaKeepsAllSubslots) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
     auto with_toa = SubslotScheduler::ComputeTiming(1000, config, 4, 100);
     auto without_toa = SubslotScheduler::ComputeTiming(1000, config, 4);
@@ -362,7 +360,7 @@ TEST(SubslotSchedulerTest, ConsistentTimingForSameInput) {
     SubslotConfig config;
     config.num_subslots = 5;
     config.guard_time_ms = 10;
-    config.strategy = SubslotAssignment::HOP_BASED;
+    config.strategy = SubslotAssignment::ADDRESS_MODULO;
 
     auto t1 = SubslotScheduler::ComputeTiming(1000, config, 2);
     auto t2 = SubslotScheduler::ComputeTiming(1000, config, 2);

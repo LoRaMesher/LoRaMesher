@@ -1197,7 +1197,6 @@ uint16_t LoRaMeshProtocol::ComputeSubslotIdentifier(
             return lora_mesh::SubslotScheduler::MixAddressFrame(node_address_,
                                                                 frame);
         }
-        case lora_mesh::SubslotAssignment::HOP_BASED:
         case lora_mesh::SubslotAssignment::ADDRESS_MODULO:
         default:
             return node_address_;

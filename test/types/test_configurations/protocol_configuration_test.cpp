@@ -464,13 +464,19 @@ TEST_F(LoRaMeshConfigTest, GetSyncBeaconSubslotConfigDefault) {
 
 TEST_F(LoRaMeshConfigTest, SetSyncBeaconSubslotConfig) {
     types::protocols::lora_mesh::SubslotConfig new_cfg{
-        3, 20, types::protocols::lora_mesh::SubslotAssignment::HOP_BASED};
+        3, 20, types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
     config_.setSyncBeaconSubslotConfig(new_cfg);
     const auto& result = config_.getSyncBeaconSubslotConfig();
     EXPECT_EQ(result.num_subslots, 3u);
     EXPECT_EQ(result.guard_time_ms, 20u);
     EXPECT_EQ(result.strategy,
-              types::protocols::lora_mesh::SubslotAssignment::HOP_BASED);
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
+}
+
+TEST_F(LoRaMeshConfigTest, SubslotConfigDefaultsToAddressHash) {
+    types::protocols::lora_mesh::SubslotConfig cfg;
+    EXPECT_EQ(cfg.strategy,
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH);
 }
 
 TEST_F(LoRaMeshConfigTest, GetDiscoverySubslotConfigDefault) {
