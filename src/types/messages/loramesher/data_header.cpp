@@ -8,9 +8,9 @@
 namespace loramesher {
 
 DataHeader::DataHeader(AddressType dest, AddressType src, AddressType next_hop,
-                       uint8_t payload_size, uint8_t ttl, uint8_t seq_num)
-    : BaseHeader(dest, src, MessageType::DATA,
-                 DataHeader::DataFieldsSize() + payload_size),
+                       uint8_t payload_size, uint8_t ttl, uint8_t seq_num,
+                       MessageType type)
+    : BaseHeader(dest, src, type, DataHeader::DataFieldsSize() + payload_size),
       next_hop_(next_hop),
       ttl_(ttl),
       seq_num_(seq_num) {}
@@ -45,8 +45,8 @@ std::optional<DataHeader> DataHeader::Deserialize(
         return std::nullopt;
     }
 
-    // Verify this is a data message
-    if (base_header->GetType() != MessageType::DATA) {
+    // Verify this is a data-header-family message
+    if (!IsDataHeaderType(base_header->GetType())) {
         LOG_ERROR("Wrong message type for data header: %d",
                   static_cast<int>(base_header->GetType()));
         return std::nullopt;
@@ -77,9 +77,10 @@ std::optional<DataHeader> DataHeader::Deserialize(
             ? base_header->GetPayloadSize() - DataFieldsSize()
             : 0;
 
-    // Create and return the data header
+    // Create and return the data header, preserving the wire type
     DataHeader header(base_header->GetDestination(), base_header->GetSource(),
-                      *next_hop, actual_payload_size, *ttl, *seq_num);
+                      *next_hop, actual_payload_size, *ttl, *seq_num,
+                      base_header->GetType());
 
     return header;
 }

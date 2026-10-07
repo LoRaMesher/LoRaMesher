@@ -34,7 +34,14 @@ class DataMessage : public IConvertibleToBaseMessage {
     static std::optional<DataMessage> Create(
         AddressType dest, AddressType src, AddressType next_hop,
         const std::vector<uint8_t>& payload, uint8_t ttl = 0,
-        uint8_t seq_num = 0);
+        uint8_t seq_num = 0, MessageType type = MessageType::DATA);
+
+    /**
+     * @brief Gets the data-family message type (DATA, DATA_RELIABLE, or ACK)
+     *
+     * @return MessageType The message type carried on the wire
+     */
+    MessageType GetType() const;
 
     /**
      * @brief Creates a data message from serialized data

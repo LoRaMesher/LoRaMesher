@@ -35,6 +35,8 @@ enum class MessageType : uint8_t {
     // Data messages (0x1x)
     DATA = 0x11,            ///< 0001 0001: Regular data message
     DATA_BROADCAST = 0x12,  ///< 0001 0010: Broadcast data message
+    DATA_RELIABLE = 0x13,   ///< 0001 0011: Reliable (acknowledged) data message
+    DATA_GROUP = 0x14,      ///< 0001 0100: Group (multicast) data message
 
     // Control messages (0x2x)
     ACK = 0x21,  ///< 0010 0001: Acknowledgment

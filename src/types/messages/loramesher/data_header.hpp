@@ -38,9 +38,22 @@ class DataHeader : public BaseHeader {
      * @param payload_size Size of the data payload
      * @param ttl Time-to-live for loop prevention (decremented at each hop)
      * @param seq_num Per-source sequence number for de-duplication
+     * @param type Data-family message type (DATA, DATA_RELIABLE, or ACK)
      */
     DataHeader(AddressType dest, AddressType src, AddressType next_hop,
-               uint8_t payload_size, uint8_t ttl = 0, uint8_t seq_num = 0);
+               uint8_t payload_size, uint8_t ttl = 0, uint8_t seq_num = 0,
+               MessageType type = MessageType::DATA);
+
+    /**
+     * @brief Check whether a message type uses the data-header wire format.
+     *
+     * @param type Message type to classify
+     * @return true for DATA, DATA_RELIABLE, and ACK
+     */
+    static bool IsDataHeaderType(MessageType type) {
+        return type == MessageType::DATA ||
+               type == MessageType::DATA_RELIABLE || type == MessageType::ACK;
+    }
 
     /**
      * @brief Gets the next hop address for routing
