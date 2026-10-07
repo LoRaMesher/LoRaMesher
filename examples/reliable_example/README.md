@@ -8,7 +8,7 @@ Shows how to send acknowledged (reliable) unicast messages and follow each one u
 2. **Registers** two callbacks:
    - `SetDataCallbackEx` — received messages with their metadata (source, sequence number, hops travelled)
    - `SetDeliveryCallback` — the outcome of each reliable send
-3. **Sends** `"Reliable hello #N"` with `SendReliable()` to the next peer in the routing table every 15 seconds
+3. **Sends** `"Reliable hello #N"` with `SendReliable()` to the next peer in the routing table, one message at a time (see [Traffic Budget](#traffic-budget))
 4. **Prints** whether each message was delivered (with the round-trip time) or failed
 
 Flash it on two or more boards.
@@ -52,6 +52,25 @@ A retransmitted message is delivered to the destination's application only once.
 | `payload` | Payload bytes, valid only during the callback |
 
 Both callbacks run on the protocol task. Keep them short or hand the data to your own task (see `examples/queued_receive_example`).
+
+## Traffic Budget
+
+A fixed send interval that works for two nodes side by side breaks as the network grows. Keep these limits in mind:
+
+- **Slots are shared.** Each node transmits in its own data slots, `GetDataSlotsPerSuperframe()` per superframe (2 by default). The same slots carry the node's own messages, the messages it forwards for others and the ACKs it returns. A superframe lasts several seconds and gets longer with more nodes and higher spreading factors.
+- **A reliable message is not one packet.** Over `h` hops it costs about `h` data transmissions plus `h` ACK transmissions, and more for every retry. The nodes in the middle of the path pay for it too.
+- **Overload shows up as:**
+  - `SendReliable()` returning an id with `source == 0` (at most 8 reliable messages can be pending);
+  - TX queues filling up;
+  - more `Failed` outcomes, whose retries add even more load.
+
+This example paces itself instead of using a fixed delay. It sends the next message only when all of these hold:
+
+1. the previous message has an outcome (`Delivered` or `Failed`);
+2. the TX queue is empty (`GetTxQueueSize() == 0`), so forwarded messages and ACKs have gone out too;
+3. at least `kMinSendIntervalMs` has passed.
+
+Then it waits `GetTimeUntilNextDataSlot()` so the message is sent in this node's next slot. Longer paths, retries and busy neighbours all slow it down. An application that sends more often should use the same signals rather than a fixed rate.
 
 ## Expected Serial Output
 
