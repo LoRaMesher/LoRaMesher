@@ -82,8 +82,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
   tasks ran with a quarter of the configured stack and the stack monitor
   reported four times the real free space. The configured sizes now state
-  the real stacks (the effective stack of each task is unchanged), and the
-  monitor reports bytes.
+  the real stacks, and the monitor reports bytes. The protocol task grows to
+  6 KB and the radio event task to 4 KB, so both keep more than the 1 KB
+  warning margin at the peaks measured on a 13-node network.
 - Reliable delivery: retransmissions reach distant destinations under load; a
   message is no longer acknowledged but dropped after the sequence number
   wraps; an attempt that can never be queued fails instead of retrying

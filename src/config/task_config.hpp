@@ -19,14 +19,15 @@ struct TaskConfig {
     /// Periodic-monitor warning threshold (bytes free).
     static constexpr size_t kStackWarnBytes = 1024;
 
-    /// Radio event task. Measured peak ~2.4 KB at the heaviest tested
-    /// radio-IRQ load.
-    static constexpr size_t kRadioEventStackSize = 3280;
+    /// Radio event task. Measured peak ~2.7 KB on a 13-node ESP32 network.
+    static constexpr size_t kRadioEventStackSize = 4096;
 
-    /// Main protocol task. Measured peak ~1.75 KB during single-node boot.
-    static constexpr size_t kProtocolMainStackSize = 4096;
+    /// Main protocol task. It also runs the application data callbacks.
+    /// Measured peak ~3.6 KB on a 13-node ESP32 network with data traffic.
+    static constexpr size_t kProtocolMainStackSize = 6144;
 
-    /// Superframe update task. Measured peak ~1.8 KB.
+    /// Superframe update task. Measured peak ~1.9 KB on a 13-node ESP32
+    /// network.
     static constexpr size_t kSuperframeStackSize = 3072;
 
     /// PingPong message-processing task.
