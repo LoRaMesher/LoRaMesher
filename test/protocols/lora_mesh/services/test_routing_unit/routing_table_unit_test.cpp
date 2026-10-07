@@ -1144,6 +1144,14 @@ TEST_F(RoutingTableUnitTest, SetControlSlotIndexNotFound) {
     EXPECT_FALSE(routing_table_->SetControlSlotIndex(kRemoteNode, 5));
 }
 
+TEST_F(RoutingTableUnitTest, SetControlSlotIndexUnchangedReturnsFalse) {
+    AddDirectNeighbor(kNeighbor1);
+    ASSERT_TRUE(routing_table_->SetControlSlotIndex(kNeighbor1, 3));
+
+    EXPECT_FALSE(routing_table_->SetControlSlotIndex(kNeighbor1, 3));
+    EXPECT_TRUE(routing_table_->SetControlSlotIndex(kNeighbor1, 4));
+}
+
 // =============================================================================
 // GetStatistics / GetLinkQuality / SetMaxNodes Tests
 // =============================================================================
@@ -2310,7 +2318,7 @@ TEST_F(RoutingTableUnitTest,
 }
 
 // =============================================================================
-// HasUnidirectionalRisk / SetControlSlotIndex / SetMaxNodes overflow
+// HasUnidirectionalRisk / SetMaxNodes overflow
 // =============================================================================
 
 TEST_F(RoutingTableUnitTest, HasUnidirectionalRiskNotPresentReturnsFalse) {
@@ -2331,23 +2339,6 @@ TEST_F(RoutingTableUnitTest, HasUnidirectionalRiskFalseForMultiHopRoute) {
     ReceiveRoutingMessage(kNeighbor2, entries, kGoodQuality);
     // kNeighbor1 is reachable via 2 hops, hop_count != 1 → no risk.
     EXPECT_FALSE(routing_table_->HasUnidirectionalRisk(kNeighbor1));
-}
-
-TEST_F(RoutingTableUnitTest, SetControlSlotIndexSucceedsForExistingNode) {
-    AddDirectNeighbor(kNeighbor1);
-    EXPECT_TRUE(routing_table_->SetControlSlotIndex(kNeighbor1, 7));
-
-    const auto& nodes = routing_table_->GetNodesCopy();
-    auto it =
-        std::find_if(nodes.begin(), nodes.end(), [](const NetworkNodeRoute& n) {
-            return n.routing_entry.destination == kNeighbor1;
-        });
-    ASSERT_NE(it, nodes.end());
-    EXPECT_EQ(it->control_slot_index, 7u);
-}
-
-TEST_F(RoutingTableUnitTest, SetControlSlotIndexFailsForUnknownNode) {
-    EXPECT_FALSE(routing_table_->SetControlSlotIndex(kNeighbor1, 7));
 }
 
 TEST_F(RoutingTableUnitTest, SetMaxNodesShrinksTableAndDropsOldest) {

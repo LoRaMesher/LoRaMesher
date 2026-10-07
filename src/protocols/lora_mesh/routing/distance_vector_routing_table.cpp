@@ -611,7 +611,7 @@ bool DistanceVectorRoutingTable::SetControlSlotIndex(
         return false;
     }
     auto it = GetNode(node_address);
-    if (it == nodes_.end()) {
+    if (it == nodes_.end() || it->control_slot_index == control_slot_index) {
         return false;
     }
     it->control_slot_index = control_slot_index;
