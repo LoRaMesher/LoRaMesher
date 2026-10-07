@@ -212,6 +212,8 @@ The three callbacks report different things:
 | `SetDataCallbackEx(const ReceivedData&)` | The same messages, with destination, sequence number and hops |
 | `SetDeliveryCallback(const DeliveryResult&)` | What happened to this node's `SendReliable()` / acknowledged `SendGroup()` |
 
+**Traffic budget.** Each node sends at most `GetDataSlotsPerSuperframe()` packets per superframe, and those slots also carry the messages it forwards and the ACKs it returns. A reliable message over `h` hops costs about `2h` transmissions; a group message costs about one transmission per node, plus the members' ACKs. Signs of overload are a `MessageId` with `source == 0`, `kQueueFull`, and `Failed` outcomes. Do not send at a fixed rate: send the next message after the previous outcome arrives and `GetTxQueueSize()` is 0, as the examples do.
+
 See `examples/reliable_example` and `examples/group_example`.
 
 ---

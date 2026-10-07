@@ -9,10 +9,13 @@
  * - Follows the acknowledgements with SetDeliveryCallback()
  * - Tells group messages from unicast messages in SetDataCallbackEx()
  *
- * Flash it on two or more boards. Every node joins kGroup and sends a group
- * message every 20 seconds; the other members receive and acknowledge it.
+ * Flash it on two or more boards. Every node joins kGroup and sends group
+ * messages one at a time: the next one goes out only after the previous
+ * acknowledgement window has closed. The other members receive and
+ * acknowledge each message.
  */
 
+#include <atomic>
 #include <iostream>
 #include <string>
 
@@ -57,11 +60,30 @@ using namespace loramesher;
 constexpr AddressType kGroup = 0x8001;
 
 // =============================================================================
+// Send Pacing
+// =============================================================================
+// A node's TX data slots (GetDataSlotsPerSuperframe() per superframe) carry
+// its own messages, the messages it forwards for other nodes and the ACKs it
+// returns. A group message is flooded, so it costs about one transmission per
+// node, plus one ACK per member travelling back over its hop distance. Rather
+// than a fixed delay, the loop sends the next message only when the previous
+// acknowledgement window has closed and the TX queue is empty, so the rate
+// follows the network size, the topology and the load.
+
+constexpr uint32_t kMinSendIntervalMs = 20000;  // Lower bound between sends
+constexpr uint32_t kPollIntervalMs = 1000;      // How often loop() re-checks
+
+// =============================================================================
 // Global Variables
 // =============================================================================
 
 std::unique_ptr<LoraMesher> mesher = nullptr;
 uint32_t message_number = 0;  // Included in the payload text
+uint32_t last_send_ms = 0;    // millis() of the last send attempt
+
+/// True from SendGroup() until its acknowledgement window closes (set by the
+/// loop, cleared on the protocol task).
+std::atomic<bool> awaiting_window{false};
 
 // =============================================================================
 // Callbacks
@@ -73,7 +95,8 @@ uint32_t message_number = 0;  // Included in the payload text
  * @brief Called with the progress of every acknowledged SendGroup()
  *
  * A group send reports Delivered once per member that acknowledges, then
- * GroupWindowClosed when its acknowledgement window ends.
+ * GroupWindowClosed when its acknowledgement window ends. GroupWindowClosed and
+ * Failed end the send and let the loop send the next message.
  *
  * @param result Message id, outcome, acknowledging member and member count
  */
@@ -87,7 +110,7 @@ void OnDeliveryResult(const LoraMesher::DeliveryResult& result) {
                       << ": member 0x" << std::hex << result.by << std::dec
                       << " acknowledged (RTT " << result.rtt_ms << " ms)"
                       << std::endl;
-            break;
+            return;
         case Outcome::GroupWindowClosed:
             std::cout << "Group 0x" << std::hex << result.id.dest << std::dec
                       << " seq=" << static_cast<int>(result.id.seq) << ": "
@@ -100,6 +123,7 @@ void OnDeliveryResult(const LoraMesher::DeliveryResult& result) {
                       << ": send failed" << std::endl;
             break;
     }
+    awaiting_window = false;
 }
 
 /**
@@ -139,8 +163,12 @@ bool sendGroupMessage() {
     options.window_ms = 8000;     // How long to collect acknowledgements
     options.max_retries = 1;      // Re-floods inside the window
 
+    // Set before sending: a send that fails at once reports its outcome
+    // before SendGroup() returns.
+    awaiting_window = true;
     LoraMesher::MessageId id = mesher->SendGroup(kGroup, payload, options);
     if (id.source == 0) {
+        awaiting_window = false;
         // Rejected, e.g. the node has not joined a network yet.
         std::cout << "Group send not accepted yet" << std::endl;
         return false;
@@ -201,7 +229,13 @@ void setup() {
 }
 
 void loop() {
-    sendGroupMessage();
-    delay(20000);
+    const bool interval_elapsed = millis() - last_send_ms >= kMinSendIntervalMs;
+    if (interval_elapsed && !awaiting_window && mesher->GetTxQueueSize() == 0) {
+        // Transmit in this node's next TX data slot.
+        delay(mesher->GetTimeUntilNextDataSlot());
+        sendGroupMessage();
+        last_send_ms = millis();
+    }
+    delay(kPollIntervalMs);
 }
 #endif

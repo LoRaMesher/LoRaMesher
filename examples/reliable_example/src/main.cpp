@@ -9,9 +9,11 @@
  *   sequence number) with SetDataCallbackEx()
  *
  * Flash it on two or more boards. Every node sends a reliable message to the
- * next peer in its routing table every 15 seconds.
+ * next peer in its routing table, one at a time: the next message goes out
+ * only after the previous one has been delivered or has failed.
  */
 
+#include <atomic>
 #include <iostream>
 #include <string>
 
@@ -47,12 +49,30 @@ using namespace loramesher;
 #define LORA_PREAMBLE_LENGTH 8U   // Preamble symbols
 
 // =============================================================================
+// Send Pacing
+// =============================================================================
+// A node's TX data slots (GetDataSlotsPerSuperframe() per superframe) carry
+// its own messages, the messages it forwards for other nodes and the ACKs it
+// returns. A reliable message over h hops costs about 2h transmissions, more
+// with retries. Rather than a fixed delay, the loop sends the next message only
+// when the previous one has an outcome and the TX queue is empty, so the rate
+// follows the hop count, the network size and the load.
+
+constexpr uint32_t kMinSendIntervalMs = 10000;  // Lower bound between sends
+constexpr uint32_t kPollIntervalMs = 1000;      // How often loop() re-checks
+
+// =============================================================================
 // Global Variables
 // =============================================================================
 
 std::unique_ptr<LoraMesher> mesher = nullptr;
 uint8_t peer_index = 0;       // Cycles through routing table destinations
 uint32_t message_number = 0;  // Included in the payload text
+uint32_t last_send_ms = 0;    // millis() of the last send attempt
+
+/// True from SendReliable() until its outcome arrives (set by the loop,
+/// cleared on the protocol task).
+std::atomic<bool> awaiting_outcome{false};
 
 // =============================================================================
 // Callbacks
@@ -62,6 +82,8 @@ uint32_t message_number = 0;  // Included in the payload text
 
 /**
  * @brief Called with the outcome of every SendReliable()
+ *
+ * Each outcome ends the send and lets the loop send the next message.
  *
  * @param result Message id, outcome, acknowledging node and round-trip time
  */
@@ -84,8 +106,9 @@ void OnDeliveryResult(const LoraMesher::DeliveryResult& result) {
             break;
         case Outcome::GroupWindowClosed:
             // Reported only for group sends.
-            break;
+            return;
     }
+    awaiting_outcome = false;
 }
 
 /**
@@ -137,8 +160,12 @@ bool sendReliableMessage() {
     options.max_retries = 3;  // Retransmissions after the first attempt
     options.timeout_ms = 0;   // 0 = derive from hop count and superframe
 
+    // Set before sending: a send that fails at once reports its outcome
+    // before SendReliable() returns.
+    awaiting_outcome = true;
     LoraMesher::MessageId id = mesher->SendReliable(dest, payload, options);
     if (id.source == 0) {
+        awaiting_outcome = false;
         std::cerr << "SendReliable to 0x" << std::hex << dest << std::dec
                   << " was rejected" << std::endl;
         return false;
@@ -191,7 +218,14 @@ void setup() {
 }
 
 void loop() {
-    sendReliableMessage();
-    delay(15000);
+    const bool interval_elapsed = millis() - last_send_ms >= kMinSendIntervalMs;
+    if (interval_elapsed && !awaiting_outcome &&
+        mesher->GetTxQueueSize() == 0) {
+        // Transmit in this node's next TX data slot.
+        delay(mesher->GetTimeUntilNextDataSlot());
+        sendReliableMessage();
+        last_send_ms = millis();
+    }
+    delay(kPollIntervalMs);
 }
 #endif

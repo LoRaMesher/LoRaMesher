@@ -6,7 +6,7 @@ Shows how to send one message to every member of a group and collect the members
 
 1. **Starts** a mesh node (same Builder flow as `simple_example`)
 2. **Joins** group `0x8001` with `JoinGroup()`
-3. **Sends** `"Group hello #N"` to the group with `SendGroup()` every 20 seconds, asking members to acknowledge
+3. **Sends** `"Group hello #N"` to the group with `SendGroup()`, asking members to acknowledge, one message at a time (see [Traffic Budget](#traffic-budget))
 4. **Prints** each member's acknowledgement and, when the acknowledgement window closes, how many members answered
 5. **Prints** received messages, telling group messages from unicast ones
 
@@ -52,6 +52,25 @@ mesher->SetDataCallbackEx([](const ReceivedData& message) {
 ```
 
 Both callbacks run on the protocol task. Keep them short or hand the data to your own task (see `examples/queued_receive_example`).
+
+## Traffic Budget
+
+Group messages are the most expensive traffic in the mesh:
+
+- **Slots are shared.** Each node transmits in its own data slots, `GetDataSlotsPerSuperframe()` per superframe (2 by default). The same slots carry the node's own messages, the messages it forwards for others and the ACKs it returns.
+- **A group message reaches every node.** It is flooded, so it costs about one transmission per node in the network. With `request_acks`, every member also sends an ACK back over its hop distance, and `max_retries` re-floods the message.
+- **Overload shows up as:**
+  - `SendGroup()` returning an id with `source == 0`;
+  - TX queues filling up;
+  - fewer members acknowledging (`ack_count`).
+
+This example paces itself instead of using a fixed delay. It sends the next group message only when all of these hold:
+
+1. the previous acknowledgement window has closed (`GroupWindowClosed` or `Failed`);
+2. the TX queue is empty (`GetTxQueueSize() == 0`);
+3. at least `kMinSendIntervalMs` has passed.
+
+Then it waits `GetTimeUntilNextDataSlot()` before sending. In large networks, keep the group send rate low and use `request_acks` only when you need the confirmation.
 
 ## Expected Serial Output
 
