@@ -253,9 +253,10 @@ class LoraMesher {
      * @brief Register the sender-side outcome callback
      *
      * Reports the result of each SendReliable() (Delivered with the
-     * acknowledging node and round-trip time, or Failed) and of each
-     * SendGroup() that requests acknowledgements (GroupWindowClosed with the
-     * number of members that acknowledged).
+     * acknowledging node and round-trip time, or Failed). For a SendGroup()
+     * that requests acknowledgements it reports Delivered once per member
+     * that acknowledges, then GroupWindowClosed with the number of members
+     * that acknowledged.
      *
      * @warning Runs on the protocol task; keep it short.
      *
