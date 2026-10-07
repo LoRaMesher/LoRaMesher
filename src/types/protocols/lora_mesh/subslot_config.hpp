@@ -20,8 +20,7 @@ namespace lora_mesh {
  * @brief Strategy for assigning a node to a subslot
  */
 enum class SubslotAssignment : uint8_t {
-    HOP_BASED,       ///< subslot = hop_count (sync beacon forwarding)
-    ADDRESS_MODULO,  ///< subslot = address % num_subslots (discovery)
+    ADDRESS_MODULO,  ///< subslot = address % num_subslots
     RANDOM,  ///< caller provides random value; subslot = value % num_subslots
     ADDRESS_HASH  ///< caller mixes address with a per-superframe term; subslot =
                   ///< mix(address, superframe) % num_subslots
@@ -33,7 +32,7 @@ enum class SubslotAssignment : uint8_t {
 struct SubslotConfig {
     uint8_t num_subslots = 5;  ///< Number of subslots to divide the slot into
     uint32_t guard_time_ms = 10;  ///< Guard time between subslots in ms
-    SubslotAssignment strategy = SubslotAssignment::HOP_BASED;
+    SubslotAssignment strategy = SubslotAssignment::ADDRESS_HASH;
 };
 
 /**
