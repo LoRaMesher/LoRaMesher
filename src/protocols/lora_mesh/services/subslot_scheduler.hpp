@@ -3,8 +3,9 @@
  * @brief Deterministic subslot-based collision mitigation for TDMA slots
  *
  * Provides timing calculations to divide a single TDMA slot into subslots,
- * allowing nodes at different hop distances (or with different addresses)
- * to transmit at non-overlapping times within the same slot.
+ * allowing nodes that share a slot to transmit at non-overlapping times.
+ * The caller derives the node identifier from the configured
+ * SubslotAssignment strategy.
  *
  * See PROTOCOL_SPEC.md Section 10.1.3: Collision Mitigation for Same-Hop
  * Forwarders.
@@ -32,9 +33,9 @@ using types::protocols::lora_mesh::SubslotTiming;
  * @brief Stateless utility for deterministic subslot timing calculations
  *
  * Divides a TDMA slot into subslots so that nodes transmit at different
- * offsets, avoiding collisions. Two assignment strategies are supported:
- * - HOP_BASED: subslot index = hop count (for sync beacon forwarding)
- * - ADDRESS_MODULO: subslot index = address % num_subslots (for discovery)
+ * offsets, avoiding collisions. The subslot index is
+ * node_identifier % num_subslots; the identifier is chosen by the caller
+ * according to the configured SubslotAssignment strategy.
  *
  * Slot layout:
  * |Guard|Subslot0_TX|Guard|Subslot1_TX|...|Guard|SubslotN-1_TX|RX_Tail|
@@ -53,10 +54,10 @@ class SubslotScheduler {
      * @brief Compute timing for a node's subslot within a slot
      *
      * @param slot_duration_ms Total slot duration in milliseconds
-     * @param config Subslot configuration (num_subslots, guard_time, strategy)
-     * @param node_identifier Node-specific value used for subslot assignment:
-     *        - HOP_BASED: hop count to network manager
-     *        - ADDRESS_MODULO: node address
+     * @param config Subslot configuration (num_subslots, guard_time)
+     * @param node_identifier Node-specific value used for subslot assignment
+     *        (node address, random value or address/superframe hash,
+     *        depending on the strategy)
      * @param toa_ms Time-on-air of the message to transmit. When > 0, the
      *        number of subslots is reduced so each subslot can hold one
      *        transmission (guard + ToA); at high spreading factors, where one
