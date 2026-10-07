@@ -1685,7 +1685,7 @@ Each slot is divided into `N` subslots. Each node is deterministically assigned 
 |-----------|---------|-------------|
 | `num_subslots` | 5 | Number of subslots per slot |
 | `guard_time_ms` | 50 ms | Guard time before each subslot TX window (configurable) |
-| `strategy` | Slot-dependent | `HOP_BASED`, `ADDRESS_MODULO`, or `RANDOM` |
+| `strategy` | Slot-dependent | `ADDRESS_HASH`, `ADDRESS_MODULO`, or `RANDOM` |
 
 **Timing Formulas:**
 ```
@@ -1714,7 +1714,8 @@ Subslot 4: TX at [810, 1000) ms
 
 | Strategy | Formula | When Used |
 |----------|---------|-----------|
-| `ADDRESS_MODULO` | `subslot = node_address % N` | Sync beacon, control, and data slots — deterministic and consistent across the network |
+| `ADDRESS_HASH` | `subslot = mix(node_address, superframe) % N` | Sync beacon forwarding (default) — deterministic per superframe; two forwarders whose addresses are congruent modulo `N` land in different subslots in most superframes instead of colliding in every one |
+| `ADDRESS_MODULO` | `subslot = node_address % N` | Available for a fixed per-node subslot; not used by default |
 | `RANDOM` | `subslot = random() % N` | Discovery TX (default) — Slotted ALOHA approach; caller provides a hardware-generated random value via `RTOS::GetRandom()`, so each attempt picks a different subslot, resolving collisions probabilistically |
 
 **Radio State Behavior During Subslotted Slots:**
@@ -1725,25 +1726,21 @@ Subslot 4: TX at [810, 1000) ms
 4. After any RX event: radio stays in `kReceive` (not `kSleep`)
 5. At slot transition: `in_subslotted_slot` flag resets, normal sleep behavior resumes
 
-**Sequence for SYNC_BEACON_TX Slot (3-hop network):**
+**Sequence for a hop-1 SYNC_BEACON_TX Slot (two forwarders, ADDRESS_HASH):**
 ```
-Time    NM (hop=0, subslot=0)    NodeA (hop=1, subslot=1)    NodeB (hop=2, subslot=2)
-─────   ────────────────────     ───────────────────────     ───────────────────────
-0ms     RX (guard)               RX (guard)                  RX (guard)
-10ms    TX sync beacon           RX (listen)                 RX (listen)
-200ms   RX (done TX)             RX (guard for subslot 1)    RX (listen)
-210ms   RX (listen)              TX sync beacon              RX (listen)
-400ms   RX (listen)              RX (done TX)                RX (guard for subslot 2)
-410ms   RX (listen)              RX (listen)                 TX sync beacon
-600ms   RX (listen)              RX (listen)                 RX (done TX)
-1000ms  Slot transition          Slot transition             Slot transition
+Time    NodeA (hash → subslot 1)    NodeB (hash → subslot 2)    Hop-2 nodes
+─────   ────────────────────────    ────────────────────────    ───────────
+0ms     RX (listen)                 RX (listen)                 RX (listen)
+210ms   TX sync beacon              RX (listen)                 RX (beacon from A)
+400ms   RX (done TX)                RX (guard for subslot 2)    RX (listen)
+410ms   RX (listen)                 TX sync beacon              RX (beacon from B)
+600ms   RX (listen)                 RX (done TX)                RX (listen)
+1000ms  Slot transition             Slot transition             Slot transition
 ```
 
 **Same-Hop Collision Handling:**
 
-Nodes at the same hop distance map to the same subslot. This is an accepted design trade-off:
-- LoRa's **capture effect** means the stronger signal is received successfully (3-6 dB advantage typical)
-- For denser networks, a secondary address-based subdivision can be added within each hop-based subslot as a future enhancement
+All forwarders of a hop layer share that layer's slot. `ADDRESS_HASH` reshuffles them every superframe, so two forwarders that pick the same subslot in one superframe usually pick different ones in the next. A remaining collision is resolved by LoRa's **capture effect** (the stronger signal is received, 3-6 dB advantage typical) or by the next superframe's beacon.
 
 **Subslot Fallback:**
 
