@@ -73,6 +73,8 @@ def set_platform_cpp_standard(environment, platform):
         environment.Append(CXXFLAGS=["-std=gnu++20"])
     elif platform == "espressif32":
         environment.Append(CXXFLAGS=["-std=gnu++2a"])
+    elif platform == "ststm32":
+        environment.Append(CXXFLAGS=["-std=gnu++20"])
 
 set_platform_cpp_standard(env, current_platform)
 set_platform_cpp_standard(global_env, current_platform)

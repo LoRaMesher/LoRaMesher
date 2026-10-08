@@ -81,7 +81,7 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
     // The local node won't be advertised to others (GetRoutingEntries excludes it)
     // This ensures SetNodeCapabilities() works regardless of network state
 
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     uint32_t current_time = GetRTOS().getTickCount();
 
@@ -117,7 +117,7 @@ bool NetworkService::UpdateNetworkNode(AddressType node_address,
 
 bool NetworkService::UpdateNetwork(uint8_t allocated_control_slots,
                                    uint8_t allocated_discovery_slots) {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
     bool updated = false;
     if (allocated_control_slots > 0) {
         config_.default_control_slots = allocated_control_slots;
@@ -132,7 +132,7 @@ bool NetworkService::UpdateNetwork(uint8_t allocated_control_slots,
 }
 
 bool NetworkService::IsNodeInNetwork(AddressType node_address) const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
     return routing_table_->IsNodePresent(node_address);
 }
 
@@ -146,12 +146,12 @@ std::vector<NetworkNodeRoute> NetworkService::GetNetworkNodesCopy() const {
 }
 
 size_t NetworkService::GetNetworkSize() const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
     return routing_table_->GetSize();
 }
 
 size_t NetworkService::RemoveInactiveNodes() {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     uint32_t current_time = GetRTOS().getTickCount();
 
@@ -207,7 +207,7 @@ Result NetworkService::ProcessRoutingTableMessage(const BaseMessage& message,
     // corrupt network_manager_, causing JOIN_REQUEST to go to the wrong NM or
     // SYNC_BEACON_TX to flip to SYNC_BEACON_RX.
     if (network_manager_ == 0 && network_manager != 0) {
-        std::lock_guard<std::mutex> lock(network_mutex_);
+        os::LockGuard lock(network_mutex_);
         network_manager_ = network_manager;
         LOG_INFO("Updated network manager to 0x%04X", network_manager);
         routing_changed = true;
@@ -283,7 +283,7 @@ bool NetworkService::IsTDMANeighbor(AddressType address) const {
 }
 
 AddressType NetworkService::FindNextHop(AddressType destination) const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     AddressType best = routing_table_->FindNextHop(destination);
 
@@ -390,7 +390,7 @@ bool NetworkService::UpdateRouteEntry(AddressType source,
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     uint32_t current_time = GetRTOS().getTickCount();
 
@@ -415,7 +415,7 @@ void NetworkService::SetDataReceivedCallback(DataReceivedCallback callback) {
 }
 
 void NetworkService::SetLocalNodeCapabilities(uint8_t capabilities) {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     // Check if capabilities actually changed
     if (local_capabilities_ == capabilities) {
@@ -429,13 +429,13 @@ void NetworkService::SetLocalNodeCapabilities(uint8_t capabilities) {
 }
 
 uint8_t NetworkService::GetLocalNodeCapabilities() const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
     // Return from dedicated field, not routing table
     return local_capabilities_;
 }
 
 void NetworkService::SetLocalAllocatedDataSlots(uint8_t data_slots) {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     // Check if data slots actually changed
     if (local_allocated_data_slots_ == data_slots) {
@@ -448,7 +448,7 @@ void NetworkService::SetLocalAllocatedDataSlots(uint8_t data_slots) {
 }
 
 uint8_t NetworkService::GetNodeCapabilities(AddressType node_address) const {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     // Check if requesting local node capabilities
     if (node_address == node_address_) {
@@ -622,7 +622,7 @@ AddressType NetworkService::GetNetworkManagerAddress() const {
 }
 
 void NetworkService::SetNetworkManager(AddressType manager_address) {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     if (network_manager_ != manager_address) {
         network_manager_ = manager_address;
@@ -687,7 +687,7 @@ uint8_t NetworkService::CalculateLinkQuality(AddressType node_address) const {
 
 std::unique_ptr<BaseMessage> NetworkService::CreateRoutingTableMessage(
     AddressType destination) {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     // Get routing entries from routing table (excludes own address)
     std::vector<RoutingTableEntry> entries =
@@ -1005,7 +1005,7 @@ void NetworkService::ResetLinkQualityStats() {
 
 bool NetworkService::UpdateNetworkTopology(bool /* notify_superframe */) {
     //TODO: Could implement additional topology analysis here
-    // std::lock_guard<std::mutex> lock(network_mutex_);
+    // os::LockGuard lock(network_mutex_);
     // Check if we have any nodes
 
     // Remove inactive nodes
@@ -2552,7 +2552,7 @@ Result NetworkService::BroadcastSlotAllocation() {
     //                   "Only network manager can broadcast allocation");
     // }
 
-    // std::lock_guard<std::mutex> lock(network_mutex_);
+    // os::LockGuard lock(network_mutex_);
 
     // // Get total active nodes
     // uint8_t total_nodes = static_cast<uint8_t>(network_nodes_.size() + 1);
@@ -2893,7 +2893,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     }
 
     {
-        std::lock_guard<std::mutex> lock(network_mutex_);
+        os::LockGuard lock(network_mutex_);
         bool params_changed = false;
 
         // Update network manager from the sync beacon header
@@ -3675,7 +3675,7 @@ bool NetworkService::ScheduleDiscoverySlotForwarding() {
 }
 
 void NetworkService::ResetNetworkState() {
-    std::lock_guard<std::mutex> lock(network_mutex_);
+    os::LockGuard lock(network_mutex_);
 
     // Store count before clearing for logging
     size_t node_count = routing_table_->GetSize();

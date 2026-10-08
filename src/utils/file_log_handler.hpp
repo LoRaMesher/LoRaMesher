@@ -4,9 +4,9 @@
 #include <fstream>
 #include <iomanip>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <string>
+#include "os/mutex.hpp"
 
 #include "logger.hpp"
 #include "os/os_port.hpp"
@@ -70,7 +70,7 @@ class FileLogHandler : public LogHandler {
             timestamp = GetTimestamp();
         }
 
-        std::lock_guard<std::mutex> lock(file_mutex_);
+        os::LockGuard lock(file_mutex_);
 
         if (!file_stream_.is_open()) {
             return;
@@ -116,7 +116,7 @@ class FileLogHandler : public LogHandler {
      * @brief Flushes buffered log messages to disk
      */
     void Flush() override {
-        std::lock_guard<std::mutex> lock(file_mutex_);
+        os::LockGuard lock(file_mutex_);
         if (file_stream_.is_open()) {
             file_stream_.flush();
         }
@@ -127,7 +127,7 @@ class FileLogHandler : public LogHandler {
      * @param interval Number of writes between forced flushes (default: 10)
      */
     void SetFlushInterval(size_t interval) {
-        std::lock_guard<std::mutex> lock(file_mutex_);
+        os::LockGuard lock(file_mutex_);
         flush_interval_ = interval;
     }
 
@@ -149,7 +149,7 @@ class FileLogHandler : public LogHandler {
     bool add_timestamps_;
     std::chrono::steady_clock::time_point start_time_{
         std::chrono::steady_clock::now()};
-    mutable std::mutex file_mutex_;  ///< Mutex to ensure atomic file writes
+    mutable os::Mutex file_mutex_;  ///< Mutex to ensure atomic file writes
     std::string buffer_;         ///< Reusable buffer for log line construction
     size_t write_count_{0};      ///< Counter for writes since last flush
     size_t flush_interval_{10};  ///< Number of writes between forced flushes
@@ -158,7 +158,7 @@ class FileLogHandler : public LogHandler {
      * @brief Write a header to the log file
      */
     void WriteHeader() {
-        std::lock_guard<std::mutex> lock(file_mutex_);
+        os::LockGuard lock(file_mutex_);
         std::string header = "# LoRaMesh Test Log\n";
         header += "# Generated: " + GetCurrentTimeString() + "\n";
         header += "# Format: [timestamp] [level] message\n";

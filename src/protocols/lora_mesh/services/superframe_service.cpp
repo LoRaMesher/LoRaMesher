@@ -207,7 +207,7 @@ Result SuperframeService::HandleNewSuperframe() {
 
     // Notify callback if set
     {
-        std::lock_guard<std::mutex> lock(callback_mutex_);
+        os::LockGuard lock(callback_mutex_);
         if (superframe_callback_) {
             superframe_callback_(0, true);  // Slot 0, new superframe
         }
@@ -543,7 +543,7 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
 }
 
 void SuperframeService::SetSuperframeCallback(SuperframeCallback callback) {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
+    os::LockGuard lock(callback_mutex_);
     superframe_callback_ = std::move(callback);
 }
 
@@ -622,7 +622,7 @@ Result SuperframeService::UpdateSuperframeState() {
 
         // Call callback for slot transition
         {
-            std::lock_guard<std::mutex> lock(callback_mutex_);
+            os::LockGuard lock(callback_mutex_);
             if (superframe_callback_ && !new_superframe) {
                 superframe_callback_(current_slot, new_superframe);
             }
