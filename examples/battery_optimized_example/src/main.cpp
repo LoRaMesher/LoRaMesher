@@ -10,6 +10,8 @@
  * - Automatic PMU detection (AXP192/AXP2101)
  * - Sleep/wake callbacks for power optimization
  * - Periodic message sending with routing table display
+ * - Warm restart: the mesh state is kept in flash across restarts (send 'r'
+ *   on the serial port to restart the node as an OTA update would)
  */
 
 #include <Arduino.h>
@@ -85,6 +87,21 @@ void OnDataReceived(AddressType source, const std::vector<uint8_t>& data) {
 // Helper Functions
 // ============================================================================
 
+/**
+ * @brief Restart the node without losing its place in the mesh
+ *
+ * Call this right before any planned reset (e.g. after an OTA image has been
+ * written). For deep sleep, use an RtcStateStore and esp_deep_sleep_start().
+ */
+void restartPreservingMeshState() {
+    Result result = mesher->SaveState();
+    if (!result) {
+        std::cerr << "Mesh state not saved: " << result.GetErrorMessage()
+                  << std::endl;
+    }
+    esp_restart();
+}
+
 void printRoutingTable() {
     auto routes = mesher->GetRoutingTable();
     std::cout << "Routes: " << routes.size() << std::endl;
@@ -158,13 +175,15 @@ void configureLoraMesher() {
         mesh_config.setNodeRole(NodeRole::NODE_ONLY);
     }
 
-    // 4. Build LoraMesher with power callbacks
+    // 4. Build LoraMesher with power callbacks and a state store that keeps
+    //    the mesh state across restarts (flash survives OTA updates)
     mesher = LoraMesher::Builder()
                  .withRadioConfig(radio_config)
                  .withPinConfig(pin_config)
                  .withLoRaMeshProtocol(mesh_config)
                  .withPrepareSleepCallback(OnSleep)
                  .withWakeUpCallback(OnWakeUp)
+                 .withStateStore(std::make_shared<storage::NvsStateStore>())
                  .Build();
 
     // 5. Set data callback
@@ -207,6 +226,10 @@ void setup() {
 }
 
 void loop() {
+    if (Serial.available() > 0 && Serial.read() == 'r') {
+        restartPreservingMeshState();
+    }
+
     printRoutingTable();
     printNetworkStatus();
     sendTestMessage();

@@ -33,6 +33,18 @@ class MessageCache {
             seq_.fetch_add(1, std::memory_order_relaxed) + 1);
     }
 
+    /// Last sequence number returned by NextSeq() (0 before the first send).
+    uint8_t LastSeq() const { return seq_.load(std::memory_order_relaxed); }
+
+    /**
+     * @brief Continue the sequence after @p last_seq
+     *
+     * Used when the node restarts: the next NextSeq() returns last_seq + 1.
+     */
+    void RestoreLastSeq(uint8_t last_seq) {
+        seq_.store(last_seq, std::memory_order_relaxed);
+    }
+
     /// True if (source, seq) is in the cache.
     bool Contains(AddressType source, uint8_t seq) const {
         std::lock_guard<std::mutex> lock(mutex_);

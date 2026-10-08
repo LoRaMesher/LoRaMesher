@@ -76,6 +76,27 @@ mesher = LoraMesher::Builder()
              .Build();
 ```
 
+## Restarting Without Leaving the Mesh
+
+The example keeps the mesh state in flash (`NvsStateStore`). Before a planned
+restart, such as an OTA update, it calls `SaveState()`; after the restart the
+node resumes in the same network: a network manager keeps its network id and
+its members' slots, and every node continues its message sequence numbers.
+Send `r` on the serial monitor to try it.
+
+```cpp
+mesher = LoraMesher::Builder()
+             .withStateStore(std::make_shared<storage::NvsStateStore>())
+             // ... other config
+             .Build();
+
+mesher->SaveState();  // right before the reset
+esp_restart();
+```
+
+For deep sleep use `storage::RtcStateStore` instead: it keeps the state in RTC
+memory without writing flash.
+
 ## Battery Monitoring
 
 Access battery information through the PMU (defined in `initDevices.cpp`):

@@ -43,6 +43,7 @@ This document provides the complete technical specification for the LoRaMesher p
    - 6.2 [Discovery Messages](#62-discovery-messages)
    - 6.3 [Join Process](#63-join-process)
    - 6.4 [Sponsor-Based Join Protocol](#64-sponsor-based-join-protocol)
+   - 6.5 [Warm Restart](#65-warm-restart)
 7. [Packet Structure](#7-packet-structure)
    - 7.1 [Physical Layer Frame](#71-physical-layer-frame)
    - 7.2 [LoRaMesher Frame Structure](#72-loramesher-frame-structure)
@@ -1759,7 +1760,8 @@ Control slots are allocated using NM-assigned indices tracked in the routing tab
 
 1. **NM assigns `control_slot_index`** to each node at join time (in JOIN_RESPONSE)
 2. NM tracks assignments in its routing table (`NetworkNodeRoute.control_slot_index`)
-3. Re-joining nodes reuse their existing index; new nodes get the lowest available
+3. Re-joining nodes reuse their existing index; new nodes get the lowest available. The NM's own
+   index is never handed out: a former NM rejoining an elected successor gets a new index
 4. NM broadcasts `node_count` in SYNC_BEACON = max assigned index + 1
 5. All nodes use `node_count` as `allocated_control_slots_`
 6. Each node's CONTROL_TX slot = `sync_beacon_slots + my_control_slot_index_`
@@ -2046,11 +2048,19 @@ Implemented. When a node misses `kExpandListeningThreshold` (2) consecutive sync
 If missed beacons reach `kMaxNoReceivedSyncBeacons` (5) the node enters FAULT_RECOVERY and starts a weighted staggered-backoff timer:
 
 ```
-election_delay = kElectionListenWindowMs (5 000 ms)           // mandatory anti-flap window
+listen_window  = max(kElectionListenWindowMs (5 000 ms),
+                     superframe_duration × (kElectionListenSuperframes (2)
+                       + kElectionListenSuperframesPerHop (4) × (hops_to_nm − 1)))
+election_delay = listen_window                                  // anti-flap window
                + role_bonus   (0 for NETWORK_MANAGER role, else kElectionListenWindowMs)
                + addr_bonus   (kElectionListenWindowMs × (addr & 0xFF) / 256)
                + jitter       (0 – kElectionListenWindowMs/2 ms, random)
 ```
+
+The listen window spans several superframes of the lost network, so a network manager that only
+reset (OTA update, reboot) is heard again before a successor is elected. Nodes further from the
+manager wait four superframes more per extra hop, because each relay on the path has to rejoin
+before it forwards the manager's beacons again.
 
 `NODE_ONLY` nodes never enter election (`election_delay = 0` = disabled).
 
@@ -2063,6 +2073,9 @@ hears an NM_CLAIM sent in any slot.
 
 **On receiving NM_CLAIM** (in FAULT_RECOVERY or NM_ELECTION):
 - If their `election_priority` < ours → surrender: cancel backoff, enter DISCOVERY and join the winner
+- If their `election_priority` > ours while our backoff still runs (FAULT_RECOVERY) → claim
+  immediately (queue our NM_CLAIM and enter NM_ELECTION), so the weaker claimant surrenders within
+  its election window instead of both nodes creating the network
 - Otherwise ignore
 
 **Election priority** (lower = wins):
@@ -2232,6 +2245,8 @@ config.setNodeRole(NodeRole::NETWORK_MANAGER);  // or NODE_ONLY, or AUTO
 **NODE_ONLY Behavior**: Nodes with NODE_ONLY role will remain in DISCOVERY state indefinitely until a SYNC_BEACON is received. They will never call `CreateNetwork()` regardless of discovery timeout.
 
 **NETWORK_MANAGER Behavior**: Nodes with NETWORK_MANAGER role will skip the discovery phase entirely and immediately create a new network, entering the NETWORK_MANAGER protocol state. If a NETWORK_MANAGER-role node later re-enters DISCOVERY after yielding in an NM election, it does not re-create a network on discovery timeout — it remains in DISCOVERY until a SYNC_BEACON is received, similar to NODE_ONLY behavior.
+
+Discovery is extended once after a warm restart of a member (Section 6.5).
 
 ### 6.2 Discovery Messages
 
@@ -2561,6 +2576,73 @@ Forwarded join requests and responses are queued to DISCOVERY_TX and delivered v
 - Distributes join processing load across sponsor nodes
 - Enables hierarchical network formation
 - Supports larger geographic coverage areas
+
+### 6.5 Warm Restart
+
+A node can keep a small snapshot of its protocol state across a planned reset (OTA reboot, deep
+sleep) and resume in the same network instead of forming or joining a new one. The application
+configures an `IStateStore` (`LoRaMeshProtocolConfig::setStateStore()`,
+`LoraMesher::Builder::withStateStore()`) and calls `SaveState()` right before the reset and before
+`Stop()`, which clears the network state. `Start()` reads the store once, erases it and applies the
+snapshot, so a snapshot is never applied twice (a crash after a warm start is a cold start).
+
+#### 6.5.1 Snapshot Contents
+
+Only state the network cannot give back is stored. Routes, link statistics, the slot table, the
+superframe phase and all timers are tick based or derived and are rebuilt after the restart.
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | Magic `"LMS1"` |
+| 4 | 1 | Format version (1) |
+| 5 | 1 | Flags (bit 0: the node was network manager) |
+| 6 | 2 | Node address |
+| 8 | 2 | Network id |
+| 10 | 1 | Last sequence number used |
+| 11 | 1 | Network depth |
+| 12 | 4 | Superframe duration (ms) |
+| 16 | 1 | Reservation count N (network manager only) |
+| 17 | 3 × N | Member address (2), control slot index (1) |
+| 17 + 3N | 4 | CRC-32 of all previous bytes |
+
+All fields are little-endian; the size is 21 + 3N bytes (171 bytes for 50 members). A snapshot is
+rejected, and the node starts cold, when it is truncated, fails the CRC, has another magic or
+version, was taken by another node, or is inconsistent (reservations of a non-manager, of the node
+itself, of a non-unicast address, of control slot 0 or duplicated).
+
+#### 6.5.2 Restart Behavior
+
+**Every node** continues its message sequence numbers at `last_sequence + 32`, past every number a
+neighbour's duplicate cache may still hold, so its first messages after the restart are not
+dropped as duplicates.
+
+**A network manager** (snapshot flag set; a NODE_ONLY node ignores it) restores its network id and
+holds every member's control slot:
+1. It listens in DISCOVERY for 1.5 superframes. Beacons of other networks are ignored. A beacon of
+   its own network means a successor was elected meanwhile: the node drops its reservations and
+   joins that network as a member. An NM_CLAIM for its network extends the wait until the winner's
+   first beacon can be heard.
+2. Otherwise it resumes the network as manager (`CreateNetwork()` keeps the restored network id).
+   The control band keeps its size because reserved slots count like assigned ones, so members
+   still in NORMAL_OPERATION resynchronize to the new superframe phase or, after missing
+   `kMaxNoReceivedSyncBeacons`, rejoin through FAULT_RECOVERY with their old control slot.
+3. A rejoining member gets its reserved slot back, and new members get the lowest slot that is
+   neither assigned nor reserved. A reservation ends when the member is in the routing table again,
+   or after `node_timeout_ms` without hearing it, which releases the slot.
+
+**A member** never restores the network id or routes: it always rejoins through DISCOVERY and
+JOINING, where the manager returns its control slot. Its first discovery waits
+`(network_depth + 2) × 4` superframes longer before an AUTO node forms a network of its own,
+because after a reset of the whole network the members reconnect hop by hop and only relays in
+NORMAL_OPERATION forward beacons.
+
+#### 6.5.3 Limits
+
+- The members' election backoff (Section 5.9) spans at least two superframes, so a manager that
+  is back within about five superframes plus that backoff keeps its role. After a longer outage a
+  successor may be elected; the returning manager then joins it (step 1 above).
+- Outages that split AUTO members into partitions that each elect a manager leave several managers
+  with the same network id, which only network merging could resolve (Section 10.6.9).
 
 ---
 
@@ -3159,6 +3241,11 @@ The following scenarios require Path B (full merge protocol with `FOREIGN_DISCOV
 
 3. **Repeated proximity** — if networks drift in/out of range frequently, the merge loop
    repeats, which is functionally correct but generates burst NM_CLAIM traffic.
+
+4. **Same-id partitions** — an outage long enough for cut-off AUTO members to elect their own
+   manager (a relay, or the centre of a star) leaves several managers sharing one network id when
+   it ends. A manager ignores beacons carrying its own network id, so these partitions are neither
+   detected nor merged. See `docs/todo_network_merge.md`.
 
 ---
 

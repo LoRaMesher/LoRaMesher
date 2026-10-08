@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <numeric>
+#include <utility>
 
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
@@ -186,6 +187,7 @@ SlotScheduler::Context NetworkService::MakeSlotContext() const {
     ctx.number_of_slots_per_superframe = number_of_slots_per_superframe_;
     ctx.beacon_node_count = beacon_node_count_;
     ctx.my_control_slot_index = my_control_slot_index_;
+    ctx.reserved_control_slot_max = GetHighestReservedControlSlot();
     ctx.no_received_sync_beacon_count = no_received_sync_beacon_count_;
     ctx.max_network_nodes = config_.max_network_nodes;
     ctx.max_data_slots = config_.max_data_slots;
@@ -650,8 +652,13 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
         selected_sponsor_ = 0;
     }
 
+    const bool resume_as_manager = std::exchange(resume_as_manager_, false);
+    if (resume_as_manager && manager_resume_listen_ms_ == 0) {
+        return ResumeNetworkAsManager();
+    }
+
     // Handle NETWORK_MANAGER role - skip discovery, create network immediately
-    if (node_role_ == NodeRole::NETWORK_MANAGER) {
+    if (node_role_ == NodeRole::NETWORK_MANAGER && !resume_as_manager) {
         LOG_INFO("Node role is NETWORK_MANAGER, creating network immediately");
         return CreateNetwork();
     }
@@ -666,12 +673,172 @@ Result NetworkService::StartDiscovery(uint32_t discovery_timeout_ms) {
     discovery_start_time_ = GetRTOS().getTickCount();
     nm_election_start_ms_.reset();
 
+    // A warm-restarted manager first listens for its network: if another
+    // manager took it over meanwhile, the node joins it instead of resuming
+    if (resume_as_manager) {
+        manager_resume_deadline_ms_ =
+            discovery_start_time_ + manager_resume_listen_ms_;
+        LOG_INFO(
+            "Warm restart: listening %u ms for network 0x%04X before resuming "
+            "it as manager",
+            manager_resume_listen_ms_, network_id_.load());
+    }
+
     LOG_INFO("Starting network discovery, timeout: %d ms, current time: %d ms",
              discovery_timeout_ms, discovery_start_time_);
 
     // Start discovery process
     // return PerformDiscovery(discovery_timeout_ms);
     return Result::Success();
+}
+
+storage::NetworkSnapshot NetworkService::CaptureSnapshot() const {
+    storage::NetworkSnapshot snapshot;
+    snapshot.node_address = node_address_;
+    snapshot.was_network_manager = (state_ == ProtocolState::NETWORK_MANAGER);
+    snapshot.network_id = network_id_.load();
+    snapshot.last_sequence = message_cache_.LastSeq();
+    snapshot.network_depth = current_network_depth_;
+    snapshot.superframe_duration_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
+    if (!snapshot.was_network_manager) {
+        return snapshot;
+    }
+
+    // One slot per member and one member per slot; the manager owns slot 0
+    std::bitset<256> used_indices;
+    used_indices.set(0);
+    auto add_member = [&](AddressType address, uint8_t index) {
+        if (address == node_address_ || address == 0 ||
+            address == kBroadcastAddress ||
+            index >= config_.max_network_nodes || used_indices.test(index)) {
+            return;
+        }
+        for (const auto& reservation : snapshot.reservations) {
+            if (reservation.address == address) {
+                return;
+            }
+        }
+        used_indices.set(index);
+        snapshot.reservations.push_back({address, index});
+    };
+
+    routing_table_->ForEachNode([&](const NetworkNodeRoute& node) {
+        add_member(node.GetAddress(), node.control_slot_index);
+    });
+    std::lock_guard<std::mutex> lock(reservations_mutex_);
+    for (const auto& reservation : control_slot_reservations_) {
+        add_member(reservation.address, reservation.control_slot_index);
+    }
+    return snapshot;
+}
+
+Result NetworkService::ApplySnapshot(const storage::NetworkSnapshot& snapshot) {
+    if (snapshot.node_address != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Snapshot was taken by another node");
+    }
+
+    // Skip past every number neighbours may still cache, including numbers
+    // used after the snapshot was taken
+    message_cache_.RestoreLastSeq(
+        static_cast<uint8_t>(snapshot.last_sequence + MessageCache::kCapacity));
+
+    const uint64_t superframe_ms = snapshot.superframe_duration_ms;
+    if (snapshot.was_network_manager && snapshot.network_id != 0 &&
+        node_role_ != NodeRole::NODE_ONLY) {
+        network_id_ = snapshot.network_id;
+        resume_as_manager_ = true;
+        manager_resume_listen_ms_ = static_cast<uint32_t>(std::min<uint64_t>(
+            superframe_ms * kManagerResumeListenPercent / 100, UINT32_MAX));
+
+        const uint32_t expires_at_ms =
+            GetRTOS().getTickCount() + config_.node_timeout_ms;
+        std::lock_guard<std::mutex> lock(reservations_mutex_);
+        control_slot_reservations_.clear();
+        for (const auto& reservation : snapshot.reservations) {
+            if (reservation.control_slot_index < config_.max_network_nodes) {
+                control_slot_reservations_.push_back(
+                    {reservation.address, reservation.control_slot_index,
+                     expires_at_ms});
+            }
+        }
+        LOG_INFO(
+            "Warm restart: resuming network 0x%04X as manager, holding %zu "
+            "member control slots",
+            snapshot.network_id, control_slot_reservations_.size());
+    } else if (!snapshot.was_network_manager && superframe_ms > 0) {
+        // The network comes back hop by hop: each relay must rejoin before
+        // the nodes behind it hear a beacon again
+        const uint64_t hops = static_cast<uint64_t>(snapshot.network_depth) + 2;
+        warm_discovery_extension_ms_ = static_cast<uint32_t>(std::min<uint64_t>(
+            hops * kWarmDiscoverySuperframesPerHop * superframe_ms,
+            UINT32_MAX));
+        LOG_INFO(
+            "Warm restart: waiting up to %u extra ms for network 0x%04X before "
+            "forming a new one",
+            warm_discovery_extension_ms_, snapshot.network_id);
+    }
+    return Result::Success();
+}
+
+uint32_t NetworkService::GetManagerResumeDelayRemaining() const {
+    if (!manager_resume_deadline_ms_) {
+        return 0;
+    }
+    const uint32_t now = GetRTOS().getTickCount();
+    if (utils::TimeReached(now, *manager_resume_deadline_ms_)) {
+        return 1;
+    }
+    return *manager_resume_deadline_ms_ - now;
+}
+
+Result NetworkService::ResumeNetworkAsManager() {
+    LOG_INFO("Warm restart: resuming network 0x%04X as manager",
+             network_id_.load());
+    return CreateNetwork();
+}
+
+bool NetworkService::PruneControlSlotReservations() {
+    const uint32_t now = GetRTOS().getTickCount();
+    std::lock_guard<std::mutex> lock(reservations_mutex_);
+    const size_t before = control_slot_reservations_.size();
+    control_slot_reservations_.erase(
+        std::remove_if(
+            control_slot_reservations_.begin(),
+            control_slot_reservations_.end(),
+            [&](const ControlSlotReservation& reservation) {
+                if (utils::TimeReached(now, reservation.expires_at_ms)) {
+                    LOG_INFO(
+                        "Released control slot %d held for 0x%04X: not heard "
+                        "since the restart",
+                        reservation.control_slot_index, reservation.address);
+                    return true;
+                }
+                auto node = routing_table_->FindNode(reservation.address);
+                return node && node->control_slot_index != 0xFF;
+            }),
+        control_slot_reservations_.end());
+    return control_slot_reservations_.size() != before;
+}
+
+uint8_t NetworkService::FindReservedControlSlot(AddressType address) const {
+    std::lock_guard<std::mutex> lock(reservations_mutex_);
+    for (const auto& reservation : control_slot_reservations_) {
+        if (reservation.address == address) {
+            return reservation.control_slot_index;
+        }
+    }
+    return 0xFF;
+}
+
+uint8_t NetworkService::GetHighestReservedControlSlot() const {
+    std::lock_guard<std::mutex> lock(reservations_mutex_);
+    uint8_t highest = 0;
+    for (const auto& reservation : control_slot_reservations_) {
+        highest = std::max(highest, reservation.control_slot_index);
+    }
+    return highest;
 }
 
 Result NetworkService::StartJoining(AddressType /* manager_address */,
@@ -685,6 +852,7 @@ Result NetworkService::StartJoining(AddressType /* manager_address */,
     SetState(ProtocolState::JOINING);
     network_found_ = true;
     network_creator_ = false;
+    warm_discovery_extension_ms_ = 0;
 
     // The retry count is kept across rejoins, so joiners that timed out
     // together come back after different backoffs.
@@ -1521,13 +1689,24 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
             control_slot_index = existing->control_slot_index;
             LOG_INFO("Reusing control slot index %d for re-joining node 0x%04X",
                      control_slot_index, source);
+        } else {
+            control_slot_index = FindReservedControlSlot(source);
+            if (control_slot_index != 0xFF) {
+                LOG_INFO(
+                    "Returning reserved control slot index %d to node 0x%04X",
+                    control_slot_index, source);
+            }
         }
 
         // Verify no other node already holds this index (stale propagation
         // can cause a previously-removed node to re-appear with an index
         // that was already reassigned to another node)
         if (control_slot_index != 0xFF) {
-            AddressType holder = 0;
+            // The manager's own index (a former manager rejoining an elected
+            // successor still has it recorded) belongs to the manager
+            AddressType holder = control_slot_index == my_control_slot_index_
+                                     ? node_address_
+                                     : 0;
             routing_table_->ForEachNode([&](const NetworkNodeRoute& node) {
                 if (holder == 0 && node.GetAddress() != source &&
                     node.control_slot_index == control_slot_index) {
@@ -2419,18 +2598,29 @@ Result NetworkService::BroadcastSlotAllocation() {
 // Discovery implementation
 
 Result NetworkService::PerformDiscovery(uint32_t timeout_ms) {
+    uint32_t current_time = GetRTOS().getTickCount();
+
+    if (manager_resume_deadline_ms_) {
+        if (!utils::TimeReached(current_time, *manager_resume_deadline_ms_)) {
+            return Result::Success();
+        }
+        manager_resume_deadline_ms_.reset();
+        return ResumeNetworkAsManager();
+    }
+
     // NODE_ONLY nodes never create a network.
     if (node_role_ == NodeRole::NODE_ONLY) {
         return Result::Success();
     }
 
-    uint32_t current_time = GetRTOS().getTickCount();
-    uint32_t end_time = discovery_start_time_ + timeout_ms;
+    uint32_t end_time =
+        discovery_start_time_ + timeout_ms + warm_discovery_extension_ms_;
 
     // Still discovering - this will be called again
-    if (current_time < end_time) {
+    if (!utils::TimeReached(current_time, end_time)) {
         return Result::Success();
     }
+    warm_discovery_extension_ms_ = 0;
 
     // A node that surrendered to a higher-priority NM stays committed to
     // merging: it keeps listening for the winner across several discovery
@@ -2655,7 +2845,7 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                     LOG_DEBUG(
                         "Foreign network 0x%04X detected (ours: 0x%04X); merge "
                         "disabled — see docs/todo_network_merge.md",
-                        bid, network_id_);
+                        bid, network_id_.load());
                 }
             }
         }
@@ -2716,11 +2906,31 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
                 LOG_DEBUG(
                     "Ignoring foreign SYNC_BEACON (net 0x%04X vs ours "
                     "0x%04X)",
-                    bid, network_id_);
+                    bid, network_id_.load());
                 return Result::Success();
             }
             // DISCOVERY, FAULT_RECOVERY, NM_ELECTION: fall through and join
             // whichever live network we detected.
+        }
+
+        // A warm-restarted manager listening for its network only reacts to
+        // that network: another manager runs it now, so the node joins it
+        // instead of resuming it and creating a second manager.
+        if (manager_resume_deadline_ms_) {
+            if (bid == 0 || bid != network_id_) {
+                LOG_DEBUG(
+                    "Ignoring SYNC_BEACON of network 0x%04X while listening "
+                    "for network 0x%04X",
+                    bid, network_id_.load());
+                return Result::Success();
+            }
+            LOG_INFO(
+                "Network 0x%04X is managed by 0x%04X: joining it instead of "
+                "resuming it",
+                bid, sync_beacon.GetNetworkManager());
+            manager_resume_deadline_ms_.reset();
+            std::lock_guard<std::mutex> lock(reservations_mutex_);
+            control_slot_reservations_.clear();
         }
     }
 
@@ -2741,7 +2951,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         uint16_t beacon_network_id = sync_beacon.GetNetworkId();
         if (beacon_network_id != 0 && network_id_ != beacon_network_id) {
             network_id_ = beacon_network_id;
-            LOG_INFO("Stored network_id 0x%04X from sync beacon", network_id_);
+            LOG_INFO("Stored network_id 0x%04X from sync beacon",
+                     network_id_.load());
         }
 
         // Cancel any pending election — a live NM is broadcasting
@@ -2972,6 +3183,10 @@ Result NetworkService::HandleSuperframeStart() {
     // This prevents duplicate transmissions at superframe start.
     if (state_ == ProtocolState::NETWORK_MANAGER &&
         network_manager_ == node_address_) {
+        if (PruneControlSlotReservations()) {
+            pending_slot_table_rebuild_ = true;
+        }
+
         Result result = ApplyPendingJoin();
         if (!result) {
             return result;
@@ -3381,6 +3596,13 @@ void NetworkService::ResetNetworkState() {
     is_synchronized_ = false;
     network_manager_ = 0;
     network_id_ = 0;
+    resume_as_manager_ = false;
+    manager_resume_deadline_ms_.reset();
+    warm_discovery_extension_ms_ = 0;
+    {
+        std::lock_guard<std::mutex> lock(reservations_mutex_);
+        control_slot_reservations_.clear();
+    }
     selected_sponsor_ = 0;
     my_control_slot_index_ = 0xFF;
 
@@ -3436,6 +3658,12 @@ uint8_t NetworkService::FindLowestAvailableControlSlot() {
             used_indices.set(node.control_slot_index);
         }
     });
+    {
+        std::lock_guard<std::mutex> lock(reservations_mutex_);
+        for (const auto& reservation : control_slot_reservations_) {
+            used_indices.set(reservation.control_slot_index);
+        }
+    }
     // Find lowest gap
     for (uint8_t i = 0; i < 255; i++) {
         if (!used_indices.test(i)) {
@@ -3476,13 +3704,25 @@ void NetworkService::StartElectionBackoff() {
 
     // Backoff formula (all in ms):
     //   listen_window + role_bonus + addr_bonus + jitter
-    uint32_t listen_window_ms = kElectionListenWindowMs;
+    // The listen window covers a few superframes of the lost network, scaled
+    // by the hops the manager's beacons travel, so a manager that only reset
+    // is heard again before anyone replaces it.
+    const uint8_t hops_to_nm = std::max<uint8_t>(GetHopDistanceToNM(), 1);
+    const uint64_t superframe_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
+    const uint64_t network_listen_ms =
+        superframe_ms * (kElectionListenSuperframes +
+                         kElectionListenSuperframesPerHop * (hops_to_nm - 1u));
+    const uint32_t listen_window_ms = static_cast<uint32_t>(std::min<uint64_t>(
+        std::max<uint64_t>(kElectionListenWindowMs, network_listen_ms),
+        UINT32_MAX / 4));
     uint32_t role_bonus_ms =
-        (node_role_ == NodeRole::NETWORK_MANAGER) ? 0 : listen_window_ms;
+        (node_role_ == NodeRole::NETWORK_MANAGER) ? 0 : kElectionListenWindowMs;
     // addr_bonus: up to 1 extra listen window spread over address space
-    uint32_t addr_bonus_ms = (listen_window_ms * (node_address_ & 0xFF)) / 256;
+    uint32_t addr_bonus_ms =
+        (kElectionListenWindowMs * (node_address_ & 0xFF)) / 256;
     uint32_t jitter_ms = static_cast<uint32_t>(GetRTOS().GetRandom()) %
-                         (listen_window_ms / 2 + 1);
+                         (kElectionListenWindowMs / 2 + 1);
 
     uint32_t backoff_ms =
         listen_window_ms + role_bonus_ms + addr_bonus_ms + jitter_ms;
@@ -3495,9 +3735,9 @@ void NetworkService::StartElectionBackoff() {
 
     LOG_INFO(
         "Election backoff started: priority=%d, delay=%ums "
-        "(role_bonus=%u addr_bonus=%u jitter=%u)",
-        election_priority_, backoff_ms, role_bonus_ms, addr_bonus_ms,
-        jitter_ms);
+        "(listen=%u role_bonus=%u addr_bonus=%u jitter=%u)",
+        election_priority_, backoff_ms, listen_window_ms, role_bonus_ms,
+        addr_bonus_ms, jitter_ms);
 }
 
 uint32_t NetworkService::GetElectionBackoffRemaining() const {
@@ -3547,7 +3787,7 @@ Result NetworkService::SendNMClaim() {
     }
 
     LOG_INFO("Queued NM_CLAIM (priority=%d, network_id=0x%04X)",
-             election_priority_, network_id_);
+             election_priority_, network_id_.load());
     return Result::Success();
 }
 
@@ -3555,7 +3795,7 @@ void NetworkService::HandleForeignBeacon(const SyncBeaconMessage& beacon) {
     LOG_INFO(
         "Foreign network 0x%04X detected (ours: 0x%04X) — broadcasting "
         "NM_CLAIM so the secondary NM can compare priorities",
-        beacon.GetNetworkId(), network_id_);
+        beacon.GetNetworkId(), network_id_.load());
     SendNMClaim();
 }
 
@@ -3582,7 +3822,8 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             LOG_INFO(
                 "Foreign NM 0x%04X priority 0x%02X beats ours 0x%02X — "
                 "yielding network 0x%04X",
-                claimant, their_priority, election_priority_, network_id_);
+                claimant, their_priority, election_priority_,
+                network_id_.load());
             // Adopt winner's network id so our nodes eventually re-join there
             if (claim.GetNetworkId() != 0) {
                 network_id_ = claim.GetNetworkId();
@@ -3604,6 +3845,24 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             // compare priorities and yield without waiting for beacon alignment
             SendNMClaim();
         }
+        return Result::Success();
+    }
+
+    // A warm-restarted manager still listening for its network hears an
+    // election for it: keep listening until the winner's first beacon can
+    // arrive, then join the winner instead of resuming in parallel
+    if (manager_resume_deadline_ms_ && claim.GetNetworkId() == network_id_) {
+        const uint32_t deadline =
+            GetRTOS().getTickCount() + manager_resume_listen_ms_ +
+            (superframe_service_ ? 2 * superframe_service_->GetSlotDuration()
+                                 : 0);
+        if (!utils::TimeReached(*manager_resume_deadline_ms_, deadline)) {
+            manager_resume_deadline_ms_ = deadline;
+        }
+        LOG_INFO(
+            "Election for network 0x%04X by 0x%04X: listening for its winner "
+            "before resuming as manager",
+            network_id_.load(), claimant);
         return Result::Success();
     }
 
@@ -3635,8 +3894,19 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
         discovery_start_time_ = GetRTOS().getTickCount();
         SetDiscoverySlots();
         SetState(ProtocolState::DISCOVERY);
+    } else if (their_priority > election_priority_ &&
+               state_ == ProtocolState::FAULT_RECOVERY &&
+               election_deadline_ms_) {
+        // A weaker node claims while our backoff still runs: claim now, so it
+        // surrenders within its election window instead of both nodes
+        // creating the network
+        LOG_INFO(
+            "Weaker claimant 0x%04X (their=%d ours=%d): claiming immediately",
+            claimant, their_priority, election_priority_);
+        election_deadline_ms_ = GetRTOS().getTickCount();
+        CheckElectionBackoff();
     }
-    // If our priority is lower or equal, we win — ignore their claim
+    // Otherwise our own claim, already sent, settles the election
 
     return Result::Success();
 }
@@ -3696,7 +3966,7 @@ Result NetworkService::ApplyRoleChange(NodeRole new_role) {
 
     if (demoting_from_nm_state) {
         LOG_INFO("Demoting from NETWORK_MANAGER: surrendering network 0x%04X",
-                 network_id_);
+                 network_id_.load());
         surrendered_in_election_ = true;
         network_found_ = false;
         network_creator_ = false;

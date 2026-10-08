@@ -11,6 +11,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <memory>
 
 #include "os/os_port.hpp"
@@ -36,9 +38,16 @@ namespace test {
 class ElectionBackoffTest : public ::testing::Test {
    protected:
     static constexpr AddressType kNodeAddress = 0x1080;
-    /// Longer than any backoff: listen window + role bonus + address bonus
-    /// + jitter
-    static constexpr uint32_t kBeyondAnyBackoffMs = 20000;
+
+    /// Longer than any backoff of a node one hop from the manager: listen
+    /// window (at least kElectionListenSuperframes superframes) + role bonus
+    /// + address bonus + jitter
+    uint32_t BeyondAnyBackoffMs() const {
+        return std::max(kElectionListenWindowMs,
+                        kElectionListenSuperframes *
+                            superframe_->GetSuperframeDuration()) +
+               3 * kElectionListenWindowMs;
+    }
 
     void SetUp() override {
         mock_ = dynamic_cast<os::RTOSMock*>(&GetRTOS());
@@ -96,7 +105,7 @@ TEST_F(ElectionBackoffTest, RemainingBackoffCountsDown) {
 
 TEST_F(ElectionBackoffTest, ExpiredBackoffStartsElectionWithoutSuperframe) {
     EnterFaultRecovery();
-    mock_->advanceTime(kBeyondAnyBackoffMs);
+    mock_->advanceTime(BeyondAnyBackoffMs());
 
     service_->CheckElectionBackoff();
 
@@ -127,7 +136,7 @@ TEST_F(ElectionBackoffTest, BackoffSpanningTickWrapStillWaits) {
     EXPECT_EQ(service_->GetState(),
               INetworkService::ProtocolState::FAULT_RECOVERY);
 
-    mock_->advanceTime(kBeyondAnyBackoffMs);
+    mock_->advanceTime(BeyondAnyBackoffMs());
     EXPECT_EQ(service_->GetElectionBackoffRemaining(), 0u);
     service_->CheckElectionBackoff();
     EXPECT_EQ(service_->GetState(),

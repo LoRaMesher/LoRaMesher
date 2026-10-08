@@ -63,6 +63,9 @@ class SlotScheduler {
         uint8_t number_of_slots_per_superframe = 0;
         uint8_t beacon_node_count = 1;
         uint8_t my_control_slot_index = 0xFF;
+        /// Highest control slot index the manager holds for members expected
+        /// back after its restart (0 = none)
+        uint8_t reserved_control_slot_max = 0;
         uint8_t no_received_sync_beacon_count = 0;
         uint8_t max_network_nodes = 0;
         uint8_t max_data_slots = 0;

@@ -34,6 +34,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Sending Packets](#sending-packets)
   - [Reliable and Group Messaging](#reliable-and-group-messaging)
   - [Timing-Aware Sending (TDMA)](#timing-aware-sending-tdma)
+  - [Restarts: OTA Updates and Deep Sleep](#restarts-ota-updates-and-deep-sleep)
   - [Diagnostics & Advanced](#diagnostics--advanced)
   - [Deployment Tips](#deployment-tips)
 - [Configuration](#configuration)
@@ -59,6 +60,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **TDMA superframe** — deterministic slot scheduling; nodes sleep when not transmitting
 - **Auto join / network formation** — nodes discover nearby networks or create a new one
 - **Network manager election** — distributed NM election with configurable priority
+- **Warm restart** — keep the network id, member slots and sequence numbers across OTA reboots and deep sleep (`SaveState()`)
 - **Runtime role changes** — promote a node to `NETWORK_MANAGER` or demote it back to `NODE_ONLY` at runtime via `SetNodeRole()`
 - **Capability-aware discovery** — find the closest gateway or any node matching a capability bitmap (`GetClosestGateway`, `GetClosestNodeByCapability`)
 - **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
@@ -251,6 +253,50 @@ Both functions return `0` when the node has not yet joined a network — pair th
 
 ---
 
+### Restarts: OTA Updates and Deep Sleep
+
+A reset normally makes a node start from scratch: a rebooted network manager forms a new network,
+and every node restarts its message sequence numbers, so neighbours drop its first messages as
+duplicates. With a state store the node saves a small snapshot (at most a few hundred bytes) right
+before the reset and resumes in the same network afterwards:
+
+```cpp
+#include "loramesher.hpp"
+
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    // RtcStateStore survives deep sleep and esp_restart(); NvsStateStore
+    // (flash) also survives a firmware update and power loss
+    .withStateStore(std::make_shared<storage::NvsStateStore>())
+    .Build();
+mesher->Start();  // restores and erases the snapshot, if any
+
+// Before an OTA reboot or deep sleep:
+mesher->SaveState();  // before Stop(), which clears the state
+esp_restart();        // or esp_deep_sleep_start()
+```
+
+| Store | Survives | Notes |
+|---|---|---|
+| `RtcStateStore` | deep sleep, `esp_restart()` | No flash wear; a new firmware image may move it, so use NVS for OTA |
+| `NvsStateStore` | OTA update, any reset, power loss | One flash write per save; save before planned resets only |
+| `MemoryStateStore` | protocol restart in the same process | Native builds and tests |
+
+What a restart restores:
+
+- **Network manager**: listens 1.5 superframes for its network (and joins a successor if one was
+  elected meanwhile), then resumes the network under the same id. Members keep their control
+  slots; slots of members that never come back are released after `node_timeout_ms`.
+- **Every node**: continues its message sequence numbers, so nothing is dropped as a duplicate.
+- **Members**: rejoin automatically; after a reset of the whole network they wait longer before
+  forming a network of their own.
+
+Members wait at least two superframes after losing the manager's beacons before electing a
+successor, so a short reboot of the manager does not hand its role to another node. Routes,
+timing and slot tables are learned again after every restart. See `PROTOCOL_SPEC.md` §6.5.
+
 ### Diagnostics & Advanced
 
 The methods below are public on `LoraMesher` and useful once the basic flow is working.
@@ -420,7 +466,7 @@ pio test -e test_native --list-tests
 #### Faster local runs (optional)
 
 The commands above work unchanged. Most of the time goes into building, not running: each of
-the 25 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
+the 27 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
 recompiles all of `src/` (~100 s per suite, while most suites run in seconds). Optional
 settings that cut this down (measured on WSL2, repo on `/mnt/d`):
 

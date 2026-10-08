@@ -41,12 +41,14 @@ LoRaMesher implements a distance-vector routing protocol for LoRa mesh networks 
 - Automatic progression: `DISCOVERY → JOINING → NORMAL_OPERATION`
 - State-specific message handling and timeouts
 - Optimized state checking performance
+- Warm restart: `SaveState()` keeps the network id, the manager's member control slots and the
+  sequence counter in an `IStateStore` (RTC memory, NVS flash or RAM) across OTA reboots and deep
+  sleep (`PROTOCOL_SPEC.md` Section 6.5, tests in `test_node_reboot`)
 
 **🔄 MINOR GAPS:**
-- No persistence of state across device restarts
 - Configurable timeout values are hardcoded in some transitions
 
-**Next Steps**: Add state persistence and make timeouts configurable via `ProtocolConfig`.
+**Next Steps**: Make timeouts configurable via `ProtocolConfig`.
 
 ### 1.2 Hardware Abstraction Layer 🟢 **Production Ready (98%)**
 
@@ -375,7 +377,8 @@ auto slots = mesher->GetSlotTable();         // Slot allocation info
 
 **🔄 GAPS:**
 - Power management optimization needed
-- Deep sleep integration missing
+- Deep sleep is not driven by the protocol: the application saves the state
+  (`RtcStateStore`) and enters deep sleep itself
 - Watchdog timer integration needed
 
 ### 7.2 Desktop Testing Support 🟢 **Production Ready (95%)**
@@ -417,7 +420,7 @@ auto slots = mesher->GetSlotTable();         // Slot allocation info
 1. **Security Implementation** - Basic encryption and authentication
 2. **Advanced Routing Algorithm** - Implement delivery success tracking and sophisticated link quality metrics
 3. **Hardware Testing** - Real device validation and optimization
-4. **Power Management** - ESP32 deep sleep integration
+4. **Power Management** - Protocol-driven ESP32 deep sleep (state persistence is in place)
 5. **Network Healing** - Partition detection and recovery
 
 ### Phase 3: Advanced Features (Future Enhancements)

@@ -37,6 +37,17 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - `IRoutingTable::SetMaxHops()`: the routing table accepts routes up to the
   configured `max_hops` (custom routing tables must implement it).
 - Network stress test suite (`test_network_stress`).
+- Warm restart across OTA reboots and deep sleep: `Builder::withStateStore()`
+  and `LoraMesher::SaveState()` keep a small snapshot (network id, the
+  manager's member control slots, the message sequence counter) in an
+  `IStateStore` — `RtcStateStore` (ESP32 RTC memory, deep sleep),
+  `NvsStateStore` (ESP32 flash, OTA updates) or `MemoryStateStore`. A
+  restarted manager resumes its network under the same id and hands members
+  their old control slots; see `PROTOCOL_SPEC.md` §6.5.
+- `LoraMesher::GetNetworkId()`.
+- Node reboot test suite (`test_node_reboot`): power-cycles nodes of
+  simulated line, star and mesh networks, alone or all together, warm and
+  cold.
 
 ### Changed
 - Wire format: new message types `DATA_RELIABLE`, `DATA_GROUP` and `ACK`
@@ -82,6 +93,13 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- NM election: the election backoff spans at least two superframes (four more
+  per extra hop to the manager), so a manager that resets is heard again
+  before a successor is elected when superframes are longer than the old
+  fixed backoff. A node whose backoff still runs claims at once when it hears
+  a weaker claim, so two candidates no longer both create the network.
+- A former network manager rejoining an elected successor no longer gets the
+  successor's own control slot 0.
 - ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
   tasks ran with a quarter of the configured stack and the stack monitor
   reported four times the real free space. The configured sizes now state

@@ -10,6 +10,7 @@
 
 #include "loramesher.hpp"
 #include "os/os_port.hpp"
+#include "types/storage/memory_state_store.hpp"
 
 namespace loramesher {
 namespace test {
@@ -614,6 +615,53 @@ TEST_F(LoraMesherInitializationTest, SendMessageWithPingPongProtocol) {
     EXPECT_EQ(slot_table.size(), 0u);
 
     ping_pong_mesher->Stop();
+}
+
+/**
+ * @brief SaveState() needs a state store
+ */
+TEST_F(LoraMesherInitializationTest, SaveStateWithoutStoreFails) {
+    mesher_ = CreateValidLoraMesher();
+    ASSERT_NE(mesher_, nullptr);
+    ASSERT_TRUE(mesher_->Start());
+
+    EXPECT_EQ(mesher_->SaveState().getErrorCode(),
+              LoraMesherErrorCode::kInvalidState);
+}
+
+/**
+ * @brief A manager rebooted with its saved state keeps its network id
+ */
+TEST_F(LoraMesherInitializationTest, SavedStateSurvivesRebuild) {
+    auto store = std::make_shared<storage::MemoryStateStore>();
+    mesh_config_.setNodeAddress(0x1234);
+    mesh_config_.setNodeRole(NodeRole::NETWORK_MANAGER);
+    auto build = [&]() {
+        return LoraMesher::Builder()
+            .withRadioConfig(radio_config_)
+            .withPinConfig(pin_config_)
+            .withLoRaMeshProtocol(mesh_config_)
+            .withStateStore(store)
+            .Build();
+    };
+
+    mesher_ = build();
+    ASSERT_TRUE(mesher_->Start());
+    const uint16_t network_id = mesher_->GetNetworkId();
+    ASSERT_NE(network_id, 0u);
+    ASSERT_TRUE(mesher_->SaveState());
+    ASSERT_TRUE(store->Load().has_value());
+
+    // Reset: a new instance starts from the saved state and consumes it
+    mesher_->Stop();
+    mesher_.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    mesher_ = build();
+    ASSERT_TRUE(mesher_->Start());
+
+    EXPECT_FALSE(store->Load().has_value());
+    // Listening for its network first, then resuming it under the same id
+    EXPECT_EQ(mesher_->GetNetworkId(), network_id);
 }
 
 }  // namespace test
