@@ -71,6 +71,8 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 
 ## Quick Start
 
+### PlatformIO (recommended)
+
 1. Install [Visual Studio Code](https://code.visualstudio.com/) and the [PlatformIO extension](https://platformio.org/install/ide?install=vscode).
 2. Clone this repository.
 3. Open PlatformIO Home → **Projects** → **Add Existing** → pick the example below that matches your use case.
@@ -84,6 +86,21 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 | `examples/battery_optimized_example` | Battery-powered nodes that sleep between TDMA slots |
 | `examples/reliable_example` | Messages must be acknowledged — `SendReliable()` with delivery outcomes |
 | `examples/group_example` | One message to many nodes — `JoinGroup()` / `SendGroup()` with member acknowledgements |
+
+### Arduino IDE
+
+LoRaMesher is an **ESP32-only** library and requires a **C++20** toolchain.
+
+1. Install the **ESP32 Arduino core 3.x or newer** via Boards Manager. Core 3.x
+   compiles at C++20 by default; **core 2.x compiles at C++11 and will not
+   build this library** (the Arduino IDE has no per-library way to raise the C++
+   standard).
+2. Install the library: either download this repository as a ZIP and use
+   **Sketch → Include Library → Add .ZIP Library…**, or (once it is listed)
+   install **LoRaMesher** from **Tools → Manage Libraries…**.
+3. Install the **RadioLib** dependency from **Tools → Manage Libraries…**.
+4. Open **File → Examples → LoRaMesher → SimpleMesh**, select your ESP32 board,
+   and upload.
 
 ---
 
