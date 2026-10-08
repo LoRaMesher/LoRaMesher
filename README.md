@@ -47,7 +47,6 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
   - [Network Stress Test](#network-stress-test)
-  - [Node Reboot Tests](#node-reboot-tests)
 - [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
@@ -658,30 +657,6 @@ grep -aE "STRESS SCORECARD|^(reliable|non-reliable|group|relay|collision|TDMA|su
 - `##MISALIGNED## slot <s>: ...`: a slot where a node transmits but a neighbour is not listening to it.
 
 **Tips:** always redirect to a file and search it with `grep -a` (the log contains colour codes); do not edit sources while a build is running; allow a long timeout for the 25-node cell. The fixture writes per-test logs to `test_logs/` in the current directory — on WSL, run the binary from a Linux directory (not `/mnt/<drive>`), since slow log writes there make the tests stall.
-
-### Node Reboot Tests
-
-`test/protocols/lora_mesh/services/test_node_reboot/` power-cycles nodes of a simulated network
-and checks that it recovers. A reboot destroys the node's protocol and hardware (packets addressed
-to it are lost while it is off), lets virtual time pass and builds the same device again; each
-node's `MemoryStateStore` outlives its reboots, standing in for RTC memory or flash. Scenarios
-cover line, star and full-mesh networks, rebooting the manager, a relay, the farthest member or
-every node at once, short and long downtimes, low duty cycles, repeated reboots, corrupted or
-foreign snapshots, and the same reboots without a store (cold start) for comparison.
-
-A network counts as recovered when, for four superframes in a row, it has one manager (the
-original one unless the outage allows an election), every node agrees on the manager and the
-network id, members hear every beacon, control slots are unique and inside the band, and every node
-has a route to every other. Data must then flow in both directions with the rebooted nodes.
-
-```bash
-pio test -e test_native -f "protocols/lora_mesh/services/test_node_reboot" --without-testing
-.pio/build/test_native/program --gtest_filter='Scenarios/WarmRebootTest.*Line4*' > reboot.log 2>&1
-```
-
-New scenarios take a `NetworkSpec` and the fixture's `RebootNodes(nodes, downtime_ms,
-save_state, boot_stagger_ms)`; a deep-sleep cycle is the same reboot with an `RtcStateStore`-like
-store and a downtime of whole superframes.
 
 ---
 
