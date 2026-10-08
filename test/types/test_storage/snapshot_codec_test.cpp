@@ -116,23 +116,24 @@ TEST(SnapshotCodecTest, TruncatedOrExtendedBlobIsRejected) {
 /// refuses to produce, with a valid CRC.
 std::vector<uint8_t> EncodeUnchecked(const NetworkSnapshot& snapshot,
                                      uint8_t version, uint8_t flags) {
-    std::vector<uint8_t> blob = {'L',
-                                 'M',
-                                 'S',
-                                 '1',
-                                 version,
-                                 flags,
-                                 static_cast<uint8_t>(snapshot.node_address),
-                                 static_cast<uint8_t>(snapshot.node_address >> 8),
-                                 static_cast<uint8_t>(snapshot.network_id),
-                                 static_cast<uint8_t>(snapshot.network_id >> 8),
-                                 snapshot.last_sequence,
-                                 snapshot.network_depth,
-                                 0,
-                                 0,
-                                 0,
-                                 0,
-                                 static_cast<uint8_t>(snapshot.reservations.size())};
+    std::vector<uint8_t> blob = {
+        'L',
+        'M',
+        'S',
+        '1',
+        version,
+        flags,
+        static_cast<uint8_t>(snapshot.node_address),
+        static_cast<uint8_t>(snapshot.node_address >> 8),
+        static_cast<uint8_t>(snapshot.network_id),
+        static_cast<uint8_t>(snapshot.network_id >> 8),
+        snapshot.last_sequence,
+        snapshot.network_depth,
+        0,
+        0,
+        0,
+        0,
+        static_cast<uint8_t>(snapshot.reservations.size())};
     for (const auto& reservation : snapshot.reservations) {
         blob.push_back(static_cast<uint8_t>(reservation.address));
         blob.push_back(static_cast<uint8_t>(reservation.address >> 8));
@@ -180,9 +181,8 @@ std::vector<InvalidSnapshotCase> InvalidSnapshots() {
         mutate(snapshot);
         return snapshot;
     };
-    cases.push_back({"NodeAddressZero", with([](NetworkSnapshot& s) {
-                         s.node_address = 0;
-                     })});
+    cases.push_back({"NodeAddressZero",
+                     with([](NetworkSnapshot& s) { s.node_address = 0; })});
     cases.push_back({"NodeAddressBroadcast", with([](NetworkSnapshot& s) {
                          s.node_address = kBroadcastAddress;
                      })});

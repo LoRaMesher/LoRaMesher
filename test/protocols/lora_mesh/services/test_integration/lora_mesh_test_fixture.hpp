@@ -274,8 +274,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
         node.protocol->SetDataReceivedCallback(
             [node_ptr = &node](AddressType source,
                                const std::vector<uint8_t>& data) {
-                auto msg_opt = BaseMessage::Create(
-                    node_ptr->address, source, MessageType::DATA, data);
+                auto msg_opt = BaseMessage::Create(node_ptr->address, source,
+                                                   MessageType::DATA, data);
                 if (msg_opt.has_value()) {
                     node_ptr->received_messages.push_back(msg_opt.value());
                 }
@@ -283,8 +283,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
 
         // Record reliable-delivery outcomes for assertions
         node.protocol->GetNetworkServiceForTest()->SetDeliveryCallback(
-            [node_ptr = &node](
-                const protocols::reliability::DeliveryResult& outcome) {
+            [node_ptr =
+                 &node](const protocols::reliability::DeliveryResult& outcome) {
                 node_ptr->delivery_outcomes.push_back(outcome);
             });
         return true;
@@ -302,8 +302,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
     void ShutdownNode(TestNode& node) {
         node.protocol.reset();
         if (virtual_network_.IsNodeRegistered(node.address)) {
-            virtual_network_.ReplaceRadio(node.address,
-                                          &powered_off_receiver_);
+            virtual_network_.ReplaceRadio(node.address, &powered_off_receiver_);
         }
         node.hardware_manager.reset();
         node.mock_radio = nullptr;
@@ -383,8 +382,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // A rebooted node keeps its registration and links; only its radio
         // changes
         if (!virtual_network_.ReplaceRadio(address, adapter.get())) {
-            virtual_network_.RegisterNode(address, adapter.get(),
-                                          radio_config);
+            virtual_network_.RegisterNode(address, adapter.get(), radio_config);
         }
 
         // Store the adapter for cleanup

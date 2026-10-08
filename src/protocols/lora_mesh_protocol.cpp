@@ -704,12 +704,11 @@ Result LoRaMeshProtocol::SaveState() {
     }
     Result result = store->Save(*blob);
     if (result) {
-        LOG_INFO(
-            "Saved state: network 0x%04X, %s, %zu member slots, seq %u",
-            snapshot.network_id,
-            snapshot.was_network_manager ? "manager" : "member",
-            snapshot.reservations.size(),
-            static_cast<unsigned>(snapshot.last_sequence));
+        LOG_INFO("Saved state: network 0x%04X, %s, %zu member slots, seq %u",
+                 snapshot.network_id,
+                 snapshot.was_network_manager ? "manager" : "member",
+                 snapshot.reservations.size(),
+                 static_cast<unsigned>(snapshot.last_sequence));
     }
     return result;
 }

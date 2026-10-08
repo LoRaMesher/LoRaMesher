@@ -38,6 +38,7 @@ namespace test {
 class ElectionBackoffTest : public ::testing::Test {
    protected:
     static constexpr AddressType kNodeAddress = 0x1080;
+
     /// Longer than any backoff of a node one hop from the manager: listen
     /// window (at least kElectionListenSuperframes superframes) + role bonus
     /// + address bonus + jitter

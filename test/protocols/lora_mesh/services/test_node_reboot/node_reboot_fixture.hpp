@@ -26,7 +26,6 @@ namespace test {
 
 class NodeRebootFixture : public RoutingTestFixture {
    public:
-
     enum class Topology {
         kLine,      ///< Node i linked to node i+1; the manager is at one end
         kStar,      ///< Every node linked to the manager only
@@ -64,11 +63,13 @@ class NodeRebootFixture : public RoutingTestFixture {
         spec_ = spec;
         std::vector<TestNode*> nodes;
         for (int i = 0; i < spec.node_count; ++i) {
-            const AddressType address = static_cast<AddressType>(kBaseAddress + i);
+            const AddressType address =
+                static_cast<AddressType>(kBaseAddress + i);
             const NodeRole role =
                 (i == 0) ? NodeRole::NETWORK_MANAGER : spec.member_role;
             if (spec.with_store) {
-                stores_[address] = std::make_shared<storage::MemoryStateStore>();
+                stores_[address] =
+                    std::make_shared<storage::MemoryStateStore>();
             }
             TestNode& node =
                 CreateNode("Node" + std::to_string(i), address, role,
@@ -221,11 +222,10 @@ class NodeRebootFixture : public RoutingTestFixture {
             if (!node->protocol) {
                 return node->name + " is powered off";
             }
-            const bool is_manager =
-                manager == kAnyManager
-                    ? node->protocol->GetState() ==
-                          ProtocolState::NETWORK_MANAGER
-                    : node->address == manager;
+            const bool is_manager = manager == kAnyManager
+                                        ? node->protocol->GetState() ==
+                                              ProtocolState::NETWORK_MANAGER
+                                        : node->address == manager;
             if (is_manager) {
                 manager_node = node;
                 ++manager_count;
@@ -274,8 +274,8 @@ class NodeRebootFixture : public RoutingTestFixture {
             const uint8_t slot = ControlSlotOf(*node);
             if (slot >= band || !used_slots.insert(slot).second) {
                 return node->name + " has control slot " +
-                       std::to_string(slot) + " (band " +
-                       std::to_string(band) + ")";
+                       std::to_string(slot) + " (band " + std::to_string(band) +
+                       ")";
             }
             for (auto* other : nodes) {
                 if (other != node && !HasRouteTo(*node, other->address)) {

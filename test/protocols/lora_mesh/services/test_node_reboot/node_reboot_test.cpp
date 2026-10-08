@@ -21,11 +21,11 @@ namespace {
 
 /// Which nodes a scenario reboots
 enum class RebootTarget {
-    kManager,               ///< The network manager only
-    kFarthestMember,        ///< The member farthest from the manager
-    kRelayMember,           ///< A member that relays for others (line only)
-    kAllNodes,              ///< Every node at once
-    kAllNodesManagerLast,   ///< Every node; the manager boots last
+    kManager,              ///< The network manager only
+    kFarthestMember,       ///< The member farthest from the manager
+    kRelayMember,          ///< A member that relays for others (line only)
+    kAllNodes,             ///< Every node at once
+    kAllNodesManagerLast,  ///< Every node; the manager boots last
 };
 
 struct RebootScenario {
@@ -91,9 +91,9 @@ TEST_P(WarmRebootTest, NetworkResumesWithSameIdentityAndSlots) {
         }
     }
 
-    ASSERT_NO_FATAL_FAILURE(RebootNodes(
-        targets, scenario.downtime_superframes * superframe_ms_, true,
-        scenario.boot_stagger_superframes * superframe_ms_));
+    ASSERT_NO_FATAL_FAILURE(
+        RebootNodes(targets, scenario.downtime_superframes * superframe_ms_,
+                    true, scenario.boot_stagger_superframes * superframe_ms_));
 
     for (auto* node : targets) {
         EXPECT_FALSE(stores_.at(node->address)->Load().has_value())
@@ -102,9 +102,8 @@ TEST_P(WarmRebootTest, NetworkResumesWithSameIdentityAndSlots) {
 
     const AddressType expected_manager =
         scenario.successor_allowed ? kAnyManager : manager.address;
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, expected_manager,
-                                      RecoveryBudgetMs(nodes),
-                                      formed_network_id_))
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, expected_manager, RecoveryBudgetMs(nodes), formed_network_id_))
         << DescribeNetwork(nodes);
     TestNode& recovered_manager = *healthy_manager_;
     if (!scenario.successor_allowed) {
@@ -143,12 +142,12 @@ INSTANTIATE_TEST_SUITE_P(
                        NodeRole::NODE_ONLY, RebootTarget::kManager, 2, 0},
         RebootScenario{"Star5_Manager", Topology::kStar, 5, NodeRole::AUTO,
                        RebootTarget::kManager, 2, 0},
-        RebootScenario{"Mesh4_Manager", Topology::kFullMesh, 4,
-                       NodeRole::AUTO, RebootTarget::kManager, 2, 0},
+        RebootScenario{"Mesh4_Manager", Topology::kFullMesh, 4, NodeRole::AUTO,
+                       RebootTarget::kManager, 2, 0},
         RebootScenario{"Line4_FarthestMember", Topology::kLine, 4,
                        NodeRole::AUTO, RebootTarget::kFarthestMember, 2, 0},
-        RebootScenario{"Line4_RelayMember", Topology::kLine, 4,
-                       NodeRole::AUTO, RebootTarget::kRelayMember, 2, 0},
+        RebootScenario{"Line4_RelayMember", Topology::kLine, 4, NodeRole::AUTO,
+                       RebootTarget::kRelayMember, 2, 0},
         RebootScenario{"Star5_Member", Topology::kStar, 5, NodeRole::AUTO,
                        RebootTarget::kFarthestMember, 2, 0},
         RebootScenario{"Line4_AllNodes", Topology::kLine, 4, NodeRole::AUTO,
@@ -158,8 +157,8 @@ INSTANTIATE_TEST_SUITE_P(
                        1},
         RebootScenario{"Star5_AllNodes", Topology::kStar, 5, NodeRole::AUTO,
                        RebootTarget::kAllNodes, 2, 0},
-        RebootScenario{"Mesh4_AllNodes", Topology::kFullMesh, 4,
-                       NodeRole::AUTO, RebootTarget::kAllNodes, 2, 0},
+        RebootScenario{"Mesh4_AllNodes", Topology::kFullMesh, 4, NodeRole::AUTO,
+                       RebootTarget::kAllNodes, 2, 0},
         RebootScenario{"Line4_AllNodes_NodeOnly", Topology::kLine, 4,
                        NodeRole::NODE_ONLY, RebootTarget::kAllNodes, 2, 0},
         // Downtimes long enough for the members to lose the manager and for
@@ -217,8 +216,8 @@ TEST_F(NodeRebootTest, ManagerColdRebootFormsNetworkWithNewId) {
 
     ASSERT_NO_FATAL_FAILURE(RebootNode(manager, superframe_ms_ * 2, false));
 
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes)))
+    ASSERT_TRUE(
+        WaitForHealthyNetwork(nodes, manager.address, RecoveryBudgetMs(nodes)))
         << DescribeNetwork(nodes);
     EXPECT_NE(NetworkIdOf(manager), formed_network_id_);
 }
@@ -233,9 +232,8 @@ TEST_F(NodeRebootTest, MemberRebootKeepsSequenceNumbersWithStore) {
 
     EXPECT_EQ(ExpectDataFlows(member, manager, 3), 3u);
     ASSERT_NO_FATAL_FAILURE(RebootNode(member, superframe_ms_ * 2, true));
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes),
-                                      formed_network_id_))
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, manager.address, RecoveryBudgetMs(nodes), formed_network_id_))
         << DescribeNetwork(nodes);
 
     EXPECT_EQ(ExpectDataFlows(member, manager, 3), 3u);
@@ -252,9 +250,8 @@ TEST_F(NodeRebootTest, MemberColdRebootLosesMessagesToDuplicateCache) {
 
     EXPECT_EQ(ExpectDataFlows(member, manager, 3), 3u);
     ASSERT_NO_FATAL_FAILURE(RebootNode(member, superframe_ms_ * 2, false));
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes),
-                                      formed_network_id_))
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, manager.address, RecoveryBudgetMs(nodes), formed_network_id_))
         << DescribeNetwork(nodes);
 
     // The restarted sequence numbers collide with the manager's cache entries
@@ -270,15 +267,14 @@ TEST_F(NodeRebootTest, SnapshotIsConsumedByTheBoot) {
     TestNode& manager = *nodes.front();
 
     ASSERT_NO_FATAL_FAILURE(RebootNode(manager, superframe_ms_ * 2, true));
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes),
-                                      formed_network_id_))
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, manager.address, RecoveryBudgetMs(nodes), formed_network_id_))
         << DescribeNetwork(nodes);
 
     // A second reset without saving (a crash) must not reuse the snapshot
     ASSERT_NO_FATAL_FAILURE(RebootNode(manager, superframe_ms_ * 2, false));
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes)))
+    ASSERT_TRUE(
+        WaitForHealthyNetwork(nodes, manager.address, RecoveryBudgetMs(nodes)))
         << DescribeNetwork(nodes);
     EXPECT_NE(NetworkIdOf(manager), formed_network_id_);
 }
@@ -299,8 +295,8 @@ TEST_F(NodeRebootTest, CorruptedSnapshotFallsBackToColdStart) {
 
     ASSERT_NO_FATAL_FAILURE(RebootNode(manager, superframe_ms_ * 2, false));
     EXPECT_FALSE(store.Load().has_value());
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes)))
+    ASSERT_TRUE(
+        WaitForHealthyNetwork(nodes, manager.address, RecoveryBudgetMs(nodes)))
         << DescribeNetwork(nodes);
     EXPECT_NE(NetworkIdOf(manager), formed_network_id_);
 }
@@ -319,8 +315,8 @@ TEST_F(NodeRebootTest, SnapshotOfAnotherNodeIsIgnored) {
     ASSERT_TRUE(stores_.at(manager.address)->Save(*member_blob));
 
     ASSERT_NO_FATAL_FAILURE(RebootNode(manager, superframe_ms_ * 2, false));
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes)))
+    ASSERT_TRUE(
+        WaitForHealthyNetwork(nodes, manager.address, RecoveryBudgetMs(nodes)))
         << DescribeNetwork(nodes);
     EXPECT_NE(NetworkIdOf(manager), formed_network_id_);
 }
@@ -365,26 +361,25 @@ TEST_F(NodeRebootTest, ManagerBackAfterSuccessorElectedJoinsSuccessor) {
 
     // The members elect a successor that keeps the network id
     TestNode* successor = nullptr;
-    ASSERT_TRUE(AdvanceTime(RecoveryBudgetMs(nodes), RecoveryBudgetMs(nodes),
-                            kStepMs, 0, [&]() {
-                                for (auto* node : members) {
-                                    if (IsHealthy(members, node->address,
-                                                  formed_network_id_)) {
-                                        successor = node;
-                                        return true;
-                                    }
-                                }
-                                return false;
-                            }))
+    ASSERT_TRUE(AdvanceTime(
+        RecoveryBudgetMs(nodes), RecoveryBudgetMs(nodes), kStepMs, 0,
+        [&]() {
+            for (auto* node : members) {
+                if (IsHealthy(members, node->address, formed_network_id_)) {
+                    successor = node;
+                    return true;
+                }
+            }
+            return false;
+        }))
         << DescribeNetwork(nodes);
     unexpected_managers_.clear();
 
     // The old manager comes back with its snapshot and must not split the
     // network: it joins the successor's network as a member
     ASSERT_TRUE(BootNode(manager));
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, successor->address,
-                                      RecoveryBudgetMs(nodes),
-                                      formed_network_id_))
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, successor->address, RecoveryBudgetMs(nodes), formed_network_id_))
         << DescribeNetwork(nodes);
     EXPECT_TRUE(unexpected_managers_.empty())
         << "The returning manager took over the network";
@@ -455,8 +450,8 @@ TEST_F(NodeRebootTest, WarmMembersWaitForSlowManager) {
     for (auto* node : members) {
         ASSERT_TRUE(BootNode(*node));
     }
-    ASSERT_TRUE(AdvanceTime(discovery_ms * 3 / 2, discovery_ms * 3 / 2,
-                            kStepMs, 0, [&]() {
+    ASSERT_TRUE(AdvanceTime(discovery_ms * 3 / 2, discovery_ms * 3 / 2, kStepMs,
+                            0, [&]() {
                                 RecordUnexpectedManagers(members,
                                                          manager.address);
                                 return false;
@@ -465,9 +460,8 @@ TEST_F(NodeRebootTest, WarmMembersWaitForSlowManager) {
         << "A member formed its own network before the manager was back";
     ASSERT_TRUE(BootNode(manager));
 
-    ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
-                                      RecoveryBudgetMs(nodes),
-                                      formed_network_id_))
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, manager.address, RecoveryBudgetMs(nodes), formed_network_id_))
         << DescribeNetwork(nodes);
     EXPECT_TRUE(unexpected_managers_.empty());
     EXPECT_EQ(ControlSlotsOf(nodes), formed_control_slots_);
@@ -495,9 +489,8 @@ TEST_P(PartitionHealTest, RelayOutageHealsToSingleManager) {
     ASSERT_NO_FATAL_FAILURE(StartAndFormNetwork(nodes));
     ASSERT_NO_FATAL_FAILURE(
         RebootNode(*nodes[1], superframe_ms_ * 15, spec.with_store));
-    EXPECT_TRUE(WaitForHealthyNetwork(nodes, kAnyManager,
-                                      RecoveryBudgetMs(nodes) * 3,
-                                      formed_network_id_))
+    EXPECT_TRUE(WaitForHealthyNetwork(
+        nodes, kAnyManager, RecoveryBudgetMs(nodes) * 3, formed_network_id_))
         << DescribeNetwork(nodes);
 }
 
@@ -511,8 +504,8 @@ TEST_P(PartitionHealTest, StarCenterOutageHealsToSingleManager) {
     ASSERT_NO_FATAL_FAILURE(StartAndFormNetwork(nodes));
     ASSERT_NO_FATAL_FAILURE(
         RebootNode(*nodes[0], superframe_ms_ * 8, spec.with_store));
-    EXPECT_TRUE(WaitForHealthyNetwork(nodes, kAnyManager,
-                                      RecoveryBudgetMs(nodes) * 3))
+    EXPECT_TRUE(
+        WaitForHealthyNetwork(nodes, kAnyManager, RecoveryBudgetMs(nodes) * 3))
         << DescribeNetwork(nodes);
 }
 

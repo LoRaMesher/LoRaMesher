@@ -741,8 +741,8 @@ Result NetworkService::ApplySnapshot(const storage::NetworkSnapshot& snapshot) {
 
     // Skip past every number neighbours may still cache, including numbers
     // used after the snapshot was taken
-    message_cache_.RestoreLastSeq(static_cast<uint8_t>(
-        snapshot.last_sequence + MessageCache::kCapacity));
+    message_cache_.RestoreLastSeq(
+        static_cast<uint8_t>(snapshot.last_sequence + MessageCache::kCapacity));
 
     const uint64_t superframe_ms = snapshot.superframe_duration_ms;
     if (snapshot.was_network_manager && snapshot.network_id != 0 &&
@@ -1704,8 +1704,9 @@ Result NetworkService::ProcessJoinRequest(const BaseMessage& message,
         if (control_slot_index != 0xFF) {
             // The manager's own index (a former manager rejoining an elected
             // successor still has it recorded) belongs to the manager
-            AddressType holder =
-                control_slot_index == my_control_slot_index_ ? node_address_ : 0;
+            AddressType holder = control_slot_index == my_control_slot_index_
+                                     ? node_address_
+                                     : 0;
             routing_table_->ForEachNode([&](const NetworkNodeRoute& node) {
                 if (holder == 0 && node.GetAddress() != source &&
                     node.control_slot_index == control_slot_index) {
@@ -2950,7 +2951,8 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         uint16_t beacon_network_id = sync_beacon.GetNetworkId();
         if (beacon_network_id != 0 && network_id_ != beacon_network_id) {
             network_id_ = beacon_network_id;
-            LOG_INFO("Stored network_id 0x%04X from sync beacon", network_id_.load());
+            LOG_INFO("Stored network_id 0x%04X from sync beacon",
+                     network_id_.load());
         }
 
         // Cancel any pending election — a live NM is broadcasting
@@ -3709,9 +3711,8 @@ void NetworkService::StartElectionBackoff() {
     const uint64_t superframe_ms =
         superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
     const uint64_t network_listen_ms =
-        superframe_ms *
-        (kElectionListenSuperframes +
-         kElectionListenSuperframesPerHop * (hops_to_nm - 1u));
+        superframe_ms * (kElectionListenSuperframes +
+                         kElectionListenSuperframesPerHop * (hops_to_nm - 1u));
     const uint32_t listen_window_ms = static_cast<uint32_t>(std::min<uint64_t>(
         std::max<uint64_t>(kElectionListenWindowMs, network_listen_ms),
         UINT32_MAX / 4));
@@ -3821,7 +3822,8 @@ Result NetworkService::ProcessNMClaim(const BaseMessage& message) {
             LOG_INFO(
                 "Foreign NM 0x%04X priority 0x%02X beats ours 0x%02X — "
                 "yielding network 0x%04X",
-                claimant, their_priority, election_priority_, network_id_.load());
+                claimant, their_priority, election_priority_,
+                network_id_.load());
             // Adopt winner's network id so our nodes eventually re-join there
             if (claim.GetNetworkId() != 0) {
                 network_id_ = claim.GetNetworkId();

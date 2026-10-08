@@ -52,8 +52,8 @@ Result RtcStateStore::Save(std::span<const uint8_t> data) {
 
 std::optional<std::vector<uint8_t>> RtcStateStore::Load() {
     if (!ResetKeepsRtcMemory() || rtc_buffer.magic != kRtcBufferMagic ||
-        rtc_buffer.length != static_cast<uint16_t>(
-                                 ~rtc_buffer.length_complement) ||
+        rtc_buffer.length !=
+            static_cast<uint16_t>(~rtc_buffer.length_complement) ||
         rtc_buffer.length > kCapacity) {
         return std::nullopt;
     }

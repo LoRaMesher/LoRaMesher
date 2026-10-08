@@ -43,8 +43,7 @@ std::optional<std::vector<uint8_t>> NvsStateStore::Load() {
     const size_t length = preferences.getBytesLength(key_.c_str());
     if (length > 0) {
         std::vector<uint8_t> data(length);
-        if (preferences.getBytes(key_.c_str(), data.data(), length) ==
-            length) {
+        if (preferences.getBytes(key_.c_str(), data.data(), length) == length) {
             blob = std::move(data);
         }
     }

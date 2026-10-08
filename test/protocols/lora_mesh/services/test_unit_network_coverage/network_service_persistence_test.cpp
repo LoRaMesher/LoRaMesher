@@ -62,8 +62,8 @@ class NetworkServicePersistenceTest : public ::testing::Test {
         Node node;
         node.queue = std::make_shared<MessageQueueService>(10);
         node.superframe = std::make_shared<SuperframeService>();
-        node.service = std::make_unique<NetworkService>(address, node.queue,
-                                                        node.superframe, nullptr);
+        node.service = std::make_unique<NetworkService>(
+            address, node.queue, node.superframe, nullptr);
         INetworkService::NetworkConfig cfg;
         cfg.node_address = address;
         cfg.node_role = role;
@@ -104,10 +104,11 @@ class NetworkServicePersistenceTest : public ::testing::Test {
 
     /// Process a join request from @p source addressed to the manager
     void Join(NetworkService& manager, AddressType source) {
-        auto request = JoinRequestMessage::Create(kManager, source, 2, {},
-                                                  kManager, 0);
+        auto request =
+            JoinRequestMessage::Create(kManager, source, 2, {}, kManager, 0);
         ASSERT_TRUE(request.has_value());
-        ASSERT_TRUE(manager.ProcessReceivedMessage(request->ToBaseMessage(), 0));
+        ASSERT_TRUE(
+            manager.ProcessReceivedMessage(request->ToBaseMessage(), 0));
     }
 
     static uint8_t ControlSlotOf(NetworkService& service, AddressType node) {
@@ -252,7 +253,8 @@ TEST_F(NetworkServicePersistenceTest, ElectionForItsNetworkExtendsTheWait) {
     ASSERT_TRUE(manager.StartDiscovery(5000));
     mock_->advanceTime(14000);
 
-    ASSERT_TRUE(manager.ProcessReceivedMessage(Claim(0x2001, 64, kNetworkId), 0));
+    ASSERT_TRUE(
+        manager.ProcessReceivedMessage(Claim(0x2001, 64, kNetworkId), 0));
 
     EXPECT_GT(manager.GetManagerResumeDelayRemaining(), 15000u);
     mock_->advanceTime(1000);

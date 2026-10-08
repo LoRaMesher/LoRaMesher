@@ -1548,6 +1548,7 @@ class NetworkService : public INetworkService {
         uint8_t control_slot_index;
         uint32_t expires_at_ms;  ///< Tick count when the hold lapses
     };
+
     /// Members' control slots held until they are heard again; guarded by
     /// reservations_mutex_
     std::vector<ControlSlotReservation> control_slot_reservations_;
