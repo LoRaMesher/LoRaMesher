@@ -243,6 +243,25 @@ class LoRaMeshProtocol : public Protocol {
     AddressType GetNetworkManager() const;
 
     /**
+     * @brief Identifier of the network this node belongs to
+     *
+     * @return Network id, 0 when the node is not in a network
+     */
+    uint16_t GetNetworkId() const;
+
+    /**
+     * @brief Save the state to keep across a reset into the state store
+     *
+     * Call right before a planned reset (OTA reboot, deep sleep) and before
+     * Stop(), which clears the state. The next Start() restores the snapshot
+     * once and erases it from the store.
+     *
+     * @return Success, kInvalidState if no state store is configured, or the
+     *         store's error
+     */
+    Result SaveState();
+
+    /**
      * @brief Get current slot number
      * 
      * @return uint16_t Current slot
@@ -510,6 +529,15 @@ class LoRaMeshProtocol : public Protocol {
      * @return Result Success or error details
      */
     Result StartDiscovery();
+
+    /**
+     * @brief Restore the snapshot saved by SaveState(), if any
+     *
+     * Reads the state store once and erases it, so a snapshot is never
+     * applied twice. A missing, corrupted or foreign snapshot leaves the node
+     * to start cold.
+     */
+    void RestoreState();
 
     /**
      * @brief Adds a routing table message into the queue service if it does not exist

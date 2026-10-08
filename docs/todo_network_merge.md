@@ -25,8 +25,15 @@ deterministic fix design so it can be implemented later.
   | `NMMergeTests.AutoRoleNMYieldsToConfiguredNM` | `test/protocols/lora_mesh/services/test_routing_nm_merge/nm_merge_test.cpp` |
   | `NMElectionTests.ConfiguredNM_SurrendersInElection_JoinsNotCreates` | `test/protocols/lora_mesh/services/test_routing/nm_election_test.cpp` |
   | `NetworkServiceCoverageTest.ProcessForeignSyncBeaconAsNMTriggersNMClaim` | `test/protocols/lora_mesh/services/test_unit_network_coverage/network_service_coverage_test.cpp` |
+  | `PartitionHealTest.RelayOutageHealsToSingleManager` (Warm/Cold) | `test/protocols/lora_mesh/services/test_node_reboot/node_reboot_test.cpp` |
+  | `PartitionHealTest.StarCenterOutageHealsToSingleManager` (Warm/Cold) | `test/protocols/lora_mesh/services/test_node_reboot/node_reboot_test.cpp` |
 
   Find them with `grep -rn "Network merge disabled" test/`.
+- **Same-id partitions:** an outage long enough for cut-off AUTO members to elect their own manager
+  leaves several managers that share one network id once the outage ends (a long relay outage, or the
+  centre of a star). Every network manager ignores beacons carrying its own network id, so nothing
+  detects or merges these partitions. The `PartitionHealTest` cases above reproduce it with and
+  without a state store; healing it belongs to the same merge machinery.
 - **Kept in place:** the sticky-surrender behaviour (commit `10cd536`) in `PerformDiscovery` /
   `ProcessJoinResponse` / `CreateNetwork` — dormant for merge (no surrender happens while merge is off),
   still correct for normal election. The `ProcessSlotRequest` capabilities fix (commit `a720249`) is

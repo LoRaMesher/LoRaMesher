@@ -427,6 +427,22 @@ uint32_t LoraMesher::GetSuperframeDuration() const {
     return protocol->GetSuperframeDuration();
 }
 
+uint16_t LoraMesher::GetNetworkId() const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetNetworkId();
+}
+
+Result LoraMesher::SaveState() {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoRaMesh protocol not active");
+    }
+    return mesh_protocol->SaveState();
+}
+
 size_t LoraMesher::GetTxQueueSize() const {
     auto protocol = GetLoRaMeshProtocol();
     if (!protocol)

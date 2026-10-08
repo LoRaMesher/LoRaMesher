@@ -13,6 +13,7 @@
 #include "types/power/power_types.hpp"
 #include "types/protocols/lora_mesh/subslot_config.hpp"
 #include "types/protocols/protocol.hpp"
+#include "types/storage/i_state_store.hpp"
 
 namespace loramesher {
 
@@ -558,6 +559,28 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
     /**
+     * @brief Set the store that keeps protocol state across resets
+     *
+     * With a store, SaveState() writes a snapshot before a planned reset (OTA
+     * reboot, deep sleep) and Start() restores it once, so the node resumes in
+     * the same network instead of forming or joining a new one.
+     *
+     * @param store State store, or nullptr to disable warm restarts
+     */
+    void setStateStore(std::shared_ptr<storage::IStateStore> store) {
+        state_store_ = std::move(store);
+    }
+
+    /**
+     * @brief Get the store that keeps protocol state across resets
+     *
+     * @return The state store, or nullptr when warm restarts are disabled
+     */
+    std::shared_ptr<storage::IStateStore> getStateStore() const {
+        return state_store_;
+    }
+
+    /**
      * @brief Get the subslot config for sync beacon slots
      *
      * @return const SubslotConfig& Sync beacon subslot configuration
@@ -678,6 +701,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;
     uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
+    /// Keeps protocol state across resets (nullptr = cold start every boot)
+    std::shared_ptr<storage::IStateStore> state_store_;
 
     /// Subslot config for sync beacon TX slots (ADDRESS_HASH by default).
     /// A deterministic per-superframe hash of the address reshuffles same-hop

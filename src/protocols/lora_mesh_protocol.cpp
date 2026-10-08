@@ -9,6 +9,7 @@
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/radio/radio_event.hpp"
+#include "types/storage/snapshot_codec.hpp"
 #include "utils/task_monitor.hpp"
 
 namespace {
@@ -355,6 +356,8 @@ Result LoRaMeshProtocol::Start() {
         return result;
     }
 
+    RestoreState();
+
     // Start superframe service
     result = superframe_service_->StartSuperframe();
     if (!result) {
@@ -677,6 +680,64 @@ AddressType LoRaMeshProtocol::GetNetworkManager() const {
     return network_service_->GetNetworkManagerAddress();
 }
 
+uint16_t LoRaMeshProtocol::GetNetworkId() const {
+    return network_service_->GetNetworkId();
+}
+
+Result LoRaMeshProtocol::SaveState() {
+    auto store = config_.getStateStore();
+    if (!store) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "No state store configured");
+    }
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Protocol not initialized");
+    }
+
+    const storage::NetworkSnapshot snapshot =
+        network_service_->CaptureSnapshot();
+    auto blob = storage::SnapshotCodec::Encode(snapshot);
+    if (!blob) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network state cannot be encoded");
+    }
+    Result result = store->Save(*blob);
+    if (result) {
+        LOG_INFO(
+            "Saved state: network 0x%04X, %s, %zu member slots, seq %u",
+            snapshot.network_id,
+            snapshot.was_network_manager ? "manager" : "member",
+            snapshot.reservations.size(),
+            static_cast<unsigned>(snapshot.last_sequence));
+    }
+    return result;
+}
+
+void LoRaMeshProtocol::RestoreState() {
+    auto store = config_.getStateStore();
+    if (!store) {
+        return;
+    }
+    auto blob = store->Load();
+    if (!blob) {
+        LOG_INFO("No saved state: cold start");
+        return;
+    }
+    store->Clear();
+
+    auto snapshot = storage::SnapshotCodec::Decode(*blob);
+    if (!snapshot) {
+        LOG_WARNING("Saved state is invalid: cold start");
+        return;
+    }
+    Result result = network_service_->ApplySnapshot(*snapshot);
+    if (!result) {
+        LOG_WARNING("Saved state not applied (%s): cold start",
+                    result.GetErrorMessage().c_str());
+    }
+}
+
 uint16_t LoRaMeshProtocol::GetCurrentSlot() const {
     return superframe_service_->GetCurrentSlot();
 }
@@ -792,10 +853,18 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
         // Set state-specific timeouts for discovery and joining
         switch (state) {
-            case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
+            case lora_mesh::INetworkService::ProtocolState::DISCOVERY: {
                 timeout_ms =
                     std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                // Wake exactly when a warm-restarted manager resumes
+                const uint32_t resume_ms =
+                    protocol->network_service_
+                        ->GetManagerResumeDelayRemaining();
+                if (resume_ms > 0) {
+                    timeout_ms = std::min(timeout_ms, resume_ms);
+                }
                 break;
+            }
             case lora_mesh::INetworkService::ProtocolState::JOINING:
                 timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;

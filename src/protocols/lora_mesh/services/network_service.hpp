@@ -38,6 +38,7 @@
 #include "types/messages/loramesher/sync_beacon_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/network_snapshot.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
@@ -61,6 +62,14 @@ static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
 
 /// Minimum listen window before an election fires (ms).
 static constexpr uint32_t kElectionListenWindowMs = 5000;
+
+/// Superframes a node one hop from the manager listens before an election
+/// fires, so a manager that resets and comes back is heard first.
+static constexpr uint32_t kElectionListenSuperframes = 2;
+
+/// Extra listen superframes per additional hop: every relay on the path has
+/// to rejoin the manager before it forwards the manager's beacons again.
+static constexpr uint32_t kElectionListenSuperframesPerHop = 4;
 
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
@@ -294,6 +303,65 @@ class NetworkService : public INetworkService {
      * @return Result Success or error details
      */
     Result StartDiscovery(uint32_t discovery_timeout_ms) override;
+
+    /**
+     * @brief Capture the state this node keeps across a reset
+     *
+     * A network manager also records the control slot of every member it
+     * knows (and of members it still holds slots for after its own restart).
+     * Safe to call from the application thread while the protocol runs.
+     *
+     * @return Snapshot of the current state
+     */
+    storage::NetworkSnapshot CaptureSnapshot() const;
+
+    /**
+     * @brief Restore state captured by CaptureSnapshot() before a reset
+     *
+     * Call after Configure() and before StartDiscovery(). The sequence counter
+     * continues past every number the node may have used. A network manager
+     * snapshot (ignored for NODE_ONLY nodes) makes StartDiscovery() listen
+     * briefly for its network and then resume it with the same network id,
+     * holding the members' control slots until they are heard again. A member
+     * snapshot makes the first discovery wait for the network to come back
+     * before forming a new one.
+     *
+     * @param snapshot Snapshot taken by this node
+     * @return Success, or kInvalidParameter if it was taken by another node
+     */
+    Result ApplySnapshot(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Identifier of the network this node belongs to (0 = none)
+     */
+    uint16_t GetNetworkId() const { return network_id_.load(); }
+
+    /**
+     * @brief This node's control slot index (0xFF = unassigned)
+     */
+    uint8_t GetMyControlSlotIndex() const { return my_control_slot_index_; }
+
+    /**
+     * @brief Consecutive superframes without a sync beacon (members only)
+     */
+    uint8_t GetMissedSyncBeaconCount() const {
+        return no_received_sync_beacon_count_;
+    }
+
+    /**
+     * @brief Number of control slots allocated in the slot table.
+     */
+    uint8_t GetAllocatedControlSlots() const {
+        return slot_scheduler_->GetAllocatedControlSlots();
+    }
+
+    /**
+     * @brief Milliseconds until a warm-restarted manager stops listening for
+     *        its network and resumes it
+     *
+     * @return 0 when no such wait is pending, otherwise at least 1
+     */
+    uint32_t GetManagerResumeDelayRemaining() const;
 
     /**
      * @brief Start joining an existing network
@@ -1259,13 +1327,6 @@ class NetworkService : public INetworkService {
     uint16_t GetSlotCount() const { return slot_scheduler_->GetSlotCount(); }
 
     /**
-     * @brief Number of control slots allocated in the slot table.
-     */
-    uint8_t GetAllocatedControlSlots() const {
-        return slot_scheduler_->GetAllocatedControlSlots();
-    }
-
-    /**
      * @brief Build the callbacks through which ReliableMessaging reaches this
      *        service (queue, routing, delivery, configuration and clock).
      */
@@ -1461,7 +1522,52 @@ class NetworkService : public INetworkService {
         0;  ///< Discovery windows spent waiting for the winner after surrender
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
-    uint16_t network_id_ = 0;
+    std::atomic<uint16_t> network_id_{0};
+
+    // Warm restart state (see ApplySnapshot())
+    /// Listen time of a warm-restarted manager, in percent of a superframe,
+    /// before it resumes its network
+    static constexpr uint32_t kManagerResumeListenPercent = 150;
+    /// Superframes per hop a warm-restarted member allows the network to
+    /// take to reach it again before forming its own
+    static constexpr uint32_t kWarmDiscoverySuperframesPerHop = 4;
+    /// Listen time before a warm-restarted manager resumes its network
+    /// (0 = no warm resume pending)
+    uint32_t manager_resume_listen_ms_ = 0;
+    bool resume_as_manager_ = false;
+    /// Tick count when a warm-restarted manager resumes its network
+    std::optional<uint32_t> manager_resume_deadline_ms_;
+    /// Extra discovery time of a warm-restarted member (first discovery only)
+    uint32_t warm_discovery_extension_ms_ = 0;
+
+    /**
+     * @brief Control slot a warm-restarted manager holds for a member
+     */
+    struct ControlSlotReservation {
+        AddressType address;
+        uint8_t control_slot_index;
+        uint32_t expires_at_ms;  ///< Tick count when the hold lapses
+    };
+    /// Members' control slots held until they are heard again; guarded by
+    /// reservations_mutex_
+    std::vector<ControlSlotReservation> control_slot_reservations_;
+    mutable std::mutex reservations_mutex_;
+
+    /// Resume the network of a warm-restarted manager
+    Result ResumeNetworkAsManager();
+
+    /**
+     * @brief Drop reservations of members that are back or timed out
+     *
+     * @return true if a reservation was dropped
+     */
+    bool PruneControlSlotReservations();
+
+    /// Reserved control slot of @p address (0xFF = none)
+    uint8_t FindReservedControlSlot(AddressType address) const;
+
+    /// Highest reserved control slot index (0 = none)
+    uint8_t GetHighestReservedControlSlot() const;
 
     // State-change notification callback
     StateChangeCallback state_change_callback_;

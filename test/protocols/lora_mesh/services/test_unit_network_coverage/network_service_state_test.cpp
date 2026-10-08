@@ -222,14 +222,15 @@ TEST_F(NetworkServiceStateCoverageTest, ProcessNMClaimFaultRecoveryWins) {
     svc->StartElectionBackoff();
     ASSERT_TRUE(svc->IsElectionPending());
 
-    // Worse priority claimant → we win and keep election
+    // Worse priority claimant → we win and claim at once
     auto claim_opt = NMClaimMessage::Create(0x9999, 0xFF, 3, 0xABCD);
     ASSERT_TRUE(claim_opt.has_value());
     BaseMessage base_msg = claim_opt->ToBaseMessage();
 
     Result result = svc->ProcessNMClaim(base_msg);
     EXPECT_TRUE(result);
-    EXPECT_TRUE(svc->IsElectionPending());
+    EXPECT_FALSE(svc->IsElectionPending());
+    EXPECT_EQ(svc->GetState(), INetworkService::ProtocolState::NM_ELECTION);
     svc.reset();
 }
 

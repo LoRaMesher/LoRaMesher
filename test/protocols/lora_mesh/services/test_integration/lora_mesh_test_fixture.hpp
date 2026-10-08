@@ -44,11 +44,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
         AddressType address;
         PinConfig pin_config;
         RadioConfig radio_config;
+        NodeRole node_role = NodeRole::AUTO;
+        /// Applied to the protocol configuration on every (re)build
+        std::function<void(LoRaMeshProtocolConfig&)> config_customizer;
         std::shared_ptr<hardware::HardwareManager> hardware_manager;
         std::unique_ptr<protocols::LoRaMeshProtocol> protocol;
         std::vector<BaseMessage> received_messages;
         std::vector<protocols::reliability::DeliveryResult> delivery_outcomes;
-        radio::test::MockRadio* mock_radio;
+        radio::test::MockRadio* mock_radio = nullptr;
+        RadioToNetworkAdapter* network_adapter = nullptr;
     };
 
     VirtualNetwork virtual_network_;
@@ -56,6 +60,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
     std::vector<std::shared_ptr<TestNode>> nodes_;
     std::map<AddressType, std::vector<BaseMessage>> message_log_;
     std::vector<std::unique_ptr<RadioToNetworkAdapter>> network_adapters_;
+    /// Radio of every powered-off node
+    PoweredOffReceiver powered_off_receiver_;
 
     /// Seed of the per-node random streams and the network's loss decisions
     uint32_t test_seed_ = kDefaultTestSeed;
@@ -154,6 +160,8 @@ class LoRaMeshTestFixture : public ::testing::Test {
         auto node = std::make_shared<TestNode>();
         node->name = name;
         node->address = address;
+        node->node_role = node_role;
+        node->config_customizer = config_customizer;
 
         // Use provided pin config or create a unique one
         if (pin_config.getNss() == 0) {
@@ -181,100 +189,153 @@ class LoRaMeshTestFixture : public ::testing::Test {
         mock_config.setPreambleLength(radio_config.getPreambleLength());
         node->radio_config = mock_config;
 
-        // Create and initialize the hardware manager with our pin and radio config
-        node->hardware_manager = std::make_shared<hardware::HardwareManager>(
-            node->pin_config, mock_config);
-
-        // Set test thread address to this node for correct log attribution
-        char addr_str[8];
-        snprintf(addr_str, sizeof(addr_str), "0x%04X", address);
-        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
-
-        node->hardware_manager->SetLocalAddress(address);
-        Result result = node->hardware_manager->Initialize();
-        if (!result) {
-            std::cerr << "Failed to initialize hardware manager for " << name
-                      << ": " << result.GetErrorMessage() << std::endl;
-            // Create an empty node as failure
-            auto empty_node = std::make_shared<TestNode>();
-            nodes_.push_back(empty_node);
-            return *empty_node;
-        }
-
-        // Get the mock radio and connect it to our virtual network
-        auto* radio_ptr = dynamic_cast<radio::RadioLibRadio*>(
-            node->hardware_manager->getRadio());
-        if (!radio_ptr) {
-            std::cerr << "Failed to get RadioLibRadio instance for " << name
-                      << std::endl;
-            auto empty_node = std::make_shared<TestNode>();
-            nodes_.push_back(empty_node);
-            return *empty_node;
-        }
-
-        // Get the mock radio from RadioLibRadio
-        node->mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
-
-        // Connect the mock radio to our virtual network
-        ConnectRadioToNetwork(node->mock_radio, node->address, radio_ptr,
-                              mock_config);
-
-        // Create the protocol instance
-        node->protocol = std::make_unique<protocols::LoRaMeshProtocol>();
-
-        // Initialize the protocol with our hardware manager
-        result = node->protocol->Init(node->hardware_manager, address);
-        if (!result) {
-            std::cerr << "Failed to initialize protocol for " << name << ": "
-                      << result.GetErrorMessage() << std::endl;
+        if (!BuildStack(*node)) {
             // Return an empty node as failure
             auto empty_node = std::make_shared<TestNode>();
             nodes_.push_back(empty_node);
             return *empty_node;
         }
 
-        // Configure the protocol with default configuration and node role
-        LoRaMeshProtocolConfig config(address);
-        config.setNodeRole(node_role);
-        config.setTargetDutyCycle(
-            1.0f);  // Tests: no duty-cycle-driven slot inflation
-        if (config_customizer) {
-            config_customizer(config);
-        }
-        result = node->protocol->Configure(config);
+        // Add the node to our collection and return a reference to it
+        nodes_.push_back(node);
+        return *node;
+    }
+
+    /**
+     * @brief Build a node's hardware, radio link and protocol from its spec
+     *
+     * Used to create a node and to boot it again after ShutdownNode(). The
+     * node keeps its address, pins, radio configuration, role and config
+     * customizer, so a rebuilt node is the same device after a reset.
+     *
+     * @param node Node to build; its stack must not exist yet
+     * @return true if the whole stack was built and configured
+     */
+    bool BuildStack(TestNode& node) {
+        // Set test thread address to this node for correct log attribution and
+        // per-node deterministic task ordering and random streams
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+        bool built = BuildStackForCurrentNode(node);
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        return built;
+    }
+
+    /**
+     * @brief BuildStack() body, run with the test thread bound to the node
+     */
+    bool BuildStackForCurrentNode(TestNode& node) {
+        node.hardware_manager = std::make_shared<hardware::HardwareManager>(
+            node.pin_config, node.radio_config);
+        node.hardware_manager->SetLocalAddress(node.address);
+        Result result = node.hardware_manager->Initialize();
         if (!result) {
-            std::cerr << "Failed to configure protocol for " << name << ": "
-                      << result.GetErrorMessage() << std::endl;
+            std::cerr << "Failed to initialize hardware manager for "
+                      << node.name << ": " << result.GetErrorMessage()
+                      << std::endl;
+            return false;
         }
 
-        // Register data received callback to populate received_messages
-        // Callback signature: void(AddressType source, const std::vector<uint8_t>& data)
-        node->protocol->SetDataReceivedCallback(
-            [node_ptr = node.get()](AddressType source,
-                                    const std::vector<uint8_t>& data) {
-                // Create a BaseMessage from the received data
+        auto* radio_ptr = dynamic_cast<radio::RadioLibRadio*>(
+            node.hardware_manager->getRadio());
+        if (!radio_ptr) {
+            std::cerr << "Failed to get RadioLibRadio instance for "
+                      << node.name << std::endl;
+            return false;
+        }
+
+        // Connect the mock radio inside RadioLibRadio to the virtual network
+        node.mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
+        node.network_adapter = ConnectRadioToNetwork(
+            node.mock_radio, node.address, radio_ptr, node.radio_config);
+
+        node.protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+        result = node.protocol->Init(node.hardware_manager, node.address);
+        if (!result) {
+            std::cerr << "Failed to initialize protocol for " << node.name
+                      << ": " << result.GetErrorMessage() << std::endl;
+            return false;
+        }
+
+        LoRaMeshProtocolConfig config(node.address);
+        config.setNodeRole(node.node_role);
+        // Tests: no duty-cycle-driven slot inflation
+        config.setTargetDutyCycle(1.0f);
+        if (node.config_customizer) {
+            node.config_customizer(config);
+        }
+        result = node.protocol->Configure(config);
+        if (!result) {
+            std::cerr << "Failed to configure protocol for " << node.name
+                      << ": " << result.GetErrorMessage() << std::endl;
+        }
+
+        node.protocol->SetDataReceivedCallback(
+            [node_ptr = &node](AddressType source,
+                               const std::vector<uint8_t>& data) {
                 auto msg_opt = BaseMessage::Create(
-                    node_ptr->address,  // destination (this node)
-                    source,             // source
-                    MessageType::DATA, data);
+                    node_ptr->address, source, MessageType::DATA, data);
                 if (msg_opt.has_value()) {
                     node_ptr->received_messages.push_back(msg_opt.value());
                 }
             });
 
         // Record reliable-delivery outcomes for assertions
-        node->protocol->GetNetworkServiceForTest()->SetDeliveryCallback(
-            [node_ptr = node.get()](
-                const protocols::reliability::DeliveryResult& result) {
-                node_ptr->delivery_outcomes.push_back(result);
+        node.protocol->GetNetworkServiceForTest()->SetDeliveryCallback(
+            [node_ptr = &node](
+                const protocols::reliability::DeliveryResult& outcome) {
+                node_ptr->delivery_outcomes.push_back(outcome);
             });
+        return true;
+    }
 
-        // Restore test thread address
-        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+    /**
+     * @brief Power a node off as if it lost power or reset
+     *
+     * Destroys the protocol (its tasks stop wherever they are, without
+     * Stop()), detaches the radio from the virtual network and destroys the
+     * hardware. Packets addressed to the node are dropped until BootNode().
+     *
+     * @param node Node to power off
+     */
+    void ShutdownNode(TestNode& node) {
+        node.protocol.reset();
+        if (virtual_network_.IsNodeRegistered(node.address)) {
+            virtual_network_.ReplaceRadio(node.address,
+                                          &powered_off_receiver_);
+        }
+        node.hardware_manager.reset();
+        node.mock_radio = nullptr;
+        if (node.network_adapter != nullptr) {
+            auto it = std::find_if(
+                network_adapters_.begin(), network_adapters_.end(),
+                [&node](const std::unique_ptr<RadioToNetworkAdapter>& a) {
+                    return a.get() == node.network_adapter;
+                });
+            if (it != network_adapters_.end()) {
+                network_adapters_.erase(it);
+            }
+            node.network_adapter = nullptr;
+        }
+    }
 
-        // Add the node to our collection and return a reference to it
-        nodes_.push_back(node);
-        return *node;
+    /**
+     * @brief Boot a powered-off node: rebuild its stack and start it
+     *
+     * @param node Node previously powered off with ShutdownNode()
+     * @return Result of starting the protocol
+     */
+    Result BootNode(TestNode& node) {
+        if (node.protocol) {
+            return Result(LoraMesherErrorCode::kInvalidState,
+                          "Node is already running");
+        }
+        if (!BuildStack(node)) {
+            return Result(LoraMesherErrorCode::kConfigurationError,
+                          "Failed to rebuild node stack");
+        }
+        return StartNode(node);
     }
 
     /**
@@ -306,11 +367,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param address Node address to use
      * @param radio_lib_instance RadioLibRadio instance for instance-aware notifications
      * @param radio_config Radio configuration for ToA calculations
+     * @return The adapter now registered for @p address
      */
-    void ConnectRadioToNetwork(radio::test::MockRadio* mock_radio,
-                               AddressType address,
-                               radio::RadioLibRadio* radio_lib_instance,
-                               const RadioConfig& radio_config) {
+    RadioToNetworkAdapter* ConnectRadioToNetwork(
+        radio::test::MockRadio* mock_radio, AddressType address,
+        radio::RadioLibRadio* radio_lib_instance,
+        const RadioConfig& radio_config) {
         // Create and track the adapter for proper cleanup
         auto adapter = std::make_unique<RadioToNetworkAdapter>(
             mock_radio, virtual_network_, address, radio_lib_instance);
@@ -318,11 +380,17 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Set the radio configuration for ToA calculations
         adapter->SetRadioConfig(radio_config);
 
-        // Register the node with the virtual network
-        virtual_network_.RegisterNode(address, adapter.get(), radio_config);
+        // A rebooted node keeps its registration and links; only its radio
+        // changes
+        if (!virtual_network_.ReplaceRadio(address, adapter.get())) {
+            virtual_network_.RegisterNode(address, adapter.get(),
+                                          radio_config);
+        }
 
         // Store the adapter for cleanup
+        RadioToNetworkAdapter* registered = adapter.get();
         network_adapters_.push_back(std::move(adapter));
+        return registered;
     }
 
     /**

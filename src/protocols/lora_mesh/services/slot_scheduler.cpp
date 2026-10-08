@@ -67,6 +67,9 @@ SlotScheduler::SlotPlan SlotScheduler::ComputeBandSizes(
         // and overflow the superframe arithmetic).
         uint8_t max_index =
             (ctx.my_control_slot_index != 0xFF) ? ctx.my_control_slot_index : 0;
+        if (ctx.reserved_control_slot_max < ctx.max_network_nodes) {
+            max_index = std::max(max_index, ctx.reserved_control_slot_max);
+        }
         for (const auto& node : nodes) {
             if (node.control_slot_index != 0xFF &&
                 node.control_slot_index < ctx.max_network_nodes &&
