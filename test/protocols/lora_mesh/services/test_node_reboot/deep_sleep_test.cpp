@@ -182,6 +182,27 @@ TEST_P(DeepSleepTest, ReliableMessagesAreAcknowledgedAcrossSleeps) {
     EXPECT_EQ(CountOf(fallback_boots_, farthest.address), 0u);
 }
 
+TEST_P(DeepSleepTest, SleepClockErrorIsAbsorbed) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& farthest = *nodes.back();
+
+    // The default 5000 ppm over a few seconds of sleep
+    sleep_clock_error_ms_ = 20;
+    ASSERT_TRUE(WaitForResumes(nodes, 4)) << DescribeNetwork(nodes);
+    EXPECT_TRUE(StaysHealthy(nodes, manager.address, superframe_ms_ * 10,
+                             formed_network_id_))
+        << DescribeNetwork(nodes);
+    EXPECT_EQ(ExpectDataFlows(manager, farthest, 3), 3u);
+    EXPECT_EQ(ExpectDataFlows(farthest, manager, 3), 3u);
+    for (size_t i = 1; i < nodes.size(); ++i) {
+        EXPECT_EQ(CountOf(fallback_boots_, nodes[i]->address), 0u)
+            << nodes[i]->name;
+        EXPECT_TRUE(LinksIntact(nodes, *nodes[i]));
+    }
+}
+
 TEST_P(DeepSleepTest, LateWakeFallsBackToRejoining) {
     auto nodes = FormNetwork(GetParam());
     ASSERT_FALSE(HasFatalFailure());

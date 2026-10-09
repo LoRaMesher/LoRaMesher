@@ -1659,6 +1659,12 @@ bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms) {
         LOG_WARNING("No deep sleep: %s", result.GetErrorMessage().c_str());
         return false;
     }
+    // The application may have queued a message meanwhile; it would be lost
+    if (message_queue_service_->HasAnyMessages()) {
+        store->Clear();
+        LOG_DEBUG("No deep sleep: messages queued");
+        return false;
+    }
     LOG_INFO("Deep sleep for %u ms (state %zu bytes, waking %u ms early)",
              sleep_ms, blob->size(), margin);
     current_power_state_ = power::PowerState::DEEP_SLEEP;

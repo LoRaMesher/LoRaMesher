@@ -243,6 +243,20 @@ class NodeRebootFixture : public RoutingTestFixture {
         GetRTOS().ContinueTickCountFrom(0);
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
 
+        // The sleep clock gained time while the node slept, and lost it
+        // every third sleep: errors add up until a beacon resynchronizes
+        if (sleep_clock_error_ms_ != 0) {
+            int64_t& offset_us = sleep_clock_offsets_us_[node.address];
+            const int64_t sign =
+                (CountOf(deep_sleeps_, node.address) % 3 == 0) ? -1 : 1;
+            offset_us +=
+                sign * static_cast<int64_t>(sleep_clock_error_ms_) * 1000;
+            char addr_str[8];
+            snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+            static_cast<os::RTOSMock*>(&GetRTOS())
+                ->SetPersistentClockOffset(addr_str, offset_us);
+        }
+
         Result result = BootNode(node);
         if (!result) {
             ADD_FAILURE() << node.name << " failed to boot from deep sleep: "
@@ -570,6 +584,9 @@ class NodeRebootFixture : public RoutingTestFixture {
     std::map<AddressType, uint64_t> sleeping_;
     /// Delay added to every deep-sleep wake-up (late wake-up tests)
     uint32_t extra_wake_delay_ms_ = 0;
+    /// Error of the sleep clock per deep sleep (see WakeFromDeepSleep())
+    uint32_t sleep_clock_error_ms_ = 0;
+    std::map<AddressType, int64_t> sleep_clock_offsets_us_;
     std::map<AddressType, size_t> deep_sleeps_;
     std::map<AddressType, size_t> resumed_boots_;
     std::map<AddressType, size_t> fallback_boots_;
