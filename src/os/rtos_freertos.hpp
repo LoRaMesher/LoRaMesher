@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 
 #ifdef ARDUINO_ARCH_ESP32
+#include <driver/uart.h>
 #include <esp_sleep.h>
 #include <esp_timer.h>
 #if defined(CONFIG_IDF_TARGET_ESP32)
@@ -204,6 +205,9 @@ class RTOSFreeRTOS : public RTOS {
     uint64_t GetPersistentTimeUs() override { return esp_rtc_get_time_us(); }
 
     void DeepSleep(uint32_t ms) override {
+        // Let the console finish the last log lines before the power goes
+        uart_wait_tx_idle_polling(
+            static_cast<uart_port_t>(CONFIG_ESP_CONSOLE_UART_NUM));
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
         esp_deep_sleep_start();
     }
