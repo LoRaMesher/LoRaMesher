@@ -24,6 +24,7 @@
 #include "types/messages/base_header.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 
 namespace loramesher {
@@ -105,8 +106,16 @@ class SlotScheduler {
     /// Mark the slot table dirty so the next rebuild regenerates it.
     void MarkDirty() { slot_table_dirty_ = true; }
 
-    /// True while a change waits for the next slot-table rebuild.
-    bool IsDirty() const { return slot_table_dirty_; }
+    /// The slot table, its band sizes and its dirty flag, for saving them.
+    storage::SlotSchedule GetSchedule() const;
+
+    /**
+     * @brief Restore a schedule returned by GetSchedule()
+     *
+     * @return true if restored; false (table unchanged) if the schedule has
+     *         more than kMaxSlots slots
+     */
+    bool RestoreSchedule(const storage::SlotSchedule& schedule);
 
     /// Clear the slot table (used when the node leaves/resets the network).
     void Reset();

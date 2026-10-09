@@ -276,11 +276,38 @@ TEST_F(NetworkServiceResumeTest, DeepSleepNeedsASettledMember) {
     ASSERT_TRUE(member.service->ProcessReceivedMessage(
         Beacon(), GetRTOS().getTickCount()));
     EXPECT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
+}
 
-    // A new node changes the schedule at the next rebuild
-    ASSERT_TRUE(member.service->UpdateNetworkNode(0x2003, false, 2));
-    EXPECT_STREQ(member.service->GetDeepSleepBlocker(),
-                 "slot table update pending");
+TEST_F(NetworkServiceResumeTest, PendingScheduleChangeSurvivesTheSleep) {
+    Node& original = MakeJoinedMember();
+    const auto slots_before = Slots(*original.service);
+    // A routing change waits for the next rebuild
+    ASSERT_TRUE(original.service->UpdateNetworkNode(kNeighbour, false, 3));
+    ASSERT_EQ(Slots(*original.service), slots_before);
+    EXPECT_EQ(original.service->GetDeepSleepBlocker(), nullptr);
+
+    auto snapshot = original.service->CaptureResumeSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_TRUE(snapshot->schedule.rebuild_pending);
+    FillTiming(*snapshot, *original.superframe);
+
+    Node& resumed = MakeNode(kMember);
+    ASSERT_TRUE(resumed.service->ApplyResumeSnapshot(*snapshot));
+    EXPECT_EQ(Slots(*resumed.service), slots_before);
+    auto recaptured = resumed.service->CaptureResumeSnapshot();
+    ASSERT_TRUE(recaptured.has_value());
+    EXPECT_TRUE(recaptured->schedule.rebuild_pending);
+
+    // Both rebuild at the next beacon, to the same table
+    mock_->advanceTime(20000);
+    for (Node* node : {&original, &resumed}) {
+        ASSERT_TRUE(node->service->ProcessReceivedMessage(
+            Beacon(), GetRTOS().getTickCount()));
+        auto after = node->service->CaptureResumeSnapshot();
+        ASSERT_TRUE(after.has_value());
+        EXPECT_FALSE(after->schedule.rebuild_pending);
+    }
+    EXPECT_EQ(Slots(*resumed.service), Slots(*original.service));
 }
 
 TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {

@@ -31,8 +31,19 @@ constexpr uint8_t kKnownRouteFlags =
 
 /// Magic, version and embedded snapshot length
 constexpr size_t kPrefixSize = 6;
-/// Timing, member state and group stream
-constexpr size_t kStateSize = 30 + 19 + 2;
+/// Timing, member state, group stream, slot count and slot band sizes
+constexpr size_t kStateSize = 30 + 19 + 2 + 2 + 4;
+constexpr uint8_t kFlagRebuildPending = 0x01;
+
+using types::protocols::lora_mesh::SlotAllocation;
+
+bool IsKnownSlotType(SlotAllocation::SlotType type) {
+    const auto value = static_cast<uint8_t>(type);
+    return value >= static_cast<uint8_t>(SlotAllocation::SlotType::TX) &&
+           value <=
+               static_cast<uint8_t>(SlotAllocation::SlotType::SYNC_BEACON_RX);
+}
+
 constexpr size_t kCrcSize = 4;
 
 uint32_t FloatBits(float value) {
@@ -235,6 +246,7 @@ size_t ResumeSnapshotCodec::EncodedSize(const ResumeSnapshot& snapshot) {
     for (const auto& route : snapshot.routes) {
         size += RouteSize(route);
     }
+    size += snapshot.schedule.slots.size() * kSlotSize;
     return size + 1 + 1 +
            snapshot.sequence_streams.size() * kSequenceStreamSize +
            snapshot.delivery_streams.size() * kDeliveryStreamSize +
@@ -263,6 +275,15 @@ bool ResumeSnapshotCodec::IsValid(const ResumeSnapshot& snapshot) {
         static_cast<uint64_t>(timing.total_slots) * timing.slot_duration_ms !=
             network.superframe_duration_ms) {
         return false;
+    }
+
+    if (snapshot.schedule.slots.size() > kMaxSlots) {
+        return false;
+    }
+    for (const auto& slot : snapshot.schedule.slots) {
+        if (!IsKnownSlotType(slot.type)) {
+            return false;
+        }
     }
 
     if (snapshot.routes.size() > kMaxRoutes) {
@@ -351,6 +372,17 @@ std::optional<std::vector<uint8_t>> ResumeSnapshotCodec::Encode(
     out.WriteUint8(snapshot.group_next_sequence ? 1 : 0);
     out.WriteUint8(snapshot.group_next_sequence.value_or(0));
 
+    const SlotSchedule& schedule = snapshot.schedule;
+    out.WriteUint16(static_cast<uint16_t>(schedule.slots.size()));
+    for (const auto& slot : schedule.slots) {
+        out.WriteUint16(slot.slot_number);
+        out.WriteUint8(static_cast<uint8_t>(slot.type));
+        out.WriteUint16(slot.target_address);
+    }
+    out.WriteUint8(schedule.control_slots);
+    out.WriteUint16(schedule.discovery_slots);
+    out.WriteUint8(schedule.rebuild_pending ? kFlagRebuildPending : 0);
+
     out.WriteUint8(static_cast<uint8_t>(snapshot.routes.size()));
     for (const auto& route : snapshot.routes) {
         WriteRoute(out, route);
@@ -435,6 +467,27 @@ std::optional<ResumeSnapshot> ResumeSnapshotCodec::Decode(
     if (group_started) {
         snapshot.group_next_sequence = group_next;
     }
+
+    SlotSchedule& schedule = snapshot.schedule;
+    const uint16_t slot_count = in.U16();
+    if (slot_count > kMaxSlots) {
+        return std::nullopt;
+    }
+    schedule.slots.reserve(slot_count);
+    for (uint16_t i = 0; i < slot_count && in.ok(); ++i) {
+        SlotAllocation slot;
+        slot.slot_number = in.U16();
+        slot.type = static_cast<SlotAllocation::SlotType>(in.U8());
+        slot.target_address = in.U16();
+        schedule.slots.push_back(slot);
+    }
+    schedule.control_slots = in.U8();
+    schedule.discovery_slots = in.U16();
+    const uint8_t schedule_flags = in.U8();
+    if ((schedule_flags & ~kFlagRebuildPending) != 0) {
+        return std::nullopt;
+    }
+    schedule.rebuild_pending = (schedule_flags & kFlagRebuildPending) != 0;
 
     const uint8_t route_count = in.U8();
     snapshot.routes.reserve(route_count);

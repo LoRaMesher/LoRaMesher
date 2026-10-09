@@ -581,6 +581,25 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
     /**
+     * @brief Set when a member deep-sleeps through a run of SLEEP slots
+     *
+     * Deep sleep needs a state store that allows a write before every sleep
+     * (RtcStateStore on ESP32).
+     *
+     * @param policy Deep-sleep policy
+     */
+    void setDeepSleepPolicy(const power::DeepSleepPolicy& policy) {
+        deep_sleep_policy_ = policy;
+    }
+
+    /**
+     * @brief Get the deep-sleep policy
+     */
+    const power::DeepSleepPolicy& getDeepSleepPolicy() const {
+        return deep_sleep_policy_;
+    }
+
+    /**
      * @brief Get the subslot config for sync beacon slots
      *
      * @return const SubslotConfig& Sync beacon subslot configuration
@@ -662,10 +681,33 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (wake_up_guard_ms_ > 500) {
             return "Wake-up guard time too long (maximum 500ms)";
         }
-        return "";
+        return ValidateDeepSleepPolicy();
     }
 
    private:
+    std::string ValidateDeepSleepPolicy() const {
+        if (!deep_sleep_policy_.enabled) {
+            return "";
+        }
+        if (node_role_ == NodeRole::NETWORK_MANAGER) {
+            return "A network manager never deep-sleeps";
+        }
+        if (!state_store_ || !state_store_->AllowsFrequentWrites()) {
+            return "Deep sleep needs a state store that allows a write before "
+                   "every sleep (RtcStateStore)";
+        }
+        if (deep_sleep_policy_.min_sleep_ms < 1000) {
+            return "Deep sleep minimum too short (minimum 1s)";
+        }
+        if (deep_sleep_policy_.boot_time_ms > 10000) {
+            return "Deep sleep boot time too long (maximum 10s)";
+        }
+        if (deep_sleep_policy_.clock_drift_ppm > 100000) {
+            return "Deep sleep clock drift too large (maximum 100000 ppm)";
+        }
+        return "";
+    }
+
     uint32_t hello_interval_ =
         60000;  ///< Interval between hello messages in ms
     uint32_t route_timeout_ =
@@ -703,6 +745,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
     /// Keeps protocol state across resets (nullptr = cold start every boot)
     std::shared_ptr<storage::IStateStore> state_store_;
+    /// When a member deep-sleeps (disabled by default)
+    power::DeepSleepPolicy deep_sleep_policy_;
 
     /// Subslot config for sync beacon TX slots (ADDRESS_HASH by default).
     /// A deterministic per-superframe hash of the address reshuffles same-hop

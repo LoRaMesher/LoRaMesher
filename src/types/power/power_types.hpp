@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -55,6 +56,45 @@ enum class PowerState : uint8_t {
     ACTIVE,       ///< Full operation - all systems active (TX/RX slots)
     RADIO_SLEEP,  ///< Radio off, MCU active - used between operations
     LIGHT_SLEEP,  ///< Radio + user peripherals off, MCU maintains timing (SLEEP slots)
+    DEEP_SLEEP,  ///< MCU off until a timer wakes it; the node reboots and resumes
+};
+
+/**
+ * @brief When a member deep-sleeps through a run of SLEEP slots
+ *
+ * A member in normal operation with nothing in flight saves its state in
+ * the state store, deep-sleeps and, when it boots again, resumes its
+ * membership without rejoining. It wakes early enough to boot and to absorb
+ * the error of the sleep clock before its next active slot. Network managers
+ * never deep-sleep; runs too short for deep sleep use light sleep.
+ */
+struct DeepSleepPolicy {
+    /// Deep-sleep when the conditions allow it
+    bool enabled = false;
+    /// Shortest deep sleep worth a reboot (ms)
+    uint32_t min_sleep_ms = 30000;
+    /// Time from the wake-up to the protocol running again (ms)
+    uint32_t boot_time_ms = 400;
+    /// Worst-case error of the sleep clock (parts per million)
+    uint32_t clock_drift_ppm = 5000;
+
+    /**
+     * @brief How long before the next active slot the node must wake
+     *
+     * @param until_active_ms Time from now to the next active slot (ms)
+     * @param wake_up_guard_ms Time the node must be running before the slot
+     * @return Boot time, wake-up guard and the clock error over the sleep
+     */
+    uint32_t WakeMarginMs(uint32_t until_active_ms,
+                          uint32_t wake_up_guard_ms) const {
+        const uint64_t drift_ms =
+            (static_cast<uint64_t>(until_active_ms) * clock_drift_ppm +
+             999999u) /
+            1000000u;
+        const uint64_t margin = boot_time_ms + wake_up_guard_ms + drift_ms;
+        return static_cast<uint32_t>(
+            std::min<uint64_t>(margin, std::numeric_limits<uint32_t>::max()));
+    }
 };
 
 /**
@@ -66,7 +106,11 @@ enum class PowerState : uint8_t {
  */
 struct SleepContext {
     /**
-     * @brief The power state being requested (typically LIGHT_SLEEP)
+     * @brief The power state being requested (LIGHT_SLEEP or DEEP_SLEEP)
+     *
+     * With a deep-sleep policy the callback is asked for DEEP_SLEEP first;
+     * after a veto the node may light-sleep and asks again for LIGHT_SLEEP.
+     * A deep sleep ends in a reboot, so the wake-up callback never follows it.
      */
     PowerState requested_state;
 
@@ -140,7 +184,8 @@ struct SleepResult {
  * @note  Returning SleepResult{true} causes the protocol to:
  *        1. Put the radio to sleep.
  *        2. Put the MCU to light sleep until shortly before the next active
- *           slot (ESP32 only).
+ *           slot (ESP32 only), or into deep sleep when the request is
+ *           DEEP_SLEEP.
  *        Use this callback to power down user peripherals (GPS, sensors) before sleep.
  * @note  Returning SleepResult{false} vetoes MCU sleep. The radio still sleeps for
  *        power savings, but the MCU stays running and OnWakeUp will not fire.

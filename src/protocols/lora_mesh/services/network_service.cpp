@@ -805,6 +805,7 @@ std::optional<storage::ResumeSnapshot> NetworkService::CaptureResumeSnapshot()
     member.last_sync_beacon_ms = last_sync_beacon_received_;
     member.last_route_cleanup_ms = last_cleanup_time_;
 
+    snapshot.schedule = slot_scheduler_->GetSchedule();
     routing_table_->ForEachNode(
         [&](const NetworkNodeRoute& node) { snapshot.routes.push_back(node); });
     reliable_messaging_->CaptureResumeState(snapshot);
@@ -867,13 +868,16 @@ Result NetworkService::ApplyResumeSnapshot(
     if (!result) {
         return result;
     }
+    // The node follows the schedule it slept with; a change it was waiting
+    // for is applied at the next rebuild, as if it had not slept
+    slot_scheduler_->RestoreSchedule(snapshot.schedule);
     SetState(ProtocolState::NORMAL_OPERATION);
     LOG_INFO(
         "Resumed membership of network 0x%04X: manager 0x%04X, control slot "
         "%u, %zu routes",
         snapshot.network.network_id, member.network_manager,
         member.control_slot_index, snapshot.routes.size());
-    return UpdateSlotTable();
+    return Result::Success();
 }
 
 const char* NetworkService::GetDeepSleepBlocker() const {
@@ -886,9 +890,6 @@ const char* NetworkService::GetDeepSleepBlocker() const {
     }
     if (no_received_sync_beacon_count_ != 0) {
         return "missed sync beacons";
-    }
-    if (pending_slot_table_rebuild_ || slot_scheduler_->IsDirty()) {
-        return "slot table update pending";
     }
     if (!reliable_messaging_->IsIdle()) {
         return "reliable messages in flight";

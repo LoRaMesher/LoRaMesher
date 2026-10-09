@@ -34,6 +34,10 @@ namespace storage {
  * |         | table version (1), last sync (4), last sync beacon (4),|
  * |         | last route cleanup (4)                                 |
  * | 2       | Group stream: started (1), next sequence (1)           |
+ * | 2       | Slot count N                                           |
+ * | 5 x N   | Slots: number (2), type (1), target (2)                |
+ * | 4       | Control slots (1), discovery slots (2), flags (1,      |
+ * |         | bit 0: slot table rebuild pending)                     |
  * | 1       | Route count R                                          |
  * | R x var | Routes, see below                                      |
  * | 1       | Sequence stream count S                                |
@@ -68,6 +72,8 @@ class ResumeSnapshotCodec {
     static constexpr size_t kMaxDeliveryStreams = 32;
     static constexpr size_t kSeenMessageSize = 3;
     static constexpr size_t kMaxSeenMessages = 32;
+    static constexpr size_t kSlotSize = 5;
+    static constexpr size_t kMaxSlots = 256;
 
     /**
      * @brief Size in bytes of the encoded @p snapshot
@@ -105,7 +111,8 @@ class ResumeSnapshotCodec {
      * sequence streams and delivery streams name distinct unicast nodes
      * (delivery streams: per kind) and fit their counts; every delivery
      * stream has delivered its highest sequence; seen messages come from
-     * unicast nodes and fit their count.
+     * unicast nodes and fit their count; the slot table fits kMaxSlots and
+     * holds known slot types.
      */
     static bool IsValid(const ResumeSnapshot& snapshot);
 };

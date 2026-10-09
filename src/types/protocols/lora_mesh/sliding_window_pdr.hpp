@@ -96,7 +96,7 @@ class SlidingWindowPDR {
      */
     bool SetState(const State& state) {
         const uint32_t used_bits =
-            WindowSize == 32 ? 0xFFFFFFFFu : ((1u << WindowSize) - 1u);
+            WindowSize == 32 ? 0xFFFFFFFFu : ((1u << (WindowSize % 32)) - 1u);
         if (state.position >= WindowSize || state.total_expected > WindowSize ||
             (state.window & ~used_bits) != 0) {
             return false;

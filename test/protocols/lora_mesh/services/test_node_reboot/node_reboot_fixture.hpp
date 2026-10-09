@@ -10,14 +10,18 @@
  */
 #pragma once
 
+#include <algorithm>
+#include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "../test_routing/routing_test_fixture.hpp"
+#include "os/rtos_mock.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "types/storage/memory_state_store.hpp"
 
@@ -44,6 +48,8 @@ class NodeRebootFixture : public RoutingTestFixture {
         bool with_store = true;
         /// Target TX duty cycle; lower values give longer superframes
         float target_duty_cycle = 1.0f;
+        /// Deep-sleep policy of the members (none: they never deep-sleep)
+        std::optional<power::DeepSleepPolicy> member_deep_sleep;
     };
 
    protected:
@@ -109,6 +115,9 @@ class NodeRebootFixture : public RoutingTestFixture {
         AddressType address) {
         return [this, address](LoRaMeshProtocolConfig& config) {
             config.setTargetDutyCycle(spec_.target_duty_cycle);
+            if (address != kBaseAddress && spec_.member_deep_sleep) {
+                config.setDeepSleepPolicy(*spec_.member_deep_sleep);
+            }
             auto it = stores_.find(address);
             if (it != stores_.end()) {
                 config.setStateStore(it->second);
@@ -173,6 +182,98 @@ class NodeRebootFixture : public RoutingTestFixture {
     }
 
     // ------------------------------------------------------------------
+    // Deep sleep
+    // ------------------------------------------------------------------
+
+    /**
+     * @brief Power off the nodes that asked to deep-sleep, boot sleepers due
+     *
+     * A node that deep-sleeps is powered off at once and boots again exactly
+     * when its timer would wake it (plus extra_wake_delay_ms_), with its
+     * protocol clock restarted at 0 as after a real reset.
+     */
+    void OnTimeAdvanced() override {
+        auto* mock = static_cast<os::RTOSMock*>(&GetRTOS());
+        for (const auto& request : mock->TakeDeepSleepRequests()) {
+            TestNode* node = FindNodeByTaskAddress(request.node_address);
+            if (node == nullptr || !node->protocol) {
+                ADD_FAILURE() << "Deep sleep requested by unknown node "
+                              << request.node_address;
+                continue;
+            }
+            ShutdownNode(*node);
+            mock->ResetNodeTickCount(request.node_address);
+            sleeping_[node->address] =
+                request.wake_at_ms + extra_wake_delay_ms_;
+            ++deep_sleeps_[node->address];
+        }
+
+        const uint64_t now = mock->getVirtualTime();
+        for (auto it = sleeping_.begin(); it != sleeping_.end();) {
+            if (it->second > now) {
+                ++it;
+                continue;
+            }
+            TestNode& node = NodeAt(it->first);
+            it = sleeping_.erase(it);
+            WakeFromDeepSleep(node);
+        }
+    }
+
+    /// Steps never pass the boot time of a sleeping node
+    uint32_t MaxTimeStepMs() const override {
+        const uint64_t now =
+            static_cast<os::RTOSMock*>(&GetRTOS())->getVirtualTime();
+        uint64_t step = std::numeric_limits<uint32_t>::max();
+        for (const auto& [address, wake_at] : sleeping_) {
+            step = std::min<uint64_t>(step, wake_at > now ? wake_at - now : 1);
+        }
+        return static_cast<uint32_t>(step);
+    }
+
+    /**
+     * @brief Boot a node at the end of its deep sleep
+     *
+     * Records whether it resumed its membership (normal operation right after
+     * Start()) or fell back to a warm restart.
+     */
+    void WakeFromDeepSleep(TestNode& node) {
+        // A reset restarts the protocol clock
+        BindTestThread(node);
+        GetRTOS().ContinueTickCountFrom(0);
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+
+        Result result = BootNode(node);
+        if (!result) {
+            ADD_FAILURE() << node.name << " failed to boot from deep sleep: "
+                          << result.GetErrorMessage();
+            return;
+        }
+        if (node.protocol->GetState() == ProtocolState::NORMAL_OPERATION) {
+            ++resumed_boots_[node.address];
+        } else {
+            ++fallback_boots_[node.address];
+        }
+    }
+
+    /// True while @p node is in deep sleep
+    bool IsSleeping(const TestNode& node) const {
+        return sleeping_.count(node.address) != 0;
+    }
+
+    /// Advance time until @p node is awake (immediately if it is)
+    bool WaitUntilAwake(TestNode& node) {
+        return AdvanceTime(superframe_ms_ * 4, superframe_ms_ * 4, kStepMs, 0,
+                           [&]() { return node.protocol != nullptr; });
+    }
+
+    static size_t CountOf(const std::map<AddressType, size_t>& counts,
+                          AddressType address) {
+        auto it = counts.find(address);
+        return it == counts.end() ? 0 : it->second;
+    }
+
+    // ------------------------------------------------------------------
     // Network health
     // ------------------------------------------------------------------
 
@@ -220,6 +321,9 @@ class NodeRebootFixture : public RoutingTestFixture {
         int manager_count = 0;
         for (auto* node : nodes) {
             if (!node->protocol) {
+                if (IsSleeping(*node)) {
+                    continue;
+                }
                 return node->name + " is powered off";
             }
             const bool is_manager = manager == kAnyManager
@@ -249,6 +353,11 @@ class NodeRebootFixture : public RoutingTestFixture {
                                  ->GetAllocatedControlSlots();
         std::set<uint8_t> used_slots;
         for (auto* node : nodes) {
+            // A node in deep sleep keeps its place: the others still route to
+            // it, and it is checked again once it is awake
+            if (!node->protocol) {
+                continue;
+            }
             const ProtocolState expected_state =
                 node == manager_node ? ProtocolState::NETWORK_MANAGER
                                      : ProtocolState::NORMAL_OPERATION;
@@ -384,6 +493,8 @@ class NodeRebootFixture : public RoutingTestFixture {
         };
 
         for (uint8_t i = 0; i < count; ++i) {
+            // An application only runs while its node is awake
+            EXPECT_TRUE(WaitUntilAwake(from)) << from.name;
             EXPECT_TRUE(SendMessage(from, to, {kDataMarker, tag, i}))
                 << from.name << " -> " << to.name;
             // One message per superframe stays within a node's data slots
@@ -455,8 +566,36 @@ class NodeRebootFixture : public RoutingTestFixture {
     /// Why the last IsHealthy() call failed (empty when it passed)
     std::string last_unhealthy_reason_;
     uint8_t next_data_tag_ = 1;
+    /// Nodes in deep sleep and the virtual time they boot at
+    std::map<AddressType, uint64_t> sleeping_;
+    /// Delay added to every deep-sleep wake-up (late wake-up tests)
+    uint32_t extra_wake_delay_ms_ = 0;
+    std::map<AddressType, size_t> deep_sleeps_;
+    std::map<AddressType, size_t> resumed_boots_;
+    std::map<AddressType, size_t> fallback_boots_;
 
    private:
+    TestNode* FindNodeByTaskAddress(const std::string& task_address) {
+        for (auto& node : nodes_) {
+            char addr_str[8];
+            snprintf(addr_str, sizeof(addr_str), "0x%04X", node->address);
+            if (task_address == addr_str) {
+                return node.get();
+            }
+        }
+        return nullptr;
+    }
+
+    TestNode& NodeAt(AddressType address) {
+        for (auto& node : nodes_) {
+            if (node->address == address) {
+                return *node;
+            }
+        }
+        ADD_FAILURE() << "Unknown node " << address;
+        return *nodes_.front();
+    }
+
     static void BindTestThread(const TestNode& node) {
         char addr_str[8];
         snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);

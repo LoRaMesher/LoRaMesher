@@ -18,9 +18,12 @@ constexpr AddressType kNode = 0x2001;
 constexpr AddressType kManager = 0x1000;
 
 /// Offset of the first route record
-constexpr size_t kRoutesOffset = 4 + 1 + 1 + 21 + 30 + 19 + 2 + 1;
+constexpr size_t kScheduleSlots = 3;
+constexpr size_t kRoutesOffset =
+    4 + 1 + 1 + 21 + 30 + 19 + 2 + 2 + kScheduleSlots * 5 + 4 + 1;
 /// Size of everything but the route and stream records
-constexpr size_t kFixedSize = 4 + 1 + 1 + 21 + 30 + 19 + 2 + 1 + 1 + 1 + 1 + 4;
+constexpr size_t kFixedSize =
+    4 + 1 + 1 + 21 + 30 + 19 + 2 + 2 + 4 + 1 + 1 + 1 + 1 + 4;
 
 NetworkNodeRoute MakeOwnEntry() {
     NetworkNodeRoute route(kNode, 1000, false, 0x03, 2, 0);
@@ -94,6 +97,14 @@ ResumeSnapshot MakeSnapshot() {
     snapshot.member.last_sync_beacon_ms = 0xFFFFE011u;
     snapshot.member.last_route_cleanup_ms = 0xFFFF0000u;
 
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+    snapshot.schedule.slots = {{0, SlotType::SYNC_BEACON_RX, 0},
+                               {1, SlotType::CONTROL_TX, 0},
+                               {2, SlotType::TX, kManager}};
+    snapshot.schedule.control_slots = 3;
+    snapshot.schedule.discovery_slots = 260;
+    snapshot.schedule.rebuild_pending = true;
+
     snapshot.routes = {MakeOwnEntry(), MakeDirectNeighbour(),
                        MakeMultiHopRoute()};
     snapshot.sequence_streams = {{kManager, 17}, {0x3003, 0}};
@@ -164,6 +175,12 @@ void ExpectSameSnapshot(const ResumeSnapshot& actual,
     EXPECT_EQ(actual.group_next_sequence, expected.group_next_sequence);
     EXPECT_EQ(actual.delivery_streams, expected.delivery_streams);
     EXPECT_EQ(actual.seen_messages, expected.seen_messages);
+    EXPECT_EQ(actual.schedule.slots, expected.schedule.slots);
+    EXPECT_EQ(actual.schedule.control_slots, expected.schedule.control_slots);
+    EXPECT_EQ(actual.schedule.discovery_slots,
+              expected.schedule.discovery_slots);
+    EXPECT_EQ(actual.schedule.rebuild_pending,
+              expected.schedule.rebuild_pending);
     ASSERT_EQ(actual.routes.size(), expected.routes.size());
     for (size_t i = 0; i < expected.routes.size(); ++i) {
         ExpectSameRoute(actual.routes[i], expected.routes[i]);
@@ -195,8 +212,8 @@ TEST(ResumeSnapshotCodecTest, OnlyRoutesWithHistoryCarryStatistics) {
 
     // Own entry and multi-hop route: plain records; the neighbour carries its
     // link statistics and round-trip time
-    const size_t expected =
-        kFixedSize + 3 * 22 + 33 + 8 + 2 * 3 + 3 * 12 + 3 * 3;
+    const size_t expected = kFixedSize + kScheduleSlots * 5 + 3 * 22 + 33 + 8 +
+                            2 * 3 + 3 * 12 + 3 * 3;
     EXPECT_EQ(blob.size(), expected);
     EXPECT_EQ(ResumeSnapshotCodec::EncodedSize(snapshot), expected);
 }
@@ -208,6 +225,7 @@ TEST(ResumeSnapshotCodecTest, EmptyTablesRoundTrip) {
     snapshot.group_next_sequence.reset();
     snapshot.delivery_streams.clear();
     snapshot.seen_messages.clear();
+    snapshot.schedule = {};
     const auto blob = EncodeOrFail(snapshot);
     EXPECT_EQ(blob.size(), kFixedSize);
 
@@ -339,6 +357,15 @@ TEST(ResumeSnapshotCodecTest, InvalidContentIsNotEncoded) {
     }));
     EXPECT_TRUE(
         rejects([](ResumeSnapshot& s) { s.seen_messages.push_back({0, 1}); }));
+    EXPECT_TRUE(rejects([](ResumeSnapshot& s) {
+        s.schedule.slots.front().type =
+            static_cast<types::protocols::lora_mesh::SlotAllocation::SlotType>(
+                0);
+    }));
+    EXPECT_TRUE(rejects([](ResumeSnapshot& s) {
+        s.schedule.slots.resize(ResumeSnapshotCodec::kMaxSlots + 1,
+                                s.schedule.slots.front());
+    }));
     EXPECT_TRUE(rejects([](ResumeSnapshot& s) {
         s.seen_messages.assign(ResumeSnapshotCodec::kMaxSeenMessages + 1,
                                {0x3003, 1});

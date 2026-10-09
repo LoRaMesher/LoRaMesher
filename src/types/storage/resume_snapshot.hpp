@@ -11,6 +11,7 @@
 
 #include "types/messages/base_header.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
+#include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/storage/network_snapshot.hpp"
 
 namespace loramesher {
@@ -81,6 +82,18 @@ struct MemberState {
 };
 
 /**
+ * @brief Slot table of the node, restored as it was so the node follows the
+ *        same schedule until the rebuild it was waiting for
+ */
+struct SlotSchedule {
+    /// Slots of the table, in table order
+    std::vector<types::protocols::lora_mesh::SlotAllocation> slots;
+    uint8_t control_slots = 0;     ///< Control slots of the network
+    uint16_t discovery_slots = 0;  ///< Discovery slots of the network
+    bool rebuild_pending = false;  ///< A change waits for the next rebuild
+};
+
+/**
  * @brief Next reliable message sequence toward one unicast destination
  */
 struct SequenceStream {
@@ -132,6 +145,7 @@ struct ResumeSnapshot {
     NetworkSnapshot network;
     ResumeTiming timing;
     MemberState member;
+    SlotSchedule schedule;
     /// Routing table, including the node's own entry and link statistics
     std::vector<types::protocols::lora_mesh::NetworkNodeRoute> routes;
     /// Reliable unicast sequence streams

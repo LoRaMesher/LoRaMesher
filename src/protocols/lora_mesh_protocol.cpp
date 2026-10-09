@@ -9,6 +9,7 @@
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/radio/radio_event.hpp"
+#include "types/storage/resume_snapshot_codec.hpp"
 #include "types/storage/snapshot_codec.hpp"
 #include "utils/task_monitor.hpp"
 #include "utils/time_utils.hpp"
@@ -357,21 +358,20 @@ Result LoRaMeshProtocol::Start() {
         return result;
     }
 
-    RestoreState();
+    if (RestoreState() != StartMode::kResumed) {
+        result = superframe_service_->StartSuperframe();
+        if (!result) {
+            LOG_ERROR("Failed to start superframe service: %s",
+                      result.GetErrorMessage().c_str());
+            return result;
+        }
 
-    // Start superframe service
-    result = superframe_service_->StartSuperframe();
-    if (!result) {
-        LOG_ERROR("Failed to start superframe service: %s",
-                  result.GetErrorMessage().c_str());
-        return result;
-    }
-
-    result = StartDiscovery();
-    if (!result) {
-        LOG_ERROR("Failed to start discovery: %s",
-                  result.GetErrorMessage().c_str());
-        return result;
+        result = StartDiscovery();
+        if (!result) {
+            LOG_ERROR("Failed to start discovery: %s",
+                      result.GetErrorMessage().c_str());
+            return result;
+        }
     }
 
     // Resume protocol task
@@ -714,28 +714,91 @@ Result LoRaMeshProtocol::SaveState() {
     return result;
 }
 
-void LoRaMeshProtocol::RestoreState() {
+LoRaMeshProtocol::StartMode LoRaMeshProtocol::RestoreState() {
     auto store = config_.getStateStore();
     if (!store) {
-        return;
+        return StartMode::kCold;
     }
     auto blob = store->Load();
     if (!blob) {
         LOG_INFO("No saved state: cold start");
-        return;
+        return StartMode::kCold;
     }
     store->Clear();
+
+    if (storage::ResumeSnapshotCodec::HasMagic(*blob)) {
+        auto resume = storage::ResumeSnapshotCodec::Decode(*blob);
+        if (!resume) {
+            LOG_WARNING("Saved resume state is invalid: cold start");
+            return StartMode::kCold;
+        }
+        if (ResumeAfterDeepSleep(*resume)) {
+            return StartMode::kResumed;
+        }
+        return ApplyWarmRestart(resume->network);
+    }
 
     auto snapshot = storage::SnapshotCodec::Decode(*blob);
     if (!snapshot) {
         LOG_WARNING("Saved state is invalid: cold start");
-        return;
+        return StartMode::kCold;
     }
-    Result result = network_service_->ApplySnapshot(*snapshot);
+    return ApplyWarmRestart(*snapshot);
+}
+
+LoRaMeshProtocol::StartMode LoRaMeshProtocol::ApplyWarmRestart(
+    const storage::NetworkSnapshot& snapshot) {
+    Result result = network_service_->ApplySnapshot(snapshot);
     if (!result) {
         LOG_WARNING("Saved state not applied (%s): cold start",
                     result.GetErrorMessage().c_str());
+        return StartMode::kCold;
     }
+    return StartMode::kWarmRestart;
+}
+
+bool LoRaMeshProtocol::ResumeAfterDeepSleep(
+    const storage::ResumeSnapshot& snapshot) {
+    const storage::ResumeTiming& timing = snapshot.timing;
+    const uint64_t now_us = GetRTOS().GetPersistentTimeUs();
+    if (now_us < timing.persistent_time_at_save_us) {
+        LOG_WARNING("Cannot resume: the persistent clock restarted");
+        return false;
+    }
+    const uint64_t slept_ms =
+        (now_us - timing.persistent_time_at_save_us) / 1000;
+    const uint64_t planned_ms =
+        timing.wake_deadline_ms - timing.tick_at_save_ms;
+    const uint64_t superframe_ms =
+        static_cast<uint64_t>(timing.total_slots) * timing.slot_duration_ms;
+    if (slept_ms > planned_ms + superframe_ms) {
+        LOG_WARNING(
+            "Cannot resume: slept %llu ms, more than a superframe past its "
+            "next slot",
+            static_cast<unsigned long long>(slept_ms));
+        return false;
+    }
+
+    GetRTOS().ContinueTickCountFrom(timing.tick_at_save_ms +
+                                    static_cast<uint32_t>(slept_ms));
+    Result result = network_service_->ApplyResumeSnapshot(snapshot);
+    if (!result) {
+        LOG_WARNING("Cannot resume: %s", result.GetErrorMessage().c_str());
+        return false;
+    }
+    result = superframe_service_->ResumeAt(
+        timing.superframe_start_ms, timing.total_slots, timing.slot_duration_ms,
+        timing.superframes_completed);
+    if (!result) {
+        LOG_WARNING("Cannot resume the superframe: %s",
+                    result.GetErrorMessage().c_str());
+        network_service_->ResetNetworkState();
+        return false;
+    }
+    LOG_INFO("Resumed network 0x%04X after %llu ms of deep sleep",
+             snapshot.network.network_id,
+             static_cast<unsigned long long>(slept_ms));
+    return true;
 }
 
 uint16_t LoRaMeshProtocol::GetCurrentSlot() const {
@@ -1495,14 +1558,17 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
     // The MCU sleeps once per run of SLEEP slots, through the whole run: a
     // node woken at the end of the run (or still asleep) only keeps the radio
     // asleep in the run's later slots
-    if (!prepare_sleep_callback_ ||
-        current_power_state_ == power::PowerState::LIGHT_SLEEP) {
+    if (current_power_state_ == power::PowerState::LIGHT_SLEEP ||
+        (!prepare_sleep_callback_ && !config_.getDeepSleepPolicy().enabled)) {
+        return;
+    }
+    const uint32_t until_active = GetTimeUntilNextActiveSlot();
+    if (TryDeepSleep(until_active) || !prepare_sleep_callback_) {
         return;
     }
 
     // Wake the MCU before the next active slot starts, so the callback,
     // radio transition and peripheral init are done in time
-    const uint32_t until_active = GetTimeUntilNextActiveSlot();
     const uint32_t wake_guard = config_.getWakeUpGuardTime();
     if (until_active <= wake_guard + kMinLightSleepMs) {
         return;
@@ -1531,6 +1597,73 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
 
     // The wake callback fires at the next active slot
     current_power_state_ = power::PowerState::LIGHT_SLEEP;
+}
+
+bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms) {
+    const power::DeepSleepPolicy& policy = config_.getDeepSleepPolicy();
+    auto store = config_.getStateStore();
+    if (!policy.enabled || !store || !store->AllowsFrequentWrites()) {
+        return false;
+    }
+    const uint32_t margin =
+        policy.WakeMarginMs(until_active_ms, config_.getWakeUpGuardTime());
+    if (until_active_ms <= margin ||
+        until_active_ms - margin < policy.min_sleep_ms) {
+        return false;
+    }
+    const uint32_t sleep_ms = until_active_ms - margin;
+
+    if (message_queue_service_->HasAnyMessages()) {
+        LOG_DEBUG("No deep sleep: messages queued");
+        return false;
+    }
+    if (const char* blocker = network_service_->GetDeepSleepBlocker()) {
+        LOG_DEBUG("No deep sleep: %s", blocker);
+        return false;
+    }
+    auto snapshot = network_service_->CaptureResumeSnapshot();
+    if (!snapshot) {
+        return false;
+    }
+
+    const uint32_t now = GetRTOS().getTickCount();
+    storage::ResumeTiming& timing = snapshot->timing;
+    timing.tick_at_save_ms = now;
+    timing.persistent_time_at_save_us = GetRTOS().GetPersistentTimeUs();
+    timing.wake_deadline_ms = now + until_active_ms;
+    timing.superframe_start_ms = superframe_service_->GetSlotStartTime(0);
+    timing.superframes_completed =
+        superframe_service_->GetSuperframeStats().superframes_completed;
+    timing.slot_duration_ms = superframe_service_->GetSlotDuration();
+    timing.total_slots = superframe_service_->GetTotalSlots();
+    auto blob = storage::ResumeSnapshotCodec::Encode(*snapshot);
+    if (!blob) {
+        LOG_WARNING("No deep sleep: the state cannot be encoded");
+        return false;
+    }
+
+    if (prepare_sleep_callback_) {
+        power::SleepContext ctx{};
+        ctx.requested_state = power::PowerState::DEEP_SLEEP;
+        ctx.current_slot = superframe_service_->GetCurrentSlot();
+        ctx.has_pending_messages = false;
+        ctx.sleep_duration_ms = sleep_ms;
+        if (!prepare_sleep_callback_(ctx).allow_sleep) {
+            LOG_DEBUG("Deep sleep vetoed by user callback");
+            return false;
+        }
+    }
+
+    Result result = store->Save(*blob);
+    if (!result) {
+        LOG_WARNING("No deep sleep: %s", result.GetErrorMessage().c_str());
+        return false;
+    }
+    LOG_INFO("Deep sleep for %u ms (state %zu bytes, waking %u ms early)",
+             sleep_ms, blob->size(), margin);
+    current_power_state_ = power::PowerState::DEEP_SLEEP;
+    GetRTOS().DeepSleep(sleep_ms);
+    return true;
 }
 
 LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(

@@ -498,6 +498,18 @@ class LoRaMeshProtocol : public Protocol {
     void SleepThroughSleepRun();
 
     /**
+     * @brief Deep-sleep through the rest of the SLEEP run if the policy allows
+     *
+     * A member with nothing in flight saves its resume snapshot and
+     * deep-sleeps until shortly before the next active slot; on hardware the
+     * call does not return.
+     *
+     * @param until_active_ms Time from now to the next active slot
+     * @return false if the node stays up
+     */
+    bool TryDeepSleep(uint32_t until_active_ms);
+
+    /**
      * @brief Process messages for current slot type
      * 
      * @param slot_type Type of current slot
@@ -547,14 +559,43 @@ class LoRaMeshProtocol : public Protocol {
      */
     Result StartDiscovery();
 
+    /// How Start() brings the node up
+    enum class StartMode : uint8_t {
+        kCold,         ///< Discover or form a network
+        kWarmRestart,  ///< Discover with the restored warm-restart state
+        kResumed,      ///< Membership resumed after a deep sleep
+    };
+
     /**
-     * @brief Restore the snapshot saved by SaveState(), if any
+     * @brief Restore the state saved before a reset, if any
      *
      * Reads the state store once and erases it, so a snapshot is never
-     * applied twice. A missing, corrupted or foreign snapshot leaves the node
-     * to start cold.
+     * applied twice. A member woken from deep sleep in time resumes its
+     * membership; otherwise the snapshot's warm-restart state applies. A
+     * missing, corrupted or foreign snapshot leaves the node to start cold.
+     *
+     * @return How Start() continues
      */
-    void RestoreState();
+    StartMode RestoreState();
+
+    /**
+     * @brief Apply a warm-restart snapshot
+     *
+     * @return kWarmRestart, or kCold if the snapshot does not apply
+     */
+    StartMode ApplyWarmRestart(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Resume the membership saved before a deep sleep
+     *
+     * Continues the protocol clock from the persistent clock, restores the
+     * network state and resumes the superframe schedule.
+     *
+     * @param snapshot Snapshot saved before the deep sleep
+     * @return true if resumed; false if the node woke too late or the
+     *         snapshot does not apply
+     */
+    bool ResumeAfterDeepSleep(const storage::ResumeSnapshot& snapshot);
 
     /**
      * @brief Adds a routing table message into the queue service if it does not exist

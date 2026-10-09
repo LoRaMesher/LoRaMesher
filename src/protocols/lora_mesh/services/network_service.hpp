@@ -346,10 +346,9 @@ class NetworkService : public INetworkService {
     /**
      * @brief Resume the membership saved by CaptureResumeSnapshot()
      *
-     * Restores the routes, the membership and the message sequences, enters
-     * normal operation and rebuilds the slot table for the snapshot's
-     * superframe. Call after Configure() instead of StartDiscovery(); the
-     * caller then resumes the superframe schedule.
+     * Restores the routes, the membership, the message sequences and the
+     * slot table, and enters normal operation. Call after Configure() instead
+     * of StartDiscovery(); the caller then resumes the superframe schedule.
      *
      * @param snapshot Snapshot taken by this node before it slept
      * @return Success, or kInvalidParameter (nothing restored) if the
@@ -362,8 +361,8 @@ class NetworkService : public INetworkService {
      * @brief Reason the node cannot deep-sleep and resume now
      *
      * A node may only resume a state that needs nothing from the network
-     * while it sleeps: a member in normal operation, in sync, with no slot
-     * table change pending and no reliable message in flight.
+     * while it sleeps: a member in normal operation, in sync, with no
+     * reliable message in flight.
      *
      * @return The reason, or nullptr if the node may deep-sleep
      */
