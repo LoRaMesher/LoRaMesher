@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "types/messages/base_header.hpp"
+#include "types/power/sleep_clock_calibration.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/storage/network_snapshot.hpp"
@@ -67,6 +68,10 @@ struct MemberState {
     uint32_t last_sync_time_ms = 0;      ///< Last synchronization (tick)
     uint32_t last_sync_beacon_ms = 0;    ///< Last sync beacon received (tick)
     uint32_t last_route_cleanup_ms = 0;  ///< Last route cleanup (tick)
+    /// Learned error of the deep-sleep clock
+    power::SleepClockCalibration sleep_clock;
+    /// How far ahead of the network the schedule was at the last beacon
+    int16_t schedule_offset_ms = 0;
 
     bool operator==(const MemberState& other) const {
         return network_manager == other.network_manager &&
@@ -77,7 +82,9 @@ struct MemberState {
                table_version == other.table_version &&
                last_sync_time_ms == other.last_sync_time_ms &&
                last_sync_beacon_ms == other.last_sync_beacon_ms &&
-               last_route_cleanup_ms == other.last_route_cleanup_ms;
+               last_route_cleanup_ms == other.last_route_cleanup_ms &&
+               sleep_clock == other.sleep_clock &&
+               schedule_offset_ms == other.schedule_offset_ms;
     }
 };
 

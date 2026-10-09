@@ -74,23 +74,26 @@ struct DeepSleepPolicy {
     /// Shortest deep sleep worth a reboot (ms)
     uint32_t min_sleep_ms = 30000;
     /// Time from the wake-up to the protocol running again (ms)
-    uint32_t boot_time_ms = 400;
-    /// Worst-case error of the sleep clock (parts per million)
-    uint32_t clock_drift_ppm = 5000;
+    uint32_t boot_time_ms = 1000;
+    /// Worst-case error of an uncalibrated sleep clock (parts per million)
+    uint32_t clock_drift_ppm = 10000;
+    /// Worst-case error left once the node has calibrated its sleep clock
+    uint32_t calibrated_drift_ppm = 2000;
 
     /**
      * @brief How long before the next active slot the node must wake
      *
      * @param until_active_ms Time from now to the next active slot (ms)
      * @param wake_up_guard_ms Time the node must be running before the slot
+     * @param calibrated The sleep clock is calibrated
      * @return Boot time, wake-up guard and the clock error over the sleep
      */
-    uint32_t WakeMarginMs(uint32_t until_active_ms,
-                          uint32_t wake_up_guard_ms) const {
+    uint32_t WakeMarginMs(uint32_t until_active_ms, uint32_t wake_up_guard_ms,
+                          bool calibrated) const {
+        const uint64_t ppm =
+            calibrated ? calibrated_drift_ppm : clock_drift_ppm;
         const uint64_t drift_ms =
-            (static_cast<uint64_t>(until_active_ms) * clock_drift_ppm +
-             999999u) /
-            1000000u;
+            (static_cast<uint64_t>(until_active_ms) * ppm + 999999u) / 1000000u;
         const uint64_t margin = boot_time_ms + wake_up_guard_ms + drift_ms;
         return static_cast<uint32_t>(
             std::min<uint64_t>(margin, std::numeric_limits<uint32_t>::max()));

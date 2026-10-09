@@ -246,6 +246,46 @@ TEST_P(DeepSleepTest, LargeSleepClockErrorIsCaughtByTheBeacon) {
     }
 }
 
+TEST_P(DeepSleepTest, SleepClockErrorIsLearned) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& farthest = *nodes.back();
+
+    for (int32_t ppm : {9000, -6000}) {
+        SCOPED_TRACE(ppm);
+        sleep_clock_ppm_ = ppm;
+        ASSERT_TRUE(WaitForResumes(nodes, 8)) << DescribeNetwork(nodes);
+        ASSERT_TRUE(AdvanceTime(
+            superframe_ms_ * 2, superframe_ms_ * 2, kStepMs, 0, [&]() {
+                return std::all_of(
+                    nodes.begin(), nodes.end(),
+                    [](TestNode* node) { return node->protocol != nullptr; });
+            }));
+        for (size_t i = 1; i < nodes.size(); ++i) {
+            const auto calibration = nodes[i]
+                                         ->protocol->GetNetworkServiceForTest()
+                                         ->GetSleepClockCalibration();
+            // Each relay re-times the beacon with up to guard/2 of residual
+            // offset, which is large against the short simulated sleeps
+            const int32_t hops = GetParam().topology == Topology::kLine
+                                     ? static_cast<int32_t>(i)
+                                     : 1;
+            EXPECT_TRUE(calibration.IsCalibrated()) << nodes[i]->name;
+            EXPECT_NEAR(calibration.GetPpm(), ppm, 1500 * hops)
+                << nodes[i]->name;
+        }
+        EXPECT_TRUE(StaysHealthy(nodes, manager.address, superframe_ms_ * 4,
+                                 formed_network_id_))
+            << DescribeNetwork(nodes);
+    }
+    EXPECT_EQ(ExpectDataFlows(farthest, manager, 3), 3u);
+    EXPECT_EQ(ExpectDataFlows(manager, farthest, 3), 3u);
+    for (size_t i = 1; i < nodes.size(); ++i) {
+        EXPECT_EQ(CountOf(fallback_boots_, nodes[i]->address), 0u);
+    }
+}
+
 TEST_P(DeepSleepTest, ResumeAfterTheBeaconWaitsForTheNextBeacon) {
     auto nodes = FormNetwork(GetParam());
     ASSERT_FALSE(HasFatalFailure());

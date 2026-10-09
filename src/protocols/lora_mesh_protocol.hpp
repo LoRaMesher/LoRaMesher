@@ -481,15 +481,34 @@ class LoRaMeshProtocol : public Protocol {
     void OnStateChange(lora_mesh::INetworkService::ProtocolState new_state);
 
     /**
-     * @brief Time from now until the next slot that is not SLEEP
+     * @brief Next slot after the current one that is not SLEEP
      *
      * SLEEP slots are not always contiguous (the sync and data bands contain
-     * some), so this scans the slot table from the current slot. When no
-     * active slot follows, it is the time until the superframe ends.
+     * some), so this scans the slot table from the current slot.
      *
-     * @return Milliseconds until the next active slot starts (0 if overdue)
+     * @return The slot number, or the superframe's slot count (the start of
+     *         the next superframe) when no active slot follows
      */
-    uint32_t GetTimeUntilNextActiveSlot();
+    uint16_t GetNextActiveSlot();
+
+    /**
+     * @brief Time from now until @p slot of the current superframe starts
+     *
+     * @return Milliseconds until the slot starts (0 if overdue)
+     */
+    uint32_t GetTimeUntilSlot(uint16_t slot);
+
+    /**
+     * @brief True if the node only listens from @p slot until it receives its
+     *        sync beacon
+     *
+     * A node resumed from deep sleep may not transmit before a beacon has
+     * confirmed its schedule, so it only deep-sleeps through a run that
+     * leads to the beacon without a transmit slot in between.
+     *
+     * @param slot First slot after the sleep (may be the slot count)
+     */
+    bool ListensUntilSyncBeacon(uint16_t slot);
 
     /**
      * @brief Put the radio and, when power management is active, the MCU to
@@ -505,9 +524,10 @@ class LoRaMeshProtocol : public Protocol {
      * call does not return.
      *
      * @param until_active_ms Time from now to the next active slot
+     * @param next_active_slot Next active slot (see GetNextActiveSlot())
      * @return false if the node stays up
      */
-    bool TryDeepSleep(uint32_t until_active_ms);
+    bool TryDeepSleep(uint32_t until_active_ms, uint16_t next_active_slot);
 
     /**
      * @brief Process messages for current slot type

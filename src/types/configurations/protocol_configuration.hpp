@@ -698,7 +698,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (deep_sleep_policy_.boot_time_ms > 60000) {
             return "Deep sleep boot time too long (maximum 60s)";
         }
-        if (deep_sleep_policy_.clock_drift_ppm > 100000) {
+        if (deep_sleep_policy_.clock_drift_ppm > 100000 ||
+            deep_sleep_policy_.calibrated_drift_ppm > 100000) {
             return "Deep sleep clock drift too large (maximum 100000 ppm)";
         }
         return "";

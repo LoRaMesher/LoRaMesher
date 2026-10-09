@@ -773,8 +773,9 @@ bool LoRaMeshProtocol::ResumeAfterDeepSleep(
         LOG_WARNING("Cannot resume: the persistent clock restarted");
         return false;
     }
-    const uint64_t slept_ms =
-        (now_us - timing.persistent_time_at_save_us) / 1000;
+    // The sleep clock's own count, corrected by its learned error
+    const uint64_t slept_ms = snapshot.member.sleep_clock.ToRealMs(
+        (now_us - timing.persistent_time_at_save_us) / 1000);
     const uint64_t planned_ms =
         timing.wake_deadline_ms - timing.tick_at_save_ms;
     const uint64_t superframe_ms =
@@ -803,6 +804,8 @@ bool LoRaMeshProtocol::ResumeAfterDeepSleep(
         network_service_->ResetNetworkState();
         return false;
     }
+    network_service_->CalibrateSleepClockAtNextBeacon(
+        static_cast<uint32_t>(slept_ms));
     LOG_INFO("Resumed network 0x%04X after %llu ms of deep sleep",
              snapshot.network.network_id,
              static_cast<unsigned long long>(slept_ms));
@@ -1411,8 +1414,15 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
     // After a resume the schedule is only as accurate as the sleep clock:
     // the node listens in every slot, without transmitting, until a sync
-    // beacon confirms it
-    if (network_service_->IsAwaitingResync()) {
+    // beacon confirms it. With a calibrated sleep clock the error is within
+    // the subslot guard, so the discovery band before the beacon is served
+    // as usual.
+    const bool discovery_slot =
+        slot_type == SlotAllocation::SlotType::DISCOVERY_RX ||
+        slot_type == SlotAllocation::SlotType::DISCOVERY_TX;
+    if (network_service_->IsAwaitingResync() &&
+        !(discovery_slot &&
+          network_service_->GetSleepClockCalibration().IsCalibrated())) {
         result = hardware_->setState(radio::RadioState::kReceive);
         if (!result) {
             LOG_ERROR("Failed to set radio to receive: %s",
@@ -1545,14 +1555,9 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
     }
 }
 
-uint32_t LoRaMeshProtocol::GetTimeUntilNextActiveSlot() {
-    const uint32_t slot_duration = superframe_service_->GetSlotDuration();
-    if (slot_duration == 0) {
-        return 0;
-    }
+uint16_t LoRaMeshProtocol::GetNextActiveSlot() {
     const uint16_t current_slot = superframe_service_->GetCurrentSlot();
-    uint16_t next_active = static_cast<uint16_t>(
-        superframe_service_->GetSuperframeDuration() / slot_duration);
+    uint16_t next_active = superframe_service_->GetTotalSlots();
     network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
         if (allocation.slot_number > current_slot &&
             allocation.slot_number < next_active &&
@@ -1560,12 +1565,41 @@ uint32_t LoRaMeshProtocol::GetTimeUntilNextActiveSlot() {
             next_active = allocation.slot_number;
         }
     });
+    return next_active;
+}
 
+uint32_t LoRaMeshProtocol::GetTimeUntilSlot(uint16_t slot) {
     const uint32_t now = GetRTOS().getTickCount();
-    const uint32_t next_active_start =
-        superframe_service_->GetSlotStartTime(next_active);
-    return utils::TimeReached(now, next_active_start) ? 0
-                                                      : next_active_start - now;
+    const uint32_t slot_start = superframe_service_->GetSlotStartTime(slot);
+    return utils::TimeReached(now, slot_start) ? 0 : slot_start - now;
+}
+
+bool LoRaMeshProtocol::ListensUntilSyncBeacon(uint16_t slot) {
+    const uint16_t total = superframe_service_->GetTotalSlots();
+    if (total == 0) {
+        return false;
+    }
+    std::vector<SlotAllocation::SlotType> types(
+        total, SlotAllocation::SlotType::SLEEP);
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
+        if (allocation.slot_number < total) {
+            types[allocation.slot_number] = allocation.type;
+        }
+    });
+    for (uint16_t i = 0; i < total; ++i) {
+        switch (types[(slot + i) % total]) {
+            case SlotAllocation::SlotType::SYNC_BEACON_RX:
+                return true;
+            case SlotAllocation::SlotType::TX:
+            case SlotAllocation::SlotType::CONTROL_TX:
+            case SlotAllocation::SlotType::SYNC_BEACON_TX:
+            case SlotAllocation::SlotType::DISCOVERY_TX:
+                return false;
+            default:
+                break;
+        }
+    }
+    return false;
 }
 
 void LoRaMeshProtocol::SleepThroughSleepRun() {
@@ -1583,8 +1617,9 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
         (!prepare_sleep_callback_ && !config_.getDeepSleepPolicy().enabled)) {
         return;
     }
-    const uint32_t until_active = GetTimeUntilNextActiveSlot();
-    if (TryDeepSleep(until_active) || !prepare_sleep_callback_) {
+    const uint16_t next_active = GetNextActiveSlot();
+    const uint32_t until_active = GetTimeUntilSlot(next_active);
+    if (TryDeepSleep(until_active, next_active) || !prepare_sleep_callback_) {
         return;
     }
 
@@ -1620,20 +1655,28 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
     current_power_state_ = power::PowerState::LIGHT_SLEEP;
 }
 
-bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms) {
+bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms,
+                                    uint16_t next_active_slot) {
     const power::DeepSleepPolicy& policy = config_.getDeepSleepPolicy();
     auto store = config_.getStateStore();
     if (!policy.enabled || !store || !store->AllowsFrequentWrites()) {
         return false;
     }
+    const power::SleepClockCalibration sleep_clock =
+        network_service_->GetSleepClockCalibration();
     const uint32_t margin =
-        policy.WakeMarginMs(until_active_ms, config_.getWakeUpGuardTime());
+        policy.WakeMarginMs(until_active_ms, config_.getWakeUpGuardTime(),
+                            sleep_clock.IsCalibrated());
     if (until_active_ms <= margin ||
         until_active_ms - margin < policy.min_sleep_ms) {
         return false;
     }
     const uint32_t sleep_ms = until_active_ms - margin;
 
+    if (!ListensUntilSyncBeacon(next_active_slot)) {
+        LOG_DEBUG("No deep sleep: the node transmits before its next beacon");
+        return false;
+    }
     if (message_queue_service_->HasAnyMessages()) {
         LOG_DEBUG("No deep sleep: messages queued");
         return false;
@@ -1689,7 +1732,7 @@ bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms) {
     LOG_INFO("Deep sleep for %u ms (state %zu bytes, waking %u ms early)",
              sleep_ms, blob->size(), margin);
     current_power_state_ = power::PowerState::DEEP_SLEEP;
-    GetRTOS().DeepSleep(sleep_ms);
+    GetRTOS().DeepSleep(static_cast<uint32_t>(sleep_clock.ToClockMs(sleep_ms)));
     return true;
 }
 

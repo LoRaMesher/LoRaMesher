@@ -572,7 +572,9 @@ Result SuperframeService::SynchronizeWith(uint32_t external_slot_start_time,
     // Other nodes that are not network manager, would update this after the superframe_start_time_ has been updated
     // After a full superframe has compleated.
     // Calculate drift
-    int32_t drift = static_cast<int32_t>(external_slot_start_time - old_start);
+    int32_t drift = utils::WrapToPeriod(
+        static_cast<int32_t>(external_slot_start_time - old_start),
+        superframe_duration);
     sync_drift_accumulator_ += static_cast<uint32_t>(std::abs(drift));
 
     last_slot_ = (external_slot > 0) ? (external_slot - 1) : 0;

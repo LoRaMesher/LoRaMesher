@@ -32,7 +32,7 @@ constexpr uint8_t kKnownRouteFlags =
 /// Magic, version and embedded snapshot length
 constexpr size_t kPrefixSize = 6;
 /// Timing, member state, group stream, slot count and slot band sizes
-constexpr size_t kStateSize = 30 + 19 + 2 + 2 + 4;
+constexpr size_t kStateSize = 30 + 26 + 2 + 2 + 4;
 constexpr uint8_t kFlagRebuildPending = 0x01;
 
 using types::protocols::lora_mesh::SlotAllocation;
@@ -368,6 +368,9 @@ std::optional<std::vector<uint8_t>> ResumeSnapshotCodec::Encode(
     out.WriteUint32(member.last_sync_time_ms);
     out.WriteUint32(member.last_sync_beacon_ms);
     out.WriteUint32(member.last_route_cleanup_ms);
+    out.WriteUint32(static_cast<uint32_t>(member.sleep_clock.GetPpm()));
+    out.WriteUint8(member.sleep_clock.GetSamples());
+    out.WriteUint16(static_cast<uint16_t>(member.schedule_offset_ms));
 
     out.WriteUint8(snapshot.group_next_sequence ? 1 : 0);
     out.WriteUint8(snapshot.group_next_sequence.value_or(0));
@@ -458,6 +461,15 @@ std::optional<ResumeSnapshot> ResumeSnapshotCodec::Decode(
     member.last_sync_time_ms = in.U32();
     member.last_sync_beacon_ms = in.U32();
     member.last_route_cleanup_ms = in.U32();
+    const auto sleep_clock_ppm = static_cast<int32_t>(in.U32());
+    const uint8_t sleep_clock_samples = in.U8();
+    member.schedule_offset_ms = static_cast<int16_t>(in.U16());
+    if (sleep_clock_ppm < -power::SleepClockCalibration::kMaxPpm ||
+        sleep_clock_ppm > power::SleepClockCalibration::kMaxPpm) {
+        return std::nullopt;
+    }
+    member.sleep_clock =
+        power::SleepClockCalibration(sleep_clock_ppm, sleep_clock_samples);
 
     const uint8_t group_started = in.U8();
     const uint8_t group_next = in.U8();

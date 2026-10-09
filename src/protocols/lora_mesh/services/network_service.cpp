@@ -804,6 +804,9 @@ std::optional<storage::ResumeSnapshot> NetworkService::CaptureResumeSnapshot()
     member.last_sync_time_ms = last_sync_time_;
     member.last_sync_beacon_ms = last_sync_beacon_received_;
     member.last_route_cleanup_ms = last_cleanup_time_;
+    member.sleep_clock = sleep_clock_;
+    member.schedule_offset_ms = static_cast<int16_t>(
+        std::clamp<int32_t>(schedule_offset_ms_, INT16_MIN, INT16_MAX));
 
     snapshot.schedule = slot_scheduler_->GetSchedule();
     routing_table_->ForEachNode(
@@ -853,6 +856,8 @@ Result NetworkService::ApplyResumeSnapshot(
         last_sync_time_ = member.last_sync_time_ms;
         last_sync_beacon_received_ = member.last_sync_beacon_ms;
         last_cleanup_time_ = member.last_route_cleanup_ms;
+        sleep_clock_ = member.sleep_clock;
+        schedule_offset_ms_ = member.schedule_offset_ms;
         no_received_sync_beacon_count_ = 0;
         pending_slot_table_rebuild_ = false;
 
@@ -899,6 +904,21 @@ const char* NetworkService::GetDeepSleepBlocker() const {
         return "reliable messages in flight";
     }
     return nullptr;
+}
+
+void NetworkService::RecordSleepClockDrift(int32_t drift_ms) {
+    if (!calibration_sleep_ms_) {
+        return;
+    }
+    // Only what the schedule moved during the sleep is the clock's error
+    const int32_t sleep_error_ms = drift_ms - schedule_offset_ms_;
+    sleep_clock_.AddSample(sleep_error_ms, *calibration_sleep_ms_);
+    LOG_INFO(
+        "Sleep clock: %d ms off after %u ms of deep sleep, error now %d ppm "
+        "(%u samples)",
+        sleep_error_ms, *calibration_sleep_ms_, sleep_clock_.GetPpm(),
+        sleep_clock_.GetSamples());
+    calibration_sleep_ms_.reset();
 }
 
 bool NetworkService::HeardSyncBeaconThisSuperframe() const {
@@ -1448,28 +1468,37 @@ Result NetworkService::PerformTimingSynchronization(
         (total_slots == number_of_slots_per_superframe_) &&
         (slot_duration == superframe_service_->GetSlotDuration());
 
-    if (superframe_service_->IsSynchronized() && config_unchanged) {
-        uint32_t current_time_check = GetRTOS().getTickCount();
-        uint32_t current_sf_start =
-            current_time_check -
+    // Offset of the network's superframe from this node's, wrapped to the
+    // nearest superframe (positive: this node is ahead)
+    std::optional<int32_t> drift;
+    if (superframe_service_->IsSynchronized()) {
+        const uint32_t current_sf_start =
+            GetRTOS().getTickCount() -
             superframe_service_->GetTimeSinceSuperframeStart();
-        int32_t drift =
-            static_cast<int32_t>(estimated_nm_time - current_sf_start);
-        uint32_t abs_drift = static_cast<uint32_t>(std::abs(drift));
+        drift = utils::WrapToPeriod(
+            static_cast<int32_t>(estimated_nm_time - current_sf_start),
+            superframe_service_->GetSuperframeDuration());
+        RecordSleepClockDrift(*drift);
+    }
+
+    if (drift && config_unchanged) {
+        uint32_t abs_drift = static_cast<uint32_t>(std::abs(*drift));
         uint32_t drift_threshold = config_.guard_time_ms / 2;
 
         if (abs_drift < drift_threshold) {
             LOG_DEBUG(
                 "%s: drift %dms < threshold %ums (guard_time/2), skipping "
                 "resync",
-                context_name.c_str(), drift, drift_threshold);
+                context_name.c_str(), *drift, drift_threshold);
 
+            schedule_offset_ms_ = *drift;
             if (pre_start_action) {
                 pre_start_action();
             }
             return Result::Success();
         }
     }
+    schedule_offset_ms_ = 0;
 
     // Stop the superframe now that all radio-dependent computations are done.
     superframe_service_->StopSuperframe();
@@ -3714,6 +3743,7 @@ void NetworkService::ResetNetworkState() {
     MarkSlotTableDirty();
     pending_slot_table_rebuild_ = false;
     awaiting_resync_ = false;
+    calibration_sleep_ms_.reset();
     reliable_messaging_->Reset();
     message_cache_.Reset();
 

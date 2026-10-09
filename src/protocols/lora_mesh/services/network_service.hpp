@@ -388,6 +388,25 @@ class NetworkService : public INetworkService {
     }
 
     /**
+     * @brief Learned error of the deep-sleep clock
+     */
+    power::SleepClockCalibration GetSleepClockCalibration() const {
+        return sleep_clock_;
+    }
+
+    /**
+     * @brief Measure the sleep clock at the first beacon after a resume
+     *
+     * The drift between the resumed schedule and the beacon is the error the
+     * sleep clock made over the sleep.
+     *
+     * @param slept_ms Corrected length of the sleep the node resumed from
+     */
+    void CalibrateSleepClockAtNextBeacon(uint32_t slept_ms) {
+        calibration_sleep_ms_ = slept_ms;
+    }
+
+    /**
      * @brief Identifier of the network this node belongs to (0 = none)
      */
     uint16_t GetNetworkId() const { return network_id_.load(); }
@@ -1597,6 +1616,17 @@ class NetworkService : public INetworkService {
     uint32_t warm_discovery_extension_ms_ = 0;
     /// Resumed after a deep sleep and no sync beacon heard since
     std::atomic<bool> awaiting_resync_{false};
+    /// Learned error of the deep-sleep clock (kept across network resets)
+    power::SleepClockCalibration sleep_clock_;
+    /// Length of the sleep to calibrate with at the next beacon
+    std::optional<uint32_t> calibration_sleep_ms_;
+    /// How far ahead of the network the schedule was left at the last beacon
+    /// (drifts below the resync threshold are not corrected)
+    int32_t schedule_offset_ms_ = 0;
+
+    /// Fold the drift seen at the first beacon after a resume into the
+    /// sleep-clock calibration
+    void RecordSleepClockDrift(int32_t drift_ms);
 
     /**
      * @brief Control slot a warm-restarted manager holds for a member

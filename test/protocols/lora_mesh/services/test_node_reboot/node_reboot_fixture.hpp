@@ -217,6 +217,8 @@ class NodeRebootFixture : public RoutingTestFixture {
                 next_wake_delay_ms_.reset();
             }
             sleeping_[node->address] = request.wake_at_ms + delay_ms;
+            sleep_lengths_ms_[node->address] =
+                request.wake_at_ms + delay_ms - mock->getVirtualTime();
             ++deep_sleeps_[node->address];
         }
 
@@ -256,13 +258,16 @@ class NodeRebootFixture : public RoutingTestFixture {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
 
         // The sleep clock gained time while the node slept, and lost it
-        // every third sleep: errors add up until a beacon resynchronizes
-        if (sleep_clock_error_ms_ != 0) {
+        // every third sleep: errors add up until a beacon resynchronizes.
+        // A clock off by sleep_clock_ppm_ gains in proportion to the sleep.
+        if (sleep_clock_error_ms_ != 0 || sleep_clock_ppm_ != 0) {
             int64_t& offset_us = sleep_clock_offsets_us_[node.address];
             const int64_t sign =
                 (CountOf(deep_sleeps_, node.address) % 3 == 0) ? -1 : 1;
             offset_us +=
                 sign * static_cast<int64_t>(sleep_clock_error_ms_) * 1000;
+            offset_us += static_cast<int64_t>(sleep_lengths_ms_[node.address]) *
+                         sleep_clock_ppm_ / 1000;
             char addr_str[8];
             snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
             static_cast<os::RTOSMock*>(&GetRTOS())
@@ -601,6 +606,10 @@ class NodeRebootFixture : public RoutingTestFixture {
     /// Error of the sleep clock per deep sleep (see WakeFromDeepSleep())
     uint32_t sleep_clock_error_ms_ = 0;
     std::map<AddressType, int64_t> sleep_clock_offsets_us_;
+    /// Error of every node's sleep clock, in parts per million
+    int32_t sleep_clock_ppm_ = 0;
+    /// Real length of each node's current deep sleep
+    std::map<AddressType, uint64_t> sleep_lengths_ms_;
     std::map<AddressType, size_t> deep_sleeps_;
     /// Deep sleeps entered without a beacon in the current superframe
     std::map<AddressType, size_t> sleeps_without_beacon_;
