@@ -11,6 +11,7 @@
 #include "config/task_config.hpp"
 #include "os/os_port.hpp"
 #include "utils/task_monitor.hpp"
+#include "utils/time_utils.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
@@ -128,6 +129,41 @@ Result SuperframeService::StartSuperframe() {
     // NotifyUpdateTask(SuperframeNotificationType::STARTED);
 
     return Result::Success();
+}
+
+Result SuperframeService::ResumeAt(uint32_t last_known_start,
+                                   uint16_t total_slots,
+                                   uint32_t slot_duration_ms,
+                                   uint32_t superframes_completed) {
+    if (is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Superframe already running");
+    }
+    const uint32_t now = GetRTOS().getTickCount();
+    if (total_slots == 0 || slot_duration_ms == 0 ||
+        !utils::TimeReached(now, last_known_start)) {
+        return Result(LoraMesherErrorCode::kInvalidArgument,
+                      "Invalid superframe schedule to resume");
+    }
+
+    const uint32_t superframe_ms = total_slots * slot_duration_ms;
+    const uint32_t elapsed_superframes =
+        (now - last_known_start) / superframe_ms;
+
+    total_slots_ = total_slots;
+    slot_duration_ms_ = slot_duration_ms;
+    superframe_start_time_ =
+        last_known_start + elapsed_superframes * superframe_ms;
+    superframes_completed_ = superframes_completed + elapsed_superframes;
+    update_start_time_in_new_superframe = false;
+    is_synchronized_ = true;
+    last_slot_ = static_cast<uint16_t>((now - superframe_start_time_) /
+                                       slot_duration_ms);
+
+    LOG_INFO("Resuming superframe #%u at slot %u (start %u ms)",
+             superframes_completed_.load(), last_slot_.load(),
+             superframe_start_time_.load());
+    return StartSuperframe();
 }
 
 Result SuperframeService::StopSuperframe() {

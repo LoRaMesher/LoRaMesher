@@ -105,6 +105,9 @@ class SlotScheduler {
     /// Mark the slot table dirty so the next rebuild regenerates it.
     void MarkDirty() { slot_table_dirty_ = true; }
 
+    /// True while a change waits for the next slot-table rebuild.
+    bool IsDirty() const { return slot_table_dirty_; }
+
     /// Clear the slot table (used when the node leaves/resets the network).
     void Reset();
 

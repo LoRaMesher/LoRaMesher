@@ -15,6 +15,7 @@
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/configurations/protocol_configuration.hpp"
+#include "types/storage/resume_snapshot_codec.hpp"
 #include "utils/time_utils.hpp"
 
 namespace {
@@ -780,6 +781,119 @@ Result NetworkService::ApplySnapshot(const storage::NetworkSnapshot& snapshot) {
             warm_discovery_extension_ms_, snapshot.network_id);
     }
     return Result::Success();
+}
+
+std::optional<storage::ResumeSnapshot> NetworkService::CaptureResumeSnapshot()
+    const {
+    const AddressType manager = network_manager_;
+    if (state_ != ProtocolState::NORMAL_OPERATION || manager == 0 ||
+        manager == node_address_) {
+        return std::nullopt;
+    }
+
+    storage::ResumeSnapshot snapshot;
+    snapshot.network = CaptureSnapshot();
+
+    storage::MemberState& member = snapshot.member;
+    member.network_manager = manager;
+    member.slots_per_superframe = number_of_slots_per_superframe_;
+    member.beacon_node_count = beacon_node_count_;
+    member.control_slot_index = my_control_slot_index_;
+    member.allocated_data_slots = local_allocated_data_slots_;
+    member.table_version = table_version_;
+    member.last_sync_time_ms = last_sync_time_;
+    member.last_sync_beacon_ms = last_sync_beacon_received_;
+    member.last_route_cleanup_ms = last_cleanup_time_;
+
+    routing_table_->ForEachNode(
+        [&](const NetworkNodeRoute& node) { snapshot.routes.push_back(node); });
+    reliable_messaging_->CaptureResumeState(snapshot);
+    snapshot.seen_messages = message_cache_.GetSeenMessages();
+    return snapshot;
+}
+
+Result NetworkService::ApplyResumeSnapshot(
+    const storage::ResumeSnapshot& snapshot) {
+    if (snapshot.network.node_address != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Snapshot was taken by another node");
+    }
+    if (node_role_ == NodeRole::NETWORK_MANAGER) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "A network manager does not resume as a member");
+    }
+    if (!storage::ResumeSnapshotCodec::IsValid(snapshot) ||
+        snapshot.routes.size() > config_.max_network_nodes) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Invalid resume snapshot");
+    }
+    Result result = reliable_messaging_->ApplyResumeState(snapshot);
+    if (!result) {
+        return result;
+    }
+    message_cache_.RestoreSeenMessages(snapshot.seen_messages);
+    message_cache_.RestoreLastSeq(snapshot.network.last_sequence);
+
+    const storage::MemberState& member = snapshot.member;
+    {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        network_id_ = snapshot.network.network_id;
+        network_manager_ = member.network_manager;
+        network_found_ = true;
+        network_creator_ = false;
+        is_synchronized_ = true;
+        selected_sponsor_ = 0;
+        current_network_depth_ = snapshot.network.network_depth;
+        number_of_slots_per_superframe_ = member.slots_per_superframe;
+        beacon_node_count_ = member.beacon_node_count;
+        my_control_slot_index_ = member.control_slot_index;
+        local_allocated_data_slots_ = member.allocated_data_slots;
+        table_version_ = member.table_version;
+        last_sync_time_ = member.last_sync_time_ms;
+        last_sync_beacon_received_ = member.last_sync_beacon_ms;
+        last_cleanup_time_ = member.last_route_cleanup_ms;
+        no_received_sync_beacon_count_ = 0;
+        pending_slot_table_rebuild_ = false;
+
+        routing_table_->Clear();
+        for (const auto& route : snapshot.routes) {
+            routing_table_->AddNode(route);
+        }
+    }
+    ResetJoinRetryState();
+
+    result = superframe_service_->UpdateSuperframeConfig(
+        snapshot.timing.total_slots, snapshot.timing.slot_duration_ms, false);
+    if (!result) {
+        return result;
+    }
+    SetState(ProtocolState::NORMAL_OPERATION);
+    LOG_INFO(
+        "Resumed membership of network 0x%04X: manager 0x%04X, control slot "
+        "%u, %zu routes",
+        snapshot.network.network_id, member.network_manager,
+        member.control_slot_index, snapshot.routes.size());
+    return UpdateSlotTable();
+}
+
+const char* NetworkService::GetDeepSleepBlocker() const {
+    if (state_ != ProtocolState::NORMAL_OPERATION) {
+        return "not in normal operation";
+    }
+    const AddressType manager = network_manager_;
+    if (manager == 0 || manager == node_address_) {
+        return "not a member";
+    }
+    if (no_received_sync_beacon_count_ != 0) {
+        return "missed sync beacons";
+    }
+    if (pending_slot_table_rebuild_ || slot_scheduler_->IsDirty()) {
+        return "slot table update pending";
+    }
+    if (!reliable_messaging_->IsIdle()) {
+        return "reliable messages in flight";
+    }
+    return nullptr;
 }
 
 uint32_t NetworkService::GetManagerResumeDelayRemaining() const {

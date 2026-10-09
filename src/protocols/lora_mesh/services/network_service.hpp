@@ -39,6 +39,7 @@
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/storage/network_snapshot.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
@@ -330,6 +331,43 @@ class NetworkService : public INetworkService {
      * @return Success, or kInvalidParameter if it was taken by another node
      */
     Result ApplySnapshot(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Capture the state a member needs to resume after a deep sleep
+     *
+     * Fills every part of the snapshot but the timing, which belongs to the
+     * caller. Call from the protocol task.
+     *
+     * @return The snapshot, or std::nullopt when the node is not a member in
+     *         normal operation
+     */
+    std::optional<storage::ResumeSnapshot> CaptureResumeSnapshot() const;
+
+    /**
+     * @brief Resume the membership saved by CaptureResumeSnapshot()
+     *
+     * Restores the routes, the membership and the message sequences, enters
+     * normal operation and rebuilds the slot table for the snapshot's
+     * superframe. Call after Configure() instead of StartDiscovery(); the
+     * caller then resumes the superframe schedule.
+     *
+     * @param snapshot Snapshot taken by this node before it slept
+     * @return Success, or kInvalidParameter (nothing restored) if the
+     *         snapshot is invalid, was taken by another node or the node is
+     *         configured as network manager
+     */
+    Result ApplyResumeSnapshot(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief Reason the node cannot deep-sleep and resume now
+     *
+     * A node may only resume a state that needs nothing from the network
+     * while it sleeps: a member in normal operation, in sync, with no slot
+     * table change pending and no reliable message in flight.
+     *
+     * @return The reason, or nullptr if the node may deep-sleep
+     */
+    const char* GetDeepSleepBlocker() const;
 
     /**
      * @brief Identifier of the network this node belongs to (0 = none)

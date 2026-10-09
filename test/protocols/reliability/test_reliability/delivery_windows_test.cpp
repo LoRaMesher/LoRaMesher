@@ -119,6 +119,68 @@ TEST_F(DeliveryWindowsTest, LeastRecentlyUsedStreamIsEvictedWhenFull) {
     EXPECT_TRUE(Accept(1, 1000, StreamKind::kUnicast, 0x101));
 }
 
+TEST_F(DeliveryWindowsTest, RestoredStreamsKeepTheirHistory) {
+    EXPECT_TRUE(Accept(5, 1000));
+    EXPECT_TRUE(Accept(7, 1200));
+    EXPECT_TRUE(Accept(3, 1000, StreamKind::kGroup));
+
+    DeliveryWindows restored;
+    ASSERT_TRUE(restored.RestoreStreams(windows_.GetStreams()));
+    EXPECT_EQ(restored.GetStreams(), windows_.GetStreams());
+
+    EXPECT_FALSE(
+        restored.Accept(kSource, StreamKind::kUnicast, 5, 1000, kRegressionMs));
+    EXPECT_FALSE(
+        restored.Accept(kSource, StreamKind::kUnicast, 7, 1200, kRegressionMs));
+    EXPECT_TRUE(
+        restored.Accept(kSource, StreamKind::kUnicast, 6, 1100, kRegressionMs));
+    EXPECT_FALSE(
+        restored.Accept(kSource, StreamKind::kGroup, 3, 1000, kRegressionMs));
+}
+
+TEST_F(DeliveryWindowsTest, RestoredStreamsKeepTheirEvictionOrder) {
+    for (size_t i = 0; i < DeliveryWindows::kCapacity; ++i) {
+        ASSERT_TRUE(Accept(1, 1000, StreamKind::kUnicast,
+                           static_cast<AddressType>(0x100 + i)));
+    }
+    EXPECT_FALSE(Accept(1, 1000, StreamKind::kUnicast, 0x100));
+    const auto streams = windows_.GetStreams();
+    ASSERT_EQ(streams.size(), DeliveryWindows::kCapacity);
+    EXPECT_EQ(streams.front().source, 0x101);
+    EXPECT_EQ(streams.back().source, 0x100);
+
+    DeliveryWindows restored;
+    ASSERT_TRUE(restored.RestoreStreams(streams));
+    // A new stream evicts the least recently used one, as before
+    EXPECT_TRUE(
+        restored.Accept(0x200, StreamKind::kUnicast, 1, 1000, kRegressionMs));
+    EXPECT_FALSE(
+        restored.Accept(0x100, StreamKind::kUnicast, 1, 1000, kRegressionMs));
+    EXPECT_TRUE(
+        restored.Accept(0x101, StreamKind::kUnicast, 1, 1000, kRegressionMs));
+}
+
+TEST_F(DeliveryWindowsTest, InvalidStreamsAreNotRestored) {
+    EXPECT_TRUE(Accept(5, 1000));
+    const auto before = windows_.GetStreams();
+    const storage::DeliveryStream valid{0x0011, false, 1, 1, 0};
+
+    std::vector<storage::DeliveryStream> too_many(
+        DeliveryWindows::kCapacity + 1, valid);
+    for (size_t i = 0; i < too_many.size(); ++i) {
+        too_many[i].source = static_cast<AddressType>(0x100 + i);
+    }
+    EXPECT_FALSE(windows_.RestoreStreams(too_many));
+    EXPECT_FALSE(windows_.RestoreStreams(
+        std::vector<storage::DeliveryStream>{valid, valid}));
+    EXPECT_FALSE(windows_.RestoreStreams(
+        std::vector<storage::DeliveryStream>{{0x0011, false, 1, 2, 0}}));
+    EXPECT_EQ(windows_.GetStreams(), before);
+
+    EXPECT_TRUE(windows_.RestoreStreams({}));
+    EXPECT_TRUE(windows_.GetStreams().empty());
+}
+
 }  // namespace test
 }  // namespace reliability
 }  // namespace protocols

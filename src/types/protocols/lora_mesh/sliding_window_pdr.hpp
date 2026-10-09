@@ -73,6 +73,40 @@ class SlidingWindowPDR {
         total_expected_ = 0;
     }
 
+    /**
+     * @brief Complete state of the window, for saving and restoring it
+     */
+    struct State {
+        uint32_t window = 0;         ///< Bitset of reception results
+        uint8_t position = 0;        ///< Current slot in circular buffer
+        uint8_t total_expected = 0;  ///< Slots filled so far
+    };
+
+    /**
+     * @brief Get the complete state of the window
+     */
+    State GetState() const { return {window_, position_, total_expected_}; }
+
+    /**
+     * @brief Restore a state returned by GetState()
+     *
+     * @param state State to restore
+     * @return true if restored; false (window unchanged) if @p state is not
+     *         a state of a window of this size
+     */
+    bool SetState(const State& state) {
+        const uint32_t used_bits =
+            WindowSize == 32 ? 0xFFFFFFFFu : ((1u << WindowSize) - 1u);
+        if (state.position >= WindowSize || state.total_expected > WindowSize ||
+            (state.window & ~used_bits) != 0) {
+            return false;
+        }
+        window_ = state.window;
+        position_ = state.position;
+        total_expected_ = state.total_expected;
+        return true;
+    }
+
    private:
     static uint8_t PopCount(uint32_t v) {
 #if defined(__GNUC__) || defined(__clang__)

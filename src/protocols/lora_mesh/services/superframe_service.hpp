@@ -103,6 +103,23 @@ class SuperframeService : public ISuperframeService {
      */
     void NotifyWokeUp();
 
+    /**
+     * @brief Start the superframe on a schedule known from before a sleep
+     *
+     * Projects the schedule forward from a superframe start seen earlier,
+     * keeping the network's phase. Slot callbacks resume at the next slot
+     * boundary; the slot in progress is not reported.
+     *
+     * @param last_known_start Start time of a past superframe (tick ms)
+     * @param total_slots Number of slots in the superframe
+     * @param slot_duration_ms Duration of each slot in milliseconds
+     * @param superframes_completed Superframes completed at last_known_start
+     * @return Result Success, or an error if the service is running or the
+     *         schedule is invalid
+     */
+    Result ResumeAt(uint32_t last_known_start, uint16_t total_slots,
+                    uint32_t slot_duration_ms, uint32_t superframes_completed);
+
     void SetSynchronized(bool synchronized) override;
 
     /**

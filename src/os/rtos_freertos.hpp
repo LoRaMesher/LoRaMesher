@@ -15,7 +15,18 @@
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_sleep.h>
 #include <esp_timer.h>
+#if defined(CONFIG_IDF_TARGET_ESP32)
+#include "esp32/rtc.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
+#include "esp32s2/rtc.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#include "esp32s3/rtc.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+#include "esp32c3/rtc.h"
 #endif
+#endif
+
+#include <atomic>
 
 #include "config/task_config.hpp"
 #include "os/rtos.hpp"
@@ -179,17 +190,27 @@ class RTOSFreeRTOS : public RTOS {
     }
 
     /**
-     * @brief Milliseconds since boot
-     *
-     * On ESP32 this is esp_timer time, which keeps counting through light
-     * sleep; the FreeRTOS tick count stands still while the MCU sleeps.
+     * @brief Milliseconds since boot, continued across deep sleep by
+     *        ContinueTickCountFrom()
      */
     uint32_t getTickCount() override {
+        return ClockMs() + tick_offset_ms_.load(std::memory_order_relaxed);
+    }
+
 #ifdef ARDUINO_ARCH_ESP32
-        return static_cast<uint32_t>(esp_timer_get_time() / 1000);
-#else
-        return xTaskGetTickCount() * portTICK_PERIOD_MS;
+    /**
+     * @brief RTC timer time, which runs through deep sleep (not power loss)
+     */
+    uint64_t GetPersistentTimeUs() override { return esp_rtc_get_time_us(); }
+
+    void DeepSleep(uint32_t ms) override {
+        esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
+        esp_deep_sleep_start();
+    }
 #endif
+
+    void ContinueTickCountFrom(uint32_t tick_ms) override {
+        tick_offset_ms_.store(tick_ms - ClockMs(), std::memory_order_relaxed);
     }
 
     void StartScheduler() override { vTaskStartScheduler(); }
@@ -452,7 +473,23 @@ class RTOSFreeRTOS : public RTOS {
     }
 
    private:
+    /**
+     * @brief Milliseconds since boot from a clock that runs during light sleep
+     *
+     * On ESP32 this is esp_timer time; the FreeRTOS tick count stands still
+     * while the MCU light-sleeps.
+     */
+    static uint32_t ClockMs() {
+#ifdef ARDUINO_ARCH_ESP32
+        return static_cast<uint32_t>(esp_timer_get_time() / 1000);
+#else
+        return xTaskGetTickCount() * portTICK_PERIOD_MS;
+#endif
+    }
+
     char current_node_address_[8] = {};
+    /// Added to ClockMs() so the tick count continues across deep sleep
+    std::atomic<uint32_t> tick_offset_ms_{0};
 };
 
 }  // namespace os
