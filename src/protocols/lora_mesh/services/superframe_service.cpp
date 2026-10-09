@@ -776,10 +776,15 @@ void SuperframeService::UpdateTaskFunction(void* param) {
             //           static_cast<int>(notification));
 
             switch (notification) {
+                case SuperframeNotificationType::WOKE_UP:
+                    // A slot that began while the MCU slept is handled now,
+                    // late, instead of being skipped
+                    service->UpdateSuperframeState();
+                    break;
+
                 case SuperframeNotificationType::CONFIG_CHANGED:
                 case SuperframeNotificationType::SYNC_UPDATED:
                 case SuperframeNotificationType::SYNC_COMPLETE:
-                case SuperframeNotificationType::WOKE_UP:
                     // These notifications only require timeout recalculation, not state updates
                     // LOG_DEBUG(
                     //     "Notification requires timeout recalculation only");

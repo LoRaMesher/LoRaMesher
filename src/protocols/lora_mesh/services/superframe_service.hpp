@@ -365,6 +365,8 @@ class SuperframeService : public ISuperframeService {
     void TestSetAutoAdvance(bool v) { auto_advance_ = v; }
 
     void TestSetSyncInProgress(bool v) { sync_in_progress_ = v; }
+
+    os::TaskHandle_t TestGetUpdateTask() const { return update_task_handle_; }
 #endif  // LORAMESHER_BUILD_NATIVE
 
    private:
