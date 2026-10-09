@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "node_reboot_fixture.hpp"
 
 namespace loramesher {
@@ -42,6 +44,15 @@ std::ostream& operator<<(std::ostream& out, const DeepSleepScenario& scenario) {
 class DeepSleepTest : public NodeRebootFixture,
                       public ::testing::WithParamInterface<DeepSleepScenario> {
    protected:
+    void TearDown() override {
+        for (const auto& [address, count] : sleeps_without_beacon_) {
+            ADD_FAILURE() << "Node 0x" << std::hex << address << std::dec
+                          << " deep-slept " << count
+                          << " times without a beacon in its superframe";
+        }
+        NodeRebootFixture::TearDown();
+    }
+
     /// Build and form the network of @p scenario with deep-sleeping members
     std::vector<TestNode*> FormNetwork(const DeepSleepScenario& scenario) {
         NetworkSpec spec;
@@ -55,13 +66,19 @@ class DeepSleepTest : public NodeRebootFixture,
         return nodes;
     }
 
-    /// Run until every member deep-slept and resumed at least @p times
+    /// Run until every member deep-slept and resumed @p times more
     bool WaitForResumes(const std::vector<TestNode*>& nodes, size_t times) {
+        std::map<AddressType, size_t> before;
+        for (auto* node : nodes) {
+            before[node->address] = CountOf(resumed_boots_, node->address);
+        }
         const uint32_t budget =
             superframe_ms_ * (static_cast<uint32_t>(times) + 4);
         return AdvanceTime(budget, budget, kStepMs, 0, [&]() {
             for (size_t i = 1; i < nodes.size(); ++i) {
-                if (CountOf(resumed_boots_, nodes[i]->address) < times) {
+                const AddressType address = nodes[i]->address;
+                if (CountOf(resumed_boots_, address) - before[address] <
+                    times) {
                     return false;
                 }
             }
@@ -119,9 +136,13 @@ TEST_P(DeepSleepTest, MembersResumeEverySuperframeWithoutRejoining) {
     ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
                                       superframe_ms_ * 10, formed_network_id_))
         << DescribeNetwork(nodes);
-    for (auto* node : nodes) {
-        ASSERT_TRUE(WaitUntilAwake(*node)) << node->name;
-    }
+    // Members are all awake in the active part of the superframe
+    ASSERT_TRUE(
+        AdvanceTime(superframe_ms_ * 2, superframe_ms_ * 2, kStepMs, 0, [&]() {
+            return std::all_of(nodes.begin(), nodes.end(), [](TestNode* node) {
+                return node->protocol != nullptr;
+            });
+        }));
     EXPECT_EQ(ControlSlotsOf(nodes), formed_control_slots_);
 }
 
@@ -201,6 +222,79 @@ TEST_P(DeepSleepTest, SleepClockErrorIsAbsorbed) {
             << nodes[i]->name;
         EXPECT_TRUE(LinksIntact(nodes, *nodes[i]));
     }
+}
+
+TEST_P(DeepSleepTest, LargeSleepClockErrorIsCaughtByTheBeacon) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& farthest = *nodes.back();
+
+    // More than a slot per sleep: a resumed member is outside its own
+    // beacon slot until it hears the beacon
+    sleep_clock_error_ms_ = 700;
+    ASSERT_TRUE(WaitForResumes(nodes, 4)) << DescribeNetwork(nodes);
+    EXPECT_TRUE(StaysHealthy(nodes, manager.address, superframe_ms_ * 10,
+                             formed_network_id_))
+        << DescribeNetwork(nodes);
+    EXPECT_EQ(ExpectDataFlows(manager, farthest, 3), 3u);
+    EXPECT_EQ(ExpectDataFlows(farthest, manager, 3), 3u);
+    for (size_t i = 1; i < nodes.size(); ++i) {
+        EXPECT_EQ(CountOf(fallback_boots_, nodes[i]->address), 0u)
+            << nodes[i]->name;
+        EXPECT_TRUE(LinksIntact(nodes, *nodes[i]));
+    }
+}
+
+TEST_P(DeepSleepTest, ResumeAfterTheBeaconWaitsForTheNextBeacon) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& farthest = *nodes.back();
+    ASSERT_TRUE(WaitForResumes(nodes, 1)) << DescribeNetwork(nodes);
+
+    // The clock gains on every sleep, and one wake-up comes after the beacon
+    // slot of its superframe: the node must hear a beacon before sleeping
+    sleep_clock_error_ms_ = 200;
+    next_wake_delay_ms_ = superframe_ms_ / 3;
+    ASSERT_TRUE(WaitForResumes(nodes, 4)) << DescribeNetwork(nodes);
+    ASSERT_FALSE(next_wake_delay_ms_.has_value());
+    EXPECT_TRUE(StaysHealthy(nodes, manager.address, superframe_ms_ * 10,
+                             formed_network_id_))
+        << DescribeNetwork(nodes);
+    EXPECT_EQ(ExpectDataFlows(farthest, manager, 3), 3u);
+    EXPECT_EQ(ExpectDataFlows(manager, farthest, 3), 3u);
+    EXPECT_TRUE(LinksIntact(nodes, farthest));
+}
+
+TEST_P(DeepSleepTest, NewNodeJoinsThroughADeepSleepingSponsor) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& sponsor = *nodes.back();
+    ASSERT_TRUE(WaitForResumes(nodes, 1)) << DescribeNetwork(nodes);
+
+    // The newcomer hears only a member that deep-sleeps every superframe;
+    // the member is awake in the discovery band at the end of the superframe
+    const AddressType address =
+        static_cast<AddressType>(kBaseAddress + nodes.size());
+    TestNode& newcomer =
+        CreateNode("Newcomer", address, NodeRole::NODE_ONLY, PinConfig(),
+                   RadioConfig(), MakeCustomizer(address));
+    for (auto* node : nodes) {
+        SetLinkStatus(newcomer, *node, node == &sponsor);
+    }
+    nodes.push_back(&newcomer);
+    ASSERT_TRUE(StartNode(newcomer));
+    const size_t sponsor_sleeps = CountOf(deep_sleeps_, sponsor.address);
+
+    ASSERT_TRUE(WaitForHealthyNetwork(
+        nodes, manager.address, RecoveryBudgetMs(nodes), formed_network_id_))
+        << DescribeNetwork(nodes);
+    EXPECT_GT(CountOf(deep_sleeps_, sponsor.address), sponsor_sleeps)
+        << "The sponsor kept deep-sleeping while the newcomer joined";
+    EXPECT_EQ(CountOf(fallback_boots_, sponsor.address), 0u);
+    EXPECT_EQ(ExpectDataFlows(newcomer, manager, 2), 2u);
 }
 
 TEST_P(DeepSleepTest, LateWakeFallsBackToRejoining) {

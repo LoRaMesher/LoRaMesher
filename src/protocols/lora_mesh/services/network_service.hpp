@@ -369,6 +369,25 @@ class NetworkService : public INetworkService {
     const char* GetDeepSleepBlocker() const;
 
     /**
+     * @brief True if a sync beacon arrived in the current superframe
+     *
+     * A beacon up to half a superframe before the node's own superframe
+     * start counts, so a clock slightly ahead of the network's still counts
+     * the beacon it just synchronized to.
+     */
+    bool HeardSyncBeaconThisSuperframe() const;
+
+    /**
+     * @brief True from a resume until a sync beacon confirms the schedule
+     *
+     * The resumed schedule is only as accurate as the sleep clock, so the
+     * node listens instead of transmitting until then.
+     */
+    bool IsAwaitingResync() const {
+        return awaiting_resync_ && state_ == ProtocolState::NORMAL_OPERATION;
+    }
+
+    /**
      * @brief Identifier of the network this node belongs to (0 = none)
      */
     uint16_t GetNetworkId() const { return network_id_.load(); }
@@ -1576,6 +1595,8 @@ class NetworkService : public INetworkService {
     std::optional<uint32_t> manager_resume_deadline_ms_;
     /// Extra discovery time of a warm-restarted member (first discovery only)
     uint32_t warm_discovery_extension_ms_ = 0;
+    /// Resumed after a deep sleep and no sync beacon heard since
+    std::atomic<bool> awaiting_resync_{false};
 
     /**
      * @brief Control slot a warm-restarted manager holds for a member

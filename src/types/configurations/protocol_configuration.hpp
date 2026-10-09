@@ -584,7 +584,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @brief Set when a member deep-sleeps through a run of SLEEP slots
      *
      * Deep sleep needs a state store that allows a write before every sleep
-     * (RtcStateStore on ESP32).
+     * (RtcStateStore on ESP32); without one the node only light-sleeps.
      *
      * @param policy Deep-sleep policy
      */
@@ -692,15 +692,11 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (node_role_ == NodeRole::NETWORK_MANAGER) {
             return "A network manager never deep-sleeps";
         }
-        if (!state_store_ || !state_store_->AllowsFrequentWrites()) {
-            return "Deep sleep needs a state store that allows a write before "
-                   "every sleep (RtcStateStore)";
-        }
         if (deep_sleep_policy_.min_sleep_ms < 1000) {
             return "Deep sleep minimum too short (minimum 1s)";
         }
-        if (deep_sleep_policy_.boot_time_ms > 10000) {
-            return "Deep sleep boot time too long (maximum 10s)";
+        if (deep_sleep_policy_.boot_time_ms > 60000) {
+            return "Deep sleep boot time too long (maximum 60s)";
         }
         if (deep_sleep_policy_.clock_drift_ppm > 100000) {
             return "Deep sleep clock drift too large (maximum 100000 ppm)";

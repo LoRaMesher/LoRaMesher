@@ -301,6 +301,14 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
         wake_up_callback_ = config.getWakeUpCallback();
     }
 
+    const auto store = config.getStateStore();
+    if (config.getDeepSleepPolicy().enabled &&
+        (!store || !store->AllowsFrequentWrites())) {
+        LOG_WARNING(
+            "Deep sleep disabled: it needs a state store that allows a write "
+            "before every sleep (RtcStateStore)");
+    }
+
     // Set node capabilities from config
     if (config.getNodeCapabilities() != 0) {
         network_service_->SetLocalNodeCapabilities(
@@ -1399,6 +1407,19 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
         }
         // Update power state to ACTIVE now that we're in an active slot
         current_power_state_ = power::PowerState::ACTIVE;
+    }
+
+    // After a resume the schedule is only as accurate as the sleep clock:
+    // the node listens in every slot, without transmitting, until a sync
+    // beacon confirms it
+    if (network_service_->IsAwaitingResync()) {
+        result = hardware_->setState(radio::RadioState::kReceive);
+        if (!result) {
+            LOG_ERROR("Failed to set radio to receive: %s",
+                      result.GetErrorMessage().c_str());
+        }
+        in_rx_slot_ = true;
+        return;
     }
 
     switch (slot_type) {

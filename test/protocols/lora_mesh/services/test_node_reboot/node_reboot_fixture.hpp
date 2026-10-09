@@ -201,10 +201,22 @@ class NodeRebootFixture : public RoutingTestFixture {
                               << request.node_address;
                 continue;
             }
+            // A node only deep-sleeps on a schedule a beacon just confirmed
+            BindTestThread(*node);
+            if (!node->protocol->GetNetworkServiceForTest()
+                     ->HeardSyncBeaconThisSuperframe()) {
+                ++sleeps_without_beacon_[node->address];
+            }
+            GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+
             ShutdownNode(*node);
             mock->ResetNodeTickCount(request.node_address);
-            sleeping_[node->address] =
-                request.wake_at_ms + extra_wake_delay_ms_;
+            uint64_t delay_ms = extra_wake_delay_ms_;
+            if (next_wake_delay_ms_) {
+                delay_ms += *next_wake_delay_ms_;
+                next_wake_delay_ms_.reset();
+            }
+            sleeping_[node->address] = request.wake_at_ms + delay_ms;
             ++deep_sleeps_[node->address];
         }
 
@@ -584,10 +596,14 @@ class NodeRebootFixture : public RoutingTestFixture {
     std::map<AddressType, uint64_t> sleeping_;
     /// Delay added to every deep-sleep wake-up (late wake-up tests)
     uint32_t extra_wake_delay_ms_ = 0;
+    /// Delay added to the next deep-sleep wake-up only
+    std::optional<uint32_t> next_wake_delay_ms_;
     /// Error of the sleep clock per deep sleep (see WakeFromDeepSleep())
     uint32_t sleep_clock_error_ms_ = 0;
     std::map<AddressType, int64_t> sleep_clock_offsets_us_;
     std::map<AddressType, size_t> deep_sleeps_;
+    /// Deep sleeps entered without a beacon in the current superframe
+    std::map<AddressType, size_t> sleeps_without_beacon_;
     std::map<AddressType, size_t> resumed_boots_;
     std::map<AddressType, size_t> fallback_boots_;
 

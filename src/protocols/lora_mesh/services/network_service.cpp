@@ -871,6 +871,7 @@ Result NetworkService::ApplyResumeSnapshot(
     // The node follows the schedule it slept with; a change it was waiting
     // for is applied at the next rebuild, as if it had not slept
     slot_scheduler_->RestoreSchedule(snapshot.schedule);
+    awaiting_resync_ = true;
     SetState(ProtocolState::NORMAL_OPERATION);
     LOG_INFO(
         "Resumed membership of network 0x%04X: manager 0x%04X, control slot "
@@ -891,10 +892,22 @@ const char* NetworkService::GetDeepSleepBlocker() const {
     if (no_received_sync_beacon_count_ != 0) {
         return "missed sync beacons";
     }
+    if (!HeardSyncBeaconThisSuperframe()) {
+        return "no sync beacon in this superframe";
+    }
     if (!reliable_messaging_->IsIdle()) {
         return "reliable messages in flight";
     }
     return nullptr;
+}
+
+bool NetworkService::HeardSyncBeaconThisSuperframe() const {
+    if (last_sync_beacon_received_ == 0 || !superframe_service_) {
+        return false;
+    }
+    const uint32_t age = GetRTOS().getTickCount() - last_sync_beacon_received_;
+    return age <= superframe_service_->GetTimeSinceSuperframeStart() +
+                      superframe_service_->GetSuperframeDuration() / 2;
 }
 
 uint32_t NetworkService::GetManagerResumeDelayRemaining() const {
@@ -3248,6 +3261,9 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     }
 
     no_received_sync_beacon_count_ = 0;  // Reset missed beacon counter
+    if (awaiting_resync_.exchange(false)) {
+        LOG_INFO("Schedule confirmed by a sync beacon after the resume");
+    }
 
     return Result::Success();
 }
@@ -3697,6 +3713,7 @@ void NetworkService::ResetNetworkState() {
     slot_scheduler_->Reset();
     MarkSlotTableDirty();
     pending_slot_table_rebuild_ = false;
+    awaiting_resync_ = false;
     reliable_messaging_->Reset();
     message_cache_.Reset();
 

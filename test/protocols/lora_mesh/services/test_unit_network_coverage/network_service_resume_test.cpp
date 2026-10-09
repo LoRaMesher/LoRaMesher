@@ -310,6 +310,32 @@ TEST_F(NetworkServiceResumeTest, PendingScheduleChangeSurvivesTheSleep) {
     EXPECT_EQ(Slots(*resumed.service), Slots(*original.service));
 }
 
+TEST_F(NetworkServiceResumeTest, ResumedMemberWaitsForABeacon) {
+    Node& original = MakeJoinedMember();
+    auto snapshot = original.service->CaptureResumeSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    FillTiming(*snapshot, *original.superframe);
+    EXPECT_FALSE(original.service->IsAwaitingResync());
+
+    // The node sleeps through the rest of the superframe and part of the next
+    mock_->advanceTime(25000);
+    Node& resumed = MakeNode(kMember);
+    ASSERT_TRUE(resumed.service->ApplyResumeSnapshot(*snapshot));
+    ASSERT_TRUE(resumed.superframe->ResumeAt(
+        snapshot->member.last_sync_beacon_ms, 20, 1000, 0));
+    EXPECT_TRUE(resumed.service->IsAwaitingResync());
+    EXPECT_FALSE(resumed.service->HeardSyncBeaconThisSuperframe());
+    EXPECT_STREQ(resumed.service->GetDeepSleepBlocker(),
+                 "no sync beacon in this superframe");
+
+    mock_->advanceTime(15000);
+    ASSERT_TRUE(resumed.service->ProcessReceivedMessage(
+        Beacon(), GetRTOS().getTickCount()));
+    EXPECT_FALSE(resumed.service->IsAwaitingResync());
+    EXPECT_TRUE(resumed.service->HeardSyncBeaconThisSuperframe());
+    EXPECT_EQ(resumed.service->GetDeepSleepBlocker(), nullptr);
+}
+
 TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {
     Node& member = MakeJoinedMember();
     ASSERT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
