@@ -318,17 +318,24 @@ mesher->Start();  // after a deep sleep: resumes the membership
 | `power::DeepSleepPolicy` field | Default | Meaning |
 |---|---|---|
 | `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
-| `boot_time_ms` | 400 | Time from the wake-up to `Start()` resuming the protocol |
-| `clock_drift_ppm` | 5000 | Worst-case error of the RTC sleep clock |
+| `boot_time_ms` | 1000 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms) |
+| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated |
+| `calibrated_drift_ppm` | 2000 | Worst-case error once the node has calibrated its sleep clock |
 
 - Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
   awake or light-sleeps.
 - The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
   light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
   callback.
-- Deep sleep needs `RtcStateStore`: it is written before every sleep, so `NvsStateStore` (flash) is
-  refused.
-- A node that wakes more than a superframe late rejoins through a warm restart.
+- Deep sleep needs `RtcStateStore`: it is written before every sleep, so with `NvsStateStore`
+  (flash) the node logs a warning and only light-sleeps.
+- The node deep-sleeps through the SLEEP run that leads to its next beacon (usually the long run
+  before the discovery band at the end of the superframe), so it is awake for the discovery band.
+  After waking it listens, without transmitting, until a beacon confirms its schedule, and it
+  learns the error of its RTC clock from that beacon to correct later sleeps.
+- Set `boot_time_ms` to the time your application takes from the wake-up to `Start()`; a node that
+  starts late misses its first slots. One that wakes more than a superframe late rejoins through a
+  warm restart.
 - Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
   already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
   `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).

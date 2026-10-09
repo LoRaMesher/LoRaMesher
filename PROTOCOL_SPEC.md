@@ -2003,7 +2003,7 @@ Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside 
 - `current_slot`: First slot of the sleep
 - `has_pending_messages`: Whether TX queue has messages
 
-Runs shorter than the wake-up guard plus 10 ms only put the radio to sleep. On ESP32 the protocol's clock is `esp_timer` time, which keeps counting through light sleep, and the superframe timer recomputes its next slot boundary after every wake-up.
+Runs shorter than the wake-up guard plus 10 ms only put the radio to sleep. On ESP32 the protocol's clock is `esp_timer` time, which keeps counting through light sleep, and the superframe timer recomputes its next slot boundary after every wake-up; a slot that began before it did so is handled late rather than skipped.
 
 Returns a `SleepResult`:
 - `allow_sleep`: If false, radio sleeps but device state remains ACTIVE
@@ -2050,34 +2050,43 @@ auto mesher = LoraMesher::Builder()
 With a `DeepSleepPolicy` (`LoRaMeshProtocolConfig::setDeepSleepPolicy()`,
 `LoraMesher::Builder::withDeepSleep()`), a member deep-sleeps through a SLEEP run and, after the
 reboot, resumes its membership without discovery or joining. Network managers never deep-sleep.
-The policy needs a state store that allows a write before every sleep (`RtcStateStore`;
-`NvsStateStore` is refused).
+Deep sleep needs a state store that allows a write before every sleep (`RtcStateStore`); with
+another store, or none, the node logs a warning and only light-sleeps.
 
 | Field | Default | Meaning |
 |-------|---------|---------|
 | `min_sleep_ms` | 30 000 | Shortest deep sleep; shorter runs light-sleep (Section 5.8.3) |
-| `boot_time_ms` | 400 | Time from the wake-up to the protocol running |
-| `clock_drift_ppm` | 5 000 | Worst-case error of the sleep clock |
+| `boot_time_ms` | 1 000 | Time from the wake-up to the protocol running (at most 60 000) |
+| `clock_drift_ppm` | 10 000 | Worst-case error of an uncalibrated sleep clock |
+| `calibrated_drift_ppm` | 2 000 | Worst-case error left once the sleep clock is calibrated |
 
-**Entering.** At a SLEEP slot the node takes the time `T` to the next active slot and the wake
-margin `M = boot_time_ms + wake_up_guard_ms + ⌈T × clock_drift_ppm / 10⁶⌉`. It deep-sleeps for
-`T − M` when `T − M ≥ min_sleep_ms` and:
-- it is a member in NORMAL_OPERATION that has not missed the current sync beacon;
+**Entering.** At a SLEEP slot the node takes the next active slot `S`, the time `T` until it
+starts, and the wake margin `M = boot_time_ms + wake_up_guard_ms + ⌈T × ppm / 10⁶⌉`, where `ppm`
+is `calibrated_drift_ppm` once the sleep clock is calibrated (below) and `clock_drift_ppm`
+before. It deep-sleeps for `T − M` when `T − M ≥ min_sleep_ms` and:
+- from `S` to its next SYNC_BEACON_RX slot it has no TX, CONTROL_TX, SYNC_BEACON_TX or
+  DISCOVERY_TX slot, since a resumed node does not transmit before a beacon (in practice, the run
+  that ends at the discovery band before the beacon);
+- it is a member in NORMAL_OPERATION that received a sync beacon in the current superframe
+  (a beacon up to half a superframe before its own superframe start counts) and has not missed
+  one;
 - its TX queue is empty;
 - no reliable message and no group acknowledgement window is open.
 
 It encodes a resume snapshot, asks the `PrepareSleepCallback` with `requested_state = DEEP_SLEEP`
-(after a veto it may light-sleep instead), saves the snapshot and arms the wake-up timer.
+(after a veto it may light-sleep instead), saves the snapshot and arms the wake-up timer for
+`T − M` scaled by the learned clock error. If the application queued a message meanwhile, it erases
+the snapshot and stays up.
 
-**Resume snapshot.** Little-endian, magic `"LMR1"`, protected by a CRC-32, and embedding the
-warm-restart snapshot (Section 6.5.1):
+**Resume snapshot.** Little-endian, magic `"LMR1"`, format version 2, protected by a CRC-32, and
+embedding the warm-restart snapshot (Section 6.5.1):
 
 | Part | Size (bytes) |
 |------|--------------|
 | Magic, version, length of the embedded snapshot | 6 |
 | Warm-restart snapshot | 21 |
 | Timing: protocol clock, persistent clock (8), wake deadline, superframe start, superframes completed, slot duration (4 each), slot count (2) | 30 |
-| Membership: manager (2), beacon slot count, beacon node count, control slot, data slots, routing-table version (1 each), last sync, last sync beacon, last route cleanup (4 each) | 19 |
+| Membership: manager (2), beacon slot count, beacon node count, control slot, data slots, routing-table version (1 each), last sync, last sync beacon, last route cleanup (4 each), sleep clock error (4, signed ppm), sleep clock samples (1), schedule offset at the last beacon (2, signed ms) | 26 |
 | Reliable group stream: started, next sequence | 2 |
 | Slot table: count (2); number (2), type (1), target (2) per slot; control slots (1), discovery slots (2), rebuild pending (1) | 6 + 5 per slot |
 | Routes: count (1); 22 per route, plus 33 of link statistics and 8 of round-trip time when they hold data | 1 + 22 to 63 per route |
@@ -2091,8 +2100,8 @@ fit in the 4 KB `RtcStateStore`. A snapshot that is truncated, fails the CRC, ha
 version, or is inconsistent is rejected and the node starts cold.
 
 **Waking.** `Start()` reads the store once. From the persistent clock (`esp_rtc_get_time_us()` on
-ESP32) it takes the time slept. If the node wakes at most one superframe after its planned wake
-deadline, it:
+ESP32) it takes the time slept, corrected by the learned clock error. If the node wakes at most
+one superframe after its planned wake deadline, it:
 1. continues the protocol clock from the saved value plus the time slept, so every saved timestamp
    keeps its meaning;
 2. restores the routes with their link statistics, the membership, the sequence streams, the
@@ -2101,9 +2110,23 @@ deadline, it:
 3. moves the saved superframe start forward by whole superframes to the present and resumes the
    schedule at the next slot boundary, in NORMAL_OPERATION.
 
-Otherwise it applies the embedded warm-restart snapshot and rejoins (Section 6.5.2). Neighbours do
-not see the sleep: the node misses no active slot, keeps its control slot, and its routing
-broadcasts keep listing its neighbours with their link qualities.
+Otherwise it applies the embedded warm-restart snapshot and rejoins (Section 6.5.2).
+
+**Until the first beacon** the resumed schedule is only as accurate as the sleep clock. The node
+keeps its radio receiving in every slot, SLEEP slots included, and transmits nothing; once its
+sleep clock is calibrated it serves the discovery band before the beacon as usual (receiving join
+requests, forwarding as a sponsor). The first sync beacon in normal operation ends this.
+
+**Sleep clock calibration.** At the first beacon after a resume, the offset between the beacon's
+superframe and the node's own, wrapped to the nearest superframe, minus the offset the schedule
+already had at the last beacon before the sleep (drifts below `guard_time / 2` are not
+resynchronized), is the error the sleep clock made over the sleep. The first sample sets the
+estimate (`error_ms × 10⁶ / slept_ms`, clamped to ±50 000 ppm); later samples correct half of what
+is left. Sleeps shorter than 1 s are not sampled. After two samples the clock counts as
+calibrated. The estimate is kept in the resume snapshot and survives network resets.
+
+Neighbours do not see the sleep: the node misses no active slot, keeps its control slot, and its
+routing broadcasts keep listing its neighbours with their link qualities.
 
 ### 5.9 Network Manager Election Sequence
 
@@ -3012,8 +3035,8 @@ Recovery flow when sync is lost:
 - **Battery-Aware Scheduling**: Dynamic slot allocation based on battery levels
 - **Network-Wide Power Optimization**: Coordinated power saving across all nodes
 - **Emergency Wake-Up Protocols**: Critical message delivery during sleep periods
-- **Calibrated Deep-Sleep Margins**: Learn each node's boot time and sleep-clock drift to shorten
-  the wake margin of Section 5.8.4
+- **Measured Boot Time**: Learn each node's boot time to shorten the deep-sleep wake margin of
+  Section 5.8.4
 
 ### 10.4 Protocol Extensions
 

@@ -51,7 +51,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   slot table, message sequences and duplicate state) without discovery or
   joining; a late wake-up falls back to a warm restart. See
   `PROTOCOL_SPEC.md` §5.8.4. `RtcStateStore` holds 4 KB, and the battery
-  example has an `ENABLE_DEEP_SLEEP` option.
+  example has an `ENABLE_DEEP_SLEEP` option. A resumed member listens without
+  transmitting until a beacon confirms its schedule, and calibrates its sleep
+  clock from that beacon's drift.
 - Node reboot test suite (`test_node_reboot`): power-cycles nodes of
   simulated line, star and mesh networks, alone or all together, warm and
   cold.
@@ -108,6 +110,12 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - ESP32: protocol time comes from `esp_timer`, which keeps counting during
   light sleep; the FreeRTOS tick count it used before stood still while the
   MCU slept, so slot timing fell behind after every sleep.
+- A slot that began before the superframe timer learned of a wake-up is
+  handled late instead of skipped; the first active slot after a light sleep
+  (often a join or data slot) was lost whenever waking took longer than the
+  wake-up guard.
+- Join responses carry the network id; they carried the manager's address.
+- Synchronization drift is reported relative to the nearest superframe.
 - `battery_optimized_example`: the LoRa power rail stays on during sleep (the
   radio lost its configuration when it was cut), the wake-up callback no
   longer re-creates the PMU driver, and the CPU runs at 80 MHz.
