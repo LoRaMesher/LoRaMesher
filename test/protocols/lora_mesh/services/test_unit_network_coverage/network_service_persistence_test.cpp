@@ -165,6 +165,21 @@ TEST_F(NetworkServicePersistenceTest, ManagerSnapshotRecordsMemberSlots) {
     EXPECT_GT(snapshot.superframe_duration_ms, 0u);
 }
 
+TEST_F(NetworkServicePersistenceTest, JoinResponseCarriesTheNetworkId) {
+    auto& manager = MakeService(kManager, NodeRole::NETWORK_MANAGER);
+    ASSERT_TRUE(manager.StartDiscovery(5000));
+    ASSERT_EQ(manager.GetState(), ProtocolState::NETWORK_MANAGER);
+    Join(manager, 0x2001);
+
+    auto queued = QueueOf(manager).ExtractMessageOfType(
+        types::protocols::lora_mesh::SlotAllocation::SlotType::DISCOVERY_TX);
+    ASSERT_NE(queued, nullptr);
+    auto response = JoinResponseMessage::CreateFromBaseMessage(*queued);
+    ASSERT_TRUE(response.has_value());
+    EXPECT_EQ(response->GetNetworkId(), manager.GetNetworkId());
+    EXPECT_NE(response->GetNetworkId(), kManager);
+}
+
 TEST_F(NetworkServicePersistenceTest, SnapshotOfAnotherNodeIsRejected) {
     auto& node = MakeService(0x3000, NodeRole::NETWORK_MANAGER);
     EXPECT_EQ(node.ApplySnapshot(ManagerSnapshot()).getErrorCode(),

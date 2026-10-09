@@ -2103,11 +2103,9 @@ Result NetworkService::SendJoinResponse(AddressType dest,
     }
 
     // Create join response with corrected addressing and next_hop for multi-hop forwarding
-    auto join_response =
-        JoinResponseMessage::Create(response_destination, node_address_,
-                                    network_manager_,  // Network ID
-                                    allocated_slots, status, {}, next_hop,
-                                    target_address, control_slot_index);
+    auto join_response = JoinResponseMessage::Create(
+        response_destination, node_address_, network_id_, allocated_slots,
+        status, {}, next_hop, target_address, control_slot_index);
 
     if (!join_response) {
         return Result(LoraMesherErrorCode::kMemoryError,
