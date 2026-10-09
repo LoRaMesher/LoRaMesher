@@ -111,8 +111,9 @@ bool InitDevices::beginPower() {
 }
 
 bool InitDevices::prepareSleep(uint32_t sleep_ms) {
+    // Boards without a PMU (e.g. TTGO LoRa32) have no rails to switch
     if (!PMU) {
-        return false;
+        return true;
     }
 
     // Disable measurements to save power

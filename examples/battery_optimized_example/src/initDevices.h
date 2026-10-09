@@ -28,7 +28,7 @@ class InitDevices {
      * rail stays on: the protocol puts the radio into its own sleep mode.
      *
      * @param sleep_ms Planned sleep duration in milliseconds
-     * @return true if sleep preparation succeeded, false if no PMU
+     * @return true if the device may sleep (also on boards without a PMU)
      */
     static bool prepareSleep(uint32_t sleep_ms);
 
