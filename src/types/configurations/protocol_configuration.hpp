@@ -211,7 +211,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
         uint8_t max_packet_size = 255, uint8_t default_data_slots = 2,
         uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50,
-        uint32_t guard_time_ms = 50, uint32_t wake_up_guard_ms = 100,
+        uint32_t guard_time_ms = 50, uint32_t wake_up_guard_ms = 20,
         uint8_t max_data_slots = 100)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
@@ -683,7 +683,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         100;  ///< Ceiling on total data slots allocatable in the superframe
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
     uint32_t wake_up_guard_ms_ =
-        100;  ///< Guard time before slot boundary for MCU wake-up
+        20;  ///< Guard time before slot boundary for MCU wake-up
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep

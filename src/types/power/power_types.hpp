@@ -73,14 +73,15 @@ struct SleepContext {
     /**
      * @brief How long until the next scheduled activity (ms)
      *
-     * This is the slot duration - the maximum time the device can sleep
-     * before the next slot transition. User callbacks can use this to
-     * decide whether sleep is worthwhile for short durations.
+     * The time until the next non-SLEEP slot minus the wake-up guard: the
+     * device sleeps once through a whole run of SLEEP slots. User callbacks
+     * can use this to decide whether sleep is worthwhile.
      */
     uint32_t sleep_duration_ms;
 
     /**
-     * @brief Current slot number in the superframe (0-based)
+     * @brief First slot of the sleep, as a slot number in the superframe
+     *        (0-based)
      *
      * Useful for slot-specific behavior (e.g., always stay awake on
      * certain slots for external communication).
@@ -125,9 +126,10 @@ struct SleepResult {
 /**
  * @brief Callback type for preparing to enter sleep mode
  *
- * This callback is invoked before the system enters a SLEEP slot in the
- * TDMA superframe. The user can perform device-specific power management
- * operations and optionally veto the sleep request.
+ * This callback is invoked once per run of consecutive SLEEP slots in the
+ * TDMA superframe, before the system sleeps through it. The user can perform
+ * device-specific power management operations and optionally veto the sleep
+ * request.
  *
  * @param context Information about the sleep request including duration,
  *                current slot, and pending message status
@@ -137,7 +139,8 @@ struct SleepResult {
  *        The callback runs in the protocol task context.
  * @note  Returning SleepResult{true} causes the protocol to:
  *        1. Put the radio to sleep.
- *        2. Put the MCU to light sleep until the next slot (ESP32 only).
+ *        2. Put the MCU to light sleep until shortly before the next active
+ *           slot (ESP32 only).
  *        Use this callback to power down user peripherals (GPS, sensors) before sleep.
  * @note  Returning SleepResult{false} vetoes MCU sleep. The radio still sleeps for
  *        power savings, but the MCU stays running and OnWakeUp will not fire.

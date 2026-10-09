@@ -12,6 +12,11 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#ifdef ARDUINO_ARCH_ESP32
+#include <esp_sleep.h>
+#include <esp_timer.h>
+#endif
+
 #include "config/task_config.hpp"
 #include "os/rtos.hpp"
 #include "utils/logger.hpp"
@@ -165,7 +170,7 @@ class RTOSFreeRTOS : public RTOS {
     void delay(uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
     void LightSleep(uint32_t ms) override {
-#ifdef LORAMESHER_BUILD_ARDUINO
+#ifdef ARDUINO_ARCH_ESP32
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
         esp_light_sleep_start();
 #else
@@ -173,7 +178,19 @@ class RTOSFreeRTOS : public RTOS {
 #endif
     }
 
-    uint32_t getTickCount() override { return xTaskGetTickCount(); }
+    /**
+     * @brief Milliseconds since boot
+     *
+     * On ESP32 this is esp_timer time, which keeps counting through light
+     * sleep; the FreeRTOS tick count stands still while the MCU sleeps.
+     */
+    uint32_t getTickCount() override {
+#ifdef ARDUINO_ARCH_ESP32
+        return static_cast<uint32_t>(esp_timer_get_time() / 1000);
+#else
+        return xTaskGetTickCount() * portTICK_PERIOD_MS;
+#endif
+    }
 
     void StartScheduler() override { vTaskStartScheduler(); }
 

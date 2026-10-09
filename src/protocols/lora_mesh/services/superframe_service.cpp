@@ -743,6 +743,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
                 case SuperframeNotificationType::CONFIG_CHANGED:
                 case SuperframeNotificationType::SYNC_UPDATED:
                 case SuperframeNotificationType::SYNC_COMPLETE:
+                case SuperframeNotificationType::WOKE_UP:
                     // These notifications only require timeout recalculation, not state updates
                     // LOG_DEBUG(
                     //     "Notification requires timeout recalculation only");
@@ -858,6 +859,10 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
     const uint32_t MAX_TIMEOUT_MS = 5000;  // 5 seconds maximum sleep
     const uint32_t MIN_TIMEOUT_MS = 20;    // 20ms minimum sleep
     return std::max(std::min(timeout, MAX_TIMEOUT_MS), MIN_TIMEOUT_MS);
+}
+
+void SuperframeService::NotifyWokeUp() {
+    NotifyUpdateTask(SuperframeNotificationType::WOKE_UP);
 }
 
 void SuperframeService::NotifyUpdateTask(

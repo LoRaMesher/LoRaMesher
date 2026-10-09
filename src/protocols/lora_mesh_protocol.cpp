@@ -11,6 +11,7 @@
 #include "types/radio/radio_event.hpp"
 #include "types/storage/snapshot_codec.hpp"
 #include "utils/task_monitor.hpp"
+#include "utils/time_utils.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
@@ -1454,61 +1455,82 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             break;
 
         case SlotAllocation::SlotType::SLEEP:
-        default: {
-            // Build sleep context for user callback
-            // This provides all information needed to make intelligent sleep decisions
-            power::SleepContext ctx{};
-            ctx.requested_state = power::PowerState::LIGHT_SLEEP;
-            ctx.current_slot = superframe_service_->GetCurrentSlot();
-            ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
-
-            // Calculate sleep duration (time until next slot minus wake-up guard)
-            // The guard ensures the MCU wakes before the slot boundary for
-            // callback execution, radio transition, and peripheral init
-            uint32_t slot_duration = superframe_service_->GetSlotDuration();
-            uint32_t wake_guard = config_.getWakeUpGuardTime();
-            ctx.sleep_duration_ms =
-                (slot_duration > wake_guard) ? (slot_duration - wake_guard) : 0;
-
-            // Call user callback if registered
-            // This allows application-level power management (disable GPS, sensors, etc.)
-            if (prepare_sleep_callback_) {
-                LOG_DEBUG("Invoking prepare-sleep callback for slot %u",
-                          ctx.current_slot);
-                auto sleep_result = prepare_sleep_callback_(ctx);
-
-                if (!sleep_result.allow_sleep) {
-                    // User vetoed sleep - still set radio to sleep for power savings
-                    // but don't track as "sleeping" (wake callback won't fire)
-                    LOG_DEBUG("Sleep vetoed by user callback");
-                    result = hardware_->setState(radio::RadioState::kSleep);
-                    if (!result) {
-                        LOG_ERROR("Failed to set radio to sleep: %s",
-                                  result.GetErrorMessage().c_str());
-                    }
-                    // Note: current_power_state_ remains ACTIVE
-                    break;
-                }
-            }
-
-            // Set radio to sleep mode
-            result = hardware_->setState(radio::RadioState::kSleep);
-            if (!result) {
-                LOG_ERROR("Failed to set radio to sleep: %s",
-                          result.GetErrorMessage().c_str());
-            }
-
-            // Sleep the MCU until the next slot when power management is active
-            if (prepare_sleep_callback_ && ctx.sleep_duration_ms > 0) {
-                GetRTOS().LightSleep(ctx.sleep_duration_ms);
-            }
-
-            // Update power state to track for wake callback
-            // This ensures WakeUpCallback fires on next active slot
-            current_power_state_ = power::PowerState::LIGHT_SLEEP;
+        default:
+            SleepThroughSleepRun();
             break;
-        }
     }
+}
+
+uint32_t LoRaMeshProtocol::GetTimeUntilNextActiveSlot() {
+    const uint32_t slot_duration = superframe_service_->GetSlotDuration();
+    if (slot_duration == 0) {
+        return 0;
+    }
+    const uint16_t current_slot = superframe_service_->GetCurrentSlot();
+    uint16_t next_active = static_cast<uint16_t>(
+        superframe_service_->GetSuperframeDuration() / slot_duration);
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
+        if (allocation.slot_number > current_slot &&
+            allocation.slot_number < next_active &&
+            allocation.type != SlotAllocation::SlotType::SLEEP) {
+            next_active = allocation.slot_number;
+        }
+    });
+
+    const uint32_t now = GetRTOS().getTickCount();
+    const uint32_t next_active_start =
+        superframe_service_->GetSlotStartTime(next_active);
+    return utils::TimeReached(now, next_active_start) ? 0
+                                                      : next_active_start - now;
+}
+
+void LoRaMeshProtocol::SleepThroughSleepRun() {
+    // The radio sleeps in every SLEEP slot
+    Result result = hardware_->setState(radio::RadioState::kSleep);
+    if (!result) {
+        LOG_ERROR("Failed to set radio to sleep: %s",
+                  result.GetErrorMessage().c_str());
+    }
+
+    // The MCU sleeps once per run of SLEEP slots, through the whole run: a
+    // node woken at the end of the run (or still asleep) only keeps the radio
+    // asleep in the run's later slots
+    if (!prepare_sleep_callback_ ||
+        current_power_state_ == power::PowerState::LIGHT_SLEEP) {
+        return;
+    }
+
+    // Wake the MCU before the next active slot starts, so the callback,
+    // radio transition and peripheral init are done in time
+    const uint32_t until_active = GetTimeUntilNextActiveSlot();
+    const uint32_t wake_guard = config_.getWakeUpGuardTime();
+    if (until_active <= wake_guard + kMinLightSleepMs) {
+        return;
+    }
+
+    power::SleepContext ctx{};
+    ctx.requested_state = power::PowerState::LIGHT_SLEEP;
+    ctx.current_slot = superframe_service_->GetCurrentSlot();
+    ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
+    ctx.sleep_duration_ms = until_active - wake_guard;
+
+    // Application-level power management (disable GPS, sensors, etc.)
+    LOG_DEBUG("Invoking prepare-sleep callback for slot %u (%u ms)",
+              ctx.current_slot, ctx.sleep_duration_ms);
+    auto sleep_result = prepare_sleep_callback_(ctx);
+    if (!sleep_result.allow_sleep) {
+        // The radio still sleeps, but the wake callback will not fire
+        LOG_DEBUG("Sleep vetoed by user callback");
+        return;
+    }
+
+    GetRTOS().LightSleep(ctx.sleep_duration_ms);
+    // Timers stood still while the MCU slept: let the superframe service
+    // recompute its next slot boundary from the current time
+    superframe_service_->NotifyWokeUp();
+
+    // The wake callback fires at the next active slot
+    current_power_state_ = power::PowerState::LIGHT_SLEEP;
 }
 
 LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(

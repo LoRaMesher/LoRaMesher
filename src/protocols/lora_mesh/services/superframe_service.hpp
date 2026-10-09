@@ -29,7 +29,8 @@ enum class SuperframeNotificationType : uint8_t {
     CONFIG_CHANGED,  ///< Configuration changed, recalculate timeout
     SYNC_UPDATED,    ///< External sync updated, immediate recalculation
     SYNC_COMPLETE,  ///< Complete sync operation finished (consolidated notification)
-    STOP_REQUESTED  ///< Stop requested, task should exit immediately
+    STOP_REQUESTED,  ///< Stop requested, task should exit immediately
+    WOKE_UP  ///< MCU woke from sleep, recalculate timeout from the current time
 };
 
 /**
@@ -93,6 +94,14 @@ class SuperframeService : public ISuperframeService {
     bool IsSynchronized() const override;
 
     bool IsRunning() const { return is_running_; }
+
+    /**
+     * @brief Tell the update task that the MCU woke from sleep
+     *
+     * While the MCU slept, the update task's wait did not progress; it
+     * recomputes the time to the next slot boundary from the current time.
+     */
+    void NotifyWokeUp();
 
     void SetSynchronized(bool synchronized) override;
 

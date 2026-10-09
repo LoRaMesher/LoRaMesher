@@ -24,6 +24,8 @@ struct SleepTracker {
     std::atomic<int> wake_count{0};
     bool veto_sleep{false};
     power::SleepContext last_sleep_context{};
+    /// Virtual time of every sleep callback
+    std::vector<uint32_t> sleep_times;
     std::mutex context_mutex;
 };
 
@@ -65,6 +67,7 @@ class LoRaMeshSleepWakeUpTests : public LoRaMeshTestFixture {
                 {
                     std::lock_guard<std::mutex> lock(tracker->context_mutex);
                     tracker->last_sleep_context = ctx;
+                    tracker->sleep_times.push_back(GetRTOS().getTickCount());
                 }
                 return power::SleepResult{!tracker->veto_sleep};
             });
@@ -264,9 +267,137 @@ TEST_F(LoRaMeshSleepWakeUpTests, SleepContextHasValidData) {
     EXPECT_GT(ctx.sleep_duration_ms, 0u)
         << "Sleep duration should be greater than zero";
 
-    // Sleep duration should be slot_duration minus wake_up_guard
-    EXPECT_LE(ctx.sleep_duration_ms, slot_duration)
-        << "Sleep duration should not exceed slot duration";
+    // A sleep lasts at most until the end of the superframe
+    EXPECT_GE(ctx.sleep_duration_ms + 1, slot_duration / 2);
+    EXPECT_LT(ctx.sleep_duration_ms, GetSuperframeDuration(node))
+        << "Sleep duration should not exceed the superframe";
+}
+
+/**
+ * @brief Run of consecutive SLEEP slots in a slot table
+ */
+struct SleepRun {
+    uint16_t first_slot;
+    uint16_t length;
+};
+
+std::vector<SleepRun> SleepRunsOf(
+    const std::vector<types::protocols::lora_mesh::SlotAllocation>& table) {
+    std::vector<SleepRun> runs;
+    for (const auto& slot : table) {
+        const bool sleeping =
+            slot.type ==
+            types::protocols::lora_mesh::SlotAllocation::SlotType::SLEEP;
+        if (!sleeping) {
+            continue;
+        }
+        if (!runs.empty() &&
+            runs.back().first_slot + runs.back().length == slot.slot_number) {
+            runs.back().length++;
+        } else {
+            runs.push_back({slot.slot_number, 1});
+        }
+    }
+    return runs;
+}
+
+/**
+ * @brief The MCU sleeps once per run of SLEEP slots, through the whole run
+ */
+TEST_F(LoRaMeshSleepWakeUpTests, SleepsOncePerRunOfSleepSlots) {
+    auto& manager = CreateNodeWithSleepCallbacks("Manager", 0x1001,
+                                                 NodeRole::NETWORK_MANAGER);
+    auto& joiner =
+        CreateNodeWithSleepCallbacks("Joiner", 0x1002, NodeRole::NODE_ONLY);
+    SetLinkStatus(manager, joiner, true);
+    StartNodeUntilNetworkManager(manager);
+    StartNodeUntilNormalOperation(joiner);
+
+    // Let the schedule settle, then align to a superframe start
+    const uint32_t superframe_ms = GetSuperframeDuration(manager);
+    AdvanceTime(superframe_ms * 3);
+
+    const auto runs = SleepRunsOf(joiner.protocol->GetSlotTable());
+    ASSERT_FALSE(runs.empty());
+    const uint32_t slot_ms = GetSlotDuration(joiner);
+    uint32_t longest_run_ms = 0;
+    for (const auto& run : runs) {
+        longest_run_ms = std::max(longest_run_ms, run.length * slot_ms);
+    }
+
+    auto& tracker = GetTracker(joiner.address);
+    uint32_t longest_sleep_ms = 0;
+    const uint32_t window_start = GetRTOS().getTickCount();
+    constexpr uint32_t kSuperframes = 10;
+    for (uint32_t elapsed = 0; elapsed < superframe_ms * (kSuperframes + 1);
+         elapsed += 15) {
+        AdvanceTime(15);
+        std::lock_guard<std::mutex> lock(tracker.context_mutex);
+        longest_sleep_ms = std::max(
+            longest_sleep_ms, tracker.last_sleep_context.sleep_duration_ms);
+    }
+
+    // Exactly one callback per run in each of kSuperframes superframes
+    std::vector<uint32_t> times;
+    {
+        std::lock_guard<std::mutex> lock(tracker.context_mutex);
+        for (uint32_t time : tracker.sleep_times) {
+            if (time >= window_start) {
+                times.push_back(time);
+            }
+        }
+    }
+    ASSERT_EQ(runs.size(), 1u) << "Expected one SLEEP run per superframe";
+    ASSERT_GE(times.size(), kSuperframes);
+    const uint32_t period_ms = joiner.protocol->GetSuperframeDuration();
+    for (size_t i = 1; i < times.size(); ++i) {
+        EXPECT_NEAR(static_cast<double>(times[i] - times[i - 1]), period_ms,
+                    slot_ms / 2.0)
+            << "Sleep " << i << " is not one superframe after the previous";
+    }
+
+    // The sleep of the longest run lasts until shortly before it ends
+    const uint32_t guard_ms =
+        LoRaMeshProtocolConfig(joiner.address).getWakeUpGuardTime();
+    EXPECT_LE(longest_sleep_ms, longest_run_ms - guard_ms);
+    EXPECT_GE(longest_sleep_ms + slot_ms / 4, longest_run_ms - guard_ms);
+}
+
+/**
+ * @brief A multi-hop network keeps working while every node sleeps through
+ *        its runs of SLEEP slots
+ */
+TEST_F(LoRaMeshSleepWakeUpTests, MultiHopNetworkWorksWithRunSleeps) {
+    auto& manager = CreateNodeWithSleepCallbacks("Manager", 0x1001,
+                                                 NodeRole::NETWORK_MANAGER);
+    auto& relay =
+        CreateNodeWithSleepCallbacks("Relay", 0x1002, NodeRole::NODE_ONLY);
+    auto& leaf =
+        CreateNodeWithSleepCallbacks("Leaf", 0x1003, NodeRole::NODE_ONLY);
+    SetLinkStatus(manager, relay, true);
+    SetLinkStatus(relay, leaf, true);
+    SetLinkStatus(manager, leaf, false);
+    StartNodeUntilNetworkManager(manager);
+    StartNodeUntilNormalOperation(relay);
+    StartNodeUntilNormalOperation(leaf);
+
+    using ProtocolState = protocols::lora_mesh::INetworkService::ProtocolState;
+    const uint32_t superframe_ms = GetSuperframeDuration(manager);
+    for (uint32_t elapsed = 0; elapsed < superframe_ms * 20; elapsed += 15) {
+        AdvanceTime(15);
+        ASSERT_EQ(relay.protocol->GetState(), ProtocolState::NORMAL_OPERATION);
+        ASSERT_EQ(leaf.protocol->GetState(), ProtocolState::NORMAL_OPERATION);
+    }
+    EXPECT_GT(GetTracker(leaf.address).wake_count.load(), 10);
+    EXPECT_GT(GetTracker(relay.address).wake_count.load(), 10);
+
+    ASSERT_TRUE(SendMessage(leaf, manager, {0x01, 0x02}));
+    ASSERT_TRUE(SendMessage(manager, leaf, {0x03, 0x04}));
+    const uint32_t budget = superframe_ms * 6;
+    EXPECT_TRUE(AdvanceTime(budget, budget, 15, 0, [&]() {
+        return HasReceivedMessageFrom(manager, leaf.address) &&
+               HasReceivedMessageFrom(leaf, manager.address);
+    }));
 }
 
 /**

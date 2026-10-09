@@ -93,6 +93,17 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
+  `wake_up_guard_ms` before the next active slot, instead of waking at every
+  slot boundary and staying awake for the guard. `PrepareSleepCallback` runs
+  once per run, and `SleepContext::sleep_duration_ms` is the length of the
+  whole sleep. The default wake-up guard is 20 ms (was 100 ms).
+- ESP32: protocol time comes from `esp_timer`, which keeps counting during
+  light sleep; the FreeRTOS tick count it used before stood still while the
+  MCU slept, so slot timing fell behind after every sleep.
+- `battery_optimized_example`: the LoRa power rail stays on during sleep (the
+  radio lost its configuration when it was cut), the wake-up callback no
+  longer re-creates the PMU driver, and the CPU runs at 80 MHz.
 - NM election: the election backoff spans at least two superframes (four more
   per extra hop to the manager), so a manager that resets is heard again
   before a successor is elected when superframes are longer than the old

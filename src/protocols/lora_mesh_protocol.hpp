@@ -481,6 +481,23 @@ class LoRaMeshProtocol : public Protocol {
     void OnStateChange(lora_mesh::INetworkService::ProtocolState new_state);
 
     /**
+     * @brief Time from now until the next slot that is not SLEEP
+     *
+     * SLEEP slots are not always contiguous (the sync and data bands contain
+     * some), so this scans the slot table from the current slot. When no
+     * active slot follows, it is the time until the superframe ends.
+     *
+     * @return Milliseconds until the next active slot starts (0 if overdue)
+     */
+    uint32_t GetTimeUntilNextActiveSlot();
+
+    /**
+     * @brief Put the radio and, when power management is active, the MCU to
+     *        sleep for the rest of the current run of SLEEP slots
+     */
+    void SleepThroughSleepRun();
+
+    /**
      * @brief Process messages for current slot type
      * 
      * @param slot_type Type of current slot
@@ -615,6 +632,8 @@ class LoRaMeshProtocol : public Protocol {
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
         16;  ///< Protocol notification queue size
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS = 100;
+    /// Shortest MCU light sleep worth entering (ms)
+    static constexpr uint32_t kMinLightSleepMs = 10;
     static constexpr uint32_t DEFAULT_HELLO_INTERVAL_MS = 60000;
 };
 

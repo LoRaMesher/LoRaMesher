@@ -1990,16 +1990,18 @@ stateDiagram-v2
 
 | Transition | Callback | When Invoked |
 |------------|----------|--------------|
-| Active → Sleep | `PrepareSleepCallback` | Beginning of SLEEP slot |
+| Active → Sleep | `PrepareSleepCallback` | First slot of a run of SLEEP slots |
 | Sleep → Active | `WakeUpCallback` | Beginning of any active slot |
 
 ##### PrepareSleepCallback
 
-Invoked before the device enters a SLEEP slot. Receives a `SleepContext` with:
+Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside the sync and data bands, so a superframe can have several runs). If allowed, the MCU light-sleeps through the whole run and wakes `wake_up_guard_ms` (default 20 ms) before the next active slot; the radio sleeps in every SLEEP slot. Receives a `SleepContext` with:
 - `requested_state`: The target power state (LIGHT_SLEEP)
-- `sleep_duration_ms`: Time until next slot (slot duration)
-- `current_slot`: Current slot number in superframe
+- `sleep_duration_ms`: Time until the next non-SLEEP slot minus the wake-up guard
+- `current_slot`: First slot of the sleep
 - `has_pending_messages`: Whether TX queue has messages
+
+Runs shorter than the wake-up guard plus 10 ms only put the radio to sleep. On ESP32 the protocol's clock is `esp_timer` time, which keeps counting through light sleep, and the superframe timer recomputes its next slot boundary after every wake-up.
 
 Returns a `SleepResult`:
 - `allow_sleep`: If false, radio sleeps but device state remains ACTIVE

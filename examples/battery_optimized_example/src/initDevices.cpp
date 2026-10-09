@@ -13,7 +13,12 @@
 
 #define PMU_IRQ 35
 
+/// Sleeps at least this long power the GPS down (a GPS warm start costs more
+/// than a short sleep saves)
+constexpr uint32_t kGpsOffMinSleepMs = 10000;
+
 XPowersLibInterface* PMU = nullptr;
+bool gps_powered_down = false;
 
 void InitDevices::init() {
     Wire.begin(SDA, SCL);
@@ -105,7 +110,7 @@ bool InitDevices::beginPower() {
     return true;
 }
 
-bool InitDevices::prepareSleep() {
+bool InitDevices::prepareSleep(uint32_t sleep_ms) {
     if (!PMU) {
         return false;
     }
@@ -117,18 +122,28 @@ bool InitDevices::prepareSleep() {
     PMU->disableBattVoltageMeasure();
     PMU->disableSystemVoltageMeasure();
 
-    PMU->enableSleep();
-
-    // Disable peripherals based on chip type
-    if (PMU->getChipModel() == XPOWERS_AXP192) {
-        PMU->disablePowerOutput(XPOWERS_LDO2);  // LoRa off
-        PMU->disablePowerOutput(XPOWERS_LDO3);  // GPS off
-        PMU->disablePowerOutput(XPOWERS_DCDC2);
-    } else {
-        PMU->disablePowerOutput(XPOWERS_ALDO2);  // LoRa off
-        PMU->disablePowerOutput(XPOWERS_ALDO3);  // GPS off
+    // The LoRa rail stays on: the protocol already puts the radio into its own
+    // sleep mode, and an unpowered radio would lose its configuration
+    if (sleep_ms >= kGpsOffMinSleepMs) {
+        PMU->disablePowerOutput(PMU->getChipModel() == XPOWERS_AXP192
+                                    ? XPOWERS_LDO3
+                                    : XPOWERS_ALDO3);
+        gps_powered_down = true;
     }
 
     PMU->clearIrqStatus();
     return true;
+}
+
+void InitDevices::wakeUp() {
+    if (!PMU) {
+        return;
+    }
+    if (gps_powered_down) {
+        PMU->enablePowerOutput(PMU->getChipModel() == XPOWERS_AXP192
+                                   ? XPOWERS_LDO3
+                                   : XPOWERS_ALDO3);
+        gps_powered_down = false;
+    }
+    PMU->enableBattVoltageMeasure();
 }

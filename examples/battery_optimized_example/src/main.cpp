@@ -61,17 +61,17 @@ uint8_t message_counter = 0;
 using namespace loramesher::power;
 
 SleepResult OnSleep(const SleepContext& ctx) {
-    if (!InitDevices::prepareSleep()) {
+    if (!InitDevices::prepareSleep(ctx.sleep_duration_ms)) {
         Serial.println("Error: Failed to prepare sleep");
         return power::SleepResult{false};  // veto: peripheral state unknown
     }
-    // After returning true, the protocol puts the radio and MCU to sleep.
-    // OnWakeUp will be called before the next active slot.
+    // After returning true, the protocol puts the radio and MCU to sleep
+    // until shortly before the next active slot, when OnWakeUp is called.
     return power::SleepResult{true};
 }
 
 void OnWakeUp(PowerState previous_state) {
-    InitDevices::init();
+    InitDevices::wakeUp();
 }
 
 // ============================================================================
@@ -220,6 +220,8 @@ void configureLoraMesher() {
 void setup() {
     Serial.begin(115200);
     esp_log_level_set("*", ESP_LOG_INFO);
+    // An idle CPU at 80 MHz draws about a third less than at 240 MHz
+    setCpuFrequencyMhz(80);
 
     InitDevices::init();
     configureLoraMesher();

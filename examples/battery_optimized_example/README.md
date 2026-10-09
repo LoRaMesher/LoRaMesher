@@ -14,7 +14,7 @@ Compared to `simple_example`, this example includes:
 
 - **Automatic PMU detection** - Supports both AXP192 (T-Beam v1.0/v1.1) and AXP2101 (T-Beam v1.2+)
 - **Sleep callbacks** - Disable peripherals before sleep
-- **Wake callbacks** - Re-initialize hardware after wake
+- **Wake callbacks** - Restore peripherals after wake
 - **Battery monitoring** - Enable voltage measurement via PMU
 
 ## T-Beam Power Architecture
@@ -48,23 +48,29 @@ Compared to `simple_example`, this example includes:
 
 ## Sleep/Wake Callbacks
 
-LoraMesher calls your callbacks when entering and exiting sleep:
+LoraMesher calls your callbacks once per run of sleep slots: the MCU then
+light-sleeps through the whole run and wakes shortly before the next active
+slot (`ctx.sleep_duration_ms` says for how long):
 
 ```cpp
 SleepResult OnSleep(const SleepContext& ctx) {
-    if (!InitDevices::prepareSleep()) {
+    if (!InitDevices::prepareSleep(ctx.sleep_duration_ms)) {
         Serial.println("Error: Failed to prepare sleep");
         return power::SleepResult{false};  // veto: peripheral state unknown
     }
-    // After returning true, the protocol puts the radio and MCU to sleep.
-    // OnWakeUp will be called before the next active slot.
+    // After returning true, the protocol puts the radio and MCU to sleep
+    // until shortly before the next active slot, when OnWakeUp is called.
     return power::SleepResult{true};
 }
 
 void OnWakeUp(PowerState previous_state) {
-    InitDevices::init();  // Re-enable power to peripherals
+    InitDevices::wakeUp();  // Undo prepareSleep()
 }
 ```
+
+Keep the LoRa power rail on during sleep: the protocol already puts the radio
+into its own sleep mode, and a radio whose rail was cut loses its configuration.
+`prepareSleep()` only cuts the GPS rail for sleeps of 10 s or more.
 
 Register callbacks when building LoraMesher:
 
