@@ -297,6 +297,42 @@ Members wait at least two superframes after losing the manager's beacons before 
 successor, so a short reboot of the manager does not hand its role to another node. Routes,
 timing and slot tables are learned again after every restart. See `PROTOCOL_SPEC.md` §6.5.
 
+#### Deep sleep without rejoining
+
+Members can deep-sleep through the long SLEEP run of each superframe and resume their place in the
+mesh when they wake, without discovery or joining. The node saves its routes, link statistics,
+slot table and message sequences (a few hundred bytes) in RTC memory before every sleep, and wakes
+early enough to boot before its next active slot:
+
+```cpp
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    .withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep()  // or withDeepSleep(policy) to tune it
+    .Build();
+mesher->Start();  // after a deep sleep: resumes the membership
+```
+
+| `power::DeepSleepPolicy` field | Default | Meaning |
+|---|---|---|
+| `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
+| `boot_time_ms` | 400 | Time from the wake-up to `Start()` resuming the protocol |
+| `clock_drift_ppm` | 5000 | Worst-case error of the RTC sleep clock |
+
+- Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
+  awake or light-sleeps.
+- The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
+  light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
+  callback.
+- Deep sleep needs `RtcStateStore`: it is written before every sleep, so `NvsStateStore` (flash) is
+  refused.
+- A node that wakes more than a superframe late rejoins through a warm restart.
+- Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
+  already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
+  `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).
+
 ### Diagnostics & Advanced
 
 The methods below are public on `LoraMesher` and useful once the basic flow is working.

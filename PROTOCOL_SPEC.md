@@ -1981,6 +1981,8 @@ stateDiagram-v2
     [*] --> ACTIVE: System Start
     ACTIVE --> LIGHT_SLEEP: SLEEP slot (with callback)
     LIGHT_SLEEP --> ACTIVE: Active slot (TX/RX/etc.)
+    ACTIVE --> DEEP_SLEEP: Long SLEEP run (deep-sleep policy, members)
+    DEEP_SLEEP --> ACTIVE: Reboot, membership resumed
 
     note right of ACTIVE: Radio active, peripherals enabled
     note right of LIGHT_SLEEP: Radio sleep, peripherals controlled by app
@@ -1996,7 +1998,7 @@ stateDiagram-v2
 ##### PrepareSleepCallback
 
 Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside the sync and data bands, so a superframe can have several runs). If allowed, the MCU light-sleeps through the whole run and wakes `wake_up_guard_ms` (default 20 ms) before the next active slot; the radio sleeps in every SLEEP slot. Receives a `SleepContext` with:
-- `requested_state`: The target power state (LIGHT_SLEEP)
+- `requested_state`: The target power state (LIGHT_SLEEP, or DEEP_SLEEP with a deep-sleep policy; after a DEEP_SLEEP veto the node may ask again for LIGHT_SLEEP)
 - `sleep_duration_ms`: Time until the next non-SLEEP slot minus the wake-up guard
 - `current_slot`: First slot of the sleep
 - `has_pending_messages`: Whether TX queue has messages
@@ -2009,7 +2011,7 @@ Returns a `SleepResult`:
 
 ##### WakeUpCallback
 
-Invoked when transitioning from a SLEEP slot to any active slot (TX, RX, CONTROL_*, SYNC_*, DISCOVERY_*). Receives the previous power state to allow appropriate restoration.
+Invoked when transitioning from a SLEEP slot to any active slot (TX, RX, CONTROL_*, SYNC_*, DISCOVERY_*). Receives the previous power state to allow appropriate restoration. A deep sleep ends with a reboot instead, so it is never followed by this callback.
 
 ##### Usage Example
 
@@ -2042,6 +2044,66 @@ auto mesher = LoraMesher::Builder()
 - Keep callback execution time minimal (< 5ms recommended)
 - Long operations may cause slot timing issues
 - Sleep veto still allows radio sleep for power saving
+
+#### 5.8.4 Member Deep Sleep
+
+With a `DeepSleepPolicy` (`LoRaMeshProtocolConfig::setDeepSleepPolicy()`,
+`LoraMesher::Builder::withDeepSleep()`), a member deep-sleeps through a SLEEP run and, after the
+reboot, resumes its membership without discovery or joining. Network managers never deep-sleep.
+The policy needs a state store that allows a write before every sleep (`RtcStateStore`;
+`NvsStateStore` is refused).
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `min_sleep_ms` | 30 000 | Shortest deep sleep; shorter runs light-sleep (Section 5.8.3) |
+| `boot_time_ms` | 400 | Time from the wake-up to the protocol running |
+| `clock_drift_ppm` | 5 000 | Worst-case error of the sleep clock |
+
+**Entering.** At a SLEEP slot the node takes the time `T` to the next active slot and the wake
+margin `M = boot_time_ms + wake_up_guard_ms + ⌈T × clock_drift_ppm / 10⁶⌉`. It deep-sleeps for
+`T − M` when `T − M ≥ min_sleep_ms` and:
+- it is a member in NORMAL_OPERATION that has not missed the current sync beacon;
+- its TX queue is empty;
+- no reliable message and no group acknowledgement window is open.
+
+It encodes a resume snapshot, asks the `PrepareSleepCallback` with `requested_state = DEEP_SLEEP`
+(after a veto it may light-sleep instead), saves the snapshot and arms the wake-up timer.
+
+**Resume snapshot.** Little-endian, magic `"LMR1"`, protected by a CRC-32, and embedding the
+warm-restart snapshot (Section 6.5.1):
+
+| Part | Size (bytes) |
+|------|--------------|
+| Magic, version, length of the embedded snapshot | 6 |
+| Warm-restart snapshot | 21 |
+| Timing: protocol clock, persistent clock (8), wake deadline, superframe start, superframes completed, slot duration (4 each), slot count (2) | 30 |
+| Membership: manager (2), beacon slot count, beacon node count, control slot, data slots, routing-table version (1 each), last sync, last sync beacon, last route cleanup (4 each) | 19 |
+| Reliable group stream: started, next sequence | 2 |
+| Slot table: count (2); number (2), type (1), target (2) per slot; control slots (1), discovery slots (2), rebuild pending (1) | 6 + 5 per slot |
+| Routes: count (1); 22 per route, plus 33 of link statistics and 8 of round-trip time when they hold data | 1 + 22 to 63 per route |
+| Reliable unicast sequence streams: count (1); destination (2), next sequence (1) | 1 + 3 per stream |
+| Delivered reliable messages: count (1); source (2), kind (1), highest sequence (1), bitmap (4), last send timestamp (4) | 1 + 12 per stream |
+| Duplicate cache: count (1); source (2), sequence (1), oldest first | 1 + 3 per entry |
+| CRC-32 of all previous bytes | 4 |
+
+A member with a few neighbours saves about 300 bytes; 50 direct neighbours with their statistics
+fit in the 4 KB `RtcStateStore`. A snapshot that is truncated, fails the CRC, has another magic or
+version, or is inconsistent is rejected and the node starts cold.
+
+**Waking.** `Start()` reads the store once. From the persistent clock (`esp_rtc_get_time_us()` on
+ESP32) it takes the time slept. If the node wakes at most one superframe after its planned wake
+deadline, it:
+1. continues the protocol clock from the saved value plus the time slept, so every saved timestamp
+   keeps its meaning;
+2. restores the routes with their link statistics, the membership, the sequence streams, the
+   delivered-message windows, the duplicate cache and the slot table as it was (a pending rebuild
+   runs at the next sync beacon);
+3. moves the saved superframe start forward by whole superframes to the present and resumes the
+   schedule at the next slot boundary, in NORMAL_OPERATION.
+
+Otherwise it applies the embedded warm-restart snapshot and rejoins (Section 6.5.2). Neighbours do
+not see the sleep: the node misses no active slot, keeps its control slot, and its routing
+broadcasts keep listing its neighbours with their link qualities.
 
 ### 5.9 Network Manager Election Sequence
 
@@ -2582,7 +2644,9 @@ Forwarded join requests and responses are queued to DISCOVERY_TX and delivered v
 ### 6.5 Warm Restart
 
 A node can keep a small snapshot of its protocol state across a planned reset (OTA reboot, deep
-sleep) and resume in the same network instead of forming or joining a new one. The application
+sleep) and resume in the same network instead of forming or joining a new one. A member with a
+deep-sleep policy saves a resume snapshot instead and rejoins only when it cannot resume
+(Section 5.8.4). The application
 configures an `IStateStore` (`LoRaMeshProtocolConfig::setStateStore()`,
 `LoraMesher::Builder::withStateStore()`) and calls `SaveState()` right before the reset and before
 `Stop()`, which clears the network state. `Start()` reads the store once, erases it and applies the
@@ -2948,6 +3012,8 @@ Recovery flow when sync is lost:
 - **Battery-Aware Scheduling**: Dynamic slot allocation based on battery levels
 - **Network-Wide Power Optimization**: Coordinated power saving across all nodes
 - **Emergency Wake-Up Protocols**: Critical message delivery during sleep periods
+- **Calibrated Deep-Sleep Margins**: Learn each node's boot time and sleep-clock drift to shorten
+  the wake margin of Section 5.8.4
 
 ### 10.4 Protocol Extensions
 

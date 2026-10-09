@@ -45,6 +45,13 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   restarted manager resumes its network under the same id and hands members
   their old control slots; see `PROTOCOL_SPEC.md` §6.5.
 - `LoraMesher::GetNetworkId()`.
+- Member deep sleep without rejoining: with `Builder::withDeepSleep()` and an
+  `RtcStateStore`, a member deep-sleeps through long SLEEP runs and, after the
+  reboot, resumes its membership (routes with link statistics, control slot,
+  slot table, message sequences and duplicate state) without discovery or
+  joining; a late wake-up falls back to a warm restart. See
+  `PROTOCOL_SPEC.md` §5.8.4. `RtcStateStore` holds 4 KB, and the battery
+  example has an `ENABLE_DEEP_SLEEP` option.
 - Node reboot test suite (`test_node_reboot`): power-cycles nodes of
   simulated line, star and mesh networks, alone or all together, warm and
   cold.

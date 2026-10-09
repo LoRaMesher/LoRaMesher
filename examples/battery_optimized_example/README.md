@@ -100,8 +100,22 @@ mesher->SaveState();  // right before the reset
 esp_restart();
 ```
 
-For deep sleep use `storage::RtcStateStore` instead: it keeps the state in RTC
-memory without writing flash.
+## Deep Sleep (`ENABLE_DEEP_SLEEP`)
+
+Build with `-DENABLE_DEEP_SLEEP=1` to let members deep-sleep through SLEEP runs
+of 30 s or more. They keep the mesh state in RTC memory (`RtcStateStore`) and,
+when the timer wakes them, `setup()` runs again and `Start()` resumes the
+membership without rejoining. The network manager keeps the flash store and
+never deep-sleeps.
+
+```cpp
+builder.withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep();  // power::DeepSleepPolicy defaults
+```
+
+`OnSleep` is asked for `PowerState::DEEP_SLEEP` first; returning `false` makes
+the node light-sleep instead. Long SLEEP runs need a low duty cycle (the
+default target is 1%).
 
 ## Battery Monitoring
 
