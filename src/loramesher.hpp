@@ -661,6 +661,29 @@ class LoraMesher::Builder {
     }
 
     /**
+     * @brief Let a member deep-sleep through long runs of SLEEP slots
+     *
+     * Needs a state store that allows a write before every sleep, such as
+     * an RtcStateStore set with withStateStore(). Must follow
+     * withLoRaMeshProtocol().
+     *
+     * @param policy Deep-sleep policy (enabled is forced to true)
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withDeepSleep(power::DeepSleepPolicy policy = {}) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            policy.enabled = true;
+            lora_config.setDeepSleepPolicy(policy);
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
      * @brief Configure for PingPong protocol
      * 
      * @param config The PingPong protocol configuration

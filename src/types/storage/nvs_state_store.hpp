@@ -36,6 +36,9 @@ class NvsStateStore : public IStateStore {
     std::optional<std::vector<uint8_t>> Load() override;
     void Clear() override;
 
+    /// Flash wears out: not for a save before every deep sleep
+    bool AllowsFrequentWrites() const override { return false; }
+
    private:
     std::string name_space_;
     std::string key_;

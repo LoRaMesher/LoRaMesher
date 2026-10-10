@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <thread>
@@ -463,11 +464,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Continue checking until timeout or condition is met
         while (elapsed_ms < kEffectiveTimeoutMs) {
             // Calculate time to advance in this iteration
-            uint32_t time_to_advance = kOptimalTimeStepMs;
+            const uint32_t time_to_advance = std::max<uint32_t>(
+                1, std::min(kOptimalTimeStepMs, MaxTimeStepMs()));
 
             // Advance simulation time
             time_controller_.AdvanceTime(time_to_advance);
             elapsed_ms += time_to_advance;
+            OnTimeAdvanced();
 
             // Minimal real sleep to allow tasks to execute
             if (real_sleep_ms > 0) {
@@ -482,6 +485,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
 
         return !condition;  // Timeout occurred
+    }
+
+    /**
+     * @brief Called after every AdvanceTime() step
+     *
+     * Lets a fixture act at exact virtual instants (for example power a node
+     * on), together with MaxTimeStepMs().
+     */
+    virtual void OnTimeAdvanced() {}
+
+    /**
+     * @brief Longest step AdvanceTime() may take next
+     */
+    virtual uint32_t MaxTimeStepMs() const {
+        return std::numeric_limits<uint32_t>::max();
     }
 
     /**

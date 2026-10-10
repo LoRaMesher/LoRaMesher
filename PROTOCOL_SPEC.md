@@ -1018,17 +1018,17 @@ size_t RemoveInactiveNodes(uint32_t current_time,
 - `route_timeout_ms`: Default 60,000 ms (1 minute) — marks routes inactive
 - `node_timeout_ms`: Configurable — removes nodes entirely after extended inactivity
 
-**Rotation-Aware Timeout Scaling**: When broadcast slicing is active (see §4.6), `NetworkService` scales the timeouts passed to `RemoveInactiveNodes()` so the aging window spans at least two full rotations. The configured value is the floor; small networks see no change.
+**Rotation-Aware Timeout Scaling**: `NetworkService` scales the timeouts passed to `RemoveInactiveNodes()` so the aging window spans at least three full rotations (one superframe each without broadcast slicing, see §4.6): a node that misses one routing broadcast, such as a member that resumed from deep sleep after its beacon, keeps its route. The configured value is the floor.
 
 ```
 rotation_period_ms     = ceil(N / slice_capacity) * superframe_ms
-scaled_route_timeout   = max(route_timeout_ms, 2 * rotation_period_ms)
+scaled_route_timeout   = max(route_timeout_ms, 3 * rotation_period_ms)
 scaled_node_timeout    = max(node_timeout_ms,
                              scaled_route_timeout +
                              (node_timeout_ms - route_timeout_ms))
 ```
 
-Here `N` is the current routing-table size. Dead routes are still pruned, on a timescale matched to the rotation period — at SF7–SF9 the scaling is a no-op, at SF12 it stretches with the active set.
+Here `N` is the current routing-table size. Dead routes are still pruned, on a timescale matched to the rotation period — with short superframes (SF7–SF9) the scaling is a no-op, with long ones (SF12, low duty cycles) it stretches with the superframe and the active set.
 
 **EWMA Link Quality Tracking**:
 
@@ -1981,6 +1981,8 @@ stateDiagram-v2
     [*] --> ACTIVE: System Start
     ACTIVE --> LIGHT_SLEEP: SLEEP slot (with callback)
     LIGHT_SLEEP --> ACTIVE: Active slot (TX/RX/etc.)
+    ACTIVE --> DEEP_SLEEP: Long SLEEP run (deep-sleep policy, members)
+    DEEP_SLEEP --> ACTIVE: Reboot, membership resumed
 
     note right of ACTIVE: Radio active, peripherals enabled
     note right of LIGHT_SLEEP: Radio sleep, peripherals controlled by app
@@ -1990,16 +1992,31 @@ stateDiagram-v2
 
 | Transition | Callback | When Invoked |
 |------------|----------|--------------|
-| Active → Sleep | `PrepareSleepCallback` | Beginning of SLEEP slot |
+| Active → Sleep | `PrepareSleepCallback` | First slot of a run of SLEEP slots |
 | Sleep → Active | `WakeUpCallback` | Beginning of any active slot |
 
 ##### PrepareSleepCallback
 
-Invoked before the device enters a SLEEP slot. Receives a `SleepContext` with:
-- `requested_state`: The target power state (LIGHT_SLEEP)
-- `sleep_duration_ms`: Time until next slot (slot duration)
-- `current_slot`: Current slot number in superframe
+Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside the sync and data bands, so a superframe can have several runs). If allowed, the MCU light-sleeps through the whole run; the radio sleeps in every SLEEP slot. With `T` the time until the next active slot, the MCU wakes `wake_up_guard_ms` (default 20 ms) plus the sleep-clock allowance `⌈T × ppm / 10⁶⌉` before that slot, where `ppm` is the `DeepSleepPolicy`'s `calibrated_drift_ppm` once the light-sleep clock is calibrated and `clock_drift_ppm` before (Section 5.8.4; the policy's defaults apply without deep sleep). Receives a `SleepContext` with:
+- `requested_state`: The target power state (LIGHT_SLEEP, or DEEP_SLEEP with a deep-sleep policy; after a DEEP_SLEEP veto the node may ask again for LIGHT_SLEEP)
+- `sleep_duration_ms`: Time until the next non-SLEEP slot minus the wake-up guard and the sleep-clock allowance
+- `current_slot`: First slot of the sleep
 - `has_pending_messages`: Whether TX queue has messages
+
+Runs not longer than the wake margin plus 10 ms only put the radio to sleep. On ESP32 the protocol's clock is `esp_timer` time, which the RTC sleep clock advances through light sleep, and the superframe timer recomputes its next slot boundary after every wake-up; a slot that began before it did so is handled late rather than skipped.
+
+The light sleep is timed by the RC sleep clock, which runs at another rate in light sleep than in deep sleep; each kind has its own calibration (Section 5.8.4). The node asks for the light sleep scaled by the learned light-sleep error and, after waking, removes that error from its clock. A clock correction that moves the clock back into a slot already handled neither repeats the slot nor starts a new superframe.
+
+##### Sleep Holds
+
+The MCU does not sleep, light or deep, while the node or a join it relays is not yet stable. The radio still sleeps in SLEEP slots; the clock keeps running on the crystal.
+
+| Hold | Ends |
+|------|------|
+| The node has not joined (any state other than NORMAL_OPERATION or NETWORK_MANAGER) | On joining |
+| Settling after joining | After sync beacons in 3 consecutive superframes; a missed beacon restarts the count. A resumed member is already settled |
+| A member forwarded a JOIN_REQUEST (as sponsor or on the path) or a JOIN_RESPONSE | When the joiner has an active route, or at the end of the next superframe |
+| A network manager has a pending join or a queued JOIN_RESPONSE | When the response is sent |
 
 Returns a `SleepResult`:
 - `allow_sleep`: If false, radio sleeps but device state remains ACTIVE
@@ -2007,7 +2024,7 @@ Returns a `SleepResult`:
 
 ##### WakeUpCallback
 
-Invoked when transitioning from a SLEEP slot to any active slot (TX, RX, CONTROL_*, SYNC_*, DISCOVERY_*). Receives the previous power state to allow appropriate restoration.
+Invoked when transitioning from a SLEEP slot to any active slot (TX, RX, CONTROL_*, SYNC_*, DISCOVERY_*). Receives the previous power state to allow appropriate restoration. A deep sleep ends with a reboot instead, so it is never followed by this callback.
 
 ##### Usage Example
 
@@ -2040,6 +2057,101 @@ auto mesher = LoraMesher::Builder()
 - Keep callback execution time minimal (< 5ms recommended)
 - Long operations may cause slot timing issues
 - Sleep veto still allows radio sleep for power saving
+
+#### 5.8.4 Member Deep Sleep
+
+With a `DeepSleepPolicy` (`LoRaMeshProtocolConfig::setDeepSleepPolicy()`,
+`LoraMesher::Builder::withDeepSleep()`), a member deep-sleeps through a SLEEP run and, after the
+reboot, resumes its membership without discovery or joining. Network managers never deep-sleep.
+Deep sleep needs a state store that allows a write before every sleep (`RtcStateStore`); with
+another store, or none, the node logs a warning and only light-sleeps.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `min_sleep_ms` | 30 000 | Shortest deep sleep; shorter runs light-sleep (Section 5.8.3) |
+| `boot_time_ms` | 1 200 | Time from the wake-up to the protocol running (at most 60 000) |
+| `clock_drift_ppm` | 10 000 | Worst-case error of an uncalibrated sleep clock (light and deep sleep) |
+| `calibrated_drift_ppm` | 3 000 | Worst-case error left once the sleep clock is calibrated |
+
+**Entering.** At a SLEEP slot the node takes the next active slot `S`, the time `T` until it
+starts, and the wake margin `M = boot_time_ms + wake_up_guard_ms + ⌈T × ppm / 10⁶⌉`, where `ppm`
+is `calibrated_drift_ppm` once the deep-sleep clock is calibrated (below) and `clock_drift_ppm`
+before. It deep-sleeps for `T − M` when `T − M ≥ min_sleep_ms` and:
+- from `S` to its next SYNC_BEACON_RX slot it has no TX, CONTROL_TX, SYNC_BEACON_TX or
+  DISCOVERY_TX slot, since a resumed node does not transmit before a beacon (in practice, the run
+  that ends at the discovery band before the beacon);
+- it is a member in NORMAL_OPERATION that received a sync beacon in the current superframe
+  and has not missed one. A beacon up to half a superframe before the node's own superframe
+  start belongs to the superframe that starts: a schedule slightly behind the network's hears
+  each beacon just before its own start;
+- its TX queue is empty;
+- no reliable message and no group acknowledgement window is open;
+- no sleep hold applies (Section 5.8.3).
+
+It encodes a resume snapshot, asks the `PrepareSleepCallback` with `requested_state = DEEP_SLEEP`
+(after a veto it may light-sleep instead), saves the snapshot and arms the wake-up timer for
+`T − M` scaled by the learned clock error. If the application queued a message meanwhile, it erases
+the snapshot and stays up.
+
+**Resume snapshot.** Little-endian, magic `"LMR1"`, format version 3, protected by a CRC-32, and
+embedding the warm-restart snapshot (Section 6.5.1):
+
+| Part | Size (bytes) |
+|------|--------------|
+| Magic, version, length of the embedded snapshot | 6 |
+| Warm-restart snapshot | 21 |
+| Timing: protocol clock, persistent clock (8), wake deadline, superframe start, superframes completed, slot duration (4 each), slot count (2) | 30 |
+| Membership: manager (2), beacon slot count, beacon node count, control slot, data slots, routing-table version (1 each), last sync, last sync beacon, last route cleanup (4 each), light-sleep and deep-sleep clock errors (4, signed ppm) each followed by its sample count (1), schedule offset at the last beacon (2, signed ms) | 31 |
+| Reliable group stream: started, next sequence | 2 |
+| Slot table: count (2); number (2), type (1), target (2) per slot; control slots (1), discovery slots (2), rebuild pending (1) | 6 + 5 per slot |
+| Routes: count (1); 22 per route, plus 33 of link statistics and 8 of round-trip time when they hold data | 1 + 22 to 63 per route |
+| Reliable unicast sequence streams: count (1); destination (2), next sequence (1) | 1 + 3 per stream |
+| Delivered reliable messages: count (1); source (2), kind (1), highest sequence (1), bitmap (4), last send timestamp (4) | 1 + 12 per stream |
+| Duplicate cache: count (1); source (2), sequence (1), oldest first | 1 + 3 per entry |
+| CRC-32 of all previous bytes | 4 |
+
+A member with a few neighbours saves about 300 bytes; 50 direct neighbours with their statistics
+fit in the 4 KB `RtcStateStore`. A snapshot that is truncated, fails the CRC, has another magic or
+version, or is inconsistent is rejected and the node starts cold.
+
+**Waking.** `Start()` reads the store once. From the persistent clock (`esp_rtc_get_time_us()` on
+ESP32) it takes the time slept, corrected by the learned clock error. If the node wakes at most
+one superframe after its planned wake deadline, it:
+1. continues the protocol clock from the saved value plus the time slept, so every saved timestamp
+   keeps its meaning;
+2. restores the routes with their link statistics, the membership, the sequence streams, the
+   delivered-message windows, the duplicate cache and the slot table as it was (a pending rebuild
+   runs at the next sync beacon);
+3. moves the saved superframe start forward by whole superframes to the present and resumes the
+   schedule at the next slot boundary, in NORMAL_OPERATION.
+
+Otherwise it applies the embedded warm-restart snapshot and rejoins (Section 6.5.2).
+
+**Until the first beacon** the resumed schedule is only as accurate as the sleep clock. The node
+keeps its radio receiving in every slot, SLEEP slots included, and transmits nothing; once its
+sleep clock is calibrated it serves the discovery band before the beacon as usual (receiving join
+requests, forwarding as a sponsor). `IsReadyToSend()` returns `kInvalidState` ("Waiting for a
+beacon after resuming"), so the application holds its messages. The first sync beacon in normal
+operation ends this.
+
+**Sleep clock calibration.** The RC sleep clock runs at different rates in light and in deep
+sleep, so the node keeps one estimate per kind. Light and deep sleeps since the last beacon are
+added up per kind. At the next beacon, the offset between the beacon's superframe and the node's
+own, wrapped to the nearest superframe, minus the offset the schedule already had at the last
+beacon (drifts below `guard_time / 2` are not resynchronized), is the error the sleep clock made
+over that sleep time. It is a sample of the kind that slept longer; the other kind counts as
+corrected by its own estimate. No sample is taken when a beacon was missed since the sleep, when
+the node was awake for more than half a superframe between its last sleep and the beacon (a
+resume after the beacon slot), or when less than 1 s was slept. For each kind, the first sample
+after a cold start is only counted, since the clock's error right after power-on differs from its
+steady state. The second sets the estimate (`error_ms × 10⁶ / slept_ms`, clamped
+to ±50 000 ppm). Later samples correct half of what is left up to the fourth sample, then a
+quarter, which smooths the beacon's timing noise. From three samples the clock counts as
+calibrated. Both estimates are kept in the resume snapshot and survive network resets; network
+managers hear no beacon and never calibrate.
+
+Neighbours do not see the sleep: the node misses no active slot, keeps its control slot, and its
+routing broadcasts keep listing its neighbours with their link qualities.
 
 ### 5.9 Network Manager Election Sequence
 
@@ -2580,7 +2692,9 @@ Forwarded join requests and responses are queued to DISCOVERY_TX and delivered v
 ### 6.5 Warm Restart
 
 A node can keep a small snapshot of its protocol state across a planned reset (OTA reboot, deep
-sleep) and resume in the same network instead of forming or joining a new one. The application
+sleep) and resume in the same network instead of forming or joining a new one. A member with a
+deep-sleep policy saves a resume snapshot instead and rejoins only when it cannot resume
+(Section 5.8.4). The application
 configures an `IStateStore` (`LoRaMeshProtocolConfig::setStateStore()`,
 `LoraMesher::Builder::withStateStore()`) and calls `SaveState()` right before the reset and before
 `Stop()`, which clears the network state. `Start()` reads the store once, erases it and applies the
@@ -2946,6 +3060,8 @@ Recovery flow when sync is lost:
 - **Battery-Aware Scheduling**: Dynamic slot allocation based on battery levels
 - **Network-Wide Power Optimization**: Coordinated power saving across all nodes
 - **Emergency Wake-Up Protocols**: Critical message delivery during sleep periods
+- **Measured Boot Time**: Learn each node's boot time to shorten the deep-sleep wake margin of
+  Section 5.8.4
 
 ### 10.4 Protocol Extensions
 

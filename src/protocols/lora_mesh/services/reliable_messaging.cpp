@@ -713,6 +713,68 @@ void ReliableMessaging::OnReliableOutcome(
     outcome_batch_->results[outcome_batch_->count++] = result;
 }
 
+bool ReliableMessaging::IsIdle() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (reliable_.PendingCount() != 0) {
+        return false;
+    }
+    return std::none_of(group_windows_.begin(), group_windows_.end(),
+                        [](const GroupWindow& window) { return window.valid; });
+}
+
+void ReliableMessaging::CaptureResumeState(
+    storage::ResumeSnapshot& snapshot) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    snapshot.sequence_streams.clear();
+    for (const auto& stream : seq_streams_) {
+        if (stream.valid) {
+            snapshot.sequence_streams.push_back({stream.dest, stream.next});
+        }
+    }
+    snapshot.group_next_sequence.reset();
+    if (group_stream_started_) {
+        snapshot.group_next_sequence = group_next_seq_;
+    }
+    snapshot.delivery_streams = delivery_windows_.GetStreams();
+}
+
+Result ReliableMessaging::ApplyResumeState(
+    const storage::ResumeSnapshot& snapshot) {
+    const auto& streams = snapshot.sequence_streams;
+    if (streams.size() > kMaxSeqStreams) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Too many sequence streams");
+    }
+    for (size_t i = 0; i < streams.size(); ++i) {
+        if (!IsUnicastAddress(streams[i].destination) ||
+            streams[i].destination == host_.node_address) {
+            return Result(LoraMesherErrorCode::kInvalidParameter,
+                          "Sequence stream to a non-unicast destination");
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (streams[j].destination == streams[i].destination) {
+                return Result(LoraMesherErrorCode::kInvalidParameter,
+                              "Duplicate sequence stream");
+            }
+        }
+    }
+    reliability::DeliveryWindows windows;
+    if (!windows.RestoreStreams(snapshot.delivery_streams)) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Invalid delivery windows");
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    seq_streams_.fill(SeqStream{});
+    for (size_t i = 0; i < streams.size(); ++i) {
+        seq_streams_[i] = {true, streams[i].destination, streams[i].next};
+    }
+    group_stream_started_ = snapshot.group_next_sequence.has_value();
+    group_next_seq_ = snapshot.group_next_sequence.value_or(0);
+    delivery_windows_ = windows;
+    return Result::Success();
+}
+
 void ReliableMessaging::Reset() {
     RunLocked([this]() {
         reliable_.AbortAll();

@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -55,6 +56,64 @@ enum class PowerState : uint8_t {
     ACTIVE,       ///< Full operation - all systems active (TX/RX slots)
     RADIO_SLEEP,  ///< Radio off, MCU active - used between operations
     LIGHT_SLEEP,  ///< Radio + user peripherals off, MCU maintains timing (SLEEP slots)
+    DEEP_SLEEP,  ///< MCU off until a timer wakes it; the node reboots and resumes
+};
+
+/**
+ * @brief When a member deep-sleeps through a run of SLEEP slots
+ *
+ * A member in normal operation with nothing in flight saves its state in
+ * the state store, deep-sleeps and, when it boots again, resumes its
+ * membership without rejoining. It wakes early enough to boot and to absorb
+ * the error of the sleep clock before its next active slot. Network managers
+ * never deep-sleep; runs too short for deep sleep use light sleep.
+ */
+struct DeepSleepPolicy {
+    /// Deep-sleep when the conditions allow it
+    bool enabled = false;
+    /// Shortest deep sleep worth a reboot (ms)
+    uint32_t min_sleep_ms = 30000;
+    /// Time from the wake-up to the protocol running again (ms)
+    uint32_t boot_time_ms = 1200;
+    /// Worst-case error of an uncalibrated sleep clock (parts per million).
+    /// It times both light and deep sleep.
+    uint32_t clock_drift_ppm = 10000;
+    /// Worst-case error left once the node has calibrated its sleep clock
+    uint32_t calibrated_drift_ppm = 3000;
+
+    /**
+     * @brief Worst-case error of the sleep clock over a sleep
+     *
+     * @param until_active_ms Time from now to the next active slot (ms)
+     * @param calibrated The sleep clock is calibrated
+     * @return The error, rounded up (ms)
+     */
+    uint32_t SleepClockAllowanceMs(uint32_t until_active_ms,
+                                   bool calibrated) const {
+        const uint64_t ppm =
+            calibrated ? calibrated_drift_ppm : clock_drift_ppm;
+        const uint64_t drift_ms =
+            (static_cast<uint64_t>(until_active_ms) * ppm + 999999u) / 1000000u;
+        return static_cast<uint32_t>(
+            std::min<uint64_t>(drift_ms, std::numeric_limits<uint32_t>::max()));
+    }
+
+    /**
+     * @brief How long before the next active slot the node must wake
+     *
+     * @param until_active_ms Time from now to the next active slot (ms)
+     * @param wake_up_guard_ms Time the node must be running before the slot
+     * @param calibrated The sleep clock is calibrated
+     * @return Boot time, wake-up guard and the clock error over the sleep
+     */
+    uint32_t WakeMarginMs(uint32_t until_active_ms, uint32_t wake_up_guard_ms,
+                          bool calibrated) const {
+        const uint64_t margin =
+            static_cast<uint64_t>(boot_time_ms) + wake_up_guard_ms +
+            SleepClockAllowanceMs(until_active_ms, calibrated);
+        return static_cast<uint32_t>(
+            std::min<uint64_t>(margin, std::numeric_limits<uint32_t>::max()));
+    }
 };
 
 /**
@@ -66,21 +125,26 @@ enum class PowerState : uint8_t {
  */
 struct SleepContext {
     /**
-     * @brief The power state being requested (typically LIGHT_SLEEP)
+     * @brief The power state being requested (LIGHT_SLEEP or DEEP_SLEEP)
+     *
+     * With a deep-sleep policy the callback is asked for DEEP_SLEEP first;
+     * after a veto the node may light-sleep and asks again for LIGHT_SLEEP.
+     * A deep sleep ends in a reboot, so the wake-up callback never follows it.
      */
     PowerState requested_state;
 
     /**
      * @brief How long until the next scheduled activity (ms)
      *
-     * This is the slot duration - the maximum time the device can sleep
-     * before the next slot transition. User callbacks can use this to
-     * decide whether sleep is worthwhile for short durations.
+     * The time until the next non-SLEEP slot minus the wake-up guard: the
+     * device sleeps once through a whole run of SLEEP slots. User callbacks
+     * can use this to decide whether sleep is worthwhile.
      */
     uint32_t sleep_duration_ms;
 
     /**
-     * @brief Current slot number in the superframe (0-based)
+     * @brief First slot of the sleep, as a slot number in the superframe
+     *        (0-based)
      *
      * Useful for slot-specific behavior (e.g., always stay awake on
      * certain slots for external communication).
@@ -125,9 +189,10 @@ struct SleepResult {
 /**
  * @brief Callback type for preparing to enter sleep mode
  *
- * This callback is invoked before the system enters a SLEEP slot in the
- * TDMA superframe. The user can perform device-specific power management
- * operations and optionally veto the sleep request.
+ * This callback is invoked once per run of consecutive SLEEP slots in the
+ * TDMA superframe, before the system sleeps through it. The user can perform
+ * device-specific power management operations and optionally veto the sleep
+ * request.
  *
  * @param context Information about the sleep request including duration,
  *                current slot, and pending message status
@@ -137,7 +202,9 @@ struct SleepResult {
  *        The callback runs in the protocol task context.
  * @note  Returning SleepResult{true} causes the protocol to:
  *        1. Put the radio to sleep.
- *        2. Put the MCU to light sleep until the next slot (ESP32 only).
+ *        2. Put the MCU to light sleep until shortly before the next active
+ *           slot (ESP32 only), or into deep sleep when the request is
+ *           DEEP_SLEEP.
  *        Use this callback to power down user peripherals (GPS, sensors) before sleep.
  * @note  Returning SleepResult{false} vetoes MCU sleep. The radio still sleeps for
  *        power savings, but the MCU stays running and OnWakeUp will not fire.

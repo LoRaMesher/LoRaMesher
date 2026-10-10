@@ -47,6 +47,14 @@ class IStateStore {
      * @brief Erase the stored blob
      */
     virtual void Clear() = 0;
+
+    /**
+     * @brief True if the store takes a Save() every superframe without wear
+     *
+     * Deep sleep saves the state before every sleep, so it needs such a
+     * store (RAM or RTC memory, not flash).
+     */
+    virtual bool AllowsFrequentWrites() const { return true; }
 };
 
 }  // namespace storage

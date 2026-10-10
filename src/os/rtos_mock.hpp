@@ -39,6 +39,7 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "os/rtos.hpp"
@@ -160,6 +161,7 @@ class RTOSMock : public RTOS {
             // Virtual time always starts at the same fixed epoch
             else if (mode == TimeMode::kVirtualTime &&
                      timeMode_ == TimeMode::kRealTime) {
+                ResetNodeClocks();
                 virtualTimeMs_ = kVirtualEpochMs;
                 virtualTimeMsAtomic_.store(virtualTimeMs_,
                                            std::memory_order_release);
@@ -1252,17 +1254,163 @@ class RTOSMock : public RTOS {
         unregisterWait(wait_id);
     }
 
-    void LightSleep(uint32_t ms) override { delay(ms); }
+    /**
+     * @brief Sleep @p ms as counted by the node's sleep clock
+     *
+     * With a sleep-clock error (SetSleepClockError()) less or more real time
+     * passes. The node's clock stands still during the sleep, as no task runs
+     * on a sleeping MCU, and then jumps forward by the count, as ESP32
+     * esp_timer does after a light sleep.
+     */
+    void LightSleep(uint32_t ms) override {
+        const std::string node = GetCurrentTaskNodeAddress();
+        const int32_t ppm = SleepClockErrorOfCurrentNode();
+        const auto real_ms = static_cast<uint32_t>(
+            static_cast<uint64_t>(ms) * 1000000 /
+            static_cast<uint64_t>(1000000 + static_cast<int64_t>(ppm)));
+        const uint32_t tick_before = getTickCount();
+        {
+            std::lock_guard<std::mutex> lock(node_clock_mutex_);
+            frozen_ticks_ms_[node] = tick_before;
+            has_node_tick_offsets_.store(true, std::memory_order_release);
+        }
+        delay(real_ms);
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        frozen_ticks_ms_.erase(node);
+        node_tick_offsets_ms_[node] = tick_before + ms - BaseTickCount();
+    }
+
+    /**
+     * @brief Set the error of a node's sleep clock
+     *
+     * @param node_address Node address as passed to
+     *        SetCurrentTaskNodeAddress() (e.g. "0x1001")
+     * @param ppm Error in parts per million (positive: the clock runs fast)
+     */
+    void SetSleepClockError(const std::string& node_address, int32_t ppm) {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        sleep_clock_errors_ppm_[node_address] = ppm;
+    }
+
+    /**
+     * @brief A node's request to deep-sleep, recorded by DeepSleep()
+     */
+    struct DeepSleepRequest {
+        std::string node_address;  ///< Node that asked to sleep
+        uint64_t wake_at_ms;       ///< Virtual time at which it wakes up
+    };
+
+    /**
+     * @brief Record a deep-sleep request and park the calling task
+     *
+     * The task never returns, like a real deep sleep: it stays parked until
+     * the test powers the node off (deleting the task ends the park).
+     * TakeDeepSleepRequests() hands the request to the test.
+     */
+    void DeepSleep(uint32_t ms) override {
+        {
+            std::lock_guard<std::mutex> lock(node_clock_mutex_);
+            deep_sleep_requests_.push_back(
+                {GetCurrentTaskNodeAddress(), getVirtualTime() + ms});
+        }
+        while (true) {
+            delay(kDeepSleepParkMs);
+        }
+    }
+
+    /**
+     * @brief Hand over the deep-sleep requests recorded since the last call
+     */
+    std::vector<DeepSleepRequest> TakeDeepSleepRequests() {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        return std::exchange(deep_sleep_requests_, {});
+    }
+
+    /**
+     * @brief Persistent clock: virtual time plus the node's clock offset
+     */
+    uint64_t GetPersistentTimeUs() override {
+        const uint64_t time_us =
+            static_cast<uint64_t>(BaseTickCount()) * 1000ULL;
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        auto it =
+            persistent_clock_offsets_us_.find(GetCurrentTaskNodeAddress());
+        return it == persistent_clock_offsets_us_.end()
+                   ? time_us
+                   : time_us + static_cast<uint64_t>(it->second);
+    }
+
+    /**
+     * @brief Shift a node's persistent clock, emulating RTC clock error
+     *
+     * @param node_address Node address as passed to
+     *        SetCurrentTaskNodeAddress() (e.g. "0x1001")
+     * @param offset_us Offset added to the node's persistent clock
+     */
+    void SetPersistentClockOffset(const std::string& node_address,
+                                  int64_t offset_us) {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        persistent_clock_offsets_us_[node_address] = offset_us;
+    }
+
+    void ContinueTickCountFrom(uint32_t tick_ms) override {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        node_tick_offsets_ms_[GetCurrentTaskNodeAddress()] =
+            tick_ms - BaseTickCount();
+        has_node_tick_offsets_.store(true, std::memory_order_release);
+    }
+
+    /**
+     * @brief Forget every node's clock offsets and deep-sleep requests
+     */
+    void ResetNodeClocks() {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        deep_sleep_requests_.clear();
+        persistent_clock_offsets_us_.clear();
+        node_tick_offsets_ms_.clear();
+        frozen_ticks_ms_.clear();
+        sleep_clock_errors_ppm_.clear();
+        has_node_tick_offsets_.store(false, std::memory_order_release);
+    }
+
+    /**
+     * @brief Forget a node's tick offset, as when it powers off
+     */
+    void ResetNodeTickCount(const std::string& node_address) {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        node_tick_offsets_ms_.erase(node_address);
+        frozen_ticks_ms_.erase(node_address);
+    }
 
     /**
      * @brief Gets the current tick count (time)
      * 
      * In real-time mode, returns actual system time
-     * In virtual time mode, returns the virtual time counter
+     * In virtual time mode, returns the virtual time counter, plus the
+     * calling node's offset after ContinueTickCountFrom(); it stands still
+     * while the node light-sleeps
      * 
      * @return Current time in milliseconds
      */
     uint32_t getTickCount() override {
+        const uint32_t base = BaseTickCount();
+        if (!has_node_tick_offsets_.load(std::memory_order_acquire)) {
+            return base;
+        }
+        const std::string node = GetCurrentTaskNodeAddress();
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        if (auto frozen = frozen_ticks_ms_.find(node);
+            frozen != frozen_ticks_ms_.end()) {
+            return frozen->second;
+        }
+        auto it = node_tick_offsets_ms_.find(node);
+        return it == node_tick_offsets_ms_.end() ? base : base + it->second;
+    }
+
+    /**
+     * @brief Time shared by every node: real or virtual time in milliseconds
+     */
+    uint32_t BaseTickCount() {
         if (timeMode_ == TimeMode::kRealTime) {
             // In real-time mode, use actual system time
             auto now = std::chrono::steady_clock::now();
@@ -2647,6 +2795,26 @@ class RTOSMock : public RTOS {
         0};  ///< Atomic mirror of virtualTimeMs_ for lock-free reads
     mutable std::mutex
         timeMutex_;  ///< Mutex protecting time-related operations
+
+    // Per-node clocks and deep sleep (guarded by node_clock_mutex_)
+    /// Delay a deep-sleeping task waits in, until the test powers it off
+    static constexpr uint32_t kDeepSleepParkMs = 60'000;
+    std::mutex node_clock_mutex_;
+    std::vector<DeepSleepRequest> deep_sleep_requests_;
+    std::map<std::string, int64_t> persistent_clock_offsets_us_;
+    std::map<std::string, uint32_t> node_tick_offsets_ms_;
+    /// Clock of each light-sleeping node, which stands still
+    std::map<std::string, uint32_t> frozen_ticks_ms_;
+    std::map<std::string, int32_t> sleep_clock_errors_ppm_;
+
+    int32_t SleepClockErrorOfCurrentNode() {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        auto it = sleep_clock_errors_ppm_.find(GetCurrentTaskNodeAddress());
+        return it == sleep_clock_errors_ppm_.end() ? 0 : it->second;
+    }
+
+    /// Fast path of getTickCount() while no node has a tick offset or sleeps
+    std::atomic<bool> has_node_tick_offsets_{false};
 
     std::map<uint64_t, Waiter> waiters_;  ///< Virtual-time waits by id
     uint64_t next_wait_id_ = 0;

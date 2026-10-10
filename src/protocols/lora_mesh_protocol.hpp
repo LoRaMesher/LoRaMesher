@@ -210,7 +210,10 @@ class LoRaMeshProtocol : public Protocol {
      *
      * Returns Success when the protocol is in NORMAL_OPERATION or
      * NETWORK_MANAGER, both network and superframe services are
-     * synchronized, and at least one TX data slot is allocated. Returns a
+     * synchronized, a member that resumed from deep sleep has heard a beacon
+     * since, at least one TX data slot is allocated, and the TX queue holds
+     * fewer messages than the node's data slots carry in a superframe
+     * (kQueueFull otherwise). Returns a
      * specific error code identifying the first failed condition otherwise.
      *
      * @return Result Success if a Send() / SendBroadcast() call is expected
@@ -481,6 +484,55 @@ class LoRaMeshProtocol : public Protocol {
     void OnStateChange(lora_mesh::INetworkService::ProtocolState new_state);
 
     /**
+     * @brief Next slot after the current one that is not SLEEP
+     *
+     * SLEEP slots are not always contiguous (the sync and data bands contain
+     * some), so this scans the slot table from the current slot.
+     *
+     * @return The slot number, or the superframe's slot count (the start of
+     *         the next superframe) when no active slot follows
+     */
+    uint16_t GetNextActiveSlot();
+
+    /**
+     * @brief Time from now until @p slot of the current superframe starts
+     *
+     * @return Milliseconds until the slot starts (0 if overdue)
+     */
+    uint32_t GetTimeUntilSlot(uint16_t slot);
+
+    /**
+     * @brief True if the node only listens from @p slot until it receives its
+     *        sync beacon
+     *
+     * A node resumed from deep sleep may not transmit before a beacon has
+     * confirmed its schedule, so it only deep-sleeps through a run that
+     * leads to the beacon without a transmit slot in between.
+     *
+     * @param slot First slot after the sleep (may be the slot count)
+     */
+    bool ListensUntilSyncBeacon(uint16_t slot);
+
+    /**
+     * @brief Put the radio and, when power management is active, the MCU to
+     *        sleep for the rest of the current run of SLEEP slots
+     */
+    void SleepThroughSleepRun();
+
+    /**
+     * @brief Deep-sleep through the rest of the SLEEP run if the policy allows
+     *
+     * A member with nothing in flight saves its resume snapshot and
+     * deep-sleeps until shortly before the next active slot; on hardware the
+     * call does not return.
+     *
+     * @param until_active_ms Time from now to the next active slot
+     * @param next_active_slot Next active slot (see GetNextActiveSlot())
+     * @return false if the node stays up
+     */
+    bool TryDeepSleep(uint32_t until_active_ms, uint16_t next_active_slot);
+
+    /**
      * @brief Process messages for current slot type
      * 
      * @param slot_type Type of current slot
@@ -530,14 +582,43 @@ class LoRaMeshProtocol : public Protocol {
      */
     Result StartDiscovery();
 
+    /// How Start() brings the node up
+    enum class StartMode : uint8_t {
+        kCold,         ///< Discover or form a network
+        kWarmRestart,  ///< Discover with the restored warm-restart state
+        kResumed,      ///< Membership resumed after a deep sleep
+    };
+
     /**
-     * @brief Restore the snapshot saved by SaveState(), if any
+     * @brief Restore the state saved before a reset, if any
      *
      * Reads the state store once and erases it, so a snapshot is never
-     * applied twice. A missing, corrupted or foreign snapshot leaves the node
-     * to start cold.
+     * applied twice. A member woken from deep sleep in time resumes its
+     * membership; otherwise the snapshot's warm-restart state applies. A
+     * missing, corrupted or foreign snapshot leaves the node to start cold.
+     *
+     * @return How Start() continues
      */
-    void RestoreState();
+    StartMode RestoreState();
+
+    /**
+     * @brief Apply a warm-restart snapshot
+     *
+     * @return kWarmRestart, or kCold if the snapshot does not apply
+     */
+    StartMode ApplyWarmRestart(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Resume the membership saved before a deep sleep
+     *
+     * Continues the protocol clock from the persistent clock, restores the
+     * network state and resumes the superframe schedule.
+     *
+     * @param snapshot Snapshot saved before the deep sleep
+     * @return true if resumed; false if the node woke too late or the
+     *         snapshot does not apply
+     */
+    bool ResumeAfterDeepSleep(const storage::ResumeSnapshot& snapshot);
 
     /**
      * @brief Adds a routing table message into the queue service if it does not exist
@@ -590,6 +671,8 @@ class LoRaMeshProtocol : public Protocol {
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;
     power::PowerState current_power_state_ = power::PowerState::ACTIVE;
+    /// Last reason logged for keeping the MCU awake (nullptr: none)
+    const char* logged_sleep_hold_ = nullptr;
 
     // Subslot scheduling state
     bool in_subslotted_slot_ =
@@ -615,6 +698,8 @@ class LoRaMeshProtocol : public Protocol {
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
         16;  ///< Protocol notification queue size
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS = 100;
+    /// Shortest MCU light sleep worth entering (ms)
+    static constexpr uint32_t kMinLightSleepMs = 10;
     static constexpr uint32_t DEFAULT_HELLO_INTERVAL_MS = 60000;
 };
 

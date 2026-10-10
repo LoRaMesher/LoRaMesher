@@ -39,6 +39,7 @@
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/storage/network_snapshot.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
@@ -73,6 +74,10 @@ static constexpr uint32_t kElectionListenSuperframesPerHop = 4;
 
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
+
+/// Routing-broadcast rotations a route may go unheard before it expires:
+/// one missed broadcast, plus a rotation of slack for the cleanup's timing
+static constexpr uint32_t kRouteAgingRotations = 3;
 
 /**
  * @brief Unified implementation of network service
@@ -330,6 +335,106 @@ class NetworkService : public INetworkService {
      * @return Success, or kInvalidParameter if it was taken by another node
      */
     Result ApplySnapshot(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Capture the state a member needs to resume after a deep sleep
+     *
+     * Fills every part of the snapshot but the timing, which belongs to the
+     * caller. Call from the protocol task.
+     *
+     * @return The snapshot, or std::nullopt when the node is not a member in
+     *         normal operation
+     */
+    std::optional<storage::ResumeSnapshot> CaptureResumeSnapshot() const;
+
+    /**
+     * @brief Resume the membership saved by CaptureResumeSnapshot()
+     *
+     * Restores the routes, the membership, the message sequences and the
+     * slot table, and enters normal operation. Call after Configure() instead
+     * of StartDiscovery(); the caller then resumes the superframe schedule.
+     *
+     * @param snapshot Snapshot taken by this node before it slept
+     * @return Success, or kInvalidParameter (nothing restored) if the
+     *         snapshot is invalid, was taken by another node or the node is
+     *         configured as network manager
+     */
+    Result ApplyResumeSnapshot(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief Reason the node cannot deep-sleep and resume now
+     *
+     * A node may only resume a state that needs nothing from the network
+     * while it sleeps: a member in normal operation, in sync, with no
+     * reliable message in flight.
+     *
+     * @return The reason, or nullptr if the node may deep-sleep
+     */
+    const char* GetDeepSleepBlocker() const;
+
+    /**
+     * @brief True if a sync beacon arrived in the current superframe
+     *
+     * A beacon up to half a superframe before the node's own superframe
+     * start counts, so a clock slightly ahead of the network's still counts
+     * the beacon it just synchronized to.
+     */
+    bool HeardSyncBeaconThisSuperframe() const;
+
+    /**
+     * @brief True if a sync beacon arrived within the last @p window_ms
+     */
+    bool ReceivedSyncBeaconWithin(uint32_t window_ms) const;
+
+    /**
+     * @brief Reason the MCU must stay awake now, if any
+     *
+     * Sleep makes the clock drift, so the node stays awake while it, or a
+     * join it relays, depends on precise timing: until it has joined and
+     * heard beacons in kSettleSuperframes consecutive superframes, while it
+     * relays a join request or response (until the joiner is reachable or
+     * the superframe after the relay ends), and, as manager, while it answers
+     * a join. The radio still sleeps in SLEEP slots.
+     *
+     * @return The reason, or nullptr if the MCU may sleep
+     */
+    const char* GetSleepHold() const;
+
+    /**
+     * @brief True from a resume until a sync beacon confirms the schedule
+     *
+     * The resumed schedule is only as accurate as the sleep clock, so the
+     * node listens instead of transmitting until then.
+     */
+    bool IsAwaitingResync() const {
+        return awaiting_resync_ && state_ == ProtocolState::NORMAL_OPERATION;
+    }
+
+    /**
+     * @brief Learned error of the sleep clock in @p kind sleep
+     */
+    power::SleepClockCalibration GetSleepClockCalibration(
+        power::SleepKind kind) const {
+        return kind == power::SleepKind::LIGHT ? light_sleep_clock_
+                                               : deep_sleep_clock_;
+    }
+
+    /**
+     * @brief Count a sleep that just ended towards the next calibration
+     *        sample
+     *
+     * At the next sync beacon, the drift the schedule gained since the
+     * previous beacon is the error the sleep clock made over all sleeps in
+     * between (the node runs on its crystal while awake). It calibrates the
+     * kind of sleep that took longer; the other kind counts as corrected by
+     * its own estimate. No sample is taken
+     * if a beacon was missed in between, or if the node was awake for more
+     * than half a superframe before the beacon.
+     *
+     * @param kind Kind of the sleep
+     * @param slept_ms Corrected length of the sleep
+     */
+    void RecordSleepForCalibration(power::SleepKind kind, uint32_t slept_ms);
 
     /**
      * @brief Identifier of the network this node belongs to (0 = none)
@@ -1539,6 +1644,39 @@ class NetworkService : public INetworkService {
     std::optional<uint32_t> manager_resume_deadline_ms_;
     /// Extra discovery time of a warm-restarted member (first discovery only)
     uint32_t warm_discovery_extension_ms_ = 0;
+    /// Resumed after a deep sleep and no sync beacon heard since
+    std::atomic<bool> awaiting_resync_{false};
+    /// Consecutive superframes with a sync beacon a member needs after joining
+    /// before it sleeps
+    static constexpr uint8_t kSettleSuperframes = 3;
+    /// Consecutive superframes with a sync beacon since joining (saturating)
+    uint8_t settled_superframes_ = 0;
+    /// Joiner whose join this node relays (0 = none)
+    AddressType relayed_joiner_ = 0;
+    /// Tick count when the hold for a relayed join ends
+    uint32_t relay_hold_until_ms_ = 0;
+
+    /// Hold sleep while the join of @p joiner is relayed
+    void HoldSleepForRelayedJoin(AddressType joiner);
+    /// Learned errors of the sleep clock (kept across network resets)
+    power::SleepClockCalibration light_sleep_clock_;
+    power::SleepClockCalibration deep_sleep_clock_;
+
+    /// Sleeps since the last sync beacon, for the next calibration sample
+    struct SleepTally {
+        uint32_t light_ms = 0;    ///< Time in light sleep
+        uint32_t deep_ms = 0;     ///< Time in deep sleep
+        uint32_t woke_at_ms = 0;  ///< Tick count at the end of the last sleep
+    };
+
+    SleepTally sleep_tally_;
+    /// How far ahead of the network the schedule was left at the last beacon
+    /// (drifts below the resync threshold are not corrected)
+    int32_t schedule_offset_ms_ = 0;
+
+    /// Fold the drift seen at a beacon into the sleep-clock calibration
+    /// when the node slept since the previous beacon
+    void RecordSleepClockDrift(int32_t drift_ms);
 
     /**
      * @brief Control slot a warm-restarted manager holds for a member

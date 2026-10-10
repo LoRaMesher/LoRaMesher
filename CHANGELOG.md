@@ -45,6 +45,33 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   restarted manager resumes its network under the same id and hands members
   their old control slots; see `PROTOCOL_SPEC.md` §6.5.
 - `LoraMesher::GetNetworkId()`.
+- Member deep sleep without rejoining: with `Builder::withDeepSleep()` and an
+  `RtcStateStore`, a member deep-sleeps through long SLEEP runs and, after the
+  reboot, resumes its membership (routes with link statistics, control slot,
+  slot table, message sequences and duplicate state) without discovery or
+  joining; a late wake-up falls back to a warm restart. See
+  `PROTOCOL_SPEC.md` §5.8.4. `RtcStateStore` holds 4 KB, and the battery
+  example has an `ENABLE_DEEP_SLEEP` option. A resumed member listens without
+  transmitting until a beacon confirms its schedule, and `IsReadyToSend()`
+  fails until then.
+- Sleep-clock calibration: members learn the error of their RTC sleep clock
+  from the beacons after light and deep sleeps, and correct both. Light sleep
+  wakes early enough for the clock's worst-case error
+  (`DeepSleepPolicy::clock_drift_ppm` / `calibrated_drift_ppm`).
+- Light and deep sleep are calibrated separately: the RC sleep clock runs at
+  different rates in the two, and each has its own estimate in the resume
+  snapshot (format v3). No calibration sample is taken when the node was
+  awake for more than half a superframe before the beacon.
+- `DeepSleepPolicy::calibrated_drift_ppm` defaults to 3000.
+- A beacon that arrives up to half a superframe before the node's own
+  superframe start counts for the superframe that starts, so a schedule
+  slightly behind the network's no longer counts missed beacons.
+- Route aging spans at least three routing-broadcast rotations, so with long
+  superframes a member that misses one broadcast (a late deep-sleep resume)
+  keeps its route and its data slots in the manager's table.
+- Nodes do not sleep the MCU before they have joined and settled (three
+  consecutive beacons), while they relay a join, or, as manager, while a join
+  is pending.
 - Node reboot test suite (`test_node_reboot`): power-cycles nodes of
   simulated line, star and mesh networks, alone or all together, warm and
   cold.
@@ -93,6 +120,23 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
+  `wake_up_guard_ms` before the next active slot, instead of waking at every
+  slot boundary and staying awake for the guard. `PrepareSleepCallback` runs
+  once per run, and `SleepContext::sleep_duration_ms` is the length of the
+  whole sleep. The default wake-up guard is 20 ms (was 100 ms).
+- ESP32: protocol time comes from `esp_timer`, which keeps counting during
+  light sleep; the FreeRTOS tick count it used before stood still while the
+  MCU slept, so slot timing fell behind after every sleep.
+- A slot that began before the superframe timer learned of a wake-up is
+  handled late instead of skipped; the first active slot after a light sleep
+  (often a join or data slot) was lost whenever waking took longer than the
+  wake-up guard.
+- Join responses carry the network id; they carried the manager's address.
+- Synchronization drift is reported relative to the nearest superframe.
+- `battery_optimized_example`: the LoRa power rail stays on during sleep (the
+  radio lost its configuration when it was cut), the wake-up callback no
+  longer re-creates the PMU driver, and the CPU runs at 80 MHz.
 - NM election: the election backoff spans at least two superframes (four more
   per extra hop to the manager), so a manager that resets is heard again
   before a successor is elected when superframes are longer than the old

@@ -297,6 +297,57 @@ Members wait at least two superframes after losing the manager's beacons before 
 successor, so a short reboot of the manager does not hand its role to another node. Routes,
 timing and slot tables are learned again after every restart. See `PROTOCOL_SPEC.md` §6.5.
 
+#### Deep sleep without rejoining
+
+Members can deep-sleep through the long SLEEP run of each superframe and resume their place in the
+mesh when they wake, without discovery or joining. The node saves its routes, link statistics,
+slot table and message sequences (a few hundred bytes) in RTC memory before every sleep, and wakes
+early enough to boot before its next active slot:
+
+```cpp
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    .withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep()  // or withDeepSleep(policy) to tune it
+    .Build();
+mesher->Start();  // after a deep sleep: resumes the membership
+```
+
+| `power::DeepSleepPolicy` field | Default | Meaning |
+|---|---|---|
+| `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
+| `boot_time_ms` | 1200 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms, 900 ms at DEBUG) |
+| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
+| `calibrated_drift_ppm` | 3000 | Worst-case error once the node has calibrated its sleep clock |
+
+- Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
+  awake or light-sleeps.
+- The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
+  light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
+  callback.
+- Deep sleep needs `RtcStateStore`: it is written before every sleep, so with `NvsStateStore`
+  (flash) the node logs a warning and only light-sleeps.
+- The node deep-sleeps through the SLEEP run that leads to its next beacon (usually the long run
+  before the discovery band at the end of the superframe), so it is awake for the discovery band.
+  After waking it listens, without transmitting, until a beacon confirms its schedule;
+  `IsReadyToSend()` fails meanwhile, so check it before queueing messages.
+- A message queued after the node's data slots of a superframe keeps it from deep-sleeping
+  (it light-sleeps until the message is sent). Send right after the node becomes ready, as
+  `examples/battery_optimized_example` does; `IsReadyToSend()` returns `kQueueFull` once the queue
+  holds what the node's data slots carry in a superframe.
+- Light and deep sleep run on the RTC clock, at different rates: the node learns the error of each
+  from the beacons and corrects both kinds of sleep.
+- Nodes stay awake (the radio still sleeps) until they have joined and heard three beacons in a
+  row, while they relay a join, and, for the manager, until it answers a join.
+- Set `boot_time_ms` to cover everything from the wake-up to `Start()`, your application's set-up
+  included; a node that starts late misses its first slots, and the messages sent to it in them.
+  One that wakes more than a superframe late rejoins through a warm restart.
+- Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
+  already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
+  `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).
+
 ### Diagnostics & Advanced
 
 The methods below are public on `LoraMesher` and useful once the basic flow is working.
@@ -325,7 +376,9 @@ NetworkStatus status = mesher->GetNetworkStatus();
 
 ```cpp
 if (Result r = mesher->IsReadyToSend(); !r) {
-    // Not synchronized, no TX slot allocated, or wrong protocol state.
+    // Not synchronized, no TX slot allocated, wrong protocol state,
+    // waiting for a beacon after a deep-sleep resume, or (kQueueFull) the
+    // queue already holds what the node's data slots carry in a superframe.
 }
 if (Result r = mesher->IsReadyToSend(dst); !r) {
     // Same checks plus self-send rejection and route lookup.

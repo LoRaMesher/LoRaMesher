@@ -15,6 +15,7 @@
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
 #include "types/configurations/protocol_configuration.hpp"
+#include "types/storage/resume_snapshot_codec.hpp"
 #include "utils/time_utils.hpp"
 
 namespace {
@@ -292,7 +293,8 @@ size_t NetworkService::RemoveInactiveNodes() {
 
     // Scale aging timeouts to the rotation period so a node whose
     // route appears in a sliced broadcast every ceil(N/k) superframes
-    // is not pruned by a single missed cycle. Margin = 2 full rotations.
+    // is not pruned by a single missed cycle, however late in its
+    // superframe the cleanup runs.
     const size_t rotation_steps = ComputeRotationSteps();
     const uint32_t superframe_ms =
         superframe_service_ ? superframe_service_->GetSuperframeDuration()
@@ -300,8 +302,8 @@ size_t NetworkService::RemoveInactiveNodes() {
     const uint32_t rotation_period_ms =
         static_cast<uint32_t>(rotation_steps) * superframe_ms;
 
-    const uint32_t scaled_route_timeout =
-        std::max<uint32_t>(config_.route_timeout_ms, 2u * rotation_period_ms);
+    const uint32_t scaled_route_timeout = std::max<uint32_t>(
+        config_.route_timeout_ms, kRouteAgingRotations * rotation_period_ms);
     const uint32_t node_grace_ms =
         (config_.node_timeout_ms > config_.route_timeout_ms)
             ? (config_.node_timeout_ms - config_.route_timeout_ms)
@@ -780,6 +782,237 @@ Result NetworkService::ApplySnapshot(const storage::NetworkSnapshot& snapshot) {
             warm_discovery_extension_ms_, snapshot.network_id);
     }
     return Result::Success();
+}
+
+std::optional<storage::ResumeSnapshot> NetworkService::CaptureResumeSnapshot()
+    const {
+    const AddressType manager = network_manager_;
+    if (state_ != ProtocolState::NORMAL_OPERATION || manager == 0 ||
+        manager == node_address_) {
+        return std::nullopt;
+    }
+
+    storage::ResumeSnapshot snapshot;
+    snapshot.network = CaptureSnapshot();
+
+    storage::MemberState& member = snapshot.member;
+    member.network_manager = manager;
+    member.slots_per_superframe = number_of_slots_per_superframe_;
+    member.beacon_node_count = beacon_node_count_;
+    member.control_slot_index = my_control_slot_index_;
+    member.allocated_data_slots = local_allocated_data_slots_;
+    member.table_version = table_version_;
+    member.last_sync_time_ms = last_sync_time_;
+    member.last_sync_beacon_ms = last_sync_beacon_received_;
+    member.last_route_cleanup_ms = last_cleanup_time_;
+    member.light_sleep_clock = light_sleep_clock_;
+    member.deep_sleep_clock = deep_sleep_clock_;
+    member.schedule_offset_ms = static_cast<int16_t>(
+        std::clamp<int32_t>(schedule_offset_ms_, INT16_MIN, INT16_MAX));
+
+    snapshot.schedule = slot_scheduler_->GetSchedule();
+    routing_table_->ForEachNode(
+        [&](const NetworkNodeRoute& node) { snapshot.routes.push_back(node); });
+    reliable_messaging_->CaptureResumeState(snapshot);
+    snapshot.seen_messages = message_cache_.GetSeenMessages();
+    return snapshot;
+}
+
+Result NetworkService::ApplyResumeSnapshot(
+    const storage::ResumeSnapshot& snapshot) {
+    if (snapshot.network.node_address != node_address_) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Snapshot was taken by another node");
+    }
+    if (node_role_ == NodeRole::NETWORK_MANAGER) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "A network manager does not resume as a member");
+    }
+    if (!storage::ResumeSnapshotCodec::IsValid(snapshot) ||
+        snapshot.routes.size() > config_.max_network_nodes) {
+        return Result(LoraMesherErrorCode::kInvalidParameter,
+                      "Invalid resume snapshot");
+    }
+    Result result = reliable_messaging_->ApplyResumeState(snapshot);
+    if (!result) {
+        return result;
+    }
+    message_cache_.RestoreSeenMessages(snapshot.seen_messages);
+    message_cache_.RestoreLastSeq(snapshot.network.last_sequence);
+
+    const storage::MemberState& member = snapshot.member;
+    {
+        std::lock_guard<std::mutex> lock(network_mutex_);
+        network_id_ = snapshot.network.network_id;
+        network_manager_ = member.network_manager;
+        network_found_ = true;
+        network_creator_ = false;
+        is_synchronized_ = true;
+        selected_sponsor_ = 0;
+        current_network_depth_ = snapshot.network.network_depth;
+        number_of_slots_per_superframe_ = member.slots_per_superframe;
+        beacon_node_count_ = member.beacon_node_count;
+        my_control_slot_index_ = member.control_slot_index;
+        local_allocated_data_slots_ = member.allocated_data_slots;
+        table_version_ = member.table_version;
+        last_sync_time_ = member.last_sync_time_ms;
+        last_sync_beacon_received_ = member.last_sync_beacon_ms;
+        last_cleanup_time_ = member.last_route_cleanup_ms;
+        light_sleep_clock_ = member.light_sleep_clock;
+        deep_sleep_clock_ = member.deep_sleep_clock;
+        schedule_offset_ms_ = member.schedule_offset_ms;
+        no_received_sync_beacon_count_ = 0;
+        pending_slot_table_rebuild_ = false;
+
+        routing_table_->Clear();
+        for (const auto& route : snapshot.routes) {
+            routing_table_->AddNode(route);
+        }
+    }
+    ResetJoinRetryState();
+
+    result = superframe_service_->UpdateSuperframeConfig(
+        snapshot.timing.total_slots, snapshot.timing.slot_duration_ms, false);
+    if (!result) {
+        return result;
+    }
+    // The node follows the schedule it slept with; a change it was waiting
+    // for is applied at the next rebuild, as if it had not slept
+    slot_scheduler_->RestoreSchedule(snapshot.schedule);
+    awaiting_resync_ = true;
+    // Only a settled member deep-sleeps
+    settled_superframes_ = kSettleSuperframes;
+    SetState(ProtocolState::NORMAL_OPERATION);
+    LOG_INFO(
+        "Resumed membership of network 0x%04X: manager 0x%04X, control slot "
+        "%u, %zu routes",
+        snapshot.network.network_id, member.network_manager,
+        member.control_slot_index, snapshot.routes.size());
+    return Result::Success();
+}
+
+const char* NetworkService::GetDeepSleepBlocker() const {
+    if (state_ != ProtocolState::NORMAL_OPERATION) {
+        return "not in normal operation";
+    }
+    const AddressType manager = network_manager_;
+    if (manager == 0 || manager == node_address_) {
+        return "not a member";
+    }
+    if (const char* hold = GetSleepHold()) {
+        return hold;
+    }
+    if (no_received_sync_beacon_count_ != 0) {
+        return "missed sync beacons";
+    }
+    if (!HeardSyncBeaconThisSuperframe()) {
+        return "no sync beacon in this superframe";
+    }
+    if (!reliable_messaging_->IsIdle()) {
+        return "reliable messages in flight";
+    }
+    return nullptr;
+}
+
+void NetworkService::RecordSleepForCalibration(power::SleepKind kind,
+                                               uint32_t slept_ms) {
+    if (kind == power::SleepKind::LIGHT) {
+        sleep_tally_.light_ms += slept_ms;
+    } else {
+        sleep_tally_.deep_ms += slept_ms;
+    }
+    sleep_tally_.woke_at_ms = GetRTOS().getTickCount();
+}
+
+void NetworkService::RecordSleepClockDrift(int32_t drift_ms) {
+    const SleepTally tally = std::exchange(sleep_tally_, {});
+    const uint32_t slept_ms = tally.light_ms + tally.deep_ms;
+    if (slept_ms == 0) {
+        return;
+    }
+    // A missed beacon, or a long time awake, puts the network's own drift
+    // into what the schedule moved
+    if (no_received_sync_beacon_count_ > 1) {
+        LOG_DEBUG(
+            "Sleep clock: no sample, a beacon was missed since the sleep");
+        return;
+    }
+    const uint32_t awake_ms = GetRTOS().getTickCount() - tally.woke_at_ms;
+    if (superframe_service_ &&
+        awake_ms > superframe_service_->GetSuperframeDuration() / 2) {
+        LOG_DEBUG("Sleep clock: no sample, awake %u ms since the sleep",
+                  awake_ms);
+        return;
+    }
+    // The kind that slept longer takes the sample; the other one is taken as
+    // corrected by its own estimate
+    const bool light = tally.light_ms >= tally.deep_ms;
+    power::SleepClockCalibration& clock =
+        light ? light_sleep_clock_ : deep_sleep_clock_;
+    const uint32_t sampled_ms = light ? tally.light_ms : tally.deep_ms;
+    // Only what the schedule moved since the last beacon is the clock's error
+    const int32_t sleep_error_ms = drift_ms - schedule_offset_ms_;
+    clock.AddSample(sleep_error_ms, sampled_ms);
+    LOG_INFO(
+        "Sleep clock: %d ms off after %u ms of %s sleep, error now %d ppm (%u "
+        "samples)",
+        sleep_error_ms, sampled_ms, light ? "light" : "deep", clock.GetPpm(),
+        clock.GetSamples());
+}
+
+const char* NetworkService::GetSleepHold() const {
+    const ProtocolState state = state_;
+    if (state == ProtocolState::NETWORK_MANAGER) {
+        if (!pending_joins_.empty() ||
+            message_queue_service_->HasMessage(MessageType::JOIN_RESPONSE)) {
+            return "answering a join";
+        }
+        return nullptr;
+    }
+    if (state != ProtocolState::NORMAL_OPERATION) {
+        return "not joined";
+    }
+    if (settled_superframes_ < kSettleSuperframes) {
+        return "settling after joining";
+    }
+    if (relayed_joiner_ != 0 &&
+        !utils::TimeReached(GetRTOS().getTickCount(), relay_hold_until_ms_)) {
+        const auto joiner = routing_table_->FindNode(relayed_joiner_);
+        if (!joiner || !joiner->is_active) {
+            return "relaying a join";
+        }
+    }
+    return nullptr;
+}
+
+void NetworkService::HoldSleepForRelayedJoin(AddressType joiner) {
+    // The rest of this superframe and the next one: the response and one
+    // retry of the joiner
+    const uint32_t superframe_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
+    const uint32_t superframe_start =
+        GetRTOS().getTickCount() -
+        (superframe_service_
+             ? superframe_service_->GetTimeSinceSuperframeStart()
+             : 0);
+    relayed_joiner_ = joiner;
+    relay_hold_until_ms_ = superframe_start + 2 * superframe_ms;
+}
+
+bool NetworkService::HeardSyncBeaconThisSuperframe() const {
+    if (!superframe_service_) {
+        return false;
+    }
+    return ReceivedSyncBeaconWithin(
+        superframe_service_->GetTimeSinceSuperframeStart() +
+        superframe_service_->GetSuperframeDuration() / 2);
+}
+
+bool NetworkService::ReceivedSyncBeaconWithin(uint32_t window_ms) const {
+    if (last_sync_beacon_received_ == 0) {
+        return false;
+    }
+    return GetRTOS().getTickCount() - last_sync_beacon_received_ <= window_ms;
 }
 
 uint32_t NetworkService::GetManagerResumeDelayRemaining() const {
@@ -1320,28 +1553,37 @@ Result NetworkService::PerformTimingSynchronization(
         (total_slots == number_of_slots_per_superframe_) &&
         (slot_duration == superframe_service_->GetSlotDuration());
 
-    if (superframe_service_->IsSynchronized() && config_unchanged) {
-        uint32_t current_time_check = GetRTOS().getTickCount();
-        uint32_t current_sf_start =
-            current_time_check -
+    // Offset of the network's superframe from this node's, wrapped to the
+    // nearest superframe (positive: this node is ahead)
+    std::optional<int32_t> drift;
+    if (superframe_service_->IsSynchronized()) {
+        const uint32_t current_sf_start =
+            GetRTOS().getTickCount() -
             superframe_service_->GetTimeSinceSuperframeStart();
-        int32_t drift =
-            static_cast<int32_t>(estimated_nm_time - current_sf_start);
-        uint32_t abs_drift = static_cast<uint32_t>(std::abs(drift));
+        drift = utils::WrapToPeriod(
+            static_cast<int32_t>(estimated_nm_time - current_sf_start),
+            superframe_service_->GetSuperframeDuration());
+        RecordSleepClockDrift(*drift);
+    }
+
+    if (drift && config_unchanged) {
+        uint32_t abs_drift = static_cast<uint32_t>(std::abs(*drift));
         uint32_t drift_threshold = config_.guard_time_ms / 2;
 
         if (abs_drift < drift_threshold) {
             LOG_DEBUG(
                 "%s: drift %dms < threshold %ums (guard_time/2), skipping "
                 "resync",
-                context_name.c_str(), drift, drift_threshold);
+                context_name.c_str(), *drift, drift_threshold);
 
+            schedule_offset_ms_ = *drift;
             if (pre_start_action) {
                 pre_start_action();
             }
             return Result::Success();
         }
     }
+    schedule_offset_ms_ = 0;
 
     // Stop the superframe now that all radio-dependent computations are done.
     superframe_service_->StopSuperframe();
@@ -1854,6 +2096,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
     if (status == JoinResponseStatus::ACCEPTED) {
         // Store the assigned control slot index
         my_control_slot_index_ = join_response_opt->GetControlSlotIndex();
+        settled_superframes_ = 0;
         MarkSlotTableDirty();
         LOG_INFO("Received control slot index %d from NM",
                  my_control_slot_index_);
@@ -1946,11 +2189,9 @@ Result NetworkService::SendJoinResponse(AddressType dest,
     }
 
     // Create join response with corrected addressing and next_hop for multi-hop forwarding
-    auto join_response =
-        JoinResponseMessage::Create(response_destination, node_address_,
-                                    network_manager_,  // Network ID
-                                    allocated_slots, status, {}, next_hop,
-                                    target_address, control_slot_index);
+    auto join_response = JoinResponseMessage::Create(
+        response_destination, node_address_, network_id_, allocated_slots,
+        status, {}, next_hop, target_address, control_slot_index);
 
     if (!join_response) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -3133,6 +3374,12 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     }
 
     no_received_sync_beacon_count_ = 0;  // Reset missed beacon counter
+    if (settled_superframes_ < UINT8_MAX) {
+        ++settled_superframes_;
+    }
+    if (awaiting_resync_.exchange(false)) {
+        LOG_INFO("Schedule confirmed by a sync beacon after the resume");
+    }
 
     return Result::Success();
 }
@@ -3248,7 +3495,20 @@ Result NetworkService::HandleSuperframeStart() {
         }
 
     } else if (state_ == ProtocolState::NORMAL_OPERATION) {
-        no_received_sync_beacon_count_++;
+        // A beacon up to half a superframe before this start belongs to the
+        // superframe starting now: a schedule slightly behind the network's
+        // hears it first
+        const bool beacon_arrived_early =
+            superframe_service_ &&
+            ReceivedSyncBeaconWithin(
+                superframe_service_->GetSuperframeDuration() / 2);
+        if (!beacon_arrived_early) {
+            no_received_sync_beacon_count_++;
+        }
+        // The previous superframe brought no beacon
+        if (no_received_sync_beacon_count_ > 1) {
+            settled_superframes_ = 0;
+        }
         // If no received sync beacon for x times set to FaultRecovery
         if (no_received_sync_beacon_count_ >= kMaxNoReceivedSyncBeacons) {
             LOG_WARNING(
@@ -3352,6 +3612,7 @@ Result NetworkService::ForwardJoinRequest(
                     static_cast<int>(state_.load()));
         return Result::Success();
     }
+    HoldSleepForRelayedJoin(join_request.GetSource());
 
     // Best-effort slot conversion; DISCOVERY_RX fallback TX handles delivery
     // regardless, so don't abort forwarding if no slot can be converted.
@@ -3418,6 +3679,7 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
 
     // Get the final target node address (stored in target_address field)
     AddressType joining_node = join_response.GetHeader().GetTargetAddress();
+    HoldSleepForRelayedJoin(joining_node);
 
     // If the response is ACCEPTED, add the joining node as a direct neighbor
     // This is CRITICAL: as sponsor, we have a direct link to the joining node
@@ -3498,6 +3760,7 @@ Result NetworkService::ForwardJoinResponse(
                     static_cast<int>(state_.load()));
         return Result::Success();
     }
+    HoldSleepForRelayedJoin(join_response.GetHeader().GetTargetAddress());
 
     // Best-effort slot conversion; DISCOVERY_RX fallback TX handles delivery
     // regardless, so don't abort forwarding if no slot can be converted.
@@ -3582,6 +3845,10 @@ void NetworkService::ResetNetworkState() {
     slot_scheduler_->Reset();
     MarkSlotTableDirty();
     pending_slot_table_rebuild_ = false;
+    awaiting_resync_ = false;
+    settled_superframes_ = 0;
+    relayed_joiner_ = 0;
+    sleep_tally_ = {};
     reliable_messaging_->Reset();
     message_cache_.Reset();
 
