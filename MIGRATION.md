@@ -65,8 +65,22 @@ auto table = mesher->GetSlotTable();        // OK: owns the snapshot
 
 1.x merged two independently formed networks when they came into range. In
 2.0.0 cross-network merge is disabled: a node that already belongs to a network
-ignores another network's beacons. Pre-designate one Network Manager (see
-*Deployment Tips* in the README) so a deployment forms a single network.
+ignores another network's beacons. Configure one node as `NETWORK_MANAGER` and
+every other node as `NODE_ONLY` (see *Deployment Tips* in the README) so a
+deployment forms a single network.
+
+Do not use `NodeRole::AUTO` until network merge is implemented. It remains the
+default for compatibility, but losing the Network Manager can split an `AUTO`
+mesh into networks that never merge again; `Start()` logs a warning when the
+role is `AUTO`.
+
+### Restarting with `Stop()` / `Start()`
+
+`Stop()` followed by `Start()` restarts the node; you no longer need to build
+a new `LoraMesher` instance. `Stop()` discards the network state, queued
+messages and pending reliable deliveries, so the restarted node rejoins a
+network from scratch. `Start()` now returns the protocol's error when the
+protocol fails to start, instead of reporting success.
 
 ### `LoRaMeshProtocol` API
 

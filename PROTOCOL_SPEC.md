@@ -2078,7 +2078,7 @@ Stable `network_id_` (set at `CreateNetwork()`, preserved from received beacons)
 
 **Node role behavior**:
 - **Explicit designation**: Configure a node with `NodeRole::NETWORK_MANAGER` to get lowest election priority base (0–63)
-- **Implicit designation**: With `NodeRole::AUTO` (default), nodes use election priority base 64–191
+- **Implicit designation**: With `NodeRole::AUTO` (default), nodes use election priority base 64–191. An election among `AUTO` nodes can leave the mesh split into separate networks that never merge (§10.6.9), so deployments use explicit roles (§6.1.2)
 - **Join-only nodes**: Configure with `NodeRole::NODE_ONLY` to prevent network creation entirely
 
 ### 5.10 Application Data Slot Timing API
@@ -2214,19 +2214,20 @@ For deterministic network formation, nodes can be explicitly configured with one
 
 | Role | Enum Value | Behavior |
 |------|------------|----------|
-| **AUTO** | 0 | Default. Create network if discovery times out (existing behavior) |
+| **AUTO** | 0 | Default, kept for compatibility. Create network if discovery times out. Not for deployment (see below) |
 | **NETWORK_MANAGER** | 1 | Immediately create network, skip discovery wait |
 | **NODE_ONLY** | 2 | Never create network, wait indefinitely to join |
 
 **Use Cases**:
-- **Testing**: Designate one node as NETWORK_MANAGER and others as NODE_ONLY to ensure deterministic network formation
-- **Production**: Use AUTO for most deployments; use explicit roles when network topology is known in advance
+- **Deployment and testing**: Designate one node as NETWORK_MANAGER and all others as NODE_ONLY for deterministic network formation
 - **Fixed infrastructure**: Use NETWORK_MANAGER for gateway nodes that should always be the network coordinator
+
+**AUTO is not for deployment**: losing the Network Manager starts an election, and an election (or several nodes timing out discovery together) can split the mesh into separate networks. Cross-network merge is disabled (`kNetworkMergeEnabled = false`, §10.6.9), so these networks never merge. `LoRaMeshProtocol::Start()` logs a warning when the role in effect is AUTO.
 
 **Configuration**:
 ```cpp
 LoRaMeshProtocolConfig config(node_address);
-config.setNodeRole(NodeRole::NETWORK_MANAGER);  // or NODE_ONLY, or AUTO
+config.setNodeRole(NodeRole::NETWORK_MANAGER);  // or NODE_ONLY
 ```
 
 **NODE_ONLY Behavior**: Nodes with NODE_ONLY role will remain in DISCOVERY state indefinitely until a SYNC_BEACON is received. They will never call `CreateNetwork()` regardless of discovery timeout.

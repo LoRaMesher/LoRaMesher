@@ -347,7 +347,9 @@ class LoRaMeshProtocol : public Protocol {
      * asynchronously.
      *
      * A change requested while the protocol is stopped is applied at the
-     * next Start().
+     * next Start(). Avoid AUTO: while cross-network merge is disabled, an
+     * election among AUTO nodes can split the mesh into networks that never
+     * merge.
      *
      * @param role Desired NodeRole (AUTO, NETWORK_MANAGER, or NODE_ONLY)
      * @return Result Success if queued; error if the protocol is not

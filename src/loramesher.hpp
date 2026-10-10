@@ -376,14 +376,20 @@ class LoraMesher {
      *  - NODE_ONLY/AUTO -> NETWORK_MANAGER before joining a network: the
      *    node creates a network immediately.
      *  - NODE_ONLY/AUTO -> NETWORK_MANAGER while already joined: the node
-     *    broadcasts NM_CLAIM with its new priority; the incumbent NM
-     *    yields via the standard merge protocol.
+     *    broadcasts NM_CLAIM with its new priority; an incumbent NM with a
+     *    worse priority surrenders and the network re-elects the claimant.
+     *    This is same-network election, independent of the disabled
+     *    cross-network merge.
      *  - NETWORK_MANAGER -> NODE_ONLY/AUTO while acting as NM: the node
      *    surrenders and enters DISCOVERY; the rest of the network runs an
      *    election to pick a new NM (~5 superframes of disruption).
      *
      * Typical use: boot all nodes as NODE_ONLY; promote one to
      * NETWORK_MANAGER from an external event (e.g. Wi-Fi connect).
+     *
+     * Do not switch nodes to AUTO: while cross-network merge is disabled, an
+     * election among AUTO nodes can split the mesh into networks that never
+     * merge.
      *
      * @param role Desired NodeRole
      * @return Result Success if queued; error if LoraMesher is not running

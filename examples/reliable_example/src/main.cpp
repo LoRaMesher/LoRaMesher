@@ -48,6 +48,9 @@ using namespace loramesher;
 #define LORA_CRC true             // Enable CRC checking
 #define LORA_PREAMBLE_LENGTH 8U   // Preamble symbols
 
+// The node with this address is the Network Manager; all others only join
+#define NODE_MANAGER_ADDRESS 0x3ADF
+
 // =============================================================================
 // Send Pacing
 // =============================================================================
@@ -190,6 +193,11 @@ void ConfigureAndUseLoraMesher() {
                             LORA_CRC, LORA_PREAMBLE_LENGTH);
 
     LoRaMeshProtocolConfig mesh_config;
+    if (LoraMesher::GenerateAddressFromHardware() == NODE_MANAGER_ADDRESS) {
+        mesh_config.setNodeRole(NodeRole::NETWORK_MANAGER);
+    } else {
+        mesh_config.setNodeRole(NodeRole::NODE_ONLY);
+    }
 
     mesher = LoraMesher::Builder()
                  .withRadioConfig(radioConfig)
