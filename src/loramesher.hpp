@@ -66,17 +66,30 @@ class LoraMesher {
 
     /**
      * @brief Start the LoraMesher network
-     * 
-     * Initializes hardware, protocols, and starts all required tasks.
-     * 
-     * @return Result Success if started successfully, error details otherwise
+     *
+     * Initializes hardware and protocols on the first call, then starts the
+     * protocol. Calling Start() again after Stop() restarts the node, which
+     * rediscovers and rejoins a network from scratch. Calling it while
+     * running is a no-op.
+     *
+     * Must not be called from a library callback: the protocol rejects it
+     * with kInvalidState.
+     *
+     * @return Result Success if started successfully, otherwise the error of
+     *         the protocol that failed to start (LoraMesher stays stopped)
      */
     [[nodiscard]] Result Start();
 
     /**
      * @brief Stop the LoraMesher network
-     * 
-     * Stops all tasks and releases resources.
+     *
+     * Parks the library's tasks, puts the radio to sleep and discards the
+     * network state, queued messages and pending reliable deliveries. The
+     * instance can be started again with Start().
+     *
+     * Must not be called from a library callback (data, delivery, route or
+     * state callbacks run on the protocol task): such a call is rejected,
+     * logs an error and leaves LoraMesher running. Call it from another task.
      */
     void Stop();
 
