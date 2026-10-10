@@ -198,9 +198,12 @@ TEST_F(LoRaMeshSleepWakeUpTests, TwoNodeSleepWakeUpCallbacks) {
     uint32_t timeout =
         std::max(GetSuperframeDuration(manager) * 10, slot_duration * 50);
 
+    // A joiner settles for a few superframes before its first sleep
     bool both_slept = AdvanceTime(timeout, timeout, 15, 0, [&]() {
         return manager_tracker.sleep_count.load() > 0 &&
-               joiner_tracker.sleep_count.load() > 0;
+               joiner_tracker.sleep_count.load() > 0 &&
+               manager_tracker.wake_count.load() > 0 &&
+               joiner_tracker.wake_count.load() > 0;
     });
 
     EXPECT_TRUE(both_slept)

@@ -1617,6 +1617,10 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
         (!prepare_sleep_callback_ && !config_.getDeepSleepPolicy().enabled)) {
         return;
     }
+    if (const char* hold = network_service_->GetSleepHold()) {
+        LOG_DEBUG("MCU stays awake: %s", hold);
+        return;
+    }
     const uint16_t next_active = GetNextActiveSlot();
     const uint32_t until_active = GetTimeUntilSlot(next_active);
     if (TryDeepSleep(until_active, next_active) || !prepare_sleep_callback_) {

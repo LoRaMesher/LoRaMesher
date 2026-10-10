@@ -13,6 +13,7 @@
 #include "protocols/lora_mesh/services/message_queue_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "protocols/lora_mesh/services/superframe_service.hpp"
+#include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
 #include "types/messages/loramesher/sync_beacon_message.hpp"
 #include "types/storage/resume_snapshot_codec.hpp"
@@ -124,6 +125,18 @@ class NetworkServiceResumeTest : public ::testing::Test {
         neighbour->path_rtt = {3000, 400};
         EXPECT_TRUE(member.GetRoutingTable()->AddNode(*neighbour));
         EXPECT_TRUE(member.UpdateSlotTable());
+        return node;
+    }
+
+    /// A joined member that has heard beacons long enough to sleep
+    Node& MakeSettledMember() {
+        Node& node = MakeJoinedMember();
+        for (int i = 0; i < 2; ++i) {
+            EXPECT_TRUE(node.service->HandleSuperframeStart());
+            mock_->advanceTime(20000);
+            EXPECT_TRUE(node.service->ProcessReceivedMessage(
+                Beacon(), GetRTOS().getTickCount()));
+        }
         return node;
     }
 
@@ -264,7 +277,7 @@ TEST_F(NetworkServiceResumeTest, DeepSleepNeedsASettledMember) {
     EXPECT_STREQ(fresh.service->GetDeepSleepBlocker(),
                  "not in normal operation");
 
-    Node& member = MakeJoinedMember();
+    Node& member = MakeSettledMember();
     EXPECT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
 
     // A superframe without a beacon
@@ -279,7 +292,7 @@ TEST_F(NetworkServiceResumeTest, DeepSleepNeedsASettledMember) {
 }
 
 TEST_F(NetworkServiceResumeTest, PendingScheduleChangeSurvivesTheSleep) {
-    Node& original = MakeJoinedMember();
+    Node& original = MakeSettledMember();
     const auto slots_before = Slots(*original.service);
     // A routing change waits for the next rebuild
     ASSERT_TRUE(original.service->UpdateNetworkNode(kNeighbour, false, 3));
@@ -336,8 +349,115 @@ TEST_F(NetworkServiceResumeTest, ResumedMemberWaitsForABeacon) {
     EXPECT_EQ(resumed.service->GetDeepSleepBlocker(), nullptr);
 }
 
+TEST_F(NetworkServiceResumeTest, NodeThatHasNotJoinedStaysAwake) {
+    Node& node = MakeNode(0x2007);
+    ASSERT_TRUE(node.superframe->StartSuperframe());
+    ASSERT_TRUE(node.service->StartDiscovery(5000));
+    EXPECT_STREQ(node.service->GetSleepHold(), "not joined");
+
+    ASSERT_TRUE(node.service->ProcessReceivedMessage(Beacon(),
+                                                     GetRTOS().getTickCount()));
+    ASSERT_EQ(node.service->GetState(), ProtocolState::JOINING);
+    EXPECT_STREQ(node.service->GetSleepHold(), "not joined");
+    EXPECT_STREQ(node.service->GetDeepSleepBlocker(),
+                 "not in normal operation");
+}
+
+TEST_F(NetworkServiceResumeTest, JoinedMemberSettlesBeforeSleeping) {
+    Node& member = MakeJoinedMember();  // One beacon heard since joining
+    EXPECT_STREQ(member.service->GetSleepHold(), "settling after joining");
+    EXPECT_STREQ(member.service->GetDeepSleepBlocker(),
+                 "settling after joining");
+
+    for (int i = 0; i < 2; ++i) {
+        ASSERT_TRUE(member.service->HandleSuperframeStart());
+        mock_->advanceTime(20000);
+        ASSERT_TRUE(member.service->ProcessReceivedMessage(
+            Beacon(), GetRTOS().getTickCount()));
+    }
+    EXPECT_EQ(member.service->GetSleepHold(), nullptr);
+    EXPECT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
+
+    // A superframe without a beacon starts the settling again
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(20000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(1000);
+    ASSERT_TRUE(member.service->ProcessReceivedMessage(
+        Beacon(), GetRTOS().getTickCount()));
+    EXPECT_STREQ(member.service->GetSleepHold(), "settling after joining");
+}
+
+TEST_F(NetworkServiceResumeTest, ResumedMemberIsAlreadySettled) {
+    Node& original = MakeJoinedMember();
+    auto snapshot = original.service->CaptureResumeSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    FillTiming(*snapshot, *original.superframe);
+
+    Node& resumed = MakeNode(kMember);
+    ASSERT_TRUE(resumed.service->ApplyResumeSnapshot(*snapshot));
+    EXPECT_EQ(resumed.service->GetSleepHold(), nullptr);
+}
+
+TEST_F(NetworkServiceResumeTest, SponsorStaysAwakeWhileRelayingAJoin) {
+    Node& member = MakeSettledMember();
+    ASSERT_EQ(member.service->GetSleepHold(), nullptr);
+
+    constexpr AddressType kJoiner = 0x2009;
+    auto request =
+        JoinRequestMessage::Create(kManager, kJoiner, 2, {}, kMember, kMember);
+    ASSERT_TRUE(request.has_value());
+    ASSERT_TRUE(
+        member.service->ProcessReceivedMessage(request->ToBaseMessage(), 0));
+    EXPECT_STREQ(member.service->GetSleepHold(), "relaying a join");
+
+    // Still held in the next superframe, for the response and a retry
+    mock_->advanceTime(20000);
+    EXPECT_STREQ(member.service->GetSleepHold(), "relaying a join");
+    // Released once the superframe after it is over
+    mock_->advanceTime(25000);
+    EXPECT_EQ(member.service->GetSleepHold(), nullptr);
+}
+
+TEST_F(NetworkServiceResumeTest, RelayHoldEndsWhenTheJoinerIsReachable) {
+    Node& member = MakeSettledMember();
+    constexpr AddressType kJoiner = 0x2009;
+    auto request =
+        JoinRequestMessage::Create(kManager, kJoiner, 2, {}, kMember, kMember);
+    ASSERT_TRUE(request.has_value());
+    ASSERT_TRUE(
+        member.service->ProcessReceivedMessage(request->ToBaseMessage(), 0));
+    ASSERT_STREQ(member.service->GetSleepHold(), "relaying a join");
+
+    member.service->UpdateRouteEntry(kJoiner, kJoiner, 1, 200, 2, 0);
+    EXPECT_EQ(member.service->GetSleepHold(), nullptr);
+}
+
+TEST_F(NetworkServiceResumeTest, ManagerStaysAwakeUntilItAnswersAJoin) {
+    Node& manager = MakeNode(kManager, NodeRole::NETWORK_MANAGER);
+    ASSERT_TRUE(manager.superframe->StartSuperframe());
+    ASSERT_TRUE(manager.service->CreateNetwork());
+    EXPECT_EQ(manager.service->GetSleepHold(), nullptr);
+
+    auto request =
+        JoinRequestMessage::Create(kManager, 0x2009, 2, {}, kManager, 0);
+    ASSERT_TRUE(request.has_value());
+    ASSERT_TRUE(
+        manager.service->ProcessReceivedMessage(request->ToBaseMessage(), 0));
+    EXPECT_STREQ(manager.service->GetSleepHold(), "answering a join");
+
+    // The response leaves in the discovery band; the join is applied at the
+    // next superframe start
+    ASSERT_NE(manager.queue->ExtractMessageOfType(
+                  SlotAllocation::SlotType::DISCOVERY_TX),
+              nullptr);
+    EXPECT_STREQ(manager.service->GetSleepHold(), "answering a join");
+    ASSERT_TRUE(manager.service->HandleSuperframeStart());
+    EXPECT_EQ(manager.service->GetSleepHold(), nullptr);
+}
+
 TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {
-    Node& member = MakeJoinedMember();
+    Node& member = MakeSettledMember();
     ASSERT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
 
     const auto id = member.service->SendReliable(kNeighbour, {1, 2, 3}, 2, 0);

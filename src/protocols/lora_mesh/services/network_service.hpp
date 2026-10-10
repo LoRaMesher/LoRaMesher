@@ -378,6 +378,20 @@ class NetworkService : public INetworkService {
     bool HeardSyncBeaconThisSuperframe() const;
 
     /**
+     * @brief Reason the MCU must stay awake now, if any
+     *
+     * Sleep makes the clock drift, so the node stays awake while it, or a
+     * join it relays, depends on precise timing: until it has joined and
+     * heard beacons in kSettleSuperframes consecutive superframes, while it
+     * relays a join request or response (until the joiner is reachable or
+     * the superframe after the relay ends), and, as manager, while it answers
+     * a join. The radio still sleeps in SLEEP slots.
+     *
+     * @return The reason, or nullptr if the MCU may sleep
+     */
+    const char* GetSleepHold() const;
+
+    /**
      * @brief True from a resume until a sync beacon confirms the schedule
      *
      * The resumed schedule is only as accurate as the sleep clock, so the
@@ -1616,6 +1630,18 @@ class NetworkService : public INetworkService {
     uint32_t warm_discovery_extension_ms_ = 0;
     /// Resumed after a deep sleep and no sync beacon heard since
     std::atomic<bool> awaiting_resync_{false};
+    /// Consecutive superframes with a sync beacon a member needs after joining
+    /// before it sleeps
+    static constexpr uint8_t kSettleSuperframes = 3;
+    /// Consecutive superframes with a sync beacon since joining (saturating)
+    uint8_t settled_superframes_ = 0;
+    /// Joiner whose join this node relays (0 = none)
+    AddressType relayed_joiner_ = 0;
+    /// Tick count when the hold for a relayed join ends
+    uint32_t relay_hold_until_ms_ = 0;
+
+    /// Hold sleep while the join of @p joiner is relayed
+    void HoldSleepForRelayedJoin(AddressType joiner);
     /// Learned error of the deep-sleep clock (kept across network resets)
     power::SleepClockCalibration sleep_clock_;
     /// Length of the sleep to calibrate with at the next beacon

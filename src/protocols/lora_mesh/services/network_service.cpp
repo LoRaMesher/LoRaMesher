@@ -877,6 +877,8 @@ Result NetworkService::ApplyResumeSnapshot(
     // for is applied at the next rebuild, as if it had not slept
     slot_scheduler_->RestoreSchedule(snapshot.schedule);
     awaiting_resync_ = true;
+    // Only a settled member deep-sleeps
+    settled_superframes_ = kSettleSuperframes;
     SetState(ProtocolState::NORMAL_OPERATION);
     LOG_INFO(
         "Resumed membership of network 0x%04X: manager 0x%04X, control slot "
@@ -893,6 +895,9 @@ const char* NetworkService::GetDeepSleepBlocker() const {
     const AddressType manager = network_manager_;
     if (manager == 0 || manager == node_address_) {
         return "not a member";
+    }
+    if (const char* hold = GetSleepHold()) {
+        return hold;
     }
     if (no_received_sync_beacon_count_ != 0) {
         return "missed sync beacons";
@@ -919,6 +924,45 @@ void NetworkService::RecordSleepClockDrift(int32_t drift_ms) {
         sleep_error_ms, *calibration_sleep_ms_, sleep_clock_.GetPpm(),
         sleep_clock_.GetSamples());
     calibration_sleep_ms_.reset();
+}
+
+const char* NetworkService::GetSleepHold() const {
+    const ProtocolState state = state_;
+    if (state == ProtocolState::NETWORK_MANAGER) {
+        if (!pending_joins_.empty() ||
+            message_queue_service_->HasMessage(MessageType::JOIN_RESPONSE)) {
+            return "answering a join";
+        }
+        return nullptr;
+    }
+    if (state != ProtocolState::NORMAL_OPERATION) {
+        return "not joined";
+    }
+    if (settled_superframes_ < kSettleSuperframes) {
+        return "settling after joining";
+    }
+    if (relayed_joiner_ != 0 &&
+        !utils::TimeReached(GetRTOS().getTickCount(), relay_hold_until_ms_)) {
+        const auto joiner = routing_table_->FindNode(relayed_joiner_);
+        if (!joiner || !joiner->is_active) {
+            return "relaying a join";
+        }
+    }
+    return nullptr;
+}
+
+void NetworkService::HoldSleepForRelayedJoin(AddressType joiner) {
+    // The rest of this superframe and the next one: the response and one
+    // retry of the joiner
+    const uint32_t superframe_ms =
+        superframe_service_ ? superframe_service_->GetSuperframeDuration() : 0;
+    const uint32_t superframe_start =
+        GetRTOS().getTickCount() -
+        (superframe_service_
+             ? superframe_service_->GetTimeSinceSuperframeStart()
+             : 0);
+    relayed_joiner_ = joiner;
+    relay_hold_until_ms_ = superframe_start + 2 * superframe_ms;
 }
 
 bool NetworkService::HeardSyncBeaconThisSuperframe() const {
@@ -2011,6 +2055,7 @@ Result NetworkService::ProcessJoinResponse(const BaseMessage& message,
     if (status == JoinResponseStatus::ACCEPTED) {
         // Store the assigned control slot index
         my_control_slot_index_ = join_response_opt->GetControlSlotIndex();
+        settled_superframes_ = 0;
         MarkSlotTableDirty();
         LOG_INFO("Received control slot index %d from NM",
                  my_control_slot_index_);
@@ -3288,6 +3333,9 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
     }
 
     no_received_sync_beacon_count_ = 0;  // Reset missed beacon counter
+    if (settled_superframes_ < UINT8_MAX) {
+        ++settled_superframes_;
+    }
     if (awaiting_resync_.exchange(false)) {
         LOG_INFO("Schedule confirmed by a sync beacon after the resume");
     }
@@ -3407,6 +3455,10 @@ Result NetworkService::HandleSuperframeStart() {
 
     } else if (state_ == ProtocolState::NORMAL_OPERATION) {
         no_received_sync_beacon_count_++;
+        // The previous superframe brought no beacon
+        if (no_received_sync_beacon_count_ > 1) {
+            settled_superframes_ = 0;
+        }
         // If no received sync beacon for x times set to FaultRecovery
         if (no_received_sync_beacon_count_ >= kMaxNoReceivedSyncBeacons) {
             LOG_WARNING(
@@ -3510,6 +3562,7 @@ Result NetworkService::ForwardJoinRequest(
                     static_cast<int>(state_.load()));
         return Result::Success();
     }
+    HoldSleepForRelayedJoin(join_request.GetSource());
 
     // Best-effort slot conversion; DISCOVERY_RX fallback TX handles delivery
     // regardless, so don't abort forwarding if no slot can be converted.
@@ -3576,6 +3629,7 @@ Result NetworkService::ForwardJoinResponseToSponsoredNode(
 
     // Get the final target node address (stored in target_address field)
     AddressType joining_node = join_response.GetHeader().GetTargetAddress();
+    HoldSleepForRelayedJoin(joining_node);
 
     // If the response is ACCEPTED, add the joining node as a direct neighbor
     // This is CRITICAL: as sponsor, we have a direct link to the joining node
@@ -3656,6 +3710,7 @@ Result NetworkService::ForwardJoinResponse(
                     static_cast<int>(state_.load()));
         return Result::Success();
     }
+    HoldSleepForRelayedJoin(join_response.GetHeader().GetTargetAddress());
 
     // Best-effort slot conversion; DISCOVERY_RX fallback TX handles delivery
     // regardless, so don't abort forwarding if no slot can be converted.
@@ -3741,6 +3796,8 @@ void NetworkService::ResetNetworkState() {
     MarkSlotTableDirty();
     pending_slot_table_rebuild_ = false;
     awaiting_resync_ = false;
+    settled_superframes_ = 0;
+    relayed_joiner_ = 0;
     calibration_sleep_ms_.reset();
     reliable_messaging_->Reset();
     message_cache_.Reset();
