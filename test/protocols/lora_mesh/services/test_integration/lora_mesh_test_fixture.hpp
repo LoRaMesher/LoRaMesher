@@ -7,6 +7,8 @@
 #define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -15,11 +17,13 @@
 #include <vector>
 
 #include "../test/utils/network_testing_impl.hpp"
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh_protocol.hpp"
+#include "protocols/reliability/reliable_delivery.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/radio/radio_state.hpp"
 #include "utils/file_log_handler.hpp"
@@ -45,6 +49,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
         std::shared_ptr<hardware::HardwareManager> hardware_manager;
         std::unique_ptr<protocols::LoRaMeshProtocol> protocol;
         std::vector<BaseMessage> received_messages;
+        std::vector<protocols::reliability::DeliveryResult> delivery_outcomes;
         radio::test::MockRadio* mock_radio;
     };
 
@@ -54,30 +59,77 @@ class LoRaMeshTestFixture : public ::testing::Test {
     std::map<AddressType, std::vector<BaseMessage>> message_log_;
     std::vector<std::unique_ptr<RadioToNetworkAdapter>> network_adapters_;
 
+    /// Seed of the per-node random streams and the network's loss decisions
+    uint32_t test_seed_ = kDefaultTestSeed;
+
+    /// Virtual time advanced per step while StopNode() waits for Stop()
+    static constexpr uint32_t kStopTimeStepMs = 10;
+
     // File logging support
-    std::unique_ptr<FileLogHandler> file_log_handler_;
-    std::unique_ptr<LogHandler> original_log_handler_;
+    FileLogHandler* file_log_handler_ = nullptr;  ///< Owned by LOG while set
     std::string log_directory_;
 
     LoRaMeshTestFixture()
-        : time_controller_(virtual_network_), log_directory_("test_logs") {}
+        : time_controller_(virtual_network_),
+          log_directory_(TestLogDirectoryFromEnvironment()) {}
 
     void SetUp() override {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        test_seed_ = TestSeedFromEnvironment();
+        RecordProperty("seed", static_cast<int>(test_seed_));
+        virtual_network_.SetSeed(test_seed_);
         if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
-            mock->SeedRandom(42);
+            mock->SeedRandom(test_seed_);
+            mock->resetReblockTimeoutCount();
         }
+        ResetTaskMisuseCounters();
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
 #endif
     }
 
+    /**
+     * @brief Pin the seed instead of LORAMESHER_TEST_SEED
+     *
+     * Call before creating nodes, to keep a known scenario as a regression.
+     */
+    void UseTestSeed(uint32_t seed) {
+        test_seed_ = seed;
+        RecordProperty("seed", static_cast<int>(test_seed_));
+        virtual_network_.SetSeed(test_seed_);
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            mock->SeedRandom(test_seed_);
+        }
+    }
+
     void TearDown() override {
-        // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            EXPECT_EQ(mock->getReblockTimeoutCount(), 0u)
+                << "Virtual-time steps did not complete deterministically "
+                   "(a woken task did not block again); see the MOCK reblock "
+                   "timeout lines in the test log";
+        }
+        if (HasFailure()) {
+            // No "[ ... ]" prefix: PlatformIO parses those as gtest status lines
+            std::cout << "Reproduce with LORAMESHER_TEST_SEED=" << test_seed_
+                      << std::endl;
+        }
+
+        // Stop every protocol while the clock runs, so tasks finish their
+        // current slot work and park before the protocols are destroyed
         for (auto& node : nodes_) {
             if (node->protocol) {
-                // Stop the protocol and wait for all tasks to exit
+                Result stop_result = StopNode(*node);
+                EXPECT_TRUE(stop_result)
+                    << "Stopping " << node->name
+                    << " failed: " << stop_result.GetErrorMessage();
+            }
+        }
+        ExpectNoTaskMisuse();
+
+        for (auto& node : nodes_) {
+            if (node->protocol) {
                 node->protocol.reset();
             }
         }
@@ -111,7 +163,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
     TestNode& CreateNode(const std::string& name, AddressType address,
                          NodeRole node_role = NodeRole::AUTO,
                          const PinConfig& pin_config = PinConfig(),
-                         const RadioConfig& radio_config = RadioConfig()) {
+                         const RadioConfig& radio_config = RadioConfig(),
+                         const std::function<void(LoRaMeshProtocolConfig&)>&
+                             config_customizer = nullptr) {
         // Create a node with unique address and pin configuration
         auto node = std::make_shared<TestNode>();
         node->name = name;
@@ -200,6 +254,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
         config.setNodeRole(node_role);
         config.setTargetDutyCycle(
             1.0f);  // Tests: no duty-cycle-driven slot inflation
+        if (config_customizer) {
+            config_customizer(config);
+        }
         result = node->protocol->Configure(config);
         if (!result) {
             std::cerr << "Failed to configure protocol for " << name << ": "
@@ -219,6 +276,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
                 if (msg_opt.has_value()) {
                     node_ptr->received_messages.push_back(msg_opt.value());
                 }
+            });
+
+        // Record reliable-delivery outcomes for assertions
+        node->protocol->GetNetworkServiceForTest()->SetDeliveryCallback(
+            [node_ptr = node.get()](
+                const protocols::reliability::DeliveryResult& result) {
+                node_ptr->delivery_outcomes.push_back(result);
             });
 
         // Restore test thread address
@@ -307,7 +371,38 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Protocol not initialized");
         }
-        return node.protocol->Stop();
+
+        // Stop() waits for the node's tasks to park, which may take until
+        // the end of the current slot. It runs on a helper thread while this
+        // thread advances virtual time whenever the helper is blocked waiting.
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        std::atomic<bool> done{false};
+        Result result = Result::Success();
+        std::thread stopper([&]() {
+            GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+            result = node.protocol->Stop();
+            done.store(true, std::memory_order_release);
+        });
+
+        auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+        while (!done.load(std::memory_order_acquire)) {
+            if (mock != nullptr &&
+                mock->getTimeMode() == os::RTOSMock::TimeMode::kVirtualTime &&
+                mock->HasExternalWait()) {
+                // Let a just-satisfied wait return before moving the clock
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (done.load(std::memory_order_acquire) ||
+                    !mock->HasExternalWait()) {
+                    continue;
+                }
+                time_controller_.AdvanceTime(kStopTimeStepMs);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+        stopper.join();
+        return result;
     }
 
     /**
@@ -955,17 +1050,20 @@ class LoRaMeshTestFixture : public ::testing::Test {
             ::testing::UnitTest::GetInstance()->current_test_info();
         std::string test_name = std::string(test_info->test_case_name()) + "_" +
                                 std::string(test_info->name());
+        // Parameterized test names contain '/'
+        std::replace(test_name.begin(), test_name.end(), '/', '_');
 
         // Create unique log filename
         std::string log_filename = log_directory_ + "/" + test_name + ".log";
 
         try {
             // Create file log handler
-            file_log_handler_ =
+            auto handler =
                 std::make_unique<FileLogHandler>(log_filename, false, true);
+            file_log_handler_ = handler.get();
 
             // Set the file handler as the active logger
-            LOG.SetHandler(std::move(file_log_handler_));
+            LOG.SetHandler(std::move(handler));
 
             // Log test start
             LOG_INFO("=== Test Started: %s ===", test_name.c_str());
@@ -989,11 +1087,11 @@ class LoRaMeshTestFixture : public ::testing::Test {
             // Get the log filename before cleanup
             std::string log_filename = file_log_handler_->GetFilename();
 
-            // Reset to default console handler
-            LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
-
-            // Clean up file handler
-            file_log_handler_.reset();
+            // Restore the console handler, then close the file handler here
+            std::unique_ptr<LogHandler> file_handler =
+                LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
+            file_log_handler_ = nullptr;
+            file_handler.reset();
 
             // Print log file location for user
             std::cout << "Test log saved to: " << log_filename << std::endl;

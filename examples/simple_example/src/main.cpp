@@ -50,12 +50,20 @@ using namespace loramesher;
 #define LORA_CRC true             // Enable CRC checking
 #define LORA_PREAMBLE_LENGTH 8U   // Preamble symbols
 
+// The node with this address is the Network Manager; all others only join
+#define NODE_MANAGER_ADDRESS 0x3ADF
+
 // =============================================================================
 // Global Variables
 // =============================================================================
 
 std::unique_ptr<LoraMesher> mesher = nullptr;
 uint8_t counter_address = 0;  // Cycles through routing table destinations
+
+/// Time between iterations of loop(). A node's TX data slots also carry the
+/// messages it forwards for other nodes, so in larger or deeper networks keep
+/// this well above the superframe duration.
+constexpr uint32_t kLoopIntervalMs = 10000;
 
 // =============================================================================
 // Callbacks
@@ -174,8 +182,14 @@ void ConfigureAndUseLoraMesher() {
     // RadioConfig radioConfig(RadioType::kSx1262, 868.0F, 7U, 125.0, 7U, 14, 20U, true, 8U);
     // radioConfig.setTcxoVoltage(1.8F);
 
-    // Step 3: Create protocol configuration (uses defaults)
+    // Step 3: Create protocol configuration: one Network Manager, the other
+    // nodes join its network
     LoRaMeshProtocolConfig mesh_config;
+    if (LoraMesher::GenerateAddressFromHardware() == NODE_MANAGER_ADDRESS) {
+        mesh_config.setNodeRole(NodeRole::NETWORK_MANAGER);
+    } else {
+        mesh_config.setNodeRole(NodeRole::NODE_ONLY);
+    }
 
     // Step 4: Build and configure LoraMesher instance
     mesher = LoraMesher::Builder()
@@ -228,12 +242,13 @@ void loop() {
     printRoutingTable();
     printNetworkStatus();
 
-    bool sent = sendTestMessage();
-    auto routes = mesher->GetRoutingTable();
+    // Send only once the previous message, and any messages this node
+    // forwards, have left the TX queue; then transmit in the next TX data slot.
+    if (mesher->GetTxQueueSize() == 0) {
+        delay(mesher->GetTimeUntilNextDataSlot());
+        sendTestMessage();
+    }
 
-    // Wait before next iteration
-    // Longer delay when there are more routes to avoid congestion
-    // TODO: Wait until next data slot available
-    delay(sent ? 10000 * routes.size() : 10000);
+    delay(kLoopIntervalMs);
 }
 #endif

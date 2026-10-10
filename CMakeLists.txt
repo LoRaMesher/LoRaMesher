@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(LoRaMesher VERSION 1.0.0 LANGUAGES CXX)
+project(LoRaMesher VERSION 2.0.0 LANGUAGES CXX)
 
 # Include ESP-IDF project.cmake only when not building for desktop
 if(NOT DEFINED BUILD_DESKTOP OR NOT BUILD_DESKTOP)

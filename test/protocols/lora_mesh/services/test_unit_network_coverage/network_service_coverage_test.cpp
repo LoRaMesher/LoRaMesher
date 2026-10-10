@@ -7,13 +7,17 @@
  */
 
 #include <gtest/gtest.h>
+#include <atomic>
 #include <memory>
+#include <thread>
 
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/services/message_queue_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "protocols/lora_mesh/services/superframe_service.hpp"
 #include "types/configurations/protocol_configuration.hpp"
+#include "types/messages/loramesher/data_message.hpp"
+#include "types/messages/loramesher/group_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
 #include "types/messages/loramesher/nm_claim_message.hpp"
@@ -26,6 +30,10 @@ TEST(NetworkServiceCoverageTest, SkipOnArduino) {
 }
 
 #else
+
+#include "os/rtos_mock.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
+#include "utils/byte_operations.h"
 
 namespace loramesher {
 namespace protocols {
@@ -71,21 +79,20 @@ class NetworkServiceCoverageTest : public ::testing::Test {
     // Helper to build a minimal BaseMessage from an NMClaimMessage
     BaseMessage MakeNMClaim(AddressType src, uint8_t priority,
                             uint16_t net_id = 0x1234) {
-        auto claim = NMClaimMessage::Create(src, priority, 100, 1, net_id);
+        auto claim = NMClaimMessage::Create(src, priority, 1, net_id);
         EXPECT_TRUE(claim.has_value());
         return claim->ToBaseMessage();
     }
 
     // Helper to build a sync beacon base message
-    BaseMessage MakeSyncBeacon(AddressType src, uint16_t network_id = 0xABCD) {
-        auto beacon =
-            SyncBeaconMessage::CreateOriginal(0xFFFF, src, network_id,
-                                              /*total_slots=*/20,
-                                              /*slot_duration=*/1000,
-                                              /*nm_address=*/src,
-                                              /*propagation_delay=*/0,
-                                              /*max_hops=*/3,
-                                              /*allocated_control_slots=*/2);
+    BaseMessage MakeSyncBeacon(AddressType src, uint16_t network_id = 0xABCD,
+                               uint8_t max_hops = 3, uint8_t total_slots = 20) {
+        auto beacon = SyncBeaconMessage::CreateOriginal(
+            0xFFFF, src, network_id, total_slots,
+            /*slot_duration=*/1000,
+            /*nm_address=*/src,
+            /*propagation_delay=*/0, max_hops,
+            /*allocated_control_slots=*/2);
         EXPECT_TRUE(beacon.has_value());
         return beacon->ToBaseMessage();
     }
@@ -271,8 +278,7 @@ TEST_F(NetworkServiceCoverageTest, ForwardSyncBeaconAtMaxHopsReturnsError) {
 }
 
 // ============================================================================
-// LinkQualityMetrics::CalculateCombinedQuality — lines 851-863
-// Exercise via CalculateLinkQuality (public) which calls routing table
+// CalculateLinkQuality (public) — delegates to the routing table
 // ============================================================================
 
 TEST_F(NetworkServiceCoverageTest,
@@ -424,7 +430,6 @@ TEST_F(NetworkServiceCoverageTest,
     auto join_req =
         JoinRequestMessage::Create(kNMAddress,    // destination: NM
                                    kOtherNode,    // source: joining node
-                                   100,           // battery
                                    2,             // requested slots
                                    {},            // additional info
                                    kNodeAddress,  // next_hop: us
@@ -599,7 +604,7 @@ TEST_F(NetworkServiceCoverageTest, ProcessJoinRequestWhenNotNMAndNotSponsor) {
     auto join_req =
         JoinRequestMessage::Create(kNMAddress,  // destination: NM
                                    kOtherNode,  // source: other node
-                                   100, 2, {},
+                                   2, {},
                                    kNMAddress,  // next_hop: NM (not us)
                                    kNMAddress   // sponsor: NM (not us)
         );
@@ -953,7 +958,6 @@ TEST_F(NetworkServiceCoverageTest,
     //   sponsor     = kNodeAddress (us, so "we are the sponsor" branch fires)
     auto join_req = JoinRequestMessage::Create(kNMAddress,  // dest: NM
                                                kOtherNode,  // src: joining node
-                                               80,          // battery
                                                2,           // requested_slots
                                                {},          // additional_info
                                                kNodeAddress,  // next_hop: us
@@ -984,7 +988,6 @@ TEST_F(NetworkServiceCoverageTest,
     auto join_req = JoinRequestMessage::Create(
         kNMAddress,  // dest
         kOtherNode,  // src
-        80,          // battery
         2,           // slots
         {},
         kNodeAddress,  // next_hop: us
@@ -1021,7 +1024,6 @@ TEST_F(NetworkServiceCoverageTest, ForwardJoinRequestNoRouteToNMUsesDirect) {
     // Create join request where we are the sponsor
     auto join_req = JoinRequestMessage::Create(kNMAddress,  // dest
                                                kOtherNode,  // src
-                                               80,          // battery
                                                2,           // slots
                                                {},
                                                kNodeAddress,  // next_hop: us
@@ -1305,6 +1307,7 @@ TEST_F(NetworkServiceCoverageTest, GetMaxHopsWithStaleEntriesSkipsInactive) {
 
 TEST_F(NetworkServiceCoverageTest,
        ProcessForeignSyncBeaconAsNMTriggersNMClaim) {
+    GTEST_SKIP() << "Network merge disabled — see docs/todo_network_merge.md";
     // Start the superframe so CreateNetwork succeeds.
     ASSERT_TRUE(superframe_->StartSuperframe());
 
@@ -1368,7 +1371,6 @@ TEST_F(NetworkServiceCoverageTest, ProcessJoinRequestAsNMAcceptsDirectJoin) {
     auto join_req =
         JoinRequestMessage::Create(kNodeAddress,  // dest: us (the NM)
                                    kOtherNode,    // src: joining node
-                                   80,            // battery level
                                    2,             // requested slots
                                    {},            // additional info
                                    0,             // next_hop: direct
@@ -1651,6 +1653,515 @@ TEST_F(NetworkServiceCoverageTest,
     Result recovered = service_->SendData(kOtherNode, payload);
     EXPECT_TRUE(recovered.IsSuccess()) << recovered.GetErrorMessage();
     EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 3u);
+}
+
+// ============================================================================
+// SendData rejects a payload whose packet exceeds max_packet_size (the per-SF
+// MTU), instead of queuing a packet that can never fit the slot and would be
+// re-queued forever. A payload exactly at the MTU is accepted.
+// ============================================================================
+
+TEST_F(NetworkServiceCoverageTest, SendDataRejectsPayloadAboveMtu) {
+    using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+    // Configure a small MTU like SF12 (max_packet_size = 51).
+    auto svc = std::make_unique<NetworkService>(kNodeAddress, message_queue_,
+                                                superframe_, nullptr);
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kNodeAddress;
+    cfg.max_hops = 5;
+    cfg.max_packet_size = 51;
+    cfg.default_data_slots = 2;
+    cfg.max_network_nodes = 20;
+    ASSERT_TRUE(svc->Configure(cfg));
+    svc->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    const size_t header = BaseHeader::Size() + DataHeader::DataFieldsSize();
+    const size_t mtu = 51u - header;
+
+    // One byte over the MTU is rejected and nothing is queued.
+    std::vector<uint8_t> too_big(mtu + 1, 0xAB);
+    Result rejected = svc->SendData(kOtherNode, too_big);
+    EXPECT_FALSE(rejected.IsSuccess());
+    EXPECT_EQ(rejected.getErrorCode(), LoraMesherErrorCode::kInvalidParameter);
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 0u);
+
+    // Exactly at the MTU is accepted and queued.
+    std::vector<uint8_t> at_mtu(mtu, 0xCD);
+    Result ok = svc->SendData(kOtherNode, at_mtu);
+    EXPECT_TRUE(ok.IsSuccess()) << ok.GetErrorMessage();
+    EXPECT_EQ(message_queue_->GetQueueSize(SlotType::TX), 1u);
+}
+
+// ============================================================================
+// Routing-table header: sender's own control-slot index
+// ============================================================================
+
+namespace {
+
+BaseMessage MakeRoutingTable(AddressType src, AddressType nm,
+                             const std::vector<RoutingTableEntry>& entries,
+                             uint8_t source_control_slot_index) {
+    auto msg = RoutingTableMessage::Create(
+        0xFFFF, src, nm, /*version=*/1, entries, /*caps=*/0,
+        /*data_slots=*/2, source_control_slot_index);
+    EXPECT_TRUE(msg.has_value());
+    return msg->ToBaseMessage();
+}
+
+uint8_t ControlIndexOf(const NetworkService& service, AddressType address) {
+    for (const auto& node : service.GetNetworkNodes()) {
+        if (node.GetAddress() == address) {
+            return node.control_slot_index;
+        }
+    }
+    return 0xFE;  // not present
+}
+
+}  // namespace
+
+TEST_F(NetworkServiceCoverageTest,
+       NeighbourLearnsSenderControlIndexFromHeader) {
+    // No third party ever lists kOtherNode: its index comes only from its own
+    // routing-table header.
+    BaseMessage rt = MakeRoutingTable(kOtherNode, kNMAddress, {}, 3);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(rt, 100).IsSuccess());
+
+    EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 3u);
+}
+
+TEST_F(NetworkServiceCoverageTest, GossipDoesNotOverrideNeighbourSelfReport) {
+    BaseMessage own = MakeRoutingTable(kOtherNode, kNMAddress, {}, 3);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(own, 100).IsSuccess());
+
+    // Another neighbour relays a stale index for kOtherNode.
+    std::vector<RoutingTableEntry> relayed = {
+        RoutingTableEntry(kOtherNode, /*hops=*/1, /*quality=*/200,
+                          /*data_slots=*/2, /*caps=*/0, /*ctrl_slot_idx=*/5)};
+    BaseMessage gossip = MakeRoutingTable(kNMAddress, kNMAddress, relayed, 0);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(gossip, 200).IsSuccess());
+
+    EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 3u);
+    EXPECT_EQ(ControlIndexOf(*service_, kNMAddress), 0u);
+}
+
+TEST_F(NetworkServiceCoverageTest, UnassignedHeaderIndexKeepsGossipedIndex) {
+    std::vector<RoutingTableEntry> relayed = {
+        RoutingTableEntry(kOtherNode, 1, 200, 2, 0, /*ctrl_slot_idx=*/5)};
+    BaseMessage gossip = MakeRoutingTable(kNMAddress, kNMAddress, relayed, 0);
+    ASSERT_TRUE(service_->ProcessReceivedMessage(gossip, 100).IsSuccess());
+
+    // kOtherNode reached only via kNMAddress (hop 2): gossip applies.
+    EXPECT_EQ(ControlIndexOf(*service_, kOtherNode), 5u);
+}
+
+// ============================================================================
+// Reliable delivery: per-attempt link seq, stable message seq
+// ============================================================================
+
+namespace {
+
+using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+/// Switches the RTOS mock to virtual time for the lifetime of the object.
+class VirtualClock {
+   public:
+    VirtualClock() : mock_(dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+        EXPECT_NE(mock_, nullptr);
+        if (mock_) {
+            mock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+        }
+    }
+
+    ~VirtualClock() {
+        if (mock_) {
+            mock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+        }
+    }
+
+    void Advance(uint32_t ms) {
+        if (mock_) {
+            mock_->advanceTime(ms);
+        }
+    }
+
+   private:
+    os::RTOSMock* mock_;
+};
+
+/// Reliable framing prefix: [msg_seq:1][send_ts:4].
+std::vector<uint8_t> ReliablePayload(uint8_t msg_seq,
+                                     const std::vector<uint8_t>& app,
+                                     uint32_t send_ts = 1234) {
+    std::vector<uint8_t> out(5 + app.size());
+    utils::ByteSerializer ser(out.data(), out.size());
+    ser.WriteUint8(msg_seq);
+    ser.WriteUint32(send_ts);
+    ser.WriteBytes(app.data(), app.size());
+    return out;
+}
+
+std::optional<DataMessage> PopTx(MessageQueueService& queue) {
+    auto msg = queue.ExtractMessageOfType(SlotType::TX);
+    if (!msg) {
+        return std::nullopt;
+    }
+    return DataMessage::CreateFromBaseMessage(*msg);
+}
+
+}  // namespace
+
+TEST_F(NetworkServiceCoverageTest, ReliableRetryUsesFreshLinkSeqStableMsgSeq) {
+    VirtualClock clock;
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    auto id = service_->SendReliable(kOtherNode, {1, 2, 3}, /*max_retries=*/2,
+                                     /*timeout_override_ms=*/1000);
+    ASSERT_NE(id.source, 0);
+
+    auto first = PopTx(*message_queue_);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_GE(first->GetPayload().size(), 5u);
+    EXPECT_EQ(first->GetPayload()[0], id.seq);
+
+    clock.Advance(1000);
+    service_->ProcessReliableTimers();
+
+    auto retry = PopTx(*message_queue_);
+    ASSERT_TRUE(retry.has_value());
+    EXPECT_NE(retry->GetSeqNum(), first->GetSeqNum())
+        << "a retransmission must be a new link-layer packet";
+    ASSERT_GE(retry->GetPayload().size(), 5u);
+    EXPECT_EQ(retry->GetPayload()[0], id.seq)
+        << "the message sequence must stay stable across attempts";
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableDeliveredOnceAckedPerAttempt) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    int deliveries = 0;
+    uint8_t delivered_seq = 0;
+    std::vector<uint8_t> delivered_payload;
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        deliveries++;
+        delivered_seq = msg.seq;
+        delivered_payload.assign(msg.payload.begin(), msg.payload.end());
+    });
+
+    // Two attempts of message 7: distinct link seqs, same message seq.
+    for (uint8_t link_seq : {uint8_t{7}, uint8_t{9}}) {
+        auto msg = DataMessage::Create(kNodeAddress, kOtherNode, kNodeAddress,
+                                       ReliablePayload(7, {0xAB}), /*ttl=*/10,
+                                       link_seq, MessageType::DATA_RELIABLE);
+        ASSERT_TRUE(msg.has_value());
+        ASSERT_TRUE(service_->ProcessReceivedMessage(msg->ToBaseMessage(), 0)
+                        .IsSuccess());
+    }
+
+    EXPECT_EQ(deliveries, 1);
+    EXPECT_EQ(delivered_seq, 7u);
+    EXPECT_EQ(delivered_payload, std::vector<uint8_t>({0xAB}));
+
+    for (int i = 0; i < 2; i++) {
+        auto ack_msg = PopTx(*message_queue_);
+        ASSERT_TRUE(ack_msg.has_value()) << "missing ACK for attempt " << i;
+        auto ack = AckPayload::Deserialize(ack_msg->GetPayload());
+        ASSERT_TRUE(ack.has_value());
+        EXPECT_EQ(ack->acked_seq, 7u);
+    }
+}
+
+TEST_F(NetworkServiceCoverageTest, RelayForwardsCopyAfterFailedForward) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    constexpr AddressType kFarNode = 0x4004;
+    // kFarNode is reachable through kNMAddress.
+    std::vector<RoutingTableEntry> entries = {
+        RoutingTableEntry(kFarNode, 1, 200, 2)};
+    ASSERT_TRUE(
+        service_
+            ->ProcessReceivedMessage(
+                MakeRoutingTable(kNMAddress, kNMAddress, entries, 0), 100)
+            .IsSuccess());
+    ASSERT_EQ(service_->FindNextHop(kFarNode), kNMAddress);
+
+    auto relay_msg = DataMessage::Create(kFarNode, kOtherNode, kNodeAddress,
+                                         ReliablePayload(5, {1}), /*ttl=*/10,
+                                         /*seq=*/5, MessageType::DATA_RELIABLE);
+    ASSERT_TRUE(relay_msg.has_value());
+
+    // Fill the TX queue so the forward is rejected.
+    bool queue_full = false;
+    for (int i = 0; i < 64 && !queue_full; i++) {
+        auto dummy = DataMessage::Create(kOtherNode, kNodeAddress, kOtherNode,
+                                         {0}, 10, 0, MessageType::DATA);
+        if (!message_queue_
+                 ->AddMessageToQueue(
+                     SlotType::TX,
+                     std::make_unique<BaseMessage>(dummy->ToBaseMessage()))
+                 .IsSuccess()) {
+            queue_full = true;
+        }
+    }
+    ASSERT_TRUE(queue_full);
+    service_->ProcessReceivedMessage(relay_msg->ToBaseMessage(), 200);
+
+    message_queue_->ClearQueue(SlotType::TX);
+
+    // The same packet arriving again must be forwarded, not dropped as a
+    // duplicate of the copy that was never queued.
+    service_->ProcessReceivedMessage(relay_msg->ToBaseMessage(), 300);
+    auto forwarded = PopTx(*message_queue_);
+    ASSERT_TRUE(forwarded.has_value());
+    EXPECT_EQ(forwarded->GetDestination(), kFarNode);
+    EXPECT_EQ(forwarded->GetNextHop(), kNMAddress);
+}
+
+TEST_F(NetworkServiceCoverageTest, LateAckStillUpdatesPathRtt) {
+    VirtualClock clock;
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    // kOtherNode must be in the routing table to hold an RTT estimate.
+    ASSERT_TRUE(service_
+                    ->ProcessReceivedMessage(
+                        MakeRoutingTable(kOtherNode, kNMAddress, {}, 3), 0)
+                    .IsSuccess());
+
+    auto id = service_->SendReliable(kOtherNode, {1}, /*max_retries=*/0,
+                                     /*timeout_override_ms=*/1000);
+    ASSERT_NE(id.source, 0);
+    auto sent = PopTx(*message_queue_);
+    ASSERT_TRUE(sent.has_value());
+    utils::ByteDeserializer deser(sent->GetPayload());
+    deser.ReadUint8();
+    uint32_t send_ts = deser.ReadUint32().value_or(0);
+
+    // The message fails before its ACK arrives.
+    clock.Advance(1000);
+    service_->ProcessReliableTimers();
+    ASSERT_EQ(service_->GetReliablePendingCount(), 0u);
+
+    clock.Advance(500);
+    AckPayload ack;
+    ack.acked_seq = id.seq;
+    ack.echo_timestamp = send_ts;
+    auto ack_bytes = ack.Serialize();
+    auto ack_msg = DataMessage::Create(
+        kNodeAddress, kOtherNode, kNodeAddress,
+        std::vector<uint8_t>(ack_bytes.begin(), ack_bytes.end()), 10, 0,
+        MessageType::ACK);
+    ASSERT_TRUE(ack_msg.has_value());
+    service_->ProcessReceivedMessage(ack_msg->ToBaseMessage(), 0);
+
+    std::optional<types::protocols::lora_mesh::PathRtt> rtt;
+    for (const auto& node : service_->GetNetworkNodes()) {
+        if (node.GetAddress() == kOtherNode) {
+            rtt = node.path_rtt;
+        }
+    }
+    ASSERT_TRUE(rtt.has_value());
+    EXPECT_EQ(rtt->srtt_ms, 1500u);
+}
+
+/// Inject a DATA or DATA_RELIABLE packet from kOtherNode addressed to us.
+void InjectData(NetworkService& service, uint8_t link_seq,
+                const std::vector<uint8_t>& payload, MessageType type) {
+    auto msg = DataMessage::Create(0x1001, 0x3003, 0x1001, payload, 10,
+                                   link_seq, type);
+    ASSERT_TRUE(msg.has_value());
+    ASSERT_TRUE(
+        service.ProcessReceivedMessage(msg->ToBaseMessage(), 0).IsSuccess());
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableMsgSeqDoesNotBlockBestEffortData) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    int deliveries = 0;
+    service_->SetDataReceivedExCallback(
+        [&](const ReceivedData&) { deliveries++; });
+
+    InjectData(*service_, 20, ReliablePayload(9, {0x01}),
+               MessageType::DATA_RELIABLE);
+    InjectData(*service_, 9, {0x02}, MessageType::DATA);
+
+    EXPECT_EQ(deliveries, 2);
+}
+
+TEST_F(NetworkServiceCoverageTest, ExtendedCallbackReportsUnicastMetadata) {
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kNodeAddress;
+    cfg.max_hops = 5;  // Initial TTL 10.
+    ASSERT_TRUE(service_->Configure(cfg));
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    int deliveries = 0;
+    ReceivedData received;
+    std::vector<uint8_t> payload;
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        deliveries++;
+        received = msg;
+        payload.assign(msg.payload.begin(), msg.payload.end());
+    });
+
+    auto msg = DataMessage::Create(kNodeAddress, kOtherNode, kNodeAddress,
+                                   {0x0A, 0x0B}, /*ttl=*/9, /*seq=*/42,
+                                   MessageType::DATA);
+    ASSERT_TRUE(msg.has_value());
+    ASSERT_TRUE(
+        service_->ProcessReceivedMessage(msg->ToBaseMessage(), 0).IsSuccess());
+
+    ASSERT_EQ(deliveries, 1);
+    EXPECT_EQ(received.source, kOtherNode);
+    EXPECT_EQ(received.dest, kNodeAddress);
+    EXPECT_EQ(received.seq, 42u);
+    EXPECT_EQ(received.hops, 2u);
+    EXPECT_EQ(payload, std::vector<uint8_t>({0x0A, 0x0B}));
+}
+
+TEST_F(NetworkServiceCoverageTest, ExtendedCallbackReportsGroupDestination) {
+    constexpr AddressType kGroup = 0x8001;
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    ASSERT_TRUE(service_->JoinGroup(kGroup));
+
+    int deliveries = 0;
+    ReceivedData received;
+    std::vector<uint8_t> payload;
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        deliveries++;
+        received = msg;
+        payload.assign(msg.payload.begin(), msg.payload.end());
+    });
+
+    const std::vector<uint8_t> data = {0x5A};
+    auto msg = GroupMessage::Create(kGroup, kOtherNode, /*ttl=*/10,
+                                    /*flags=*/0, /*seq_num=*/5, data);
+    ASSERT_TRUE(msg.has_value());
+    ASSERT_TRUE(
+        service_->ProcessReceivedMessage(msg->ToBaseMessage(), 0).IsSuccess());
+
+    ASSERT_EQ(deliveries, 1);
+    EXPECT_EQ(received.source, kOtherNode);
+    EXPECT_EQ(received.dest, kGroup);
+    EXPECT_TRUE(IsGroupAddress(received.dest));
+    EXPECT_EQ(payload, data);
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableSeqReusedAfterAFullWindowIsNew) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    std::vector<std::vector<uint8_t>> delivered;
+    service_->SetDataReceivedExCallback([&](const ReceivedData& msg) {
+        delivered.emplace_back(msg.payload.begin(), msg.payload.end());
+    });
+
+    InjectData(*service_, 1, ReliablePayload(7, {0x01}, 1000),
+               MessageType::DATA_RELIABLE);
+    InjectData(*service_, 2, ReliablePayload(40, {0x02}, 2000),
+               MessageType::DATA_RELIABLE);
+    // The sender's stream wrapped: 7 is a new message, not a retransmission.
+    InjectData(*service_, 3, ReliablePayload(7, {0x03}, 3000),
+               MessageType::DATA_RELIABLE);
+
+    ASSERT_EQ(delivered.size(), 3u);
+    EXPECT_EQ(delivered[2], std::vector<uint8_t>({0x03}));
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableSeqIsAllocatedPerDestination) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    constexpr AddressType kFarNode = 0x4004;
+
+    auto a1 = service_->SendReliable(kOtherNode, {1}, 0, 1000);
+    auto a2 = service_->SendReliable(kOtherNode, {2}, 0, 1000);
+    auto b1 = service_->SendReliable(kFarNode, {3}, 0, 1000);
+    auto a3 = service_->SendReliable(kOtherNode, {4}, 0, 1000);
+
+    ASSERT_NE(b1.source, 0);
+    EXPECT_EQ(b1.dest, kFarNode);
+    EXPECT_EQ(a1.dest, kOtherNode);
+    EXPECT_EQ(a2.seq, static_cast<uint8_t>(a1.seq + 1));
+    EXPECT_EQ(a3.seq, static_cast<uint8_t>(a2.seq + 1));
+}
+
+TEST_F(NetworkServiceCoverageTest, ReliableSendRefusedWhenStreamSpanIsFull) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+
+    // The first message stays unacknowledged.
+    auto oldest = service_->SendReliable(kOtherNode, {0}, 3, 100000);
+    ASSERT_NE(oldest.source, 0);
+    PopTx(*message_queue_);
+
+    for (int i = 1; i < 32; ++i) {
+        auto id = service_->SendReliable(kOtherNode, {1}, 3, 100000);
+        ASSERT_NE(id.source, 0) << "message " << i;
+        PopTx(*message_queue_);
+        AckPayload ack;
+        ack.acked_seq = id.seq;
+        auto ack_bytes = ack.Serialize();
+        auto ack_msg = DataMessage::Create(
+            kNodeAddress, kOtherNode, kNodeAddress,
+            std::vector<uint8_t>(ack_bytes.begin(), ack_bytes.end()), 10, 0,
+            MessageType::ACK);
+        ASSERT_TRUE(ack_msg.has_value());
+        service_->ProcessReceivedMessage(ack_msg->ToBaseMessage(), 0);
+    }
+    ASSERT_EQ(service_->GetReliablePendingCount(), 1u);
+
+    // A 33rd outstanding sequence would fall outside the receiver window.
+    auto refused = service_->SendReliable(kOtherNode, {2}, 3, 100000);
+    EXPECT_EQ(refused.source, 0);
+}
+
+TEST_F(NetworkServiceCoverageTest, NodeQueriesAreSafeDuringRoutingUpdates) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    std::atomic<bool> updating{true};
+
+    std::thread reader([&]() {
+        while (updating.load()) {
+            (void)service_->GetNodeCapabilities(0x3003);
+            (void)service_->GetNetworkNodes().size();
+        }
+    });
+
+    for (int round = 0; round < 20; ++round) {
+        for (AddressType src = 0x3000; src < 0x3010; ++src) {
+            service_->ProcessReceivedMessage(
+                MakeRoutingTable(src, kNMAddress, {},
+                                 static_cast<uint8_t>(src - 0x3000)),
+                0);
+        }
+    }
+    updating.store(false);
+    reader.join();
+
+    EXPECT_FALSE(service_->GetNetworkNodes().empty());
+}
+
+TEST_F(NetworkServiceCoverageTest, ImplausibleSyncBeaconIsIgnoredWhole) {
+    service_->SetState(INetworkService::ProtocolState::NORMAL_OPERATION);
+    ASSERT_NE(service_->GetNetworkManagerAddress(), kNMAddress);
+
+    // Depth beyond the protocol hop limit.
+    service_->ProcessReceivedMessage(
+        MakeSyncBeacon(kNMAddress, 0xABCD, /*max_hops=*/200), 100);
+    EXPECT_NE(service_->GetNetworkManagerAddress(), kNMAddress);
+
+    // Sync band larger than the announced superframe.
+    service_->ProcessReceivedMessage(
+        MakeSyncBeacon(kNMAddress, 0xABCD, /*max_hops=*/12, /*total_slots=*/10),
+        100);
+    EXPECT_NE(service_->GetNetworkManagerAddress(), kNMAddress);
+
+    service_->ProcessReceivedMessage(MakeSyncBeacon(kNMAddress), 100);
+    EXPECT_EQ(service_->GetNetworkManagerAddress(), kNMAddress);
+}
+
+TEST_F(NetworkServiceCoverageTest, RoutingTableUsesConfiguredNodeLimit) {
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kNodeAddress;
+    cfg.max_hops = 5;
+    cfg.max_network_nodes = 100;
+    ASSERT_TRUE(service_->Configure(cfg));
+    ASSERT_TRUE(service_->UpdateNetworkNode(kOtherNode, false, 1));
+
+    EXPECT_TRUE(
+        service_->GetRoutingTable()->SetControlSlotIndex(kOtherNode, 60));
+    EXPECT_FALSE(
+        service_->GetRoutingTable()->SetControlSlotIndex(kOtherNode, 100));
 }
 
 }  // namespace test

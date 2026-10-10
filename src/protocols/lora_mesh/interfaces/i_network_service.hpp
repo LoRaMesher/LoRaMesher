@@ -11,6 +11,7 @@
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
+#include "types/protocols/lora_mesh/protocol_state.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -25,16 +26,11 @@ class INetworkService {
 
     /**
      * @brief Protocol state enumeration
+     *
+     * Defined in types/protocols/lora_mesh/protocol_state.hpp; re-exported here
+     * so existing INetworkService::ProtocolState references keep resolving.
      */
-    enum class ProtocolState {
-        INITIALIZING,      ///< Protocol is initializing
-        DISCOVERY,         ///< Looking for existing network
-        JOINING,           ///< Attempting to join network
-        NORMAL_OPERATION,  ///< Normal network operation
-        NETWORK_MANAGER,   ///< Acting as network manager
-        FAULT_RECOVERY,    ///< Attempting to recover from fault
-        NM_ELECTION        ///< Running for NM role after fault recovery backoff
-    };
+    using ProtocolState = types::protocols::lora_mesh::ProtocolState;
 
     /**
      * @brief Callback for route update notifications
@@ -61,7 +57,8 @@ class INetworkService {
         uint8_t max_hops = 5;                 ///< Maximum hops for routing
         uint8_t max_packet_size = 255;        ///< Maximum packet size
         uint8_t max_network_nodes = 50;       ///< Maximum network nodes
-        uint8_t default_data_slots = 1;       ///< Default data slots to request
+        uint8_t max_data_slots = 100;         ///< Ceiling on total data slots
+        uint8_t default_data_slots = 2;       ///< Data slots per node
         uint8_t default_control_slots = 1;    ///< Default control slots
         uint8_t default_discovery_slots = 1;  ///< Default discovery slots
         uint32_t guard_time_ms = 50;      ///< TX guard time for RX readiness
@@ -90,6 +87,9 @@ class INetworkService {
         // Node role configuration
         NodeRole node_role =
             NodeRole::AUTO;  ///< Node role for network formation
+
+        /// When true, RTENTRY log lines include capability/data-slot fields.
+        bool log_routing_capabilities = false;
     };
 
     // Node management methods
@@ -98,14 +98,12 @@ class INetworkService {
      * @brief Update node information in the network
      * 
      * @param node_address Node address
-     * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether node is network manager
      * @param allocated_data_slots Allocated slots for node
      * @param capabilities Node capabilities bitmap
      * @return bool True if node was added or significantly updated
      */
     virtual bool UpdateNetworkNode(AddressType node_address,
-                                   uint8_t battery_level,
                                    bool is_network_manager,
                                    uint8_t allocated_data_slots,
                                    uint8_t capabilities = 0) = 0;
@@ -132,20 +130,12 @@ class INetworkService {
     virtual bool IsNodeInNetwork(AddressType node_address) const = 0;
 
     /**
-     * @brief Get all network nodes with their routing information
-     * 
-     * @return std::vector<NetworkNodeRoute> All nodes and their routes
-     */
-    virtual const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const = 0;
-
-    /**
-     * @brief Get a thread-safe copy of all network nodes
+     * @brief Get a snapshot of all network nodes with their routing information
      *
-     * @return std::vector<NetworkNodeRoute> Copy of all nodes
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
     virtual std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const = 0;
+    GetNetworkNodes() const = 0;
 
     /**
      * @brief Get total node count
@@ -206,6 +196,9 @@ class INetworkService {
 
     /**
      * @brief Set route update callback
+     *
+     * The callback runs synchronously while the routing table is locked, so it
+     * must not call back into the routing table or the network service.
      *
      * @param callback Callback function
      */

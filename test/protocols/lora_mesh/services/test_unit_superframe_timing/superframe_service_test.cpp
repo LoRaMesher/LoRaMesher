@@ -8,6 +8,7 @@
 #include <memory>
 #include <thread>
 
+#include "config/task_config.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/services/superframe_service.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
@@ -89,6 +90,29 @@ TEST_F(SuperframeServiceLifecycleTest, StartAndStop) {
     result = service_->StopSuperframe();
     EXPECT_TRUE(result);
     EXPECT_FALSE(service_->IsSynchronized());
+}
+
+/**
+ * @brief The update task receives its full configured stack budget in bytes
+ */
+TEST_F(SuperframeServiceLifecycleTest, UpdateTaskGetsConfiguredStackBytes) {
+    ASSERT_TRUE(service_->StartSuperframe());
+
+    uint32_t update_task_free = 0;
+    bool found = false;
+    for (const auto& stats : GetRTOS().getSystemTaskStats()) {
+        if (stats.name == "SuperframeUpdate") {
+            update_task_free = stats.stackWatermark;
+            found = true;
+        }
+    }
+
+    ASSERT_TRUE(service_->StopSuperframe());
+    ASSERT_TRUE(found);
+    // Free space can only exceed a quarter of the budget if the whole byte
+    // budget reached the RTOS.
+    EXPECT_GT(update_task_free, config::TaskConfig::kSuperframeStackSize / 4);
+    EXPECT_LE(update_task_free, config::TaskConfig::kSuperframeStackSize);
 }
 
 /**

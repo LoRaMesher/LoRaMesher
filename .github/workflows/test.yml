@@ -4,7 +4,7 @@ on: [push, pull_request]
 
 jobs:
   esp32-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v6
 
@@ -18,14 +18,18 @@ jobs:
         python -m pip install --upgrade pip
         pip install platformio
 
-    - name: Build ESP32 Example
+    - name: Build ESP32 Examples
       run: |
-        cd examples/simple_example
-        sed -i 's|lib_deps =.*|lib_deps = symlink://../../|' platformio.ini
-        pio run -e ttgo-lora32-v1
+        for example in simple_example reliable_example group_example; do
+          (
+            cd "examples/$example"
+            sed -i 's|https://github.com/LoRaMesher/LoRaMesher[^[:space:]]*|symlink://../../|' platformio.ini
+            pio run -e ttgo-lora32-v1
+          )
+        done
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     - uses: actions/checkout@v6
@@ -43,8 +47,16 @@ jobs:
     - name: Install LLVM 18
       run: |
         sudo apt-get update -q
-        sudo apt-get install -y llvm-18 clang-18
+        sudo apt-get install -y llvm-18 clang-18 ccache
 
+    - name: Restore compiler cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ccache
+        key: ccache-test-native-profile-${{ github.sha }}
+        restore-keys: ccache-test-native-profile-
+
+    # ccache's default cache directory is ~/.cache/ccache
     - name: Run Tests
       run: |
         LLVM_PROFILE_FILE="$(pwd)/.pio/coverage/%e-%p.profraw" \
@@ -212,7 +224,7 @@ jobs:
       if: >
         always() &&
         github.event_name == 'push' &&
-        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/new_loramesher')
+        github.ref == 'refs/heads/main'
       uses: schneegans/dynamic-badges-action@v1.8.0
       with:
         auth: ${{ secrets.GIST_TOKEN }}

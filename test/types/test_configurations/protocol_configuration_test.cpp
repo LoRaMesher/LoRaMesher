@@ -133,8 +133,23 @@ TEST_F(LoRaMeshConfigTest, GettersSetters) {
     config_.setMaxNetworkNodes(20);
     EXPECT_EQ(config_.getMaxNetworkNodes(), 20u);
 
+    config_.setMaxDataSlots(30);
+    EXPECT_EQ(config_.getMaxDataSlots(), 30u);
+
     config_.setGuardTime(100);
     EXPECT_EQ(config_.getGuardTime(), 100u);
+}
+
+TEST_F(LoRaMeshConfigTest, PositionalArgumentsKeepTheirMeaning) {
+    // Every positional argument keeps the meaning it had before max_data_slots
+    // existed; max_data_slots is appended last.
+    LoRaMeshProtocolConfig config(0x1234, 60000, 180000, 5, 255, 1, 30000, 50,
+                                  /*guard_time_ms=*/75,
+                                  /*wake_up_guard_ms=*/120,
+                                  /*max_data_slots=*/40);
+    EXPECT_EQ(config.getGuardTime(), 75u);
+    EXPECT_EQ(config.getWakeUpGuardTime(), 120u);
+    EXPECT_EQ(config.getMaxDataSlots(), 40u);
 }
 
 TEST_F(LoRaMeshConfigTest, IsValidTrue) {
@@ -268,13 +283,34 @@ TEST_F(LoRaMeshConfigTest, ValidateDefaultValues) {
     EXPECT_EQ(cfg.getHelloInterval(), 60000u);
     EXPECT_EQ(cfg.getMaxHops(), 5u);
     EXPECT_EQ(cfg.getMaxPacketSize(), 255u);
-    EXPECT_EQ(cfg.getDefaultDataSlots(), 1u);
+    EXPECT_EQ(cfg.getDefaultDataSlots(), 2u);
     EXPECT_EQ(cfg.getMaxNetworkNodes(), 50u);
+    EXPECT_EQ(cfg.getMaxDataSlots(), 100u);
     EXPECT_EQ(cfg.getGuardTime(), 50u);
     EXPECT_NEAR(cfg.getTargetDutyCycle(), 0.01f, 0.001f);
     EXPECT_NEAR(cfg.getMinSleepFraction(), 0.30f, 0.001f);
     EXPECT_EQ(cfg.getNodeRole(), NodeRole::AUTO);
     EXPECT_EQ(cfg.getNodeCapabilities(), 0u);
+}
+
+TEST_F(LoRaMeshConfigTest, ValidateRejectsNonUnicastNodeAddress) {
+    for (AddressType address :
+         {AddressType{0x8000}, AddressType{0xFFFE}, AddressType{0xFFFF}}) {
+        config_.setNodeAddress(address);
+        EXPECT_FALSE(config_.IsValid()) << std::hex << address;
+        EXPECT_EQ(config_.Validate(),
+                  "Node address must be unicast (0x0001-0x7FFF) or 0 for "
+                  "auto-assignment")
+            << std::hex << address;
+    }
+}
+
+TEST_F(LoRaMeshConfigTest, ValidateAcceptsUnicastOrAutoNodeAddress) {
+    for (AddressType address :
+         {AddressType{0}, AddressType{0x0001}, AddressType{0x7FFF}}) {
+        config_.setNodeAddress(address);
+        EXPECT_EQ(config_.Validate(), "") << std::hex << address;
+    }
 }
 
 TEST_F(LoRaMeshConfigTest, ValidateHelloIntervalTooShort) {
@@ -423,35 +459,42 @@ TEST_F(LoRaMeshConfigTest, GetSyncBeaconSubslotConfigDefault) {
     const auto& cfg = config_.getSyncBeaconSubslotConfig();
     EXPECT_EQ(cfg.num_subslots, 5u);
     EXPECT_EQ(cfg.strategy,
-              protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH);
 }
 
 TEST_F(LoRaMeshConfigTest, SetSyncBeaconSubslotConfig) {
-    protocols::lora_mesh::SubslotConfig new_cfg{
-        3, 20, protocols::lora_mesh::SubslotAssignment::HOP_BASED};
+    types::protocols::lora_mesh::SubslotConfig new_cfg{
+        3, 20, types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
     config_.setSyncBeaconSubslotConfig(new_cfg);
     const auto& result = config_.getSyncBeaconSubslotConfig();
     EXPECT_EQ(result.num_subslots, 3u);
     EXPECT_EQ(result.guard_time_ms, 20u);
     EXPECT_EQ(result.strategy,
-              protocols::lora_mesh::SubslotAssignment::HOP_BASED);
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
+}
+
+TEST_F(LoRaMeshConfigTest, SubslotConfigDefaultsToAddressHash) {
+    types::protocols::lora_mesh::SubslotConfig cfg;
+    EXPECT_EQ(cfg.strategy,
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH);
 }
 
 TEST_F(LoRaMeshConfigTest, GetDiscoverySubslotConfigDefault) {
     const auto& cfg = config_.getDiscoverySubslotConfig();
     EXPECT_EQ(cfg.num_subslots, 5u);
-    EXPECT_EQ(cfg.strategy, protocols::lora_mesh::SubslotAssignment::RANDOM);
+    EXPECT_EQ(cfg.strategy,
+              types::protocols::lora_mesh::SubslotAssignment::RANDOM);
 }
 
 TEST_F(LoRaMeshConfigTest, SetDiscoverySubslotConfig) {
-    protocols::lora_mesh::SubslotConfig new_cfg{
-        4, 15, protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
+    types::protocols::lora_mesh::SubslotConfig new_cfg{
+        4, 15, types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
     config_.setDiscoverySubslotConfig(new_cfg);
     const auto& result = config_.getDiscoverySubslotConfig();
     EXPECT_EQ(result.num_subslots, 4u);
     EXPECT_EQ(result.guard_time_ms, 15u);
     EXPECT_EQ(result.strategy,
-              protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
+              types::protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO);
 }
 
 // ---- ProtocolConfig wrapper additional coverage ----

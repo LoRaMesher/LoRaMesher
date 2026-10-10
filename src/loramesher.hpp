@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "config/system_config.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -22,9 +23,22 @@
 
 namespace loramesher {
 
+/// Options for reliable unicast sends.
+struct ReliableOptions {
+    uint32_t timeout_ms = 0;  ///< 0 = derive from hop count and superframe
+    uint8_t max_retries = 3;
+};
+
+/// Options for group sends.
+struct GroupSendOptions {
+    bool request_acks = false;
+    uint32_t window_ms = 8000;
+    uint8_t max_retries = 0;
+};
+
 /**
  * @brief Main class of the LoraMesher library
- * 
+ *
  * Provides a unified interface for hardware and protocol management,
  * message handling, and network operations.
  */
@@ -52,17 +66,30 @@ class LoraMesher {
 
     /**
      * @brief Start the LoraMesher network
-     * 
-     * Initializes hardware, protocols, and starts all required tasks.
-     * 
-     * @return Result Success if started successfully, error details otherwise
+     *
+     * Initializes hardware and protocols on the first call, then starts the
+     * protocol. Calling Start() again after Stop() restarts the node, which
+     * rediscovers and rejoins a network from scratch. Calling it while
+     * running is a no-op.
+     *
+     * Must not be called from a library callback: the protocol rejects it
+     * with kInvalidState.
+     *
+     * @return Result Success if started successfully, otherwise the error of
+     *         the protocol that failed to start (LoraMesher stays stopped)
      */
     [[nodiscard]] Result Start();
 
     /**
      * @brief Stop the LoraMesher network
-     * 
-     * Stops all tasks and releases resources.
+     *
+     * Parks the library's tasks, puts the radio to sleep and discards the
+     * network state, queued messages and pending reliable deliveries. The
+     * instance can be started again with Start().
+     *
+     * Must not be called from a library callback (data, delivery, route or
+     * state callbacks run on the protocol task): such a call is rejected,
+     * logs an error and leaves LoraMesher running. Call it from another task.
      */
     void Stop();
 
@@ -185,11 +212,83 @@ class LoraMesher {
 
     /**
      * @brief Set callback for received data messages
+     *
+     * Reports the source and payload of every message delivered to this node
+     * (unicast, group or broadcast). Use SetDataCallbackEx() to also get the
+     * destination, sequence number and hop count; when both are set, both
+     * fire.
+     *
      * @warning This callback should be small or transfer the message into another task for processing.
      *
      * @param callback Function to call when data is received
      */
     void SetDataCallback(DataReceivedCallback callback);
+
+    // Reliable delivery and group multicast
+
+    /// Stable per-message identifier exposed to the application.
+    using MessageId = protocols::reliability::MessageId;
+    /// Reliable-delivery outcome reported to the delivery callback.
+    using DeliveryResult = protocols::reliability::DeliveryResult;
+    /// Delivery outcome callback type.
+    using DeliveryCallback = protocols::reliability::DeliveryCallback;
+    /// Inbound callback reporting the message metadata.
+    using DataReceivedExCallback = loramesher::DataReceivedExCallback;
+
+    /**
+     * @brief Send data reliably (acknowledged) to a destination
+     * @return Assigned message id, or {0,0} on failure
+     */
+    MessageId SendReliable(AddressType destination,
+                           const std::vector<uint8_t>& data,
+                           ReliableOptions options = {});
+
+    /**
+     * @brief Send data to a group, optionally collecting acknowledgements
+     * @return Assigned message id, or {0,0} on failure
+     */
+    MessageId SendGroup(AddressType group, std::span<const uint8_t> data,
+                        GroupSendOptions options = {});
+
+    /** @brief Join a logical group */
+    Result JoinGroup(AddressType group);
+
+    /** @brief Leave a logical group */
+    Result LeaveGroup(AddressType group);
+
+    /** @brief Whether this node is a member of the given group */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /** @brief Get the groups this node belongs to */
+    std::vector<AddressType> GetGroups() const;
+
+    /**
+     * @brief Register the sender-side outcome callback
+     *
+     * Reports the result of each SendReliable() (Delivered with the
+     * acknowledging node and round-trip time, or Failed). For a SendGroup()
+     * that requests acknowledgements it reports Delivered once per member
+     * that acknowledges, then GroupWindowClosed with the number of members
+     * that acknowledged.
+     *
+     * @warning Runs on the protocol task; keep it short.
+     *
+     * @param callback Function to call with each outcome
+     */
+    void SetDeliveryCallback(DeliveryCallback callback);
+
+    /**
+     * @brief Set callback for received data messages, with metadata
+     *
+     * Same events as SetDataCallback(), reported as a ReceivedData: source,
+     * destination (this node, a group or broadcast), sender sequence number,
+     * hops travelled and payload. The payload is valid only during the call.
+     *
+     * @warning Runs on the protocol task; keep it short.
+     *
+     * @param callback Function to call when data is received
+     */
+    void SetDataCallbackEx(DataReceivedExCallback callback);
 
     /**
      * @brief Get current routing table with raw entry data
@@ -208,9 +307,10 @@ class LoraMesher {
     /**
      * @brief Get current slot allocation table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations (empty when the
+     *         mesh protocol is not running)
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const;
 
     /**
@@ -235,6 +335,14 @@ class LoraMesher {
      * @return uint8_t Number of TX slots, or 0 if not in NORMAL_OPERATION
      */
     uint8_t GetDataSlotsPerSuperframe() const;
+
+    /**
+     * @brief Get the duration of the current superframe
+     *
+     * @return uint32_t Superframe duration in milliseconds, or 0 if the active
+     *         protocol is not LoRaMesh or it has not been initialized
+     */
+    uint32_t GetSuperframeDuration() const;
 
     /**
      * @brief Get number of messages pending in the TX queue
@@ -268,14 +376,20 @@ class LoraMesher {
      *  - NODE_ONLY/AUTO -> NETWORK_MANAGER before joining a network: the
      *    node creates a network immediately.
      *  - NODE_ONLY/AUTO -> NETWORK_MANAGER while already joined: the node
-     *    broadcasts NM_CLAIM with its new priority; the incumbent NM
-     *    yields via the standard merge protocol.
+     *    broadcasts NM_CLAIM with its new priority; an incumbent NM with a
+     *    worse priority surrenders and the network re-elects the claimant.
+     *    This is same-network election, independent of the disabled
+     *    cross-network merge.
      *  - NETWORK_MANAGER -> NODE_ONLY/AUTO while acting as NM: the node
      *    surrenders and enters DISCOVERY; the rest of the network runs an
      *    election to pick a new NM (~5 superframes of disruption).
      *
      * Typical use: boot all nodes as NODE_ONLY; promote one to
      * NETWORK_MANAGER from an external event (e.g. Wi-Fi connect).
+     *
+     * Do not switch nodes to AUTO: while cross-network merge is disabled, an
+     * election among AUTO nodes can split the mesh into networks that never
+     * merge.
      *
      * @param role Desired NodeRole
      * @return Result Success if queued; error if LoraMesher is not running

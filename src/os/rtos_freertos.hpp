@@ -19,6 +19,23 @@
 namespace loramesher {
 namespace os {
 
+/**
+ * @brief Convert a stack size in bytes to the port's stack-depth unit
+ *
+ * ESP-IDF counts stack depth in bytes (StackType_t is uint8_t); vanilla
+ * FreeRTOS counts it in StackType_t words.
+ */
+constexpr uint32_t StackBytesToDepth(uint32_t bytes) {
+    return bytes / sizeof(StackType_t);
+}
+
+/**
+ * @brief Convert a port stack depth (e.g. a high-water mark) to bytes
+ */
+constexpr uint32_t StackDepthToBytes(uint32_t depth) {
+    return depth * sizeof(StackType_t);
+}
+
 class RTOSFreeRTOS : public RTOS {
    private:
     struct TaskData {
@@ -58,8 +75,9 @@ class RTOSFreeRTOS : public RTOS {
             new TaskData{.function = taskFunction, .parameters = parameters};
 
         // Create the task
-        BaseType_t result = xTaskCreate(taskWrapper, name, stackSize, taskData,
-                                        priority, taskHandle);
+        BaseType_t result =
+            xTaskCreate(taskWrapper, name, StackBytesToDepth(stackSize),
+                        taskData, priority, taskHandle);
 
         if (result != pdPASS) {
             delete taskData;
@@ -160,10 +178,7 @@ class RTOSFreeRTOS : public RTOS {
     void StartScheduler() override { vTaskStartScheduler(); }
 
     uint32_t getTaskStackWatermark(TaskHandle_t taskHandle) override {
-        // uxTaskGetStackHighWaterMark returns words on this port; report
-        // bytes to match the rest of the codebase.
-        return uxTaskGetStackHighWaterMark(taskHandle) *
-               config::TaskConfig::kStackBytesPerWord;
+        return StackDepthToBytes(uxTaskGetStackHighWaterMark(taskHandle));
     }
 
     TaskState getTaskState(TaskHandle_t taskHandle) override {

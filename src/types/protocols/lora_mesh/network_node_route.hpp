@@ -11,6 +11,7 @@
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_header.hpp"
 #include "types/messages/loramesher/routing_table_entry.hpp"
+#include "types/protocols/lora_mesh/path_rtt.hpp"
 #include "types/protocols/lora_mesh/sliding_window_pdr.hpp"
 #include "utils/byte_operations.h"
 
@@ -35,12 +36,30 @@ class NetworkNodeRoute {
         static constexpr uint32_t kMinSamplesForQuality = 3;
         /// Quality reported below the sample threshold (~ETX 1024)
         static constexpr uint8_t kProvisionalQuality = 64;
+        /// Asymmetric EWMA for remote (peer-reported) quality, fixed-point /256.
+        /// Slow rise suppresses optimistic single-slice spikes (the peer's
+        /// sliding-window PDR jumps in ~16-unit quanta and is sampled sparsely
+        /// due to slice rotation), so a marginal asymmetric link cannot
+        /// momentarily out-rank a stable longer path. Fast fall keeps genuine
+        /// degradation responsive so a worsening link still reroutes promptly.
+        static constexpr uint16_t kRemoteUpAlpha = 51;     ///< ~0.20
+        static constexpr uint16_t kRemoteDownAlpha = 192;  ///< ~0.75
+        /// Local routing broadcasts since first contact after which a peer
+        /// broadcast omitting us counts as absence: the peer needs
+        /// kMinSamplesForQuality of our tables before it lists us, plus one
+        /// broadcast of margin for a lost frame.
+        static constexpr uint8_t kUnidirectionalGraceBroadcasts =
+            kMinSamplesForQuality + 1;
 
         uint32_t messages_expected = 0;   ///< Expected messages count
         uint32_t messages_received = 0;   ///< Received messages count
         uint32_t last_message_time = 0;   ///< Last message received time
         uint8_t remote_link_quality = 0;  ///< Link quality as reported by peer
-        uint8_t consecutive_missed = 0;   ///< Consecutive missed messages
+        uint8_t remote_absent_streak =
+            0;  ///< Consecutive peer broadcasts not listing us as a reception
+        uint8_t local_broadcasts =
+            0;  ///< Own routing broadcasts since first reception (saturating)
+        uint8_t consecutive_missed = 0;  ///< Consecutive missed messages
         uint8_t ewma_quality =
             kProvisionalQuality;       ///< EWMA-smoothed link quality (0-255)
         uint8_t recovery_counter = 0;  ///< Messages received since inactivation
@@ -82,11 +101,40 @@ class NetworkNodeRoute {
                              float snr = 0.0f);
 
         /**
-         * @brief Update remote link quality
+         * @brief Update remote link quality from a received routing broadcast
          *
-         * @param quality Link quality as reported by peer
+         * Routing tables are broadcast as rotating slices when they exceed the
+         * per-frame entry budget, so our own entry is absent from most slices.
+         * The reported quality is therefore held sticky: a positive value
+         * refreshes it immediately, while an absent report (quality == 0) only
+         * clears it after our entry has been missing for a full rotation cycle
+         * of the peer's table (absent_threshold), which distinguishes slice
+         * rotation from a genuinely unidirectional or degraded link.
+         *
+         * An absent report counts only once the peer could have heard us,
+         * i.e. after kUnidirectionalGraceBroadcasts local broadcasts.
+         *
+         * @param quality Reception quality reported by peer (0 = not listed)
+         * @param absent_threshold Consecutive absent reports tolerated before
+         *        the link is treated as unidirectional/degraded
          */
-        void UpdateRemoteQuality(uint8_t quality);
+        void UpdateRemoteQuality(uint8_t quality, uint8_t absent_threshold = 1);
+
+        /**
+         * @brief Register one local routing broadcast
+         *
+         * Counted only after the peer has been heard directly, so the count
+         * bounds how many of our tables the peer could have received.
+         */
+        void RecordLocalBroadcast();
+
+        /**
+         * @brief Whether the link is confirmed unidirectional
+         *
+         * True when the peer has been heard at least kMinSamplesForQuality
+         * times and has reported us as absent after it could have heard us.
+         */
+        bool IsUnidirectional() const;
     };
 
     /**
@@ -106,30 +154,26 @@ class NetworkNodeRoute {
      * @brief Complete constructor with all node fields
      *
      * @param addr Node address
-     * @param battery Battery level (0-100%)
      * @param time Current timestamp
      * @param is_manager Whether this is a network manager
      * @param caps Node capabilities bitmap
      * @param slots Number of allocated slots
      */
-    NetworkNodeRoute(AddressType addr, uint8_t battery, uint32_t time,
-                     bool is_manager = false, uint8_t caps = 0,
-                     uint8_t slots = 0);
+    NetworkNodeRoute(AddressType addr, uint32_t time, bool is_manager,
+                     uint8_t caps = 0, uint8_t slots = 0);
 
     /**
      * @brief Complete constructor with all node fields and hop count
      *
      * @param addr Node address
-     * @param battery Battery level (0-100%)
      * @param time Current timestamp
      * @param is_manager Whether this is a network manager
      * @param caps Node capabilities bitmap
      * @param slots Number of allocated slots
      * @param hops Hop count to destination
      */
-    NetworkNodeRoute(AddressType addr, uint8_t battery, uint32_t time,
-                     bool is_manager, uint8_t caps, uint8_t slots,
-                     uint8_t hops);
+    NetworkNodeRoute(AddressType addr, uint32_t time, bool is_manager,
+                     uint8_t caps, uint8_t slots, uint8_t hops);
 
     /**
      * @brief Constructor with routing information
@@ -207,16 +251,15 @@ class NetworkNodeRoute {
 
     /**
      * @brief Update node information
-     * 
-     * @param battery Battery level (0-100%)
+     *
      * @param is_manager Whether node is network manager
      * @param caps Capabilities bitmap
      * @param data_slots Allocated data slots
      * @param current_time Current timestamp
      * @return bool True if significant updates were made
      */
-    bool UpdateNodeInfo(uint8_t battery, bool is_manager, uint8_t caps,
-                        uint8_t data_slots, uint32_t current_time);
+    bool UpdateNodeInfo(bool is_manager, uint8_t caps, uint8_t data_slots,
+                        uint32_t current_time);
 
     /**
      * @brief Update routing information
@@ -241,16 +284,6 @@ class NetworkNodeRoute {
     bool UpdateFromRoutingTableEntry(const RoutingTableEntry& entry,
                                      AddressType next_hop,
                                      uint32_t current_time);
-
-    /**
-     * @brief Update battery level
-     * 
-     * @param new_battery New battery level (0-100%)
-     * @param current_time Current timestamp
-     * 
-     * @return bool True if battery level changed
-     */
-    bool UpdateBatteryLevel(uint8_t new_battery, uint32_t current_time);
 
     /**
      * @brief Update allocated slots for this node
@@ -338,7 +371,6 @@ class NetworkNodeRoute {
      */
     static constexpr size_t SerializedSize() {
         return sizeof(AddressType) +  // Address
-               sizeof(uint8_t) +      // Battery level
                sizeof(uint32_t) +     // Last seen
                sizeof(uint8_t) +      // Is network manager (as uint8_t)
                sizeof(AddressType) +  // Next hop
@@ -367,7 +399,6 @@ class NetworkNodeRoute {
     RoutingTableEntry routing_entry;  ///< Routing entry for this node
 
     // Node status information
-    uint8_t battery_level = 100;      ///< Battery level (0-100%)
     uint32_t last_seen = 0;           ///< Last time node was seen
     bool is_network_manager = false;  ///< Whether node is network manager
 
@@ -382,6 +413,9 @@ class NetworkNodeRoute {
     // Control slot tracking (NM-local, not serialized for network transmission)
     uint8_t control_slot_index =
         0xFF;  ///< Assigned control slot index (0xFF = unassigned)
+
+    // Round-trip time toward this node (local, not serialized)
+    PathRtt path_rtt;  ///< Reset when the route's next hop or hop count changes
 
     /**
      * @brief Equality operator (based on address)

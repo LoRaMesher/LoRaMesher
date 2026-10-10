@@ -46,25 +46,11 @@ SuperframeService::SuperframeService(uint16_t total_slots,
 }
 
 SuperframeService::~SuperframeService() {
-    // Make sure we stop the service and task
     LOG_DEBUG("SuperframeService destructor called");
 
-    // First stop the superframe to set is_running_ = false
-    // This will cause the UpdateTaskFunction loop to exit
     if (is_running_) {
-        is_running_ = false;
-        is_synchronized_ = false;
-
-        // Wake up the task if it's blocked in ReceiveFromQueue by sending a notification
-        // This ensures the task sees is_running_ = false quickly
-        if (notification_queue_) {
-            SuperframeNotificationType stop_notification =
-                SuperframeNotificationType::STOP_REQUESTED;
-            GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
-        }
+        StopSuperframe();
     }
-
-    // Now safely delete the task (it should exit its loop due to is_running_ = false)
     DeleteUpdateTask();
 
     // Clean up notification queue after task is safely deleted
@@ -109,10 +95,9 @@ Result SuperframeService::StartSuperframe() {
         }
     }
 
-    // Create the update task
-    if (update_task_handle_ != nullptr) {
-        GetRTOS().ResumeTask(update_task_handle_);
-    } else {
+    // Release the parked update task, or create it on the first start
+    update_gate_.RequestRun();
+    if (update_task_handle_ == nullptr) {
         bool task_created = CreateUpdateTask();
         if (!task_created) {
             LOG_ERROR("Failed to create superframe update task");
@@ -139,32 +124,20 @@ Result SuperframeService::StopSuperframe() {
     is_running_ = false;
     is_synchronized_ = false;
 
-    if (update_task_handle_) {
-        bool suspended = GetRTOS().SuspendTask(update_task_handle_);
-        if (!suspended) {
-            LOG_WARNING(
-                "Failed to suspend superframe update task within timeout, "
-                "continuing anyway");
-        }
-    }
-
-    // Wake up the task if it's blocked in ReceiveFromQueue
-    // This ensures the task can exit quickly before DeleteTask tries to join
+    // Park the update task; wake it if it is blocked in ReceiveFromQueue
+    update_gate_.RequestPark();
     if (notification_queue_) {
         SuperframeNotificationType stop_notification =
             SuperframeNotificationType::STOP_REQUESTED;
         GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
-        GetRTOS().YieldTask();
     }
 
-    // Stop the update task
-    // if (update_task_handle_) {
-    //     // Delete the task. Suspending the task does not work correctly.
-    //     // Maybe is something about the virtual time mode
-    //     // Hours spend: 5h
-    //     GetRTOS().DeleteTask(update_task_handle_);
-    //     update_task_handle_ = nullptr;
-    // }
+    // Called from the update task itself, it parks at its next iteration
+    if (update_task_handle_ && !update_gate_.IsCurrentTask() &&
+        !update_gate_.WaitParked(kUpdateTaskStopTimeoutMs)) {
+        LOG_WARNING("Superframe update task did not park within %u ms",
+                    kUpdateTaskStopTimeoutMs);
+    }
 
     LOG_INFO("Superframe service stopped after %d completed superframes",
              superframes_completed_.load());
@@ -206,11 +179,9 @@ Result SuperframeService::HandleNewSuperframe() {
     LOG_DEBUG("Started superframe #%d", superframes_completed_.load());
 
     // Notify callback if set
-    {
-        std::lock_guard<std::mutex> lock(callback_mutex_);
-        if (superframe_callback_) {
-            superframe_callback_(0, true);  // Slot 0, new superframe
-        }
+    SuperframeCallback callback = GetSuperframeCallback();
+    if (callback) {
+        callback(0, true);  // Slot 0, new superframe
     }
 
     // Notify update task that a new frame has started
@@ -221,6 +192,21 @@ Result SuperframeService::HandleNewSuperframe() {
 
 Result SuperframeService::DoNotUpdateStartTimeOnNewSuperframe() {
     update_start_time_in_new_superframe = false;
+    return Result::Success();
+}
+
+Result SuperframeService::ResetForRestart() {
+    if (is_running_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Cannot reset timing while superframe is running");
+    }
+
+    update_start_time_in_new_superframe = true;
+    superframe_start_time_ = 0;
+    is_synchronized_ = false;
+    last_slot_ = 0xFFFF;
+    superframes_completed_ = 0;
+
     return Result::Success();
 }
 
@@ -547,6 +533,11 @@ void SuperframeService::SetSuperframeCallback(SuperframeCallback callback) {
     superframe_callback_ = std::move(callback);
 }
 
+SuperframeCallback SuperframeService::GetSuperframeCallback() const {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
+    return superframe_callback_;
+}
+
 SuperframeService::SuperframeStats SuperframeService::GetSuperframeStats()
     const {
     SuperframeStats stats = {};
@@ -621,10 +612,10 @@ Result SuperframeService::UpdateSuperframeState() {
         }
 
         // Call callback for slot transition
-        {
-            std::lock_guard<std::mutex> lock(callback_mutex_);
-            if (superframe_callback_ && !new_superframe) {
-                superframe_callback_(current_slot, new_superframe);
+        if (!new_superframe) {
+            SuperframeCallback callback = GetSuperframeCallback();
+            if (callback) {
+                callback(current_slot, new_superframe);
             }
         }
 
@@ -653,11 +644,15 @@ bool SuperframeService::CreateUpdateTask() {
         return true;  // Already running
     }
 
+    if (!update_gate_.IsValid()) {
+        LOG_ERROR("Superframe update task synchronization not available");
+        return false;
+    }
+
     bool task_created =
         GetRTOS().CreateTask(UpdateTaskFunction, "SuperframeUpdate",
-                             config::TaskConfig::kSuperframeStackSize /
-                                 config::TaskConfig::kStackBytesPerWord,
-                             this, TASK_PRIORITY, &update_task_handle_);
+                             config::TaskConfig::kSuperframeStackSize, this,
+                             TASK_PRIORITY, &update_task_handle_);
 
     if (task_created) {
         LOG_DEBUG("Superframe update task created");
@@ -669,16 +664,24 @@ bool SuperframeService::CreateUpdateTask() {
 }
 
 void SuperframeService::DeleteUpdateTask() {
-    if (update_task_handle_ != nullptr) {
-        LOG_DEBUG("Deleting superframe update task handle: %p",
-                  update_task_handle_);
-        GetRTOS().DeleteTask(update_task_handle_);
-        update_task_handle_ = nullptr;
-        LOG_DEBUG("Superframe update task handle set to nullptr");
-    } else {
-        LOG_DEBUG("Superframe update task handle already null");
+    if (update_task_handle_ == nullptr) {
+        return;
     }
 
+    // Ask the task to leave its loop, waking it if it waits on its queue
+    update_gate_.RequestExit();
+    if (notification_queue_) {
+        SuperframeNotificationType stop_notification =
+            SuperframeNotificationType::STOP_REQUESTED;
+        GetRTOS().SendToQueue(notification_queue_, &stop_notification, 0);
+    }
+    if (!update_gate_.WaitExited(kUpdateTaskStopTimeoutMs)) {
+        LOG_ERROR("Superframe update task did not exit within %u ms",
+                  kUpdateTaskStopTimeoutMs);
+    }
+
+    GetRTOS().DeleteTask(update_task_handle_);
+    update_task_handle_ = nullptr;
     LOG_DEBUG("Superframe update task deleted");
 }
 
@@ -704,9 +707,17 @@ void SuperframeService::UpdateTaskFunction(void* param) {
     utils::TaskMonitor::RegisterCurrentTask(
         "SuperframeUpdate", config::TaskConfig::kSuperframeStackSize);
 
+    os::TaskRunGate& gate = service->update_gate_;
+    gate.BindCurrentTask();
+
     // Task loop with queue-based efficient waiting
     SuperframeNotificationType notification;
-    while (!rtos.ShouldStopOrPause()) {
+    while (!gate.ShouldExit()) {
+        if (!gate.IsRunRequested()) {
+            gate.Park();
+            continue;
+        }
+
         // Double-check that the notification queue is still valid
         if (!service->notification_queue_) {
             LOG_DEBUG("UpdateTask: notification queue deleted, exiting");
@@ -744,9 +755,7 @@ void SuperframeService::UpdateTaskFunction(void* param) {
                     break;
 
                 case SuperframeNotificationType::STOP_REQUESTED:
-                    LOG_DEBUG(
-                        "Stop notification received, waiting for external "
-                        "suspension");
+                    LOG_DEBUG("Stop notification received, parking");
                     break;
             }
         } else if (queue_result == os::QueueResult::kTimeout) {
@@ -759,7 +768,10 @@ void SuperframeService::UpdateTaskFunction(void* param) {
         rtos.YieldTask();
     }
 
-    LOG_DEBUG("SuperframeService UpdateTaskFunction exiting naturally");
+    utils::TaskMonitor::UnregisterCurrentTask();
+    LOG_DEBUG("SuperframeService UpdateTaskFunction exiting");
+    gate.SignalExited();
+    gate.WaitForDeletion();
 }
 
 bool SuperframeService::CheckForNewSuperframe() {

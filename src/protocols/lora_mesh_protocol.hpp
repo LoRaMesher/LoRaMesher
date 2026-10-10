@@ -8,13 +8,17 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <vector>
 
+#include "config/task_config.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "lora_mesh/services/message_queue_service.hpp"
 #include "lora_mesh/services/network_service.hpp"
 #include "lora_mesh/services/subslot_scheduler.hpp"
 #include "lora_mesh/services/superframe_service.hpp"
 #include "os/rtos.hpp"
+#include "os/task_run_gate.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/protocols/protocol.hpp"
 #include "utils/compat/span.hpp"
@@ -47,9 +51,10 @@ class LoRaMeshProtocol : public Protocol {
         RADIO_EVENT = 1,  ///< Radio event received, process radio queue
         STATE_TIMEOUT,    ///< State timeout occurred, check state transitions
         STATE_CHANGE,     ///< Protocol state changed, update behavior
-        SHUTDOWN,         ///< Protocol shutdown requested
+        SHUTDOWN,         ///< Protocol task exit requested
         SLOT_TRANSITION,  ///< Superframe slot boundary reached; drain slot_transition_queue_
-        ROLE_CHANGE_REQUEST  ///< Application requested a runtime NodeRole change; apply pending_role_
+        ROLE_CHANGE_REQUEST,  ///< Application requested a runtime NodeRole change; apply pending_role_
+        PAUSE  ///< Protocol task park requested
     };
 
     /**
@@ -92,15 +97,33 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Start protocol operation
-     * 
+     *
+     * Starts the radio, the superframe and network discovery, then lets the
+     * protocol task run. Calling Start() on a started protocol is a no-op.
+     * After a Stop() that timed out, Start() first completes that stop.
+     * Called from the protocol task, it returns kInvalidState.
+     *
      * @return Result Success or error details
      */
     Result Start() override;
 
     /**
      * @brief Stop protocol operation
-     * 
-     * @return Result Success or error details
+     *
+     * Parks the protocol and superframe tasks at a point where they hold no
+     * locks, waiting at most max(5 s, 3 slot durations) for the protocol task
+     * to finish its current work. It then disconnects the radio and
+     * superframe callbacks and discards the network state, queued messages
+     * and pending reliable deliveries, so a later Start() joins a network
+     * from scratch. Calling Stop() on a stopped protocol is a no-op.
+     *
+     * Must not be called from the protocol task, which runs the data, route,
+     * state and delivery callbacks: such a call returns kInvalidState and
+     * the protocol keeps running.
+     *
+     * @return Result Success, or an error if the protocol task did not park
+     *         in time (nothing is torn down and Stop() can be called again)
+     *         or if called from the protocol task
      */
     Result Stop() override;
 
@@ -134,15 +157,62 @@ class LoRaMeshProtocol : public Protocol {
     Result SendBroadcast(std::span<const uint8_t> data);
 
     /**
+     * @brief Send user data with acknowledged (reliable) delivery
+     * @return Assigned message id, or {0,0} on failure
+     */
+    reliability::MessageId SendReliable(AddressType destination,
+                                        const std::vector<uint8_t>& data,
+                                        uint8_t max_retries,
+                                        uint32_t timeout_ms = 0);
+
+    /**
+     * @brief Send data to a group via membership-gated flooding
+     */
+    Result SendGroup(AddressType group, std::span<const uint8_t> data);
+
+    /**
+     * @brief Send data to a group collecting per-recipient acknowledgements
+     * @return Assigned message id, or {0,0} on failure
+     */
+    reliability::MessageId SendGroupReliable(AddressType group,
+                                             std::span<const uint8_t> data,
+                                             uint8_t max_retries,
+                                             uint32_t window_ms);
+
+    /** @brief Join a logical group (local membership) */
+    Result JoinGroup(AddressType group);
+
+    /** @brief Leave a logical group */
+    Result LeaveGroup(AddressType group);
+
+    /** @brief Whether this node is a member of the given group */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /** @brief Get the groups this node belongs to */
+    std::vector<AddressType> GetGroups() const;
+
+    /** @brief Register the reliable-delivery outcome callback */
+    void SetDeliveryCallback(reliability::DeliveryCallback callback);
+
+    /** @brief Register the inbound callback reporting the message metadata */
+    void SetDataReceivedExCallback(
+        lora_mesh::NetworkService::DataReceivedExCallback callback);
+
+    /**
      * @brief Pause all protocol services
-     * 
-     * @return Result Success or error details
+     *
+     * Parks the protocol task, freezes superframe advancement and puts the
+     * radio to sleep. Network state is kept for Resume(). Like Stop(), it
+     * returns kInvalidState when called from the protocol task.
+     *
+     * @return Result Success, or an error if the protocol task did not park
+     *         in time or if called from the protocol task
      */
     Result Pause();
 
     /**
      * @brief Resume all protocol services
-     * 
+     *
      * @return Result Success or error details
      */
     Result Resume();
@@ -261,18 +331,12 @@ class LoRaMeshProtocol : public Protocol {
     uint8_t GetNodeCapabilities(AddressType node_address) const;
 
     /**
-     * @brief Get all network nodes with their routing information
+     * @brief Get a snapshot of all network nodes with their routing information
      *
-     * Note: Caller must be careful with concurrent access as this returns
-     * a reference to the internal vector.
-     *
-     * @return const std::vector<NetworkNodeRoute>& Reference to all nodes
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const;
-
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const;
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNetworkNodes()
+        const;
 
     /**
      * @brief Request a runtime change of this node's role.
@@ -282,8 +346,14 @@ class LoRaMeshProtocol : public Protocol {
      * synchronously after queueing — the actual state transition happens
      * asynchronously.
      *
+     * A change requested while the protocol is stopped is applied at the
+     * next Start(). Avoid AUTO: while cross-network merge is disabled, an
+     * election among AUTO nodes can split the mesh into networks that never
+     * merge.
+     *
      * @param role Desired NodeRole (AUTO, NETWORK_MANAGER, or NODE_ONLY)
-     * @return Result Success if queued; error if the protocol is not running
+     * @return Result Success if queued; error if the protocol is not
+     *         initialized
      */
     Result RequestNodeRoleChange(NodeRole role);
 
@@ -298,6 +368,10 @@ class LoRaMeshProtocol : public Protocol {
 #ifdef DEBUG
     lora_mesh::NetworkService* GetNetworkServiceForTest() {
         return network_service_.get();
+    }
+
+    lora_mesh::SuperframeService* GetSuperframeServiceForTest() {
+        return superframe_service_.get();
     }
 #endif
 
@@ -332,9 +406,9 @@ class LoRaMeshProtocol : public Protocol {
     /**
      * @brief Get current slot table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const {
         return network_service_->GetSlotTable();
     }
@@ -370,6 +444,14 @@ class LoRaMeshProtocol : public Protocol {
      * @return uint8_t Number of TX slots, or 0 if not in NORMAL_OPERATION
      */
     uint8_t GetDataSlotsPerSuperframe() const;
+
+    /**
+     * @brief Get the duration of the current superframe
+     *
+     * @return uint32_t Superframe duration in milliseconds, or 0 if the
+     *         superframe service is not initialized
+     */
+    uint32_t GetSuperframeDuration() const;
 
     /**
      * @brief Get number of messages pending in the TX queue
@@ -416,17 +498,6 @@ class LoRaMeshProtocol : public Protocol {
     void OnStateChange(lora_mesh::INetworkService::ProtocolState new_state);
 
     /**
-     * @brief Handle network topology change
-     * 
-     * @param route_updated Whether the route was updated, if false, the route is stale
-     * @param destination Destination address of the route
-     * @param next_hop Next hop address for the route
-     * @param hop_count Number of hops to destination
-     */
-    void OnNetworkTopologyChange(bool route_updated, AddressType destination,
-                                 AddressType next_hop, uint8_t hop_count);
-
-    /**
      * @brief Process messages for current slot type
      * 
      * @param slot_type Type of current slot
@@ -441,6 +512,54 @@ class LoRaMeshProtocol : public Protocol {
      * deleted before the queue is destroyed, preventing memory leaks.
      */
     void DrainRadioEventQueue();
+
+    /**
+     * @brief Discard pending radio events, notifications and slot transitions
+     */
+    void DrainProtocolQueues();
+
+    /**
+     * @brief Connect the radio and superframe callbacks to the protocol queues
+     *
+     * @return Result Success, or the hardware error if the radio callback
+     *         could not be set
+     */
+    Result WireCallbacks();
+
+    /**
+     * @brief Disconnect the radio and superframe callbacks
+     */
+    void UnwireCallbacks();
+
+    /**
+     * @brief Stop() body; caller holds lifecycle_mutex_
+     */
+    Result StopLocked();
+
+    /**
+     * @brief Undo the steps of a Start() that failed after wiring callbacks
+     */
+    void RollbackStart();
+
+    /**
+     * @brief Park the protocol task and wait until it is parked
+     *
+     * @return Result Success, or kTimeout if the task did not park within
+     *         StopTimeoutMs()
+     */
+    Result ParkProtocolTask();
+
+    /**
+     * @brief Make the protocol task leave its loop and delete it
+     */
+    void ShutdownProtocolTask();
+
+    /**
+     * @brief Bound on waiting for the protocol task to park or exit
+     *
+     * @return max(5 s, 3 slot durations) in milliseconds
+     */
+    uint32_t StopTimeoutMs() const;
 
     /**
      * @brief Send notification to protocol task for event-driven processing
@@ -499,6 +618,13 @@ class LoRaMeshProtocol : public Protocol {
         types::protocols::lora_mesh::SlotAllocation::SlotType slot_type,
         const lora_mesh::SubslotConfig& config, uint16_t identifier);
 
+    /// Selects the subslot identifier for a given assignment strategy:
+    /// ADDRESS_MODULO uses the node address, RANDOM a hardware-random value,
+    /// and ADDRESS_HASH a nonlinear mix of the node address with the current
+    /// superframe counter so that addresses congruent modulo the subslot count
+    /// diverge across superframes instead of colliding every frame.
+    uint16_t ComputeSubslotIdentifier(const lora_mesh::SubslotConfig& config);
+
     // Services
     std::shared_ptr<lora_mesh::MessageQueueService> message_queue_service_;
     std::shared_ptr<lora_mesh::SuperframeService> superframe_service_;
@@ -506,6 +632,13 @@ class LoRaMeshProtocol : public Protocol {
 
     // Task management
     os::TaskHandle_t protocol_task_handle_;
+    os::TaskRunGate
+        task_gate_;  ///< Parks, releases and stops the protocol task
+    std::mutex lifecycle_mutex_;  ///< Serializes Start/Stop/Pause/Resume
+    std::atomic<bool> started_{
+        false};  ///< Between a successful Start() and Stop()
+    bool stop_pending_ =
+        false;  ///< A Stop() timed out waiting for the task to park; guarded by lifecycle_mutex_
     os::QueueHandle_t radio_event_queue_;
     os::QueueHandle_t
         protocol_notification_queue_;  ///< Queue for protocol event notifications
@@ -524,6 +657,9 @@ class LoRaMeshProtocol : public Protocol {
     // Subslot scheduling state
     bool in_subslotted_slot_ =
         false;  ///< True during subslotted slots (radio stays in RX)
+    bool in_rx_slot_ =
+        false;  ///< True during RX listening slots (CONTROL_RX/RX/SYNC_BEACON_RX);
+                ///< radio stays in RX for the whole slot to catch every sender
     uint32_t current_slot_arrival_time_ms_ =
         0;  ///< GetTimeInSlot() at slot boundary (from SlotTransitionData)
 
@@ -532,12 +668,23 @@ class LoRaMeshProtocol : public Protocol {
     std::atomic<NodeRole> pending_role_{NodeRole::AUTO};
 
     // Constants
-    static constexpr uint32_t TASK_PRIORITY = 3;
+    // Kept below the radio-event (15) and superframe (14) tasks so radio I/O
+    // and slot timing still preempt routing work, but above app/MQTT tasks so
+    // the protocol task is not starved (which delays reception handling and
+    // per-slot radio arming).
+    static constexpr uint32_t TASK_PRIORITY =
+        config::TaskPriorities::kNormalPriority;
     static constexpr size_t RADIO_QUEUE_SIZE = 10;
     static constexpr size_t PROTOCOL_NOTIFICATION_QUEUE_SIZE =
         16;  ///< Protocol notification queue size
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS = 100;
     static constexpr uint32_t DEFAULT_HELLO_INTERVAL_MS = 60000;
+    /// Bound on waiting for a newly created protocol task to park
+    static constexpr uint32_t kTaskStartTimeoutMs = 2000;
+    /// Lower bound of StopTimeoutMs()
+    static constexpr uint32_t kMinStopTimeoutMs = 5000;
+    /// Slot durations covered by StopTimeoutMs()
+    static constexpr uint32_t kStopTimeoutSlots = 3;
 };
 
 }  // namespace protocols

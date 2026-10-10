@@ -8,7 +8,11 @@
 #include <thread>
 #include "os/rtos.hpp"
 
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
+#include "hardware/hardware_manager.hpp"
+#include "hardware/radiolib/radiolib_radio.hpp"
 #include "loramesher.hpp"
+#include "mocks/mock_radio_test_helpers.hpp"
 #include "os/os_port.hpp"
 
 namespace loramesher {
@@ -249,18 +253,56 @@ TEST_F(LoraMesherInitializationTest, StopWithoutStart) {
  * @brief Test Start() after Stop()
  */
 TEST_F(LoraMesherInitializationTest, StartAfterStop) {
+    ResetTaskMisuseCounters();
     mesher_ = CreateValidLoraMesher();
     ASSERT_NE(mesher_, nullptr);
 
     // Start, Stop, then Start again
     Result first_start = mesher_->Start();
-    EXPECT_TRUE(first_start);
+    ASSERT_TRUE(first_start) << first_start.GetErrorMessage();
 
     mesher_->Stop();
+    auto protocol = mesher_->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+    EXPECT_FALSE(SuperframeRunning(*protocol));
 
     Result second_start = mesher_->Start();
-    EXPECT_TRUE(second_start)
+    ASSERT_TRUE(second_start)
         << "Start after Stop failed: " << second_start.GetErrorMessage();
+    EXPECT_TRUE(ProtocolTaskResponds(*protocol));
+    EXPECT_TRUE(SuperframeRunning(*protocol));
+
+    mesher_->Stop();
+    ExpectNoTaskMisuse();
+}
+
+/**
+ * @brief Start() reports a protocol start failure and leaves LoraMesher stopped
+ */
+TEST_F(LoraMesherInitializationTest, StartReturnsErrorWhenProtocolStartFails) {
+    mesher_ = CreateValidLoraMesher();
+    ASSERT_NE(mesher_, nullptr);
+    ASSERT_TRUE(mesher_->Start());
+    mesher_->Stop();
+
+    // The next hardware start (radio Begin) fails
+    auto hardware = std::dynamic_pointer_cast<hardware::HardwareManager>(
+        mesher_->GetHardwareManager());
+    ASSERT_NE(hardware, nullptr);
+    auto* radio = dynamic_cast<radio::RadioLibRadio*>(hardware->getRadio());
+    ASSERT_NE(radio, nullptr);
+    auto& mock_radio = radio::GetRadioLibMockForTesting(*radio);
+    ON_CALL(mock_radio, Begin(::testing::_))
+        .WillByDefault(::testing::Return(Result(
+            LoraMesherErrorCode::kHardwareError, "Simulated begin failure")));
+
+    Result result = mesher_->Start();
+    EXPECT_FALSE(result) << "Start() must report the protocol start failure";
+
+    std::vector<uint8_t> payload = {0x01};
+    Result send_result = mesher_->Send(0x1234, payload);
+    EXPECT_EQ(send_result.getErrorCode(), LoraMesherErrorCode::kInvalidState)
+        << "LoraMesher must not be running after a failed Start()";
 }
 
 /**

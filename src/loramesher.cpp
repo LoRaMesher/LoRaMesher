@@ -89,21 +89,20 @@ Result LoraMesher::Start() {
 
     LOG_INFO("Starting LoraMesher");
 
-    Result protocol_result = Result::Success();
-
     // Start protocols
     if (protocol_manager_) {
         Result protocol_result = protocol_manager_->StartAllProtocols();
         if (!protocol_result) {
             LOG_ERROR("Failed to start protocols: %s",
                       protocol_result.GetErrorMessage().c_str());
-            protocol_result.MergeErrors(protocol_result);
+            protocol_manager_->StopAllProtocols();
+            return protocol_result;
         }
     }
 
     is_running_ = true;
     LOG_INFO("LoraMesher started successfully");
-    return protocol_result;
+    return Result::Success();
 }
 
 void LoraMesher::Stop() {
@@ -117,8 +116,9 @@ void LoraMesher::Stop() {
     if (protocol_manager_) {
         Result protocol_result = protocol_manager_->StopAllProtocols();
         if (!protocol_result) {
-            LOG_ERROR("Protocol Stop with errors %s",
+            LOG_ERROR("Protocol Stop with errors %s; LoraMesher keeps running",
                       protocol_result.GetErrorMessage().c_str());
+            return;
         }
     }
 
@@ -233,6 +233,88 @@ void LoraMesher::SetDataCallback(DataReceivedCallback callback) {
     }
 }
 
+LoraMesher::MessageId LoraMesher::SendReliable(AddressType destination,
+                                               const std::vector<uint8_t>& data,
+                                               ReliableOptions options) {
+    if (!is_running_) {
+        return {0, 0};
+    }
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return {0, 0};
+    }
+    return mesh_protocol->SendReliable(destination, data, options.max_retries,
+                                       options.timeout_ms);
+}
+
+LoraMesher::MessageId LoraMesher::SendGroup(AddressType group,
+                                            std::span<const uint8_t> data,
+                                            GroupSendOptions options) {
+    if (!is_running_) {
+        return {0, 0};
+    }
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return {0, 0};
+    }
+    if (options.request_acks) {
+        return mesh_protocol->SendGroupReliable(
+            group, data, options.max_retries, options.window_ms);
+    }
+    // Best-effort group send returns only a success/failure indication; surface
+    // the assigned sequence implicitly via the inbound callbacks.
+    Result result = mesh_protocol->SendGroup(group, data);
+    if (!result.IsSuccess()) {
+        return {0, 0};
+    }
+    return {node_address_, 0};
+}
+
+Result LoraMesher::JoinGroup(AddressType group) {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoRaMesh protocol not active");
+    }
+    return mesh_protocol->JoinGroup(group);
+}
+
+Result LoraMesher::LeaveGroup(AddressType group) {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "LoRaMesh protocol not active");
+    }
+    return mesh_protocol->LeaveGroup(group);
+}
+
+bool LoraMesher::IsMemberOfGroup(AddressType group) const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    return mesh_protocol && mesh_protocol->IsMemberOfGroup(group);
+}
+
+std::vector<AddressType> LoraMesher::GetGroups() const {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (!mesh_protocol) {
+        return {};
+    }
+    return mesh_protocol->GetGroups();
+}
+
+void LoraMesher::SetDeliveryCallback(DeliveryCallback callback) {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        mesh_protocol->SetDeliveryCallback(std::move(callback));
+    }
+}
+
+void LoraMesher::SetDataCallbackEx(DataReceivedExCallback callback) {
+    auto mesh_protocol = GetLoRaMeshProtocol();
+    if (mesh_protocol) {
+        mesh_protocol->SetDataReceivedExCallback(std::move(callback));
+    }
+}
+
 void LoraMesher::SetNodeCapabilities(uint8_t capabilities) {
     auto mesh_protocol = GetLoRaMeshProtocol();
     if (mesh_protocol) {
@@ -284,7 +366,7 @@ std::optional<RouteEntry> LoraMesher::GetClosestNodeByCapability(
         return std::nullopt;
     }
 
-    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
+    const auto network_nodes = mesh_protocol->GetNetworkNodes();
     uint32_t now = GetRTOS().getTickCount();
 
     std::optional<RouteEntry> best;
@@ -338,6 +420,13 @@ uint8_t LoraMesher::GetDataSlotsPerSuperframe() const {
     return protocol->GetDataSlotsPerSuperframe();
 }
 
+uint32_t LoraMesher::GetSuperframeDuration() const {
+    auto protocol = GetLoRaMeshProtocol();
+    if (!protocol)
+        return 0;
+    return protocol->GetSuperframeDuration();
+}
+
 size_t LoraMesher::GetTxQueueSize() const {
     auto protocol = GetLoRaMeshProtocol();
     if (!protocol)
@@ -361,7 +450,7 @@ std::vector<RouteEntry> LoraMesher::GetRoutingTable() const {
         return routes;
     }
 
-    const auto network_nodes = mesh_protocol->GetNetworkNodesCopy();
+    const auto network_nodes = mesh_protocol->GetNetworkNodes();
     uint32_t now = GetRTOS().getTickCount();
     routes.reserve(network_nodes.size());
 
@@ -409,7 +498,7 @@ NetworkStatus LoraMesher::GetNetworkStatus() const {
     return status;
 }
 
-std::span<const types::protocols::lora_mesh::SlotAllocation>
+std::vector<types::protocols::lora_mesh::SlotAllocation>
 LoraMesher::GetSlotTable() const {
     auto mesh_protocol = GetLoRaMeshProtocol();
     if (!mesh_protocol) {

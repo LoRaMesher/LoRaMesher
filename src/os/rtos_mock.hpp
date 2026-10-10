@@ -31,10 +31,13 @@
 #include <cstring>
 #include <functional>
 #include <future>
+#include <list>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -64,6 +67,12 @@ class RTOSMock : public RTOS {
     struct TaskInfo;  // Forward declaration
 
    public:
+    /// Virtual time value (ms) set whenever the mock switches to virtual time
+    static constexpr uint64_t kVirtualEpochMs = 1'000'000;
+
+    /// Seed of the GetRandom() generators until SeedRandom() is called
+    static constexpr uint32_t kDefaultRandomSeed = 42;
+
     /**
      * @brief Struct representing a timer callback registration
      */
@@ -74,6 +83,36 @@ class RTOSMock : public RTOS {
         uint32_t period;      ///< Period for repeating timers (0 for one-shot)
         bool active;          ///< Whether the timer is active
     };
+
+    /**
+     * @brief Source of virtual-time events outside the RTOS (e.g. a simulated
+     * radio network) that advanceTime() interleaves with task wake-ups
+     */
+    class VirtualEventSource {
+       public:
+        virtual ~VirtualEventSource() = default;
+
+        /**
+         * @brief Virtual time of the earliest pending event, if any
+         */
+        virtual std::optional<uint64_t> NextEventTime() = 0;
+
+        /**
+         * @brief Process the earliest pending event; called with the virtual
+         * clock set to that event's time
+         *
+         * @param now Current virtual time in milliseconds
+         */
+        virtual void ProcessNextEvent(uint64_t now) = 0;
+    };
+
+    /// Real-time budget for woken tasks to block again before a step is
+    /// reported as a reblock timeout
+    static constexpr uint32_t kReblockTimeoutMs = 1000;
+
+    /// Upper bound of events processed at one virtual instant; exceeding it
+    /// means some task re-arms a zero-length wait forever
+    static constexpr uint32_t kMaxEventsPerInstant = 100000;
 
     /**
      * @brief Enum defining time modes available in the RTOS mock
@@ -90,11 +129,8 @@ class RTOSMock : public RTOS {
         : timeMode_(TimeMode::kRealTime),
           virtualTimeMs_(0),
           timeMutex_(),
-          waitingTasks_(),
-          timerCallbacks_(),
-          prng_engine_(static_cast<uint32_t>(
-              std::chrono::steady_clock::now().time_since_epoch().count() ^
-              reinterpret_cast<uintptr_t>(this))) {}
+          waiters_(),
+          timerCallbacks_() {}
 
     /**
      * @brief Sets the time mode for the RTOS mock
@@ -121,14 +157,10 @@ class RTOSMock : public RTOS {
                 debug_time = virtualTimeMs_;
                 debug_case = 1;
             }
-            // If switching to virtual time, initialize with current real time
+            // Virtual time always starts at the same fixed epoch
             else if (mode == TimeMode::kVirtualTime &&
                      timeMode_ == TimeMode::kRealTime) {
-                auto now = std::chrono::steady_clock::now();
-                virtualTimeMs_ =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch())
-                        .count();
+                virtualTimeMs_ = kVirtualEpochMs;
                 virtualTimeMsAtomic_.store(virtualTimeMs_,
                                            std::memory_order_release);
                 debug_time = virtualTimeMs_;
@@ -160,109 +192,113 @@ class RTOSMock : public RTOS {
 
     /**
      * @brief Advances the virtual time by the specified number of milliseconds
-     * 
-     * This method only has an effect in virtual time mode. It advances the
-     * virtual time counter and wakes up any tasks or timers that should
-     * be triggered by this time advancement.
-     * 
+     *
+     * Only has an effect in virtual time mode. Time advances event by event:
+     * the clock jumps to the earliest pending deadline (task wait, timer, or
+     * @p source event), that single event is processed, and the call waits for
+     * every task to block again before looking for the next event. Events at
+     * the same instant are processed task wake-ups first (ordered by task key),
+     * then timers, then @p source events. Tasks therefore observe their exact
+     * deadlines regardless of @p ms, and tasks due at the same instant never
+     * run concurrently. An instant with more than kMaxEventsPerInstant events
+     * is counted as a reblock timeout and ends the call at that instant, so no
+     * later deadline is skipped.
+     *
      * @param ms Number of milliseconds to advance
+     * @param source Optional external event source interleaved with task
+     *        wake-ups
      * @return The new virtual time value in milliseconds
      */
-    uint64_t advanceTime(uint32_t ms) {
+    uint64_t advanceTime(uint32_t ms, VirtualEventSource* source = nullptr) {
         if (timeMode_ != TimeMode::kVirtualTime) {
             LOG_WARNING("MOCK: Cannot advance time in real-time mode");
             return getTickCount();
         }
 
-        std::vector<std::pair<std::condition_variable*, uint64_t>> tasksToWake;
-        std::vector<TimerCallback*> timersToTrigger;
+        // Work triggered from outside advanceTime (e.g. the test thread sending
+        // to a queue or starting a task) must settle before the next event.
+        waitForTasksToReblock(kReblockTimeoutMs);
 
-        // First, advance the time and identify tasks and timers to wake up
+        const uint64_t target =
+            virtualTimeMsAtomic_.load(std::memory_order_acquire) + ms;
+        uint64_t instant = 0;
+        uint32_t events_at_instant = 0;
+
+        while (true) {
+            std::optional<uint64_t> external_time =
+                source ? source->NextEventTime() : std::nullopt;
+
+            enum class EventKind { kNone, kWaiter, kTimer, kExternal };
+            EventKind kind = EventKind::kNone;
+            uint64_t event_time = 0;
+            std::function<void()> timer_callback;
+            {
+                std::lock_guard<std::mutex> lock(timeMutex_);
+                auto waiter_it = FindEarliestWaiterLocked();
+                auto timer_it = FindEarliestTimerLocked();
+
+                if (waiter_it != waiters_.end()) {
+                    kind = EventKind::kWaiter;
+                    event_time = waiter_it->second.deadline;
+                }
+                if (timer_it != timerCallbacks_.end() &&
+                    (kind == EventKind::kNone ||
+                     timer_it->expiryTime < event_time)) {
+                    kind = EventKind::kTimer;
+                    event_time = timer_it->expiryTime;
+                }
+                if (external_time &&
+                    (kind == EventKind::kNone || *external_time < event_time)) {
+                    kind = EventKind::kExternal;
+                    event_time = *external_time;
+                }
+                if (kind == EventKind::kNone || event_time > target) {
+                    break;
+                }
+
+                SetVirtualTimeLocked(std::max(event_time, virtualTimeMs_));
+
+                if (kind == EventKind::kWaiter) {
+                    WakeWaiterLocked(waiter_it);
+                } else if (kind == EventKind::kTimer) {
+                    timer_callback = timer_it->callback;
+                    if (timer_it->period > 0) {
+                        timer_it->expiryTime += timer_it->period;
+                    } else {
+                        timer_it->active = false;
+                    }
+                }
+            }
+
+            if (kind == EventKind::kTimer && timer_callback) {
+                timer_callback();
+            } else if (kind == EventKind::kExternal) {
+                source->ProcessNextEvent(event_time);
+            }
+
+            waitForTasksToReblock(kReblockTimeoutMs);
+
+            if (event_time != instant) {
+                instant = event_time;
+                events_at_instant = 0;
+            }
+            if (++events_at_instant > kMaxEventsPerInstant) {
+                reblock_timeouts_.fetch_add(1, std::memory_order_relaxed);
+                LOG_ERROR(
+                    "MOCK: more than %u events at virtual time %llu ms; "
+                    "stopping there",
+                    kMaxEventsPerInstant, (unsigned long long)instant);
+                return instant;
+            }
+        }
+
         {
             std::lock_guard<std::mutex> lock(timeMutex_);
-
-            virtualTimeMs_ += ms;
-            virtualTimeMsAtomic_.store(virtualTimeMs_,
-                                       std::memory_order_release);
-
-            // Find tasks that should wake up within the new time window
-            auto it = waitingTasks_.begin();
-            while (it != waitingTasks_.end()) {
-                if (it->second <= virtualTimeMs_) {
-                    tasksToWake.push_back({it->first, it->second});
-                    // If this is a queue CV timeout, mark the waiter as pending
-                    // so waitForTasksToReblock doesn't return before it has run
-                    {
-                        std::lock_guard<std::mutex> cv_lock(cvToQueue_mutex_);
-                        auto q_it = cvToQueue_.find(it->first);
-                        if (q_it != cvToQueue_.end()) {
-                            TaskInfo* waiter =
-                                q_it->second->current_waiter_.load(
-                                    std::memory_order_acquire);
-                            if (waiter)
-                                waiter->pending_wakeup_.fetch_add(
-                                    1, std::memory_order_release);
-                        }
-                    }
-                    it = waitingTasks_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-
-            // Find timers that should trigger
-            for (auto& timer : timerCallbacks_) {
-                if (timer.active && timer.expiryTime <= virtualTimeMs_) {
-                    timersToTrigger.push_back(&timer);
-
-                    // If it's a periodic timer, schedule the next trigger
-                    if (timer.period > 0) {
-                        // Calculate how many periods have passed and set next expiry time
-                        uint64_t periods =
-                            (virtualTimeMs_ - timer.expiryTime) / timer.period +
-                            1;
-                        timer.expiryTime += periods * timer.period;
-                    } else {
-                        // One-shot timer - disable it
-                        timer.active = false;
-                    }
-                }
+            if (target > virtualTimeMs_) {
+                SetVirtualTimeLocked(target);
             }
         }
-
-        // Now wake up tasks (outside the lock to prevent deadlocks)
-        for (auto& task : tasksToWake) {
-            // LOG_DEBUG("MOCK: Waking up task waiting until %llu ms",
-            //           (unsigned long long)task.second);
-            task.first->notify_all();
-        }
-
-        // Trigger timers (also outside the lock)
-        for (auto timer : timersToTrigger) {
-            LOG_DEBUG("MOCK: Triggering timer callback at %llu ms",
-                      (unsigned long long)timer->expiryTime);
-            if (timer->callback) {
-                timer->callback();
-            }
-        }
-
-        // Wait for woken tasks to process and re-block before returning.
-        // This ensures deterministic behavior in tests by preventing the test
-        // from advancing virtual time before tasks have processed their wake-up.
-        // Also wait when timers fired: timer callbacks send to queues which wake
-        // protocol tasks asynchronously (not via tasksToWake), so we must wait
-        // for those tasks to finish processing and re-block as well.
-        if (!tasksToWake.empty() || !timersToTrigger.empty()) {
-            // #if defined(__SANITIZE_THREAD__) || \
-//     (defined(__has_feature) && __has_feature(thread_sanitizer))
-            //             waitForTasksToReblock(500);
-            // #else
-            waitForTasksToReblock(
-                1000);  // 1000ms covers async slot-transition processing
-                        // #endif
-        }
-
-        return virtualTimeMs_;
+        return target;
     }
 
     /**
@@ -271,8 +307,7 @@ class RTOSMock : public RTOS {
      * @return Current virtual time in milliseconds
      */
     uint64_t getVirtualTime() const {
-        std::lock_guard<std::mutex> lock(timeMutex_);
-        return virtualTimeMs_;
+        return virtualTimeMsAtomic_.load(std::memory_order_acquire);
     }
 
     /**
@@ -342,17 +377,32 @@ class RTOSMock : public RTOS {
             } catch (...) {
                 LOG_ERROR("Unknown exception in task '%s'", task_name.c_str());
             }
+            if (TaskInfo* my_info = GetThreadLocalTaskInfo()) {
+                my_info->exited.store(true, std::memory_order_release);
+            }
+            NotifyReblockWaiter();
             GetThreadLocalTaskInfo() = nullptr;  // clear before signaling exit
             exit_signal->set_value();  // signal DeleteTask() we're done
         });
 
+        // Tasks are ordered by the node address of the creating thread, the
+        // task name and a per-(address, name) counter, all independent of
+        // thread scheduling.
+        std::string order_base =
+            std::string(getThreadLocalNodeAddress()) + "/" + task_name;
+
         // Store task information
         {
             std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+            ReapDetachedTasksLocked();
 
             // Initialize the TaskInfo directly in the map to avoid copy assignment
             auto& task_info = tasks_[thread];
             task_info.name = task_name;
+            uint32_t index = task_name_counts_[order_base]++;
+            char suffix[16];
+            snprintf(suffix, sizeof(suffix), "#%010u", index);
+            task_info.order_key = order_base + suffix;
             task_info.stack_size = stackSize;
             task_info.priority = priority;
             task_info.thread_id = thread->get_id();
@@ -393,6 +443,7 @@ class RTOSMock : public RTOS {
         std::thread::id thread_id;
         std::string task_name = "unknown";
         bool was_suspended = false;
+        bool detached = false;
         TaskInfo* task_info = nullptr;
 
         // Get thread information
@@ -405,6 +456,7 @@ class RTOSMock : public RTOS {
                 task_name = it->second.name;
                 was_suspended = it->second.suspended;
                 task_info = &(it->second);
+                CountTaskHandleUse(it->second, /*is_delete=*/true);
 
                 // LOG_DEBUG(
                 //     "MOCK: Deleting task '%s' (thread ID: %p, suspended: %d)",
@@ -431,6 +483,7 @@ class RTOSMock : public RTOS {
             }
         }
         if (task_not_found) {
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
             LOG_WARNING("MOCK: Task handle %p not found in tasks map",
                         taskHandle);
             return;
@@ -475,10 +528,9 @@ class RTOSMock : public RTOS {
             // Give the task a moment to exit gracefully
             std::this_thread::yield();
 
-            // Wait for thread to finish with a reasonable timeout.
-            // Must be > waitFor's 1000ms wall-clock wait_until to avoid
-            // detaching a thread that is still blocked inside ReceiveFromQueue
-            // (missed-notification race) and then freeing the queue under it.
+            // Wait for the thread to finish. A task that does not honour the
+            // stop request in time is detached; its state is kept until it
+            // exits.
             if (thread->joinable()) {
                 auto status = task_info->exit_future.wait_for(
                     std::chrono::milliseconds(2000));
@@ -490,6 +542,7 @@ class RTOSMock : public RTOS {
                         task_name.c_str());
                     if (thread->joinable()) {
                         thread->detach();
+                        detached = true;
                     }
                 }
             }
@@ -498,11 +551,26 @@ class RTOSMock : public RTOS {
         // Clean up resources
         {
             std::lock_guard<std::timed_mutex> lock(tasksMutex_);
-            tasks_.erase(thread);
+            auto node = tasks_.extract(thread);
+            if (detached && !node.empty()) {
+                detached_tasks_.push_back(std::move(node));
+            }
+            ReapDetachedTasksLocked();
         }
 
         delete thread;
         LOG_DEBUG("MOCK: Task '%s' deleted", task_name.c_str());
+    }
+
+    /**
+     * @brief Release the state of detached tasks whose thread has exited;
+     * caller holds tasksMutex_
+     */
+    void ReapDetachedTasksLocked() {
+        detached_tasks_.remove_if([](const auto& node) {
+            return node.mapped().exit_future.wait_for(
+                       std::chrono::seconds(0)) == std::future_status::ready;
+        });
     }
 
     /**
@@ -526,11 +594,13 @@ class RTOSMock : public RTOS {
                     thread_id = it->second.thread_id;
                     task_name = it->second.name;
                     task_info = &(it->second);
+                    CountTaskHandleUse(it->second, /*is_delete=*/false);
                 } else {
                     task_not_found = true;
                 }
             }
             if (task_not_found) {
+                invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("MOCK: Task handle %p not found for suspension",
                             taskHandle);
                 return false;
@@ -571,6 +641,8 @@ class RTOSMock : public RTOS {
                 // Set suspended state and prepare for acknowledgment
                 task_info->suspended = true;
                 task_info->suspension_acknowledged = false;
+                task_info->cv.notify_all();
+                task_info->notify_cv.notify_all();
             }
         }  // task_info->mutex released before logging
         if (!already_suspended) {
@@ -611,16 +683,21 @@ class RTOSMock : public RTOS {
             return true;
         }
 
+        // A task blocked in a virtual-time wait acknowledges at its next
+        // ShouldStopOrPause(), after that wait ends; waiting for it here would
+        // stall on a clock this thread may be the one to advance.
+        if (HasIdleWait(task_info)) {
+            return true;
+        }
+
         // Wait for the task to acknowledge it's suspended
         // This happens when the task calls ShouldStopOrPause()
         bool acknowledged;
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-
-            // Wait with a reasonable timeout (500ms)
-            // Use our waitFor helper that respects virtual time
-            acknowledged =
-                waitFor(task_info->suspend_ack_cv, lock, 10, [task_info]() {
+            acknowledged = task_info->suspend_ack_cv.wait_for(
+                lock, std::chrono::milliseconds(kSuspendAckTimeoutMs),
+                [task_info]() {
                     return task_info->suspension_acknowledged ||
                            task_info->stop_requested.load(
                                std::memory_order_relaxed);
@@ -659,16 +736,20 @@ class RTOSMock : public RTOS {
                     thread_id = it->second.thread_id;
                     task_name = it->second.name;
                     task_info = &(it->second);
+                    CountTaskHandleUse(it->second, /*is_delete=*/false);
                 } else {
                     task_not_found = true;
                 }
             }
             if (task_not_found) {
+                invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("MOCK: Task handle %p not found for resume",
                             taskHandle);
                 return false;
             }
         } else {
+            // vTaskResume(NULL) is an assertion failure on FreeRTOS
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
             thread_id = std::this_thread::get_id();
 
             // Find task info for current thread
@@ -705,6 +786,8 @@ class RTOSMock : public RTOS {
             // Set the resumed state and reset acknowledgment flag
             task_info->suspended = false;
             task_info->resume_acknowledged = false;
+            task_info->cv.notify_all();
+            task_info->notify_cv.notify_all();
         }
 
         // Notify the task to wake up - notify ALL condition variables
@@ -725,21 +808,21 @@ class RTOSMock : public RTOS {
         //     "MOCK: Task '%s' resume signal sent to all condition variables",
         //     task_name.c_str());
 
-        // Wait for task to acknowledge the resume
-        // We only wait if this isn't a self-resume
-        if (taskHandle && static_cast<std::thread*>(taskHandle)->get_id() !=
-                              std::this_thread::get_id()) {
+        // Wait for task to acknowledge the resume. We only wait if this isn't
+        // a self-resume, and not for a task blocked in a virtual-time wait:
+        // it acknowledges only after that wait ends.
+        if (taskHandle &&
+            static_cast<std::thread*>(taskHandle)->get_id() !=
+                std::this_thread::get_id() &&
+            !HasIdleWait(task_info)) {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-
-            // Use our waitFor helper that respects virtual time
-            // IMPORTANT: Increased timeout and better predicate
-            bool acknowledged =
-                waitFor(task_info->resume_ack_cv, lock,
-                        1000 /* 1 second timeout */, [task_info]() {
-                            return task_info->resume_acknowledged ||
-                                   task_info->stop_requested.load(
-                                       std::memory_order_relaxed);
-                        });
+            bool acknowledged = task_info->resume_ack_cv.wait_for(
+                lock, std::chrono::milliseconds(kResumeAckTimeoutMs),
+                [task_info]() {
+                    return task_info->resume_acknowledged ||
+                           task_info->stop_requested.load(
+                               std::memory_order_relaxed);
+                });
 
             if (!acknowledged) {
                 // LOG_DEBUG(
@@ -812,6 +895,10 @@ class RTOSMock : public RTOS {
             return true;
         }
 
+        if (!is_suspended) {
+            AcknowledgeResume(*task_info);
+        }
+
         // If task is suspended, wait until resumed or stop requested
         if (is_suspended) {
             // LOG_DEBUG(
@@ -839,12 +926,14 @@ class RTOSMock : public RTOS {
 
             // Wait with timeout to prevent indefinite blocking
             // Use our waitFor helper that respects virtual time
-            bool status = waitFor(task_info->cv, lock,
-                                  500000 /* 500ms timeout */, [task_info]() {
-                                      return !task_info->suspended ||
-                                             task_info->stop_requested.load(
-                                                 std::memory_order_relaxed);
-                                  });
+            bool status = waitFor(
+                task_info->cv, lock, 500000 /* 500s timeout */,
+                [task_info]() {
+                    return !task_info->suspended ||
+                           task_info->stop_requested.load(
+                               std::memory_order_relaxed);
+                },
+                WaitKind::kPark);
 
             if (!status) {
                 // LOG_DEBUG("MOCK: Task '%s' wait timeout, rechecking condition",
@@ -884,8 +973,8 @@ class RTOSMock : public RTOS {
         uint32_t itemSize;
         bool
             isSystemQueue;  // True for system semaphores that bypass virtual time
-        std::atomic<TaskInfo*> current_waiter_{
-            nullptr};  // task currently waiting on this queue
+        std::atomic<uint32_t> size{
+            0};  // mirrors data.size(); readable without the queue mutex
     };
 
     QueueHandle_t CreateQueue(uint32_t length, uint32_t itemSize) override {
@@ -897,20 +986,12 @@ class RTOSMock : public RTOS {
             .maxSize = length,
             .itemSize = itemSize,
             .isSystemQueue = false};  // Regular queues respect virtual time
-        {
-            std::lock_guard<std::mutex> lock(cvToQueue_mutex_);
-            cvToQueue_[&q->notEmpty] = q;
-        }
         return q;
     }
 
     void DeleteQueue(QueueHandle_t queue) override {
         LOG_DEBUG("MOCK: Deleting queue");
         auto* q = static_cast<QueueData*>(queue);
-        {
-            std::lock_guard<std::mutex> lock(cvToQueue_mutex_);
-            cvToQueue_.erase(&q->notEmpty);
-        }
         {
             std::lock_guard<std::mutex> lock(q->mutex);
             int leftover = static_cast<int>(q->data.size());
@@ -924,6 +1005,7 @@ class RTOSMock : public RTOS {
     QueueResult SendToQueue(QueueHandle_t queue, const void* item,
                             uint32_t timeout) override {
         auto* q = static_cast<QueueData*>(queue);
+        TaskInfo* task_info = GetThreadLocalTaskInfo();
         std::unique_lock<std::mutex> lock(q->mutex);
 
         if (q->data.size() >= q->maxSize) {
@@ -933,11 +1015,35 @@ class RTOSMock : public RTOS {
 
                 return QueueResult::kFull;
             }
+            if (task_info != nullptr &&
+                task_info->stop_requested.load(std::memory_order_acquire)) {
+                return QueueResult::kError;
+            }
 
-            // Use our waitFor helper that respects virtual time
-            bool success = waitFor(q->notFull, lock, timeout, [q]() {
-                return q->data.size() < q->maxSize;
-            });
+            // A task blocked on a full queue is busy as soon as room appears.
+            if (task_info != nullptr) {
+                registerQueueCV(&q->notFull, task_info);
+                task_info->waiting_send_queue_.store(q,
+                                                     std::memory_order_release);
+            }
+            bool success = waitFor(
+                q->notFull, lock, timeout,
+                [q, task_info]() {
+                    return q->data.size() < q->maxSize ||
+                           (task_info != nullptr &&
+                            task_info->stop_requested.load(
+                                std::memory_order_acquire));
+                },
+                WaitKind::kQueue);
+            if (task_info != nullptr) {
+                task_info->waiting_send_queue_.store(nullptr,
+                                                     std::memory_order_release);
+                unregisterQueueCV(&q->notFull, task_info);
+                if (q->data.size() >= q->maxSize &&
+                    task_info->stop_requested.load(std::memory_order_acquire)) {
+                    return QueueResult::kError;
+                }
+            }
 
             if (!success) {
                 std::cout << "MOCK: Queue send timeout" << std::endl;
@@ -947,13 +1053,8 @@ class RTOSMock : public RTOS {
 
         auto* bytes = static_cast<const uint8_t*>(item);
         q->data.push(std::vector<uint8_t>(bytes, bytes + q->itemSize));
+        q->size.fetch_add(1, std::memory_order_release);
         pending_queue_items_.fetch_add(1, std::memory_order_relaxed);
-        {
-            TaskInfo* waiter =
-                q->current_waiter_.load(std::memory_order_acquire);
-            if (waiter)
-                waiter->pending_items_.fetch_add(1, std::memory_order_release);
-        }
         q->notEmpty.notify_one();
         return QueueResult::kOk;
     }
@@ -998,22 +1099,24 @@ class RTOSMock : public RTOS {
                 // Register that this task is waiting on this queue's condition variable.
                 // Uses task_info overload to avoid acquiring M0 while M6 is held.
                 registerQueueCV(&q->notEmpty, task_info);
-                q->current_waiter_.store(task_info, std::memory_order_release);
+                task_info->waiting_queue_.store(q, std::memory_order_release);
 
-                bool success =
-                    waitFor(q->notEmpty, lock, timeout,
-                            [q, task_info, initial_suspended_state]() {
-                                if (!q->data.empty()) {
-                                    return true;
-                                }
-                                return task_info->stop_requested.load(
-                                           std::memory_order_acquire) ||
-                                       (task_info->suspended.load(
-                                            std::memory_order_acquire) !=
-                                        initial_suspended_state);
-                            });
+                bool success = waitFor(
+                    q->notEmpty, lock, timeout,
+                    [q, task_info, initial_suspended_state]() {
+                        if (!q->data.empty()) {
+                            return true;
+                        }
+                        return task_info->stop_requested.load(
+                                   std::memory_order_acquire) ||
+                               (task_info->suspended.load(
+                                    std::memory_order_acquire) !=
+                                initial_suspended_state);
+                    },
+                    WaitKind::kQueue);
 
-                q->current_waiter_.store(nullptr, std::memory_order_release);
+                task_info->waiting_queue_.store(nullptr,
+                                                std::memory_order_release);
                 unregisterQueueCV(&q->notEmpty, task_info);
 
                 if (task_info->stop_requested.load(std::memory_order_acquire)) {
@@ -1025,8 +1128,9 @@ class RTOSMock : public RTOS {
                 }
             } else {
                 // Non-task thread (e.g., test thread) - use simple timeout wait
-                bool success = waitFor(q->notEmpty, lock, timeout,
-                                       [q]() { return !q->data.empty(); });
+                bool success = waitFor(
+                    q->notEmpty, lock, timeout,
+                    [q]() { return !q->data.empty(); }, WaitKind::kQueue);
 
                 if (!success) {
                     return QueueResult::kTimeout;
@@ -1046,13 +1150,7 @@ class RTOSMock : public RTOS {
         auto& item = q->data.front();
         memcpy(buffer, item.data(), q->itemSize);
         q->data.pop();
-        if (task_info) {
-            auto old =
-                task_info->pending_items_.load(std::memory_order_relaxed);
-            while (old > 0 && !task_info->pending_items_.compare_exchange_weak(
-                                  old, old - 1, std::memory_order_release,
-                                  std::memory_order_relaxed)) {}
-        }
+        q->size.fetch_sub(1, std::memory_order_release);
         pending_queue_items_.fetch_sub(1, std::memory_order_relaxed);
         q->notFull.notify_one();
         return QueueResult::kOk;
@@ -1124,33 +1222,28 @@ class RTOSMock : public RTOS {
         }
 
         // Virtual time mode continues below
-        uint64_t wakeTimeMs;
+        if (ms == 0) {
+            return;
+        }
 
         // Register this task as waiting until the wake time
-        {
-            std::lock_guard<std::mutex> timeLock(timeMutex_);
-            wakeTimeMs = virtualTimeMs_ + ms;
-            waitingTasks_[&(task_info->delay_cv)] = wakeTimeMs;
-        }
-        tasks_blocked_cv_.notify_all();
+        const uint64_t wakeTimeMs =
+            virtualTimeMsAtomic_.load(std::memory_order_acquire) + ms;
+        bool fired = false;
+        uint64_t wait_id =
+            registerWait(&task_info->delay_cv, &task_info->mutex, wakeTimeMs,
+                         WaitKind::kDelay, task_info, &fired);
 
-        // Wait until either:
-        // 1. The virtual time advances beyond our wake time
-        // 2. We are explicitly woken up by advanceTime
-        // 3. Stop or delay interruption is requested
+        // Wait until advanceTime fires this wait, or stop or delay
+        // interruption is requested
         {
             std::unique_lock<std::mutex> lock(task_info->mutex);
-            task_info->delay_cv.wait(lock, [this, wakeTimeMs, task_info]() {
-                // Check stop/interruption flags first
-                if (task_info->stop_requested.load(std::memory_order_relaxed) ||
-                    task_info->delay_interrupted.load(
-                        std::memory_order_acquire)) {
-                    return true;
-                }
-
-                // Check if virtual time has advanced enough using atomic mirror
-                return virtualTimeMsAtomic_.load(std::memory_order_acquire) >=
-                       wakeTimeMs;
+            task_info->delay_cv.wait(lock, [&fired, task_info]() {
+                return fired ||
+                       task_info->stop_requested.load(
+                           std::memory_order_relaxed) ||
+                       task_info->delay_interrupted.load(
+                           std::memory_order_acquire);
             });
 
             // After wait returns, check if we were woken due to termination request
@@ -1158,19 +1251,13 @@ class RTOSMock : public RTOS {
                 task_info->delay_interrupted.load(std::memory_order_acquire)) {
                 // Release M1 before acquiring M2 (timeMutex_) to maintain lock order.
                 lock.unlock();
-                {
-                    std::lock_guard<std::mutex> timeLock(timeMutex_);
-                    waitingTasks_.erase(&(task_info->delay_cv));
-                }
+                unregisterWait(wait_id);
                 throw TaskTerminationException();  // Terminate task execution
             }
         }
 
         // Clean up (in case we were woken by something other than advanceTime)
-        {
-            std::lock_guard<std::mutex> timeLock(timeMutex_);
-            waitingTasks_.erase(&(task_info->delay_cv));
-        }
+        unregisterWait(wait_id);
     }
 
     void LightSleep(uint32_t ms) override { delay(ms); }
@@ -1193,8 +1280,8 @@ class RTOSMock : public RTOS {
                 .count();
         } else {
             // In virtual time mode, return the virtual time
-            std::lock_guard<std::mutex> lock(timeMutex_);
-            return static_cast<uint32_t>(virtualTimeMs_);
+            return static_cast<uint32_t>(
+                virtualTimeMsAtomic_.load(std::memory_order_acquire));
         }
     }
 
@@ -1308,12 +1395,7 @@ class RTOSMock : public RTOS {
             // Find the task entry for the current thread
             for (const auto& [thread, info] : tasks_) {
                 if (thread->get_id() == current_id) {
-                    // Set notification flag for this task
-                    tasks_[thread].notification_pending.store(
-                        true, std::memory_order_release);
-
-                    // Wake up the task if it's waiting for a notification
-                    tasks_[thread].notify_cv.notify_one();
+                    SetNotificationPending(tasks_[thread]);
                     return;
                 }
             }
@@ -1321,12 +1403,7 @@ class RTOSMock : public RTOS {
             auto* thread = static_cast<std::thread*>(task_handle);
 
             if (auto it = tasks_.find(thread); it != tasks_.end()) {
-                // Set notification flag for this task
-                it->second.notification_pending.store(
-                    true, std::memory_order_release);
-
-                // Wake up the task if it's waiting for a notification
-                it->second.notify_cv.notify_one();
+                SetNotificationPending(it->second);
             }
         }
     }
@@ -1344,12 +1421,7 @@ class RTOSMock : public RTOS {
             // Find the task entry for the current thread
             for (const auto& [thread, info] : tasks_) {
                 if (thread->get_id() == current_id) {
-                    // Set notification flag for this task
-                    tasks_[thread].notification_pending.store(
-                        true, std::memory_order_release);
-
-                    // Wake up the task if it's waiting for a notification
-                    tasks_[thread].notify_cv.notify_one();
+                    SetNotificationPending(tasks_[thread]);
                     return QueueResult::kOk;
                 }
             }
@@ -1357,12 +1429,7 @@ class RTOSMock : public RTOS {
             auto* thread = static_cast<std::thread*>(task_handle);
 
             if (auto it = tasks_.find(thread); it != tasks_.end()) {
-                // Set notification flag for this task
-                it->second.notification_pending.store(
-                    true, std::memory_order_release);
-
-                // Wake up the task if it's waiting for a notification
-                it->second.notify_cv.notify_one();
+                SetNotificationPending(it->second);
                 return QueueResult::kOk;
             }
         }
@@ -1421,6 +1488,10 @@ class RTOSMock : public RTOS {
             if (task_info->suspended) {
                 // std::cout << "MOCK: Task is suspended during WaitForNotify, will wait for resume" << std::endl;
                 // Don't return error here - we should wait for resume or stop
+            }
+
+            if (!task_info->suspended.load(std::memory_order_acquire)) {
+                AcknowledgeResume(*task_info);
             }
 
             // If we already have a pending notification and not suspended, consume it
@@ -1487,10 +1558,11 @@ class RTOSMock : public RTOS {
                 // Use our waitFor helper with a very long timeout
                 waitFor(task_info->notify_cv, lock,
                         3600 * 1000,  // 1 hour timeout as MAX_DELAY equivalent
-                        wait_predicate);
+                        wait_predicate, WaitKind::kNotify);
             } else {
                 // Regular timeout case
-                waitFor(task_info->notify_cv, lock, timeout, wait_predicate);
+                waitFor(task_info->notify_cv, lock, timeout, wait_predicate,
+                        WaitKind::kNotify);
             }
         }
 
@@ -1812,111 +1884,113 @@ class RTOSMock : public RTOS {
     }
 
     /**
-     * @brief Updates or replaces all condition variable wait_for operations
-     * to be compatible with virtual time
-     * 
+     * @brief Kind of a registered virtual-time wait
+     *
+     * Delay, notification and queue waits mean the task is idle until an
+     * event arrives. A park wait is idle only while the task is suspended.
+     * Other waits (acknowledgement handshakes) are transient: the task is
+     * still considered running.
+     */
+    enum class WaitKind : uint8_t { kDelay, kNotify, kQueue, kPark, kOther };
+
+    /**
+     * @brief Wait on a condition variable, honouring virtual time
+     *
      * @param cv The condition variable to wait on
      * @param lock The unique lock protecting the condition variable
      * @param relTimeMs The relative time to wait in milliseconds
      * @param pred The predicate function that determines when to stop waiting
+     * @param kind Kind of wait, used to decide whether the task is idle
      * @return true if predicate became true, false if timeout occurred
      */
     template <typename Predicate>
     bool waitFor(std::condition_variable& cv,
                  std::unique_lock<std::mutex>& lock, uint32_t relTimeMs,
-                 Predicate pred) {
+                 Predicate pred, WaitKind kind = WaitKind::kOther) {
         if (timeMode_ == TimeMode::kRealTime) {
             // In real-time mode, use standard wait_for
             return cv.wait_for(lock, std::chrono::milliseconds(relTimeMs),
                                pred);
         }
 
-        // In virtual time mode, we need to register this wait
-        uint64_t wakeTimeMs;
-
         // Fast path: check predicate before waiting
         if (pred()) {
             return true;
         }
-
-        // Register this task as waiting until the wake time.
-        // Read virtual time via atomic mirror to avoid acquiring timeMutex_ while
-        // the caller's lock (task_info->mutex or q->mutex) is held, which would
-        // create a lock-order inversion (M1/M6 → M2).
-        wakeTimeMs =
-            virtualTimeMsAtomic_.load(std::memory_order_acquire) + relTimeMs;
-        lock.unlock();
-        {
-            std::lock_guard<std::mutex> timeLock(timeMutex_);
-            waitingTasks_[&cv] = wakeTimeMs;
+        if (relTimeMs == 0) {
+            return false;
         }
+
+        // Register the wait with its virtual deadline. The virtual clock does
+        // not move while this thread runs, so reading the atomic mirror here
+        // yields the current instant.
+        const uint64_t wakeTimeMs =
+            virtualTimeMsAtomic_.load(std::memory_order_acquire) + relTimeMs;
+        bool fired = false;
+        lock.unlock();
+        uint64_t wait_id = registerWait(&cv, lock.mutex(), wakeTimeMs, kind,
+                                        GetThreadLocalTaskInfo(), &fired);
         lock.lock();
 
-        tasks_blocked_cv_.notify_all();
-
-        // Wait until either:
-        // 1. The predicate becomes true
-        // 2. The virtual time advances beyond our wake time
-        //
-        // In virtual time mode, use a 1-second deadline as a safety net but
-        // silently renew it if the predicate is still false. This prevents the
-        // 1-second stall that occurred when waitFor returned kTimeout and the
-        // caller immediately re-called ReceiveFromQueue. DeleteTask still works:
-        // it sets stop_requested which makes pred() return true, so the task
-        // exits on the next combined_pred check (within 1 second at most).
-        //
-        // In real-time mode, log and exit on timeout (genuine missed wakeup).
-        // Use atomic mirror to avoid M1/M6 → M2 lock-order inversion inside pred.
-        auto combined_pred = [this, wakeTimeMs, &pred]() {
-            if (pred())
-                return true;
-            return virtualTimeMsAtomic_.load(std::memory_order_acquire) >=
-                   wakeTimeMs;
+        // The deadline counts as reached only when advanceTime() fires this
+        // wait, which it does under the caller's mutex, so waits due at the
+        // same instant run one at a time. The short real-time timeout only
+        // bounds the latency of notifications sent without that mutex.
+        auto combined_pred = [&fired, &pred]() {
+            return fired || pred();
         };
-        bool success = false;
-        while (!success) {
-            auto step_deadline = std::chrono::steady_clock::now() +
-                                 std::chrono::milliseconds(1000);
-            success = cv.wait_until(lock, step_deadline, combined_pred);
-            if (!success && timeMode_ == TimeMode::kVirtualTime) {
-                continue;  // spurious 1-second timeout in virtual mode — renew
+        while (!cv.wait_for(lock, std::chrono::milliseconds(kWaitPollMs),
+                            combined_pred)) {
+            if (timeMode_ != TimeMode::kVirtualTime) {
+                break;
             }
-            if (!success) {
-                // Real-time mode: genuine missed wakeup
-                // Unlock before logging to avoid task_info->mutex → logger ordering
-                lock.unlock();
-                LOG_DEBUG(
-                    "MOCK: waitFor timed out waiting for condition variable");
-                lock.lock();
-            }
-            break;
         }
 
-        // Clean up our wait registration. Unlock caller's lock first to avoid
-        // M1/M6 → M2 lock-order inversion when acquiring timeMutex_.
+        // Unlock the caller's lock before acquiring timeMutex_ to keep the
+        // timeMutex_ -> caller-mutex lock order.
         lock.unlock();
-        {
-            std::lock_guard<std::mutex> timeLock(timeMutex_);
-            waitingTasks_.erase(&cv);
-        }
+        unregisterWait(wait_id);
         lock.lock();
 
         // Return true only if the predicate is satisfied
         return pred();
     }
 
+    /**
+     * @brief Draw a random value from the caller's random stream
+     *
+     * Every node owns an independent stream, selected by the node address of
+     * the calling task and seeded from the SeedRandom() seed and that address.
+     * A node's sequence therefore does not depend on how its draws interleave
+     * with other nodes' draws. Non-task threads (e.g. the test thread) share
+     * one separate stream; a task without a node address uses a stream keyed
+     * by its task name.
+     *
+     * @return Uniformly distributed 32-bit value
+     */
     uint32_t GetRandom() override {
+        std::string key = RandomStreamKey();
         std::lock_guard<std::mutex> lock(prng_mutex_);
-        return prng_distribution_(prng_engine_);
+        auto it = prng_streams_.find(key);
+        if (it == prng_streams_.end()) {
+            std::seed_seq seq{prng_seed_, HashStreamKey(key)};
+            it = prng_streams_.emplace(key, std::mt19937(seq)).first;
+        }
+        return prng_distribution_(it->second);
     }
 
     /**
-     * @brief Seed the PRNG for deterministic random sequences in tests.
+     * @brief Seed every random stream for deterministic sequences in tests
+     *
+     * Restarts all streams: the next draw of each node starts its sequence
+     * for @p seed.
+     *
      * @param seed The seed value
      */
     void SeedRandom(uint32_t seed) {
         std::lock_guard<std::mutex> lock(prng_mutex_);
-        prng_engine_.seed(seed);
+        prng_seed_ = seed;
+        prng_streams_.clear();
     }
 
     /**
@@ -2029,6 +2103,35 @@ class RTOSMock : public RTOS {
     }
 
     /**
+     * @brief Key of the random stream used by the calling thread
+     */
+    static std::string RandomStreamKey() {
+        // A thread acting for a node (a task, or the test thread while it
+        // sets up that node) draws from the node's stream
+        const char* address = getThreadLocalNodeAddress();
+        if (address[0] != '\0') {
+            return std::string("node:") + address;
+        }
+        const TaskInfo* info = GetThreadLocalTaskInfo();
+        if (info == nullptr) {
+            return "<host>";
+        }
+        return "task:" + info->name;
+    }
+
+    /**
+     * @brief FNV-1a hash of a random stream key
+     */
+    static uint32_t HashStreamKey(const std::string& key) {
+        uint32_t hash = 2166136261u;
+        for (char c : key) {
+            hash ^= static_cast<uint8_t>(c);
+            hash *= 16777619u;
+        }
+        return hash;
+    }
+
+    /**
      * @brief Returns a reference to this thread's cached TaskInfo pointer.
      * Set once in CreateTask before the task function runs, cleared on exit.
      * Nullptr for non-task threads (e.g., test thread).
@@ -2130,13 +2233,6 @@ class RTOSMock : public RTOS {
                 cvs.erase(it);
                 task_info->queue_cv_count_.fetch_sub(1,
                                                      std::memory_order_relaxed);
-                // Saturating decrement: clear pending_wakeup_ set by advanceTime
-                auto old =
-                    task_info->pending_wakeup_.load(std::memory_order_relaxed);
-                while (old > 0 &&
-                       !task_info->pending_wakeup_.compare_exchange_weak(
-                           old, old - 1, std::memory_order_release,
-                           std::memory_order_relaxed)) {}
                 found = true;
             }
         }
@@ -2179,12 +2275,6 @@ class RTOSMock : public RTOS {
                 cvs.erase(it);
                 task_info->queue_cv_count_.fetch_sub(1,
                                                      std::memory_order_relaxed);
-                auto old =
-                    task_info->pending_wakeup_.load(std::memory_order_relaxed);
-                while (old > 0 &&
-                       !task_info->pending_wakeup_.compare_exchange_weak(
-                           old, old - 1, std::memory_order_release,
-                           std::memory_order_relaxed)) {}
                 found = true;
             }
         }
@@ -2214,98 +2304,252 @@ class RTOSMock : public RTOS {
         return task_info->stop_requested.load(std::memory_order_acquire);
     }
 
-    void LogReblockTimeout() {
-        // Collect all diagnostic data under locks, then log outside to avoid
-        // timeMutex_ -> system_semaphore lock-order inversion with Logger::Log.
-        struct TaskDiag {
-            std::string name;
-            int queue_cvs;
-            int pending;
-            bool stalled;
-            bool queue_blocked;
-        };
-
-        std::string pred_task;
-        int pred_cvs = 0;
-        bool pred_delay = false, pred_notify = false;
-        std::vector<TaskDiag> diags;
-
-        {
-            std::lock_guard<std::mutex> time_lock(timeMutex_);
-            std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
-            int pending = pending_queue_items_.load(std::memory_order_acquire);
-            pred_task = last_pred_failure_task_;
-            pred_cvs = last_pred_failure_queue_cvs_;
-            pred_delay = last_pred_failure_in_delay_;
-            pred_notify = last_pred_failure_in_notify_;
-
-            for (const auto& [thread_ptr, task_info] : tasks_) {
-                bool is_suspended =
-                    task_info.suspended.load(std::memory_order_relaxed);
-                bool is_stopping =
-                    task_info.stop_requested.load(std::memory_order_relaxed);
-                int queue_cvs =
-                    task_info.queue_cv_count_.load(std::memory_order_acquire);
-                bool in_delay = waitingTasks_.contains(
-                    const_cast<std::condition_variable*>(&task_info.delay_cv));
-                bool in_notify = waitingTasks_.contains(
-                    const_cast<std::condition_variable*>(&task_info.notify_cv));
-                bool stalled = !is_suspended && !is_stopping && !in_delay &&
-                               !in_notify && queue_cvs == 0;
-                diags.push_back({task_info.name, queue_cvs, pending, stalled,
-                                 pending > 0 && queue_cvs > 0});
-            }
-        }
-
-        if (!pred_task.empty()) {
-            LOG_DEBUG(
-                "MOCK: reblock timeout: last pred blocker: '%s' "
-                "(queue_cvs=%d, in_delay=%d, in_notify=%d)",
-                pred_task.c_str(), pred_cvs, pred_delay ? 1 : 0,
-                pred_notify ? 1 : 0);
-        }
-        for (const auto& d : diags) {
-            if (d.stalled) {
-                LOG_DEBUG(
-                    "MOCK: reblock timeout: '%s' still running "
-                    "(queue_cvs=%d, in_delay=0, in_notify=0, pending=%d)",
-                    d.name.c_str(), d.queue_cvs, d.pending);
-            } else if (d.queue_blocked) {
-                LOG_DEBUG(
-                    "MOCK: reblock timeout: '%s' queue-blocked with %d pending "
-                    "item(s) "
-                    "(queue_cvs=%d)",
-                    d.name.c_str(), d.pending, d.queue_cvs);
-            }
+    /**
+     * @brief Count a misuse of an existing task's handle: any call on a task
+     * whose function returned, and a delete from another thread of a task
+     * that is still running
+     */
+    void CountTaskHandleUse(const TaskInfo& info, bool is_delete) {
+        if (info.exited.load(std::memory_order_acquire)) {
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
+        } else if (is_delete && info.thread_id != std::this_thread::get_id()) {
+            external_deletes_.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
     /**
-     * @brief Check if a task has a registered wait in waitingTasks_ or on a queue
-     * @param thread_ptr Pointer to the thread to check
-     * @return true if the task is currently waiting/blocked, false otherwise
-     * @note Caller must hold both timeMutex_ and tasksMutex_ (in that order)
+     * @brief Whether @p info is blocked in a registered delay, notification
+     * or queue wait
      */
-    bool hasRegisteredWait(std::thread* thread_ptr) const {
-        auto it = tasks_.find(thread_ptr);
-        if (it == tasks_.end())
+    bool HasIdleWait(const TaskInfo* info) {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        for (const auto& [id, waiter] : waiters_) {
+            if (waiter.owner == info && waiter.kind != WaitKind::kOther &&
+                waiter.kind != WaitKind::kPark) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool WaitingSendQueueHasRoom(const TaskInfo& task_info) {
+        const QueueData* q =
+            task_info.waiting_send_queue_.load(std::memory_order_acquire);
+        return q != nullptr &&
+               q->size.load(std::memory_order_acquire) < q->maxSize;
+    }
+
+    static uint32_t WaitingQueueSize(const TaskInfo& task_info) {
+        const QueueData* q =
+            task_info.waiting_queue_.load(std::memory_order_acquire);
+        return q != nullptr ? q->size.load(std::memory_order_acquire) : 0;
+    }
+
+    /**
+     * @brief A registered virtual-time wait
+     */
+    struct Waiter {
+        std::condition_variable* cv;
+        std::mutex*
+            mutex;  ///< Mutex the waiter holds while checking its predicate
+        uint64_t deadline;  ///< Virtual wake time in milliseconds
+        WaitKind kind;
+        TaskInfo* owner;  ///< nullptr for non-task threads
+        bool* fired;      ///< Set under @ref mutex when advanceTime fires it
+    };
+
+    /**
+     * @brief Register a virtual-time wait and return its id
+     */
+    uint64_t registerWait(std::condition_variable* cv, std::mutex* mutex,
+                          uint64_t deadline, WaitKind kind, TaskInfo* owner,
+                          bool* fired) {
+        uint64_t id;
+        {
+            std::lock_guard<std::mutex> lock(timeMutex_);
+            id = ++next_wait_id_;
+            waiters_.emplace(id,
+                             Waiter{cv, mutex, deadline, kind, owner, fired});
+        }
+        NotifyReblockWaiter();
+        return id;
+    }
+
+    /**
+     * @brief Remove a registered wait (no-op if advanceTime already woke it)
+     */
+    void unregisterWait(uint64_t id) {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        waiters_.erase(id);
+    }
+
+    /**
+     * @brief Wake whoever waits in waitForTasksToReblock() to re-evaluate
+     */
+    void NotifyReblockWaiter() {
+        { std::lock_guard<std::mutex> lock(tasks_blocked_mutex_); }
+        tasks_blocked_cv_.notify_all();
+    }
+
+    /**
+     * @brief Set a task's notification flag and wake it
+     *
+     * The flag is set under the task mutex that WaitForNotify() holds while
+     * checking it, so the wake-up cannot be lost.
+     */
+    static void SetNotificationPending(TaskInfo& info) {
+        std::lock_guard<std::mutex> lock(info.mutex);
+        info.notification_pending.store(true, std::memory_order_release);
+        info.notify_cv.notify_all();
+    }
+
+    /**
+     * @brief Acknowledge a pending ResumeTask() once the task observes that it
+     * is no longer suspended, wherever it observes it
+     */
+    static void AcknowledgeResume(TaskInfo& info) {
+        if (info.resume_acknowledged.load(std::memory_order_acquire)) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(info.mutex);
+        if (!info.suspended.load(std::memory_order_acquire)) {
+            info.resume_acknowledged.store(true, std::memory_order_release);
+            info.resume_ack_cv.notify_all();
+        }
+    }
+
+    /**
+     * @brief Set the virtual clock; caller holds timeMutex_
+     */
+    void SetVirtualTimeLocked(uint64_t time_ms) {
+        virtualTimeMs_ = time_ms;
+        virtualTimeMsAtomic_.store(time_ms, std::memory_order_release);
+    }
+
+    /**
+     * @brief Earliest registered wait, ordered by (deadline, task key, id);
+     * caller holds timeMutex_
+     */
+    std::map<uint64_t, Waiter>::iterator FindEarliestWaiterLocked() {
+        auto best = waiters_.end();
+        for (auto it = waiters_.begin(); it != waiters_.end(); ++it) {
+            if (best == waiters_.end() || WaiterPrecedes(*it, *best)) {
+                best = it;
+            }
+        }
+        return best;
+    }
+
+    static bool WaiterPrecedes(const std::pair<const uint64_t, Waiter>& a,
+                               const std::pair<const uint64_t, Waiter>& b) {
+        if (a.second.deadline != b.second.deadline) {
+            return a.second.deadline < b.second.deadline;
+        }
+        // Task waits precede non-task waits; tasks order by their stable key
+        if ((a.second.owner == nullptr) != (b.second.owner == nullptr)) {
+            return a.second.owner != nullptr;
+        }
+        if (a.second.owner && b.second.owner &&
+            a.second.owner->order_key != b.second.owner->order_key) {
+            return a.second.owner->order_key < b.second.owner->order_key;
+        }
+        return a.first < b.first;
+    }
+
+    /**
+     * @brief Earliest active timer; caller holds timeMutex_
+     */
+    std::vector<TimerCallback>::iterator FindEarliestTimerLocked() {
+        auto best = timerCallbacks_.end();
+        for (auto it = timerCallbacks_.begin(); it != timerCallbacks_.end();
+             ++it) {
+            if (it->active && (best == timerCallbacks_.end() ||
+                               it->expiryTime < best->expiryTime)) {
+                best = it;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * @brief Remove a wait and wake its thread; caller holds timeMutex_
+     *
+     * Notifies under the waiter's own mutex so the wake-up cannot fall
+     * between the waiter's predicate check and its wait.
+     */
+    void WakeWaiterLocked(std::map<uint64_t, Waiter>::iterator it) {
+        Waiter waiter = it->second;
+        waiters_.erase(it);
+        std::lock_guard<std::mutex> lock(*waiter.mutex);
+        *waiter.fired = true;
+        waiter.cv->notify_all();
+    }
+
+    /**
+     * @brief Whether a task is idle: blocked until an external event and with
+     * no event already pending for it. Caller holds timeMutex_ and tasksMutex_.
+     *
+     * @param info The task
+     * @param idle_wait Whether the task has a registered delay, notification
+     *        or queue wait
+     * @param park_wait Whether the task has a registered park wait
+     */
+    static bool IsTaskIdle(const TaskInfo& info, bool idle_wait,
+                           bool park_wait) {
+        if (info.stop_requested.load(std::memory_order_acquire) ||
+            info.exited.load(std::memory_order_acquire)) {
+            return true;
+        }
+        bool suspended = info.suspended.load(std::memory_order_acquire);
+        if (!suspended &&
+            info.notification_pending.load(std::memory_order_acquire)) {
             return false;
+        }
+        if (WaitingQueueSize(info) > 0 || WaitingSendQueueHasRoom(info)) {
+            return false;
+        }
+        if (suspended) {
+            return park_wait || idle_wait ||
+                   info.suspension_acknowledged.load(std::memory_order_acquire);
+        }
+        return idle_wait;
+    }
 
-        // Task is blocked if it has registered queue CVs it's waiting on
-        // Use atomic count — avoids data race with register/unregister that only hold task_info->mutex
-        if (it->second.queue_cv_count_.load(std::memory_order_acquire) > 0)
-            return true;
+    /**
+     * @brief Name of the first task that is not idle, or empty if every task
+     * is idle. Caller holds timeMutex_ and tasksMutex_.
+     */
+    std::string FindBusyTaskLocked() const {
+        std::map<const TaskInfo*, std::pair<bool, bool>> waits;
+        for (const auto& [id, waiter] : waiters_) {
+            if (waiter.owner == nullptr) {
+                continue;
+            }
+            auto& flags = waits[waiter.owner];
+            if (waiter.kind == WaitKind::kPark) {
+                flags.second = true;
+            } else if (waiter.kind != WaitKind::kOther) {
+                flags.first = true;
+            }
+        }
+        for (const auto& [thread_ptr, task_info] : tasks_) {
+            auto it = waits.find(&task_info);
+            bool idle_wait = it != waits.end() && it->second.first;
+            bool park_wait = it != waits.end() && it->second.second;
+            if (!IsTaskIdle(task_info, idle_wait, park_wait)) {
+                return task_info.name.empty() ? "unnamed" : task_info.name;
+            }
+        }
+        return {};
+    }
 
-        // Check if THIS task's delay_cv is registered in waitingTasks_
-        // (task is sleeping via Delay())
-        if (waitingTasks_.contains(
-                const_cast<std::condition_variable*>(&it->second.delay_cv)))
-            return true;
-
-        // Check if THIS task's notify_cv is registered in waitingTasks_
-        // (task is blocking inside WaitForNotify())
-        return waitingTasks_.contains(
-            const_cast<std::condition_variable*>(&it->second.notify_cv));
+    void LogReblockTimeout(const std::string& busy_task) {
+        LOG_ERROR(
+            "MOCK: reblock timeout at virtual time %llu ms: task '%s' did "
+            "not block again within %u ms",
+            (unsigned long long)virtualTimeMsAtomic_.load(
+                std::memory_order_acquire),
+            busy_task.c_str(), kReblockTimeoutMs);
     }
 
    public:
@@ -2321,57 +2565,88 @@ class RTOSMock : public RTOS {
     void waitForTasksToReblock(uint32_t timeout_ms = 100) {
         auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(timeout_ms);
-        std::unique_lock<std::mutex> lock(tasks_blocked_mutex_);
-        auto pred = [this]() {
-            // sleep 1ms
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-
-            // Check every task is in a blocked state
+        std::string busy_task;
+        auto all_idle = [this, &busy_task]() {
             std::lock_guard<std::mutex> time_lock(timeMutex_);
             std::lock_guard<std::timed_mutex> tasks_lock(tasksMutex_);
-            for (const auto& [thread_ptr, task_info] : tasks_) {
-                if (!task_info.suspended.load(std::memory_order_relaxed) &&
-                    !task_info.stop_requested.load(std::memory_order_relaxed) &&
-                    !hasRegisteredWait(const_cast<std::thread*>(thread_ptr))) {
-                    last_pred_failure_task_ = task_info.name;
-                    last_pred_failure_queue_cvs_ =
-                        task_info.queue_cv_count_.load(
-                            std::memory_order_relaxed);
-                    last_pred_failure_in_delay_ = waitingTasks_.contains(
-                        const_cast<std::condition_variable*>(
-                            &task_info.delay_cv));
-                    last_pred_failure_in_notify_ = waitingTasks_.contains(
-                        const_cast<std::condition_variable*>(
-                            &task_info.notify_cv));
-                    return false;
-                }
-            }
-
-            // All tasks passed the "blocked" check. Now verify no task is in
-            // a transition window:
-            // (a) registered on a queue CV but has not yet dequeued the
-            //     notification that woke it (pending_items_), or
-            // (b) its queue CV timeout was moved to tasksToWake but the task
-            //     hasn't woken and called unregisterQueueCV yet (pending_wakeup_)
-            for (const auto& [thread_ptr, task_info] : tasks_) {
-                if (task_info.pending_wakeup_.load(std::memory_order_acquire) >
-                    0)
-                    return false;
-                if (task_info.queue_cv_count_.load(std::memory_order_acquire) >
-                        0 &&
-                    task_info.pending_items_.load(std::memory_order_acquire) >
-                        0)
-                    return false;
-            }
-
-            return true;
+            busy_task = FindBusyTaskLocked();
+            return busy_task.empty();
         };
+        std::unique_lock<std::mutex> lock(tasks_blocked_mutex_);
         while (std::chrono::steady_clock::now() < deadline) {
             if (tasks_blocked_cv_.wait_for(lock, std::chrono::milliseconds(1),
-                                           pred))
-                return;  // predicate satisfied
+                                           all_idle)) {
+                return;
+            }
         }
-        LogReblockTimeout();
+        lock.unlock();
+        reblock_timeouts_.fetch_add(1, std::memory_order_relaxed);
+        LogReblockTimeout(busy_task);
+    }
+
+    /**
+     * @brief Number of event steps that could not complete deterministically
+     * since the last reset: reblock timeouts (a woken task kept running past
+     * kReblockTimeoutMs) and instants with more than kMaxEventsPerInstant
+     * events. After such a step the order of task execution depends on
+     * thread scheduling.
+     */
+    uint32_t getReblockTimeoutCount() const {
+        return reblock_timeouts_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset the counter returned by getReblockTimeoutCount()
+     */
+    void resetReblockTimeoutCount() {
+        reblock_timeouts_.store(0, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Task API calls since the last reset that FreeRTOS rejects or
+     * that act on a dangling handle: ResumeTask(nullptr), and SuspendTask(),
+     * ResumeTask() or DeleteTask() on a handle that is unknown or whose task
+     * function already returned
+     */
+    uint32_t getInvalidHandleCallCount() const {
+        return invalid_handle_calls_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief DeleteTask() calls since the last reset that deleted, from
+     * another thread, a task whose function had not returned
+     *
+     * On FreeRTOS such a call kills the task wherever it is, including while
+     * it holds a lock.
+     */
+    uint32_t getExternalDeleteCount() const {
+        return external_deletes_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset the counters returned by getInvalidHandleCallCount() and
+     * getExternalDeleteCount()
+     */
+    void resetTaskMisuseCounters() {
+        invalid_handle_calls_.store(0, std::memory_order_relaxed);
+        external_deletes_.store(0, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Whether a non-task thread is blocked in a virtual-time wait
+     *
+     * Such a wait ends only when its condition holds or advanceTime() reaches
+     * its deadline, so the thread that drives the clock uses this to advance
+     * time while a helper thread waits.
+     */
+    bool HasExternalWait() {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        for (const auto& [id, waiter] : waiters_) {
+            if (waiter.owner == nullptr) {
+                return true;
+            }
+        }
+        return false;
     }
 
    private:
@@ -2407,11 +2682,17 @@ class RTOSMock : public RTOS {
         // For tracking queue condition variables the task is waiting on
         std::vector<std::condition_variable*> waiting_on_queue_cvs;
         std::atomic<int> queue_cv_count_{
-            0};  // mirrors waiting_on_queue_cvs.size(); atomic for hasRegisteredWait
-        std::atomic<int> pending_items_{
-            0};  // SendToQueue notifications received while registered
-        std::atomic<int> pending_wakeup_{
-            0};  // queue CV timeouts moved to tasksToWake but not yet processed
+            0};  // mirrors waiting_on_queue_cvs.size()
+        std::atomic<QueueData*> waiting_queue_{
+            nullptr};  // queue this task is blocked on in ReceiveFromQueue
+        std::atomic<QueueData*> waiting_send_queue_{
+            nullptr};  // full queue this task is blocked on in SendToQueue
+
+        // Stable ordering key for tasks woken at the same virtual instant
+        std::string order_key;
+
+        // Set once the task function has returned
+        std::atomic<bool> exited{false};
 
         // For timed-join in DeleteTask()
         std::shared_ptr<std::promise<void>> exit_signal;
@@ -2425,7 +2706,9 @@ class RTOSMock : public RTOS {
         std::atomic<uint32_t> peak_stack_used{0};
     };
 
-    TimeMode timeMode_;  ///< Current time mode (real or virtual)
+    /// Current time mode (real or virtual); written under timeMutex_, read
+    /// without it by task threads
+    std::atomic<TimeMode> timeMode_;
     uint64_t
         virtualTimeMs_;  ///< Virtual time counter in milliseconds (written under timeMutex_)
     std::atomic<uint64_t> virtualTimeMsAtomic_{
@@ -2433,17 +2716,24 @@ class RTOSMock : public RTOS {
     mutable std::mutex
         timeMutex_;  ///< Mutex protecting time-related operations
 
-    std::map<std::condition_variable*, uint64_t>
-        waitingTasks_;  ///< Tasks waiting for time to advance
+    std::map<uint64_t, Waiter> waiters_;  ///< Virtual-time waits by id
+    uint64_t next_wait_id_ = 0;
     std::vector<TimerCallback> timerCallbacks_;  ///< Timer callbacks
 
     std::map<std::thread*, TaskInfo> tasks_;
+    /// Tasks DeleteTask gave up waiting for; their state is kept until the
+    /// thread exits. Guarded by tasksMutex_.
+    std::list<std::map<std::thread*, TaskInfo>::node_type> detached_tasks_;
     mutable std::timed_mutex tasksMutex_;
+    /// Tasks created per (creator node address, task name); keys of tasks
+    /// with the same name order by creation. Guarded by tasksMutex_
+    std::map<std::string, uint32_t> task_name_counts_;
     std::vector<void (*)()> registeredISRs_;
     std::mutex isrMutex_;
 
     // PRNG for GetRandom()
-    std::mt19937 prng_engine_;
+    uint32_t prng_seed_ = kDefaultRandomSeed;
+    std::map<std::string, std::mt19937> prng_streams_;  ///< Streams per key
     std::uniform_int_distribution<uint32_t> prng_distribution_;
     std::mutex prng_mutex_;
 
@@ -2451,17 +2741,16 @@ class RTOSMock : public RTOS {
     std::condition_variable tasks_blocked_cv_;
     std::mutex tasks_blocked_mutex_;
 
-    // Maps each queue's notEmpty CV to its QueueData, so advanceTime can find
-    // the waiting task when a queue CV timeout fires
-    std::map<std::condition_variable*, QueueData*> cvToQueue_;
-    std::mutex cvToQueue_mutex_;
+    std::atomic<uint32_t> reblock_timeouts_{0};
+    std::atomic<uint32_t> invalid_handle_calls_{0};
+    std::atomic<uint32_t> external_deletes_{0};
 
-    // Last predicate failure state (written in pred(), read in LogReblockTimeout();
-    // both hold tasks_blocked_mutex_ so no separate synchronisation needed)
-    std::string last_pred_failure_task_{};
-    int last_pred_failure_queue_cvs_{0};
-    bool last_pred_failure_in_delay_{false};
-    bool last_pred_failure_in_notify_{false};
+    /// Real-time poll interval of virtual-time waits
+    static constexpr uint32_t kWaitPollMs = 20;
+    /// Real-time bound on waiting for a task to acknowledge a suspension
+    static constexpr uint32_t kSuspendAckTimeoutMs = 100;
+    /// Real-time bound on waiting for a task to acknowledge a resume
+    static constexpr uint32_t kResumeAckTimeoutMs = 500;
 };
 
 }  // namespace os
