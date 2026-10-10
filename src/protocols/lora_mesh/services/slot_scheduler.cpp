@@ -392,8 +392,8 @@ void SlotScheduler::LogSlotTable(const Context& ctx,
     };
 
     size_t off = 0;
-    auto Append = [&](const char* fmt, ...)
-        __attribute__((format(printf, 2, 3))) {
+    auto Append = [&](const char* fmt,
+                      ...) __attribute__((format(printf, 2, 3))) {
         if (off >= kBufSize)
             return;
         va_list args;
