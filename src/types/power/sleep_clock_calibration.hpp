@@ -14,12 +14,17 @@ namespace power {
 /**
  * @brief Learned error of the deep-sleep clock
  *
- * The clock that runs through a deep sleep (the ESP32 RTC on its RC
- * oscillator) can be off by about 1 %. After each resume, the drift between
- * the node's schedule and the next sync beacon shows how far the clock was
- * off over the sleep; the calibration folds that into an error estimate and
- * corrects later sleeps with it: the time slept is converted to real time on
- * resume, and a planned sleep to sleep-clock time before sleeping.
+ * The clock that times light and deep sleeps (the ESP32 RTC on its RC
+ * oscillator) can be off by about 1 %. After sleeping, the drift between the
+ * node's schedule and the next sync beacon shows how far the clock was off;
+ * the calibration folds that into an error estimate and corrects later
+ * sleeps with it: the time slept is converted to real time on waking, and a
+ * planned sleep to sleep-clock time before sleeping.
+ *
+ * The first sample is only counted: right after power-on the RC oscillator
+ * is calibrated poorly, about twice as far off as later. The second sample
+ * sets the estimate; later ones correct half of the residual, and a quarter
+ * once kSettledSamples back the estimate, which smooths the beacon noise.
  */
 class SleepClockCalibration {
    public:
@@ -28,7 +33,9 @@ class SleepClockCalibration {
     /// Shortest sleep whose drift is used as a sample
     static constexpr uint32_t kMinSampleSleepMs = 1000;
     /// Samples after which the estimate counts as calibrated
-    static constexpr uint8_t kCalibratedSamples = 2;
+    static constexpr uint8_t kCalibratedSamples = 3;
+    /// Samples after which each new one corrects a quarter of the residual
+    static constexpr uint8_t kSettledSamples = 4;
 
     SleepClockCalibration() = default;
 
@@ -76,10 +83,12 @@ class SleepClockCalibration {
         }
         const int64_t residual_ppm = static_cast<int64_t>(drift_ms) *
                                      static_cast<int64_t>(kMillion) / slept_ms;
-        // The first sample is the whole error; later ones correct half of
-        // what is left, which smooths the beacon timing noise
-        const int64_t ppm =
-            samples_ == 0 ? residual_ppm : ppm_ + residual_ppm / 2;
+        int64_t ppm = ppm_;
+        if (samples_ == 1) {
+            ppm = residual_ppm;
+        } else if (samples_ > 1) {
+            ppm += residual_ppm / (samples_ < kSettledSamples ? 2 : 4);
+        }
         ppm_ =
             static_cast<int32_t>(std::clamp<int64_t>(ppm, -kMaxPpm, kMaxPpm));
         if (samples_ < UINT8_MAX) {

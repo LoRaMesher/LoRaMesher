@@ -912,18 +912,25 @@ const char* NetworkService::GetDeepSleepBlocker() const {
 }
 
 void NetworkService::RecordSleepClockDrift(int32_t drift_ms) {
-    if (!calibration_sleep_ms_) {
+    const uint32_t slept_ms = std::exchange(calibration_sleep_ms_, 0);
+    if (slept_ms == 0) {
         return;
     }
-    // Only what the schedule moved during the sleep is the clock's error
+    // A missed beacon puts awake time and the network's own drift into what
+    // the schedule moved
+    if (no_received_sync_beacon_count_ > 1) {
+        LOG_DEBUG(
+            "Sleep clock: no sample, a beacon was missed since the sleep");
+        return;
+    }
+    // Only what the schedule moved since the last beacon is the clock's error
     const int32_t sleep_error_ms = drift_ms - schedule_offset_ms_;
-    sleep_clock_.AddSample(sleep_error_ms, *calibration_sleep_ms_);
+    sleep_clock_.AddSample(sleep_error_ms, slept_ms);
     LOG_INFO(
-        "Sleep clock: %d ms off after %u ms of deep sleep, error now %d ppm "
-        "(%u samples)",
-        sleep_error_ms, *calibration_sleep_ms_, sleep_clock_.GetPpm(),
+        "Sleep clock: %d ms off after %u ms of sleep, error now %d ppm (%u "
+        "samples)",
+        sleep_error_ms, slept_ms, sleep_clock_.GetPpm(),
         sleep_clock_.GetSamples());
-    calibration_sleep_ms_.reset();
 }
 
 const char* NetworkService::GetSleepHold() const {
@@ -3798,7 +3805,7 @@ void NetworkService::ResetNetworkState() {
     awaiting_resync_ = false;
     settled_superframes_ = 0;
     relayed_joiner_ = 0;
-    calibration_sleep_ms_.reset();
+    calibration_sleep_ms_ = 0;
     reliable_messaging_->Reset();
     message_cache_.Reset();
 

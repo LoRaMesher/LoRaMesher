@@ -402,22 +402,24 @@ class NetworkService : public INetworkService {
     }
 
     /**
-     * @brief Learned error of the deep-sleep clock
+     * @brief Learned error of the sleep clock
      */
     power::SleepClockCalibration GetSleepClockCalibration() const {
         return sleep_clock_;
     }
 
     /**
-     * @brief Measure the sleep clock at the first beacon after a resume
+     * @brief Count a light or deep sleep towards the next calibration sample
      *
-     * The drift between the resumed schedule and the beacon is the error the
-     * sleep clock made over the sleep.
+     * At the next sync beacon, the drift the schedule gained since the
+     * previous beacon is the error the sleep clock made over all sleeps in
+     * between (the node runs on its crystal while awake). The sample is
+     * dropped if a beacon was missed in between.
      *
-     * @param slept_ms Corrected length of the sleep the node resumed from
+     * @param slept_ms Corrected length of the sleep
      */
-    void CalibrateSleepClockAtNextBeacon(uint32_t slept_ms) {
-        calibration_sleep_ms_ = slept_ms;
+    void RecordSleepForCalibration(uint32_t slept_ms) {
+        calibration_sleep_ms_ += slept_ms;
     }
 
     /**
@@ -1642,16 +1644,16 @@ class NetworkService : public INetworkService {
 
     /// Hold sleep while the join of @p joiner is relayed
     void HoldSleepForRelayedJoin(AddressType joiner);
-    /// Learned error of the deep-sleep clock (kept across network resets)
+    /// Learned error of the sleep clock (kept across network resets)
     power::SleepClockCalibration sleep_clock_;
-    /// Length of the sleep to calibrate with at the next beacon
-    std::optional<uint32_t> calibration_sleep_ms_;
+    /// Time slept since the last sync beacon, for the next calibration sample
+    uint32_t calibration_sleep_ms_ = 0;
     /// How far ahead of the network the schedule was left at the last beacon
     /// (drifts below the resync threshold are not corrected)
     int32_t schedule_offset_ms_ = 0;
 
-    /// Fold the drift seen at the first beacon after a resume into the
-    /// sleep-clock calibration
+    /// Fold the drift seen at a beacon into the sleep-clock calibration
+    /// when the node slept since the previous beacon
     void RecordSleepClockDrift(int32_t drift_ms);
 
     /**

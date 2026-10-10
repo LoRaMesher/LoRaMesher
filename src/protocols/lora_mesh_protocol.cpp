@@ -804,7 +804,7 @@ bool LoRaMeshProtocol::ResumeAfterDeepSleep(
         network_service_->ResetNetworkState();
         return false;
     }
-    network_service_->CalibrateSleepClockAtNextBeacon(
+    network_service_->RecordSleepForCalibration(
         static_cast<uint32_t>(slept_ms));
     LOG_INFO("Resumed network 0x%04X after %llu ms of deep sleep",
              snapshot.network.network_id,
@@ -1628,9 +1628,15 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
     }
 
     // Wake the MCU before the next active slot starts, so the callback,
-    // radio transition and peripheral init are done in time
-    const uint32_t wake_guard = config_.getWakeUpGuardTime();
-    if (until_active <= wake_guard + kMinLightSleepMs) {
+    // radio transition and peripheral init are done in time even when the
+    // sleep clock runs slow
+    const power::SleepClockCalibration sleep_clock =
+        network_service_->GetSleepClockCalibration();
+    const uint32_t wake_margin =
+        config_.getWakeUpGuardTime() +
+        config_.getDeepSleepPolicy().SleepClockAllowanceMs(
+            until_active, sleep_clock.IsCalibrated());
+    if (until_active <= wake_margin + kMinLightSleepMs) {
         return;
     }
 
@@ -1638,7 +1644,7 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
     ctx.requested_state = power::PowerState::LIGHT_SLEEP;
     ctx.current_slot = superframe_service_->GetCurrentSlot();
     ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
-    ctx.sleep_duration_ms = until_active - wake_guard;
+    ctx.sleep_duration_ms = until_active - wake_margin;
 
     // Application-level power management (disable GPS, sensors, etc.)
     LOG_DEBUG("Invoking prepare-sleep callback for slot %u (%u ms)",
@@ -1650,7 +1656,19 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
         return;
     }
 
-    GetRTOS().LightSleep(ctx.sleep_duration_ms);
+    // The sleep timer and the clock after the sleep run on the RC sleep
+    // clock: ask for the sleep in its time and remove its learned error from
+    // the clock afterwards
+    const auto counted_ms =
+        static_cast<uint32_t>(sleep_clock.ToClockMs(ctx.sleep_duration_ms));
+    GetRTOS().LightSleep(counted_ms);
+    const auto real_ms =
+        static_cast<uint32_t>(sleep_clock.ToRealMs(counted_ms));
+    if (counted_ms != real_ms) {
+        GetRTOS().ContinueTickCountFrom(GetRTOS().getTickCount() - counted_ms +
+                                        real_ms);
+    }
+    network_service_->RecordSleepForCalibration(real_ms);
     // Timers stood still while the MCU slept: let the superframe service
     // recompute its next slot boundary from the current time
     superframe_service_->NotifyWokeUp();

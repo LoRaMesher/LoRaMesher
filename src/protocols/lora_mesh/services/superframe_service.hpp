@@ -414,6 +414,19 @@ class SuperframeService : public ISuperframeService {
     uint32_t GetSuperframeEndTime() const;
 
     /**
+     * @brief Whether the clock is in a slot the update task has not handled
+     *
+     * A slot lower than the last one handled starts a new superframe only
+     * once the superframe's time is over. Before that, the clock was stepped
+     * back (a clock correction after a sleep) into a slot already handled.
+     *
+     * @param current_slot Slot the clock is in now
+     * @param[out] new_superframe Set when the slot starts a new superframe
+     * @return true if the slot has not been handled yet
+     */
+    bool IsUnhandledSlot(uint16_t current_slot, bool& new_superframe) const;
+
+    /**
      * @brief Calculate timeout until next significant event
      * 
      * Calculates milliseconds until next slot transition or superframe end,

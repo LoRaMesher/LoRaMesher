@@ -57,6 +57,7 @@ class SuperframeWakeTest : public ::testing::Test {
             service_->StopSuperframe();
         }
         service_.reset();
+        mock_->ResetNodeClocks();
         mock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
     }
 
@@ -162,6 +163,32 @@ TEST_F(SuperframeWakeTest, WaitEndingJustBeforeABoundaryIsNotStretched) {
 
     ASSERT_EQ(Slots(), (std::vector<uint16_t>{1, 2}));
     EXPECT_EQ(Times()[1] - start, 2 * kSlotMs);
+}
+
+TEST_F(SuperframeWakeTest, ClockSteppedBackIsNotANewSuperframe) {
+    const uint32_t start = GetRTOS().getTickCount();
+    ASSERT_TRUE(service_->ResumeAt(start, kSlots, kSlotMs, 0));
+    mock_->advanceTime(120);
+    ASSERT_EQ(Slots(), (std::vector<uint16_t>{1}));
+    const uint32_t superframes =
+        service_->GetSuperframeStats().superframes_completed;
+
+    // A clock correction after a sleep moves the clock back into slot 0
+    GetRTOS().ContinueTickCountFrom(start + 90);
+    service_->NotifyWokeUp();
+    mock_->advanceTime(5);  // 95
+    EXPECT_EQ(Slots(), (std::vector<uint16_t>{1}));
+    EXPECT_EQ(service_->GetSuperframeStats().superframes_completed,
+              superframes);
+
+    // Slot 1 is not handled again, and slot 2 starts on the corrected clock
+    mock_->advanceTime(100);  // 195
+    EXPECT_EQ(Slots(), (std::vector<uint16_t>{1}));
+    mock_->advanceTime(10);  // 205
+    ASSERT_EQ(Slots(), (std::vector<uint16_t>{1, 2}));
+    EXPECT_EQ(Times()[1] - start, 2 * kSlotMs);
+    EXPECT_EQ(service_->GetSuperframeStats().superframes_completed,
+              superframes);
 }
 
 }  // namespace test

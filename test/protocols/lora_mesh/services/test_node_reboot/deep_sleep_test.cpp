@@ -252,10 +252,12 @@ TEST_P(DeepSleepTest, SleepClockErrorIsLearned) {
     TestNode& manager = *nodes.front();
     TestNode& farthest = *nodes.back();
 
+    // Once settled, each sleep corrects a quarter of the residual error, so
+    // following a step change of the clock takes about a dozen sleeps
     for (int32_t ppm : {9000, -6000}) {
         SCOPED_TRACE(ppm);
         sleep_clock_ppm_ = ppm;
-        ASSERT_TRUE(WaitForResumes(nodes, 8)) << DescribeNetwork(nodes);
+        ASSERT_TRUE(WaitForResumes(nodes, 12)) << DescribeNetwork(nodes);
         ASSERT_TRUE(AdvanceTime(
             superframe_ms_ * 2, superframe_ms_ * 2, kStepMs, 0, [&]() {
                 return std::all_of(

@@ -456,6 +456,47 @@ TEST_F(NetworkServiceResumeTest, ManagerStaysAwakeUntilItAnswersAJoin) {
     EXPECT_EQ(manager.service->GetSleepHold(), nullptr);
 }
 
+TEST_F(NetworkServiceResumeTest, SleepsSinceTheLastBeaconAreSampledTogether) {
+    Node& member = MakeSettledMember();
+    const auto samples =
+        member.service->GetSleepClockCalibration().GetSamples();
+
+    // Two light sleeps in one superframe, then its beacon
+    member.service->RecordSleepForCalibration(4000);
+    member.service->RecordSleepForCalibration(6000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(20000);
+    ASSERT_TRUE(member.service->ProcessReceivedMessage(
+        Beacon(), GetRTOS().getTickCount()));
+    EXPECT_EQ(member.service->GetSleepClockCalibration().GetSamples(),
+              samples + 1);
+
+    // Nothing slept since: the next beacon adds no sample
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(20000);
+    ASSERT_TRUE(member.service->ProcessReceivedMessage(
+        Beacon(), GetRTOS().getTickCount()));
+    EXPECT_EQ(member.service->GetSleepClockCalibration().GetSamples(),
+              samples + 1);
+}
+
+TEST_F(NetworkServiceResumeTest, SleepBeforeAMissedBeaconIsNotSampled) {
+    Node& member = MakeSettledMember();
+    const auto samples =
+        member.service->GetSleepClockCalibration().GetSamples();
+
+    // The beacon of the superframe is missed: the drift seen at the next one
+    // includes a superframe awake and is not the sleep clock's error
+    member.service->RecordSleepForCalibration(10000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(20000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(1000);
+    ASSERT_TRUE(member.service->ProcessReceivedMessage(
+        Beacon(), GetRTOS().getTickCount()));
+    EXPECT_EQ(member.service->GetSleepClockCalibration().GetSamples(), samples);
+}
+
 TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {
     Node& member = MakeSettledMember();
     ASSERT_EQ(member.service->GetDeepSleepBlocker(), nullptr);

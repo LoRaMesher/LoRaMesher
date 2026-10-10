@@ -50,6 +50,10 @@ class NodeRebootFixture : public RoutingTestFixture {
         float target_duty_cycle = 1.0f;
         /// Deep-sleep policy of the members (none: they never deep-sleep)
         std::optional<power::DeepSleepPolicy> member_deep_sleep;
+        /// Members light-sleep through SLEEP runs (the manager never sleeps)
+        bool member_light_sleep = false;
+        /// Error of the members' light-sleep clock (parts per million)
+        int32_t member_light_sleep_clock_ppm = 0;
     };
 
    protected:
@@ -87,7 +91,21 @@ class NodeRebootFixture : public RoutingTestFixture {
                 SetLinkStatus(*nodes[i], *nodes[j], IsLinked(spec, i, j));
             }
         }
+        if (spec.member_light_sleep_clock_ppm != 0) {
+            for (size_t i = 1; i < nodes.size(); ++i) {
+                SetLightSleepClockError(*nodes[i],
+                                        spec.member_light_sleep_clock_ppm);
+            }
+        }
         return nodes;
+    }
+
+    /// Make the light-sleep clock of @p node run @p ppm fast (or slow)
+    static void SetLightSleepClockError(const TestNode& node, int32_t ppm) {
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        static_cast<os::RTOSMock*>(&GetRTOS())
+            ->SetSleepClockError(addr_str, ppm);
     }
 
     /**
@@ -117,6 +135,11 @@ class NodeRebootFixture : public RoutingTestFixture {
             config.setTargetDutyCycle(spec_.target_duty_cycle);
             if (address != kBaseAddress && spec_.member_deep_sleep) {
                 config.setDeepSleepPolicy(*spec_.member_deep_sleep);
+            }
+            if (address != kBaseAddress && spec_.member_light_sleep) {
+                config.setPrepareSleepCallback([](const power::SleepContext&) {
+                    return power::SleepResult{true};
+                });
             }
             auto it = stores_.find(address);
             if (it != stores_.end()) {

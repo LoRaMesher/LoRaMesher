@@ -353,6 +353,21 @@ uint32_t SuperframeService::GetSuperframeEndTime() const {
     return superframe_start_time_ + GetSuperframeDuration();
 }
 
+bool SuperframeService::IsUnhandledSlot(uint16_t current_slot,
+                                        bool& new_superframe) const {
+    new_superframe = false;
+    const uint16_t last_slot = last_slot_;
+    if (last_slot == 0xFFFF || current_slot > last_slot) {
+        return true;
+    }
+    if (current_slot == last_slot) {
+        return false;
+    }
+    // Wrap-around, also when a large time jump skips slot 0 entirely
+    new_superframe = GetRTOS().getTickCount() >= GetSuperframeEndTime();
+    return new_superframe;
+}
+
 uint32_t SuperframeService::GetDiscoveryTimeout() {
     if (!is_running_) {
         return 0;
@@ -655,16 +670,9 @@ Result SuperframeService::UpdateSuperframeState() {
     uint16_t current_slot = GetCurrentSlot();
 
     // Check for slot transition
-    if (current_slot != last_slot_) {
-        // Check if we've wrapped around (new superframe)
-        bool new_superframe = false;
-
-        // Detect new superframe: wrap-around occurs when current_slot < last_slot_
-        // (covers both the normal case where current_slot == 0, and the case where
-        // a large time jump skips slot 0 entirely, landing at e.g. slot 5 after
-        // last_slot_ == 13).  Guard against first invocation (last_slot_ == 0xFFFF).
-        if (current_slot < last_slot_ && last_slot_ != 0xFFFF) {
-            new_superframe = true;
+    bool new_superframe = false;
+    if (IsUnhandledSlot(current_slot, new_superframe)) {
+        if (new_superframe) {
             // Only handle new superframe if auto-advance is enabled
             if (auto_advance_) {
                 HandleNewSuperframe();
@@ -871,8 +879,8 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
     // slot callback ran or a higher-priority task held the CPU right after a
     // wake-up notice. Handle that slot now: waiting for the boundary after
     // the current slot would skip it, and leave this task a slot behind.
-    const uint16_t last_slot = last_slot_;
-    if (last_slot != 0xFFFF && current_slot != last_slot) {
+    bool new_superframe = false;
+    if (last_slot_ != 0xFFFF && IsUnhandledSlot(current_slot, new_superframe)) {
         return 1;
     }
 
