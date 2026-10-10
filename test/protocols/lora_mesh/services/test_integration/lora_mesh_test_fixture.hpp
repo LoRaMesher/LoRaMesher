@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include "../test/utils/network_testing_impl.hpp"
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
@@ -60,6 +62,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
     /// Seed of the per-node random streams and the network's loss decisions
     uint32_t test_seed_ = kDefaultTestSeed;
 
+    /// Virtual time advanced per step while StopNode() waits for Stop()
+    static constexpr uint32_t kStopTimeStepMs = 10;
+
     // File logging support
     FileLogHandler* file_log_handler_ = nullptr;  ///< Owned by LOG while set
     std::string log_directory_;
@@ -77,6 +82,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             mock->SeedRandom(test_seed_);
             mock->resetReblockTimeoutCount();
         }
+        ResetTaskMisuseCounters();
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
@@ -110,10 +116,20 @@ class LoRaMeshTestFixture : public ::testing::Test {
                       << std::endl;
         }
 
-        // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
+        // Stop every protocol while the clock runs, so tasks finish their
+        // current slot work and park before the protocols are destroyed
         for (auto& node : nodes_) {
             if (node->protocol) {
-                // Stop the protocol and wait for all tasks to exit
+                Result stop_result = StopNode(*node);
+                EXPECT_TRUE(stop_result)
+                    << "Stopping " << node->name
+                    << " failed: " << stop_result.GetErrorMessage();
+            }
+        }
+        ExpectNoTaskMisuse();
+
+        for (auto& node : nodes_) {
+            if (node->protocol) {
                 node->protocol.reset();
             }
         }
@@ -355,7 +371,38 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Protocol not initialized");
         }
-        return node.protocol->Stop();
+
+        // Stop() waits for the node's tasks to park, which may take until
+        // the end of the current slot. It runs on a helper thread while this
+        // thread advances virtual time whenever the helper is blocked waiting.
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        std::atomic<bool> done{false};
+        Result result = Result::Success();
+        std::thread stopper([&]() {
+            GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+            result = node.protocol->Stop();
+            done.store(true, std::memory_order_release);
+        });
+
+        auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+        while (!done.load(std::memory_order_acquire)) {
+            if (mock != nullptr &&
+                mock->getTimeMode() == os::RTOSMock::TimeMode::kVirtualTime &&
+                mock->HasExternalWait()) {
+                // Let a just-satisfied wait return before moving the clock
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (done.load(std::memory_order_acquire) ||
+                    !mock->HasExternalWait()) {
+                    continue;
+                }
+                time_controller_.AdvanceTime(kStopTimeStepMs);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+        stopper.join();
+        return result;
     }
 
     /**
