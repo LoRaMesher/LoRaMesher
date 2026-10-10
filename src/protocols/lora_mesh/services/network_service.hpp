@@ -382,6 +382,11 @@ class NetworkService : public INetworkService {
     bool HeardSyncBeaconThisSuperframe() const;
 
     /**
+     * @brief True if a sync beacon arrived within the last @p window_ms
+     */
+    bool ReceivedSyncBeaconWithin(uint32_t window_ms) const;
+
+    /**
      * @brief Reason the MCU must stay awake now, if any
      *
      * Sleep makes the clock drift, so the node stays awake while it, or a
@@ -406,25 +411,30 @@ class NetworkService : public INetworkService {
     }
 
     /**
-     * @brief Learned error of the sleep clock
+     * @brief Learned error of the sleep clock in @p kind sleep
      */
-    power::SleepClockCalibration GetSleepClockCalibration() const {
-        return sleep_clock_;
+    power::SleepClockCalibration GetSleepClockCalibration(
+        power::SleepKind kind) const {
+        return kind == power::SleepKind::LIGHT ? light_sleep_clock_
+                                               : deep_sleep_clock_;
     }
 
     /**
-     * @brief Count a light or deep sleep towards the next calibration sample
+     * @brief Count a sleep that just ended towards the next calibration
+     *        sample
      *
      * At the next sync beacon, the drift the schedule gained since the
      * previous beacon is the error the sleep clock made over all sleeps in
-     * between (the node runs on its crystal while awake). The sample is
-     * dropped if a beacon was missed in between.
+     * between (the node runs on its crystal while awake). It calibrates the
+     * kind of sleep that took longer; the other kind counts as corrected by
+     * its own estimate. No sample is taken
+     * if a beacon was missed in between, or if the node was awake for more
+     * than half a superframe before the beacon.
      *
+     * @param kind Kind of the sleep
      * @param slept_ms Corrected length of the sleep
      */
-    void RecordSleepForCalibration(uint32_t slept_ms) {
-        calibration_sleep_ms_ += slept_ms;
-    }
+    void RecordSleepForCalibration(power::SleepKind kind, uint32_t slept_ms);
 
     /**
      * @brief Identifier of the network this node belongs to (0 = none)
@@ -1648,10 +1658,18 @@ class NetworkService : public INetworkService {
 
     /// Hold sleep while the join of @p joiner is relayed
     void HoldSleepForRelayedJoin(AddressType joiner);
-    /// Learned error of the sleep clock (kept across network resets)
-    power::SleepClockCalibration sleep_clock_;
-    /// Time slept since the last sync beacon, for the next calibration sample
-    uint32_t calibration_sleep_ms_ = 0;
+    /// Learned errors of the sleep clock (kept across network resets)
+    power::SleepClockCalibration light_sleep_clock_;
+    power::SleepClockCalibration deep_sleep_clock_;
+
+    /// Sleeps since the last sync beacon, for the next calibration sample
+    struct SleepTally {
+        uint32_t light_ms = 0;    ///< Time in light sleep
+        uint32_t deep_ms = 0;     ///< Time in deep sleep
+        uint32_t woke_at_ms = 0;  ///< Tick count at the end of the last sleep
+    };
+
+    SleepTally sleep_tally_;
     /// How far ahead of the network the schedule was left at the last beacon
     /// (drifts below the resync threshold are not corrected)
     int32_t schedule_offset_ms_ = 0;

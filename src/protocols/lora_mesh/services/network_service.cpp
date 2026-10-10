@@ -805,7 +805,8 @@ std::optional<storage::ResumeSnapshot> NetworkService::CaptureResumeSnapshot()
     member.last_sync_time_ms = last_sync_time_;
     member.last_sync_beacon_ms = last_sync_beacon_received_;
     member.last_route_cleanup_ms = last_cleanup_time_;
-    member.sleep_clock = sleep_clock_;
+    member.light_sleep_clock = light_sleep_clock_;
+    member.deep_sleep_clock = deep_sleep_clock_;
     member.schedule_offset_ms = static_cast<int16_t>(
         std::clamp<int32_t>(schedule_offset_ms_, INT16_MIN, INT16_MAX));
 
@@ -857,7 +858,8 @@ Result NetworkService::ApplyResumeSnapshot(
         last_sync_time_ = member.last_sync_time_ms;
         last_sync_beacon_received_ = member.last_sync_beacon_ms;
         last_cleanup_time_ = member.last_route_cleanup_ms;
-        sleep_clock_ = member.sleep_clock;
+        light_sleep_clock_ = member.light_sleep_clock;
+        deep_sleep_clock_ = member.deep_sleep_clock;
         schedule_offset_ms_ = member.schedule_offset_ms;
         no_received_sync_beacon_count_ = 0;
         pending_slot_table_rebuild_ = false;
@@ -912,26 +914,50 @@ const char* NetworkService::GetDeepSleepBlocker() const {
     return nullptr;
 }
 
+void NetworkService::RecordSleepForCalibration(power::SleepKind kind,
+                                               uint32_t slept_ms) {
+    if (kind == power::SleepKind::LIGHT) {
+        sleep_tally_.light_ms += slept_ms;
+    } else {
+        sleep_tally_.deep_ms += slept_ms;
+    }
+    sleep_tally_.woke_at_ms = GetRTOS().getTickCount();
+}
+
 void NetworkService::RecordSleepClockDrift(int32_t drift_ms) {
-    const uint32_t slept_ms = std::exchange(calibration_sleep_ms_, 0);
+    const SleepTally tally = std::exchange(sleep_tally_, {});
+    const uint32_t slept_ms = tally.light_ms + tally.deep_ms;
     if (slept_ms == 0) {
         return;
     }
-    // A missed beacon puts awake time and the network's own drift into what
-    // the schedule moved
+    // A missed beacon, or a long time awake, puts the network's own drift
+    // into what the schedule moved
     if (no_received_sync_beacon_count_ > 1) {
         LOG_DEBUG(
             "Sleep clock: no sample, a beacon was missed since the sleep");
         return;
     }
+    const uint32_t awake_ms = GetRTOS().getTickCount() - tally.woke_at_ms;
+    if (superframe_service_ &&
+        awake_ms > superframe_service_->GetSuperframeDuration() / 2) {
+        LOG_DEBUG("Sleep clock: no sample, awake %u ms since the sleep",
+                  awake_ms);
+        return;
+    }
+    // The kind that slept longer takes the sample; the other one is taken as
+    // corrected by its own estimate
+    const bool light = tally.light_ms >= tally.deep_ms;
+    power::SleepClockCalibration& clock =
+        light ? light_sleep_clock_ : deep_sleep_clock_;
+    const uint32_t sampled_ms = light ? tally.light_ms : tally.deep_ms;
     // Only what the schedule moved since the last beacon is the clock's error
     const int32_t sleep_error_ms = drift_ms - schedule_offset_ms_;
-    sleep_clock_.AddSample(sleep_error_ms, slept_ms);
+    clock.AddSample(sleep_error_ms, sampled_ms);
     LOG_INFO(
-        "Sleep clock: %d ms off after %u ms of sleep, error now %d ppm (%u "
+        "Sleep clock: %d ms off after %u ms of %s sleep, error now %d ppm (%u "
         "samples)",
-        sleep_error_ms, slept_ms, sleep_clock_.GetPpm(),
-        sleep_clock_.GetSamples());
+        sleep_error_ms, sampled_ms, light ? "light" : "deep", clock.GetPpm(),
+        clock.GetSamples());
 }
 
 const char* NetworkService::GetSleepHold() const {
@@ -974,12 +1000,19 @@ void NetworkService::HoldSleepForRelayedJoin(AddressType joiner) {
 }
 
 bool NetworkService::HeardSyncBeaconThisSuperframe() const {
-    if (last_sync_beacon_received_ == 0 || !superframe_service_) {
+    if (!superframe_service_) {
         return false;
     }
-    const uint32_t age = GetRTOS().getTickCount() - last_sync_beacon_received_;
-    return age <= superframe_service_->GetTimeSinceSuperframeStart() +
-                      superframe_service_->GetSuperframeDuration() / 2;
+    return ReceivedSyncBeaconWithin(
+        superframe_service_->GetTimeSinceSuperframeStart() +
+        superframe_service_->GetSuperframeDuration() / 2);
+}
+
+bool NetworkService::ReceivedSyncBeaconWithin(uint32_t window_ms) const {
+    if (last_sync_beacon_received_ == 0) {
+        return false;
+    }
+    return GetRTOS().getTickCount() - last_sync_beacon_received_ <= window_ms;
 }
 
 uint32_t NetworkService::GetManagerResumeDelayRemaining() const {
@@ -3462,7 +3495,16 @@ Result NetworkService::HandleSuperframeStart() {
         }
 
     } else if (state_ == ProtocolState::NORMAL_OPERATION) {
-        no_received_sync_beacon_count_++;
+        // A beacon up to half a superframe before this start belongs to the
+        // superframe starting now: a schedule slightly behind the network's
+        // hears it first
+        const bool beacon_arrived_early =
+            superframe_service_ &&
+            ReceivedSyncBeaconWithin(
+                superframe_service_->GetSuperframeDuration() / 2);
+        if (!beacon_arrived_early) {
+            no_received_sync_beacon_count_++;
+        }
         // The previous superframe brought no beacon
         if (no_received_sync_beacon_count_ > 1) {
             settled_superframes_ = 0;
@@ -3806,7 +3848,7 @@ void NetworkService::ResetNetworkState() {
     awaiting_resync_ = false;
     settled_superframes_ = 0;
     relayed_joiner_ = 0;
-    calibration_sleep_ms_ = 0;
+    sleep_tally_ = {};
     reliable_messaging_->Reset();
     message_cache_.Reset();
 

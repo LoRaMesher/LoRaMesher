@@ -1,6 +1,6 @@
 /**
  * @file sleep_clock_calibration.hpp
- * @brief Correction of the clock that times a deep sleep
+ * @brief Correction of the clock that times light and deep sleeps
  */
 
 #pragma once
@@ -12,7 +12,18 @@ namespace loramesher {
 namespace power {
 
 /**
- * @brief Learned error of the deep-sleep clock
+ * @brief Kind of MCU sleep, each with its own sleep-clock error
+ *
+ * The ESP32 RC oscillator runs at a different frequency in light and in deep
+ * sleep, so each kind is calibrated on its own.
+ */
+enum class SleepKind : uint8_t {
+    LIGHT,  ///< Light sleep: the MCU halts and resumes where it stopped
+    DEEP,   ///< Deep sleep: the MCU powers off and reboots
+};
+
+/**
+ * @brief Learned error of a sleep clock
  *
  * The clock that times light and deep sleeps (the ESP32 RTC on its RC
  * oscillator) can be off by about 1 %. After sleeping, the drift between the

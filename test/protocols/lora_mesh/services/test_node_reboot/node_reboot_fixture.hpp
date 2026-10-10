@@ -11,6 +11,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <limits>
 #include <map>
 #include <memory>
@@ -137,9 +138,12 @@ class NodeRebootFixture : public RoutingTestFixture {
                 config.setDeepSleepPolicy(*spec_.member_deep_sleep);
             }
             if (address != kBaseAddress && spec_.member_light_sleep) {
-                config.setPrepareSleepCallback([](const power::SleepContext&) {
-                    return power::SleepResult{true};
-                });
+                config.setPrepareSleepCallback(
+                    [this](const power::SleepContext& ctx) {
+                        const bool deep = ctx.requested_state ==
+                                          power::PowerState::DEEP_SLEEP;
+                        return power::SleepResult{!(deep && veto_deep_sleep_)};
+                    });
             }
             auto it = stores_.find(address);
             if (it != stores_.end()) {
@@ -631,6 +635,8 @@ class NodeRebootFixture : public RoutingTestFixture {
     std::map<AddressType, int64_t> sleep_clock_offsets_us_;
     /// Error of every node's sleep clock, in parts per million
     int32_t sleep_clock_ppm_ = 0;
+    /// Light-sleeping members veto deep sleep (they light-sleep instead)
+    std::atomic<bool> veto_deep_sleep_{false};
     /// Real length of each node's current deep sleep
     std::map<AddressType, uint64_t> sleep_lengths_ms_;
     std::map<AddressType, size_t> deep_sleeps_;

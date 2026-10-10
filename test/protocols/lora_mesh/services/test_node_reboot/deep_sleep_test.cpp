@@ -53,14 +53,24 @@ class DeepSleepTest : public NodeRebootFixture,
         NodeRebootFixture::TearDown();
     }
 
-    /// Build and form the network of @p scenario with deep-sleeping members
-    std::vector<TestNode*> FormNetwork(const DeepSleepScenario& scenario) {
+    /**
+     * @brief Build and form the network of @p scenario with deep-sleeping
+     *        members
+     *
+     * @param light_sleep_clock_ppm When not 0, members also light-sleep
+     *        through the SLEEP runs too short for deep sleep, on a sleep
+     *        clock off by this much
+     */
+    std::vector<TestNode*> FormNetwork(const DeepSleepScenario& scenario,
+                                       int32_t light_sleep_clock_ppm = 0) {
         NetworkSpec spec;
         spec.topology = scenario.topology;
         spec.node_count = scenario.node_count;
         spec.member_role = NodeRole::NODE_ONLY;
         spec.target_duty_cycle = scenario.target_duty_cycle;
         spec.member_deep_sleep = TestDeepSleepPolicy();
+        spec.member_light_sleep = light_sleep_clock_ppm != 0;
+        spec.member_light_sleep_clock_ppm = light_sleep_clock_ppm;
         auto nodes = BuildNetwork(spec);
         StartAndFormNetwork(nodes);
         return nodes;
@@ -265,9 +275,10 @@ TEST_P(DeepSleepTest, SleepClockErrorIsLearned) {
                     [](TestNode* node) { return node->protocol != nullptr; });
             }));
         for (size_t i = 1; i < nodes.size(); ++i) {
-            const auto calibration = nodes[i]
-                                         ->protocol->GetNetworkServiceForTest()
-                                         ->GetSleepClockCalibration();
+            const auto calibration =
+                nodes[i]
+                    ->protocol->GetNetworkServiceForTest()
+                    ->GetSleepClockCalibration(power::SleepKind::DEEP);
             // Each relay re-times the beacon with up to guard/2 of residual
             // offset, which is large against the short simulated sleeps
             const int32_t hops = GetParam().topology == Topology::kLine
@@ -286,6 +297,46 @@ TEST_P(DeepSleepTest, SleepClockErrorIsLearned) {
     for (size_t i = 1; i < nodes.size(); ++i) {
         EXPECT_EQ(CountOf(fallback_boots_, nodes[i]->address), 0u);
     }
+}
+
+TEST_P(DeepSleepTest, LightAndDeepSleepClocksAreLearnedSeparately) {
+    // The RC sleep clock runs at another rate in light sleep than in deep
+    constexpr int32_t kLightPpm = 15000;
+    constexpr int32_t kDeepPpm = 5000;
+    veto_deep_sleep_ = true;
+    auto nodes = FormNetwork(GetParam(), kLightPpm);
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    sleep_clock_ppm_ = kDeepPpm;
+
+    // Light sleep alone first, then deep sleep with the light sleeps of the
+    // shorter SLEEP runs mixed in
+    AdvanceTime(superframe_ms_ * 12);
+    veto_deep_sleep_ = false;
+    ASSERT_TRUE(WaitForResumes(nodes, 12)) << DescribeNetwork(nodes);
+    ASSERT_TRUE(
+        AdvanceTime(superframe_ms_ * 2, superframe_ms_ * 2, kStepMs, 0, [&]() {
+            return std::all_of(nodes.begin(), nodes.end(), [](TestNode* node) {
+                return node->protocol != nullptr;
+            });
+        }));
+    for (size_t i = 1; i < nodes.size(); ++i) {
+        auto* service = nodes[i]->protocol->GetNetworkServiceForTest();
+        const auto light =
+            service->GetSleepClockCalibration(power::SleepKind::LIGHT);
+        const auto deep =
+            service->GetSleepClockCalibration(power::SleepKind::DEEP);
+        const int32_t hops = GetParam().topology == Topology::kLine
+                                 ? static_cast<int32_t>(i)
+                                 : 1;
+        EXPECT_TRUE(light.IsCalibrated()) << nodes[i]->name;
+        EXPECT_NEAR(light.GetPpm(), kLightPpm, 2500 * hops) << nodes[i]->name;
+        EXPECT_TRUE(deep.IsCalibrated()) << nodes[i]->name;
+        EXPECT_NEAR(deep.GetPpm(), kDeepPpm, 1500 * hops) << nodes[i]->name;
+    }
+    EXPECT_TRUE(StaysHealthy(nodes, manager.address, superframe_ms_ * 4,
+                             formed_network_id_))
+        << DescribeNetwork(nodes);
 }
 
 TEST_P(DeepSleepTest, ResumeAfterTheBeaconWaitsForTheNextBeacon) {

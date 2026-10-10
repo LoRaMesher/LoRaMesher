@@ -65,9 +65,10 @@ TEST_P(LightSleepClockTest, MembersCalibrateTheirSleepClock) {
                              formed_network_id_))
         << DescribeNetwork(nodes);
     for (size_t i = 1; i < nodes.size(); ++i) {
-        const auto calibration = nodes[i]
-                                     ->protocol->GetNetworkServiceForTest()
-                                     ->GetSleepClockCalibration();
+        const auto calibration =
+            nodes[i]
+                ->protocol->GetNetworkServiceForTest()
+                ->GetSleepClockCalibration(power::SleepKind::LIGHT);
         EXPECT_TRUE(calibration.IsCalibrated()) << nodes[i]->name;
         // Each relay re-times the beacon with up to guard/2 of residual
         // offset, which is large against the short simulated sleeps

@@ -778,7 +778,7 @@ bool LoRaMeshProtocol::ResumeAfterDeepSleep(
         return false;
     }
     // The sleep clock's own count, corrected by its learned error
-    const uint64_t slept_ms = snapshot.member.sleep_clock.ToRealMs(
+    const uint64_t slept_ms = snapshot.member.deep_sleep_clock.ToRealMs(
         (now_us - timing.persistent_time_at_save_us) / 1000);
     const uint64_t planned_ms =
         timing.wake_deadline_ms - timing.tick_at_save_ms;
@@ -809,7 +809,7 @@ bool LoRaMeshProtocol::ResumeAfterDeepSleep(
         return false;
     }
     network_service_->RecordSleepForCalibration(
-        static_cast<uint32_t>(slept_ms));
+        power::SleepKind::DEEP, static_cast<uint32_t>(slept_ms));
     LOG_INFO("Resumed network 0x%04X after %llu ms of deep sleep",
              snapshot.network.network_id,
              static_cast<unsigned long long>(slept_ms));
@@ -1426,7 +1426,8 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
         slot_type == SlotAllocation::SlotType::DISCOVERY_TX;
     if (network_service_->IsAwaitingResync() &&
         !(discovery_slot &&
-          network_service_->GetSleepClockCalibration().IsCalibrated())) {
+          network_service_->GetSleepClockCalibration(power::SleepKind::DEEP)
+              .IsCalibrated())) {
         result = hardware_->setState(radio::RadioState::kReceive);
         if (!result) {
             LOG_ERROR("Failed to set radio to receive: %s",
@@ -1635,7 +1636,7 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
     // radio transition and peripheral init are done in time even when the
     // sleep clock runs slow
     const power::SleepClockCalibration sleep_clock =
-        network_service_->GetSleepClockCalibration();
+        network_service_->GetSleepClockCalibration(power::SleepKind::LIGHT);
     const uint32_t wake_margin =
         config_.getWakeUpGuardTime() +
         config_.getDeepSleepPolicy().SleepClockAllowanceMs(
@@ -1672,7 +1673,8 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
         GetRTOS().ContinueTickCountFrom(GetRTOS().getTickCount() - counted_ms +
                                         real_ms);
     }
-    network_service_->RecordSleepForCalibration(real_ms);
+    network_service_->RecordSleepForCalibration(power::SleepKind::LIGHT,
+                                                real_ms);
     // Timers stood still while the MCU slept: let the superframe service
     // recompute its next slot boundary from the current time
     superframe_service_->NotifyWokeUp();
@@ -1689,7 +1691,7 @@ bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms,
         return false;
     }
     const power::SleepClockCalibration sleep_clock =
-        network_service_->GetSleepClockCalibration();
+        network_service_->GetSleepClockCalibration(power::SleepKind::DEEP);
     const uint32_t margin =
         policy.WakeMarginMs(until_active_ms, config_.getWakeUpGuardTime(),
                             sleep_clock.IsCalibrated());

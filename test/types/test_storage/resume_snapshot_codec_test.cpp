@@ -20,10 +20,10 @@ constexpr AddressType kManager = 0x1000;
 /// Offset of the first route record
 constexpr size_t kScheduleSlots = 3;
 constexpr size_t kRoutesOffset =
-    4 + 1 + 1 + 21 + 30 + 26 + 2 + 2 + kScheduleSlots * 5 + 4 + 1;
+    4 + 1 + 1 + 21 + 30 + 31 + 2 + 2 + kScheduleSlots * 5 + 4 + 1;
 /// Size of everything but the route and stream records
 constexpr size_t kFixedSize =
-    4 + 1 + 1 + 21 + 30 + 26 + 2 + 2 + 4 + 1 + 1 + 1 + 1 + 4;
+    4 + 1 + 1 + 21 + 30 + 31 + 2 + 2 + 4 + 1 + 1 + 1 + 1 + 4;
 
 NetworkNodeRoute MakeOwnEntry() {
     NetworkNodeRoute route(kNode, 1000, false, 0x03, 2, 0);
@@ -96,7 +96,8 @@ ResumeSnapshot MakeSnapshot() {
     snapshot.member.last_sync_time_ms = 0xFFFFE010u;
     snapshot.member.last_sync_beacon_ms = 0xFFFFE011u;
     snapshot.member.last_route_cleanup_ms = 0xFFFF0000u;
-    snapshot.member.sleep_clock = power::SleepClockCalibration(-7123, 9);
+    snapshot.member.light_sleep_clock = power::SleepClockCalibration(3312, 14);
+    snapshot.member.deep_sleep_clock = power::SleepClockCalibration(-7123, 9);
     snapshot.member.schedule_offset_ms = -17;
 
     using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
@@ -393,23 +394,29 @@ TEST(ResumeSnapshotCodecTest, UnknownDeliveryStreamKindIsRejected) {
 }
 
 TEST(ResumeSnapshotCodecTest, OtherFormatVersionIsRejected) {
-    auto blob = EncodeOrFail(MakeSnapshot());
-    blob[4] = 1;
-    FixCrc(blob);
-    EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value());
+    for (const uint8_t version : {1, 2, 4}) {
+        auto blob = EncodeOrFail(MakeSnapshot());
+        blob[4] = version;
+        FixCrc(blob);
+        EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value())
+            << static_cast<int>(version);
+    }
 }
 
 TEST(ResumeSnapshotCodecTest, ImplausibleSleepClockErrorIsRejected) {
-    auto blob = EncodeOrFail(MakeSnapshot());
-    // Sleep clock error: after the member's manager (2), five 1-byte and
-    // three 4-byte fields
-    const size_t ppm_offset = 4 + 1 + 1 + 21 + 30 + 2 + 5 + 12;
-    const int32_t too_large = power::SleepClockCalibration::kMaxPpm + 1;
-    for (size_t i = 0; i < 4; ++i) {
-        blob[ppm_offset + i] = static_cast<uint8_t>(too_large >> (8 * i));
+    // Light-sleep clock error: after the member's manager (2), five 1-byte
+    // and three 4-byte fields; the deep-sleep one follows its samples byte
+    const size_t light_ppm_offset = 4 + 1 + 1 + 21 + 30 + 2 + 5 + 12;
+    for (const size_t ppm_offset : {light_ppm_offset, light_ppm_offset + 5}) {
+        SCOPED_TRACE(ppm_offset);
+        auto blob = EncodeOrFail(MakeSnapshot());
+        const int32_t too_large = power::SleepClockCalibration::kMaxPpm + 1;
+        for (size_t i = 0; i < 4; ++i) {
+            blob[ppm_offset + i] = static_cast<uint8_t>(too_large >> (8 * i));
+        }
+        FixCrc(blob);
+        EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value());
     }
-    FixCrc(blob);
-    EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value());
 }
 
 TEST(ResumeSnapshotCodecTest, CraftedBlobWithValidCrcIsChecked) {

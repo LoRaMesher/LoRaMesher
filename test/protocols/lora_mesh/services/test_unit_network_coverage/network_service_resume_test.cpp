@@ -36,6 +36,8 @@ namespace test {
 using ProtocolState = INetworkService::ProtocolState;
 using types::protocols::lora_mesh::NetworkNodeRoute;
 using types::protocols::lora_mesh::SlotAllocation;
+constexpr power::SleepKind kLight = power::SleepKind::LIGHT;
+constexpr power::SleepKind kDeep = power::SleepKind::DEEP;
 
 class NetworkServiceResumeTest : public ::testing::Test {
    protected:
@@ -109,9 +111,12 @@ class NetworkServiceResumeTest : public ::testing::Test {
             member.ProcessReceivedMessage(response->ToBaseMessage(), 0));
         EXPECT_EQ(member.GetState(), ProtocolState::NORMAL_OPERATION);
 
+        // The next superframe's beacon; its successors arrive a second after
+        // each superframe start
         mock_->advanceTime(20000);
         EXPECT_TRUE(
             member.ProcessReceivedMessage(Beacon(), GetRTOS().getTickCount()));
+        mock_->advanceTime(19000);
 
         member.UpdateRouteEntry(kNeighbour, kNeighbour, 1, 200, 2, 0);
         auto neighbour = member.GetRoutingTable()->FindNode(kNeighbour);
@@ -133,9 +138,10 @@ class NetworkServiceResumeTest : public ::testing::Test {
         Node& node = MakeJoinedMember();
         for (int i = 0; i < 2; ++i) {
             EXPECT_TRUE(node.service->HandleSuperframeStart());
-            mock_->advanceTime(20000);
+            mock_->advanceTime(1000);
             EXPECT_TRUE(node.service->ProcessReceivedMessage(
                 Beacon(), GetRTOS().getTickCount()));
+            mock_->advanceTime(19000);
         }
         return node;
     }
@@ -285,9 +291,10 @@ TEST_F(NetworkServiceResumeTest, DeepSleepNeedsASettledMember) {
     ASSERT_GT(member.service->GetMissedSyncBeaconCount(), 0u);
     EXPECT_STREQ(member.service->GetDeepSleepBlocker(), "missed sync beacons");
 
-    mock_->advanceTime(20000);
+    mock_->advanceTime(1000);
     ASSERT_TRUE(member.service->ProcessReceivedMessage(
         Beacon(), GetRTOS().getTickCount()));
+    mock_->advanceTime(19000);
     EXPECT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
 }
 
@@ -371,9 +378,10 @@ TEST_F(NetworkServiceResumeTest, JoinedMemberSettlesBeforeSleeping) {
 
     for (int i = 0; i < 2; ++i) {
         ASSERT_TRUE(member.service->HandleSuperframeStart());
-        mock_->advanceTime(20000);
+        mock_->advanceTime(1000);
         ASSERT_TRUE(member.service->ProcessReceivedMessage(
             Beacon(), GetRTOS().getTickCount()));
+        mock_->advanceTime(19000);
     }
     EXPECT_EQ(member.service->GetSleepHold(), nullptr);
     EXPECT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
@@ -459,42 +467,122 @@ TEST_F(NetworkServiceResumeTest, ManagerStaysAwakeUntilItAnswersAJoin) {
 TEST_F(NetworkServiceResumeTest, SleepsSinceTheLastBeaconAreSampledTogether) {
     Node& member = MakeSettledMember();
     const auto samples =
-        member.service->GetSleepClockCalibration().GetSamples();
+        member.service->GetSleepClockCalibration(kLight).GetSamples();
 
     // Two light sleeps in one superframe, then its beacon
-    member.service->RecordSleepForCalibration(4000);
-    member.service->RecordSleepForCalibration(6000);
+    member.service->RecordSleepForCalibration(kLight, 4000);
+    member.service->RecordSleepForCalibration(kLight, 6000);
     ASSERT_TRUE(member.service->HandleSuperframeStart());
-    mock_->advanceTime(20000);
+    mock_->advanceTime(1000);
     ASSERT_TRUE(member.service->ProcessReceivedMessage(
         Beacon(), GetRTOS().getTickCount()));
-    EXPECT_EQ(member.service->GetSleepClockCalibration().GetSamples(),
+    mock_->advanceTime(19000);
+    EXPECT_EQ(member.service->GetSleepClockCalibration(kLight).GetSamples(),
               samples + 1);
 
     // Nothing slept since: the next beacon adds no sample
     ASSERT_TRUE(member.service->HandleSuperframeStart());
-    mock_->advanceTime(20000);
+    mock_->advanceTime(1000);
     ASSERT_TRUE(member.service->ProcessReceivedMessage(
         Beacon(), GetRTOS().getTickCount()));
-    EXPECT_EQ(member.service->GetSleepClockCalibration().GetSamples(),
+    mock_->advanceTime(19000);
+    EXPECT_EQ(member.service->GetSleepClockCalibration(kLight).GetSamples(),
               samples + 1);
 }
 
 TEST_F(NetworkServiceResumeTest, SleepBeforeAMissedBeaconIsNotSampled) {
     Node& member = MakeSettledMember();
     const auto samples =
-        member.service->GetSleepClockCalibration().GetSamples();
+        member.service->GetSleepClockCalibration(kLight).GetSamples();
 
     // The beacon of the superframe is missed: the drift seen at the next one
-    // includes a superframe awake and is not the sleep clock's error
-    member.service->RecordSleepForCalibration(10000);
+    // includes a superframe awake and is not the sleep clock's error. The
+    // last beacon came just before the first start and belongs to it.
+    member.service->RecordSleepForCalibration(kLight, 10000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(20000);
     ASSERT_TRUE(member.service->HandleSuperframeStart());
     mock_->advanceTime(20000);
     ASSERT_TRUE(member.service->HandleSuperframeStart());
     mock_->advanceTime(1000);
     ASSERT_TRUE(member.service->ProcessReceivedMessage(
         Beacon(), GetRTOS().getTickCount()));
-    EXPECT_EQ(member.service->GetSleepClockCalibration().GetSamples(), samples);
+    EXPECT_EQ(member.service->GetSleepClockCalibration(kLight).GetSamples(),
+              samples);
+}
+
+TEST_F(NetworkServiceResumeTest, EachKindOfSleepCalibratesItsOwnClock) {
+    Node& member = MakeSettledMember();
+    NetworkService& service = *member.service;
+    const auto light = service.GetSleepClockCalibration(kLight).GetSamples();
+    const auto deep = service.GetSleepClockCalibration(kDeep).GetSamples();
+
+    const auto beacon = [&]() {
+        ASSERT_TRUE(service.HandleSuperframeStart());
+        mock_->advanceTime(1000);
+        ASSERT_TRUE(
+            service.ProcessReceivedMessage(Beacon(), GetRTOS().getTickCount()));
+        mock_->advanceTime(19000);
+    };
+
+    service.RecordSleepForCalibration(kDeep, 10000);
+    beacon();
+    EXPECT_EQ(service.GetSleepClockCalibration(kLight).GetSamples(), light);
+    EXPECT_EQ(service.GetSleepClockCalibration(kDeep).GetSamples(), deep + 1);
+
+    // With both kinds, the one that slept longer is sampled
+    service.RecordSleepForCalibration(kLight, 4000);
+    service.RecordSleepForCalibration(kDeep, 6000);
+    beacon();
+    EXPECT_EQ(service.GetSleepClockCalibration(kLight).GetSamples(), light);
+    EXPECT_EQ(service.GetSleepClockCalibration(kDeep).GetSamples(), deep + 2);
+
+    service.RecordSleepForCalibration(kLight, 8000);
+    service.RecordSleepForCalibration(kDeep, 2000);
+    beacon();
+    EXPECT_EQ(service.GetSleepClockCalibration(kLight).GetSamples(), light + 1);
+    EXPECT_EQ(service.GetSleepClockCalibration(kDeep).GetSamples(), deep + 2);
+}
+
+TEST_F(NetworkServiceResumeTest, SleepEndingLongBeforeTheBeaconIsNotSampled) {
+    Node& member = MakeSettledMember();
+    const auto samples =
+        member.service->GetSleepClockCalibration(kLight).GetSamples();
+
+    // A resume after the beacon slot: the node stays up most of a superframe
+    // on its crystal, so the next beacon's drift is not the sleep's error
+    member.service->RecordSleepForCalibration(kLight, 10000);
+    mock_->advanceTime(15000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    mock_->advanceTime(1000);
+    ASSERT_TRUE(member.service->ProcessReceivedMessage(
+        Beacon(), GetRTOS().getTickCount()));
+    EXPECT_EQ(member.service->GetSleepClockCalibration(kLight).GetSamples(),
+              samples);
+}
+
+TEST_F(NetworkServiceResumeTest, BeaconJustBeforeTheSuperframeStartIsNotAMiss) {
+    Node& member = MakeSettledMember();
+
+    // The node's schedule runs a few ms behind the network's, too little to
+    // resynchronize: every beacon arrives just before its superframe starts
+    for (int i = 0; i < 4; ++i) {
+        mock_->advanceTime(19995);
+        ASSERT_TRUE(member.service->ProcessReceivedMessage(
+            Beacon(), GetRTOS().getTickCount()));
+        mock_->advanceTime(5);
+        ASSERT_TRUE(member.service->HandleSuperframeStart());
+        EXPECT_STREQ(member.service->GetDeepSleepBlocker(), nullptr) << i;
+    }
+}
+
+TEST_F(NetworkServiceResumeTest, SuperframeWithoutItsBeaconIsAMiss) {
+    Node& member = MakeSettledMember();
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    EXPECT_EQ(member.service->GetMissedSyncBeaconCount(), 1u);
+    mock_->advanceTime(20000);
+    ASSERT_TRUE(member.service->HandleSuperframeStart());
+    EXPECT_EQ(member.service->GetMissedSyncBeaconCount(), 2u);
 }
 
 TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {

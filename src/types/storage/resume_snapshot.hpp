@@ -68,8 +68,10 @@ struct MemberState {
     uint32_t last_sync_time_ms = 0;      ///< Last synchronization (tick)
     uint32_t last_sync_beacon_ms = 0;    ///< Last sync beacon received (tick)
     uint32_t last_route_cleanup_ms = 0;  ///< Last route cleanup (tick)
-    /// Learned error of the deep-sleep clock
-    power::SleepClockCalibration sleep_clock;
+    /// Learned error of the sleep clock in light sleep
+    power::SleepClockCalibration light_sleep_clock;
+    /// Learned error of the sleep clock in deep sleep
+    power::SleepClockCalibration deep_sleep_clock;
     /// How far ahead of the network the schedule was at the last beacon
     int16_t schedule_offset_ms = 0;
 
@@ -83,7 +85,8 @@ struct MemberState {
                last_sync_time_ms == other.last_sync_time_ms &&
                last_sync_beacon_ms == other.last_sync_beacon_ms &&
                last_route_cleanup_ms == other.last_route_cleanup_ms &&
-               sleep_clock == other.sleep_clock &&
+               light_sleep_clock == other.light_sleep_clock &&
+               deep_sleep_clock == other.deep_sleep_clock &&
                schedule_offset_ms == other.schedule_offset_ms;
     }
 };

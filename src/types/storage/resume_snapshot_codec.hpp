@@ -29,11 +29,12 @@ namespace storage {
  * | 30      | Timing: tick (4), persistent time (8), wake deadline   |
  * |         | (4), superframe start (4), superframes completed (4),  |
  * |         | slot duration (4), total slots (2)                     |
- * | 26      | Member: manager (2), slots per superframe (1), beacon  |
+ * | 31      | Member: manager (2), slots per superframe (1), beacon  |
  * |         | node count (1), control slot (1), data slots (1),      |
  * |         | table version (1), last sync (4), last sync beacon (4),|
- * |         | last route cleanup (4), sleep clock error (4, signed   |
- * |         | ppm), sleep clock samples (1), schedule offset at the  |
+ * |         | last route cleanup (4), light-sleep clock error (4,    |
+ * |         | signed ppm) and samples (1), deep-sleep clock error (4,|
+ * |         | signed ppm) and samples (1), schedule offset at the    |
  * |         | last beacon (2, signed ms)                             |
  * | 2       | Group stream: started (1), next sequence (1)           |
  * | 2       | Slot count N                                           |
@@ -63,7 +64,7 @@ class ResumeSnapshotCodec {
    public:
     /// Magic "LMR1" read as a little-endian 32-bit value
     static constexpr uint32_t kMagic = 0x31524D4C;
-    static constexpr uint8_t kFormatVersion = 2;
+    static constexpr uint8_t kFormatVersion = 3;
     static constexpr size_t kRouteSize = 22;
     static constexpr size_t kLinkStatsSize = 33;
     static constexpr size_t kPathRttSize = 8;
