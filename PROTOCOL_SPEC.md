@@ -1997,7 +1997,7 @@ stateDiagram-v2
 
 ##### PrepareSleepCallback
 
-Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside the sync and data bands, so a superframe can have several runs). If allowed, the MCU light-sleeps through the whole run; the radio sleeps in every SLEEP slot. With `T` the time until the next active slot, the MCU wakes `wake_up_guard_ms` (default 20 ms) plus the sleep-clock allowance `⌈T × ppm / 10⁶⌉` before that slot, where `ppm` is the `DeepSleepPolicy`'s `calibrated_drift_ppm` once the sleep clock is calibrated and `clock_drift_ppm` before (Section 5.8.4; the policy's defaults apply without deep sleep). Receives a `SleepContext` with:
+Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside the sync and data bands, so a superframe can have several runs). If allowed, the MCU light-sleeps through the whole run; the radio sleeps in every SLEEP slot. With `T` the time until the next active slot, the MCU wakes `wake_up_guard_ms` (default 20 ms) plus the sleep-clock allowance `⌈T × ppm / 10⁶⌉` before that slot, where `ppm` is the `DeepSleepPolicy`'s `calibrated_drift_ppm` once the light-sleep clock is calibrated and `clock_drift_ppm` before (Section 5.8.4; the policy's defaults apply without deep sleep). Receives a `SleepContext` with:
 - `requested_state`: The target power state (LIGHT_SLEEP, or DEEP_SLEEP with a deep-sleep policy; after a DEEP_SLEEP veto the node may ask again for LIGHT_SLEEP)
 - `sleep_duration_ms`: Time until the next non-SLEEP slot minus the wake-up guard and the sleep-clock allowance
 - `current_slot`: First slot of the sleep
@@ -2005,7 +2005,7 @@ Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside 
 
 Runs not longer than the wake margin plus 10 ms only put the radio to sleep. On ESP32 the protocol's clock is `esp_timer` time, which the RTC sleep clock advances through light sleep, and the superframe timer recomputes its next slot boundary after every wake-up; a slot that began before it did so is handled late rather than skipped.
 
-The light sleep is timed by the same RC sleep clock as deep sleep and shares its calibration (Section 5.8.4): the node asks for the sleep scaled by the learned error and, after waking, removes that error from its clock. A clock correction that moves the clock back into a slot already handled neither repeats the slot nor starts a new superframe.
+The light sleep is timed by the RC sleep clock, which runs at another rate in light sleep than in deep sleep; each kind has its own calibration (Section 5.8.4). The node asks for the light sleep scaled by the learned light-sleep error and, after waking, removes that error from its clock. A clock correction that moves the clock back into a slot already handled neither repeats the slot nor starts a new superframe.
 
 ##### Sleep Holds
 
@@ -2071,18 +2071,19 @@ another store, or none, the node logs a warning and only light-sleeps.
 | `min_sleep_ms` | 30 000 | Shortest deep sleep; shorter runs light-sleep (Section 5.8.3) |
 | `boot_time_ms` | 1 200 | Time from the wake-up to the protocol running (at most 60 000) |
 | `clock_drift_ppm` | 10 000 | Worst-case error of an uncalibrated sleep clock (light and deep sleep) |
-| `calibrated_drift_ppm` | 2 000 | Worst-case error left once the sleep clock is calibrated |
+| `calibrated_drift_ppm` | 3 000 | Worst-case error left once the sleep clock is calibrated |
 
 **Entering.** At a SLEEP slot the node takes the next active slot `S`, the time `T` until it
 starts, and the wake margin `M = boot_time_ms + wake_up_guard_ms + ⌈T × ppm / 10⁶⌉`, where `ppm`
-is `calibrated_drift_ppm` once the sleep clock is calibrated (below) and `clock_drift_ppm`
+is `calibrated_drift_ppm` once the deep-sleep clock is calibrated (below) and `clock_drift_ppm`
 before. It deep-sleeps for `T − M` when `T − M ≥ min_sleep_ms` and:
 - from `S` to its next SYNC_BEACON_RX slot it has no TX, CONTROL_TX, SYNC_BEACON_TX or
   DISCOVERY_TX slot, since a resumed node does not transmit before a beacon (in practice, the run
   that ends at the discovery band before the beacon);
 - it is a member in NORMAL_OPERATION that received a sync beacon in the current superframe
-  (a beacon up to half a superframe before its own superframe start counts) and has not missed
-  one;
+  and has not missed one. A beacon up to half a superframe before the node's own superframe
+  start belongs to the superframe that starts: a schedule slightly behind the network's hears
+  each beacon just before its own start;
 - its TX queue is empty;
 - no reliable message and no group acknowledgement window is open;
 - no sleep hold applies (Section 5.8.3).
@@ -2092,7 +2093,7 @@ It encodes a resume snapshot, asks the `PrepareSleepCallback` with `requested_st
 `T − M` scaled by the learned clock error. If the application queued a message meanwhile, it erases
 the snapshot and stays up.
 
-**Resume snapshot.** Little-endian, magic `"LMR1"`, format version 2, protected by a CRC-32, and
+**Resume snapshot.** Little-endian, magic `"LMR1"`, format version 3, protected by a CRC-32, and
 embedding the warm-restart snapshot (Section 6.5.1):
 
 | Part | Size (bytes) |
@@ -2100,7 +2101,7 @@ embedding the warm-restart snapshot (Section 6.5.1):
 | Magic, version, length of the embedded snapshot | 6 |
 | Warm-restart snapshot | 21 |
 | Timing: protocol clock, persistent clock (8), wake deadline, superframe start, superframes completed, slot duration (4 each), slot count (2) | 30 |
-| Membership: manager (2), beacon slot count, beacon node count, control slot, data slots, routing-table version (1 each), last sync, last sync beacon, last route cleanup (4 each), sleep clock error (4, signed ppm), sleep clock samples (1), schedule offset at the last beacon (2, signed ms) | 26 |
+| Membership: manager (2), beacon slot count, beacon node count, control slot, data slots, routing-table version (1 each), last sync, last sync beacon, last route cleanup (4 each), light-sleep and deep-sleep clock errors (4, signed ppm) each followed by its sample count (1), schedule offset at the last beacon (2, signed ms) | 31 |
 | Reliable group stream: started, next sequence | 2 |
 | Slot table: count (2); number (2), type (1), target (2) per slot; control slots (1), discovery slots (2), rebuild pending (1) | 6 + 5 per slot |
 | Routes: count (1); 22 per route, plus 33 of link statistics and 8 of round-trip time when they hold data | 1 + 22 to 63 per route |
@@ -2133,16 +2134,20 @@ requests, forwarding as a sponsor). `IsReadyToSend()` returns `kInvalidState` ("
 beacon after resuming"), so the application holds its messages. The first sync beacon in normal
 operation ends this.
 
-**Sleep clock calibration.** Light and deep sleeps since the last beacon are added up. At the
-next beacon, the offset between the beacon's superframe and the node's own, wrapped to the nearest
-superframe, minus the offset the schedule already had at the last beacon (drifts below
-`guard_time / 2` are not resynchronized), is the error the sleep clock made over that sleep time.
-No sample is taken when a beacon was missed since the sleep, or when less than 1 s was slept. The
-first sample after a cold start is only counted, since the clock's error right after power-on
-differs from its steady state. The second sets the estimate (`error_ms × 10⁶ / slept_ms`, clamped
+**Sleep clock calibration.** The RC sleep clock runs at different rates in light and in deep
+sleep, so the node keeps one estimate per kind. Light and deep sleeps since the last beacon are
+added up per kind. At the next beacon, the offset between the beacon's superframe and the node's
+own, wrapped to the nearest superframe, minus the offset the schedule already had at the last
+beacon (drifts below `guard_time / 2` are not resynchronized), is the error the sleep clock made
+over that sleep time. It is a sample of the kind that slept longer; the other kind counts as
+corrected by its own estimate. No sample is taken when a beacon was missed since the sleep, when
+the node was awake for more than half a superframe between its last sleep and the beacon (a
+resume after the beacon slot), or when less than 1 s was slept. For each kind, the first sample
+after a cold start is only counted, since the clock's error right after power-on differs from its
+steady state. The second sets the estimate (`error_ms × 10⁶ / slept_ms`, clamped
 to ±50 000 ppm). Later samples correct half of what is left up to the fourth sample, then a
 quarter, which smooths the beacon's timing noise. From three samples the clock counts as
-calibrated. The estimate is kept in the resume snapshot and survives network resets; network
+calibrated. Both estimates are kept in the resume snapshot and survive network resets; network
 managers hear no beacon and never calibrate.
 
 Neighbours do not see the sleep: the node misses no active slot, keeps its control slot, and its

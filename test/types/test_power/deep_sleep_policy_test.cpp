@@ -16,7 +16,7 @@ namespace {
 TEST(DeepSleepPolicyTest, AllowanceScalesWithTheSleepAndRoundsUp) {
     const DeepSleepPolicy policy;
     EXPECT_EQ(policy.SleepClockAllowanceMs(4000, false), 40u);
-    EXPECT_EQ(policy.SleepClockAllowanceMs(4000, true), 8u);
+    EXPECT_EQ(policy.SleepClockAllowanceMs(4000, true), 12u);
     EXPECT_EQ(policy.SleepClockAllowanceMs(4001, false), 41u);
     EXPECT_EQ(policy.SleepClockAllowanceMs(0, false), 0u);
 }
@@ -26,7 +26,7 @@ TEST(DeepSleepPolicyTest, WakeMarginAddsBootGuardAndAllowance) {
     EXPECT_EQ(policy.WakeMarginMs(100000, 20, false),
               policy.boot_time_ms + 20 + 1000);
     EXPECT_EQ(policy.WakeMarginMs(100000, 20, true),
-              policy.boot_time_ms + 20 + 200);
+              policy.boot_time_ms + 20 + 300);
 }
 
 TEST(DeepSleepPolicyTest, MarginsDoNotOverflow) {

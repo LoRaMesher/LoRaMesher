@@ -320,7 +320,7 @@ mesher->Start();  // after a deep sleep: resumes the membership
 | `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
 | `boot_time_ms` | 1200 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms, 900 ms at DEBUG) |
 | `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
-| `calibrated_drift_ppm` | 2000 | Worst-case error once the node has calibrated its sleep clock |
+| `calibrated_drift_ppm` | 3000 | Worst-case error once the node has calibrated its sleep clock |
 
 - Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
   awake or light-sleeps.

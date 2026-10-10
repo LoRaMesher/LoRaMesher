@@ -79,7 +79,7 @@ struct DeepSleepPolicy {
     /// It times both light and deep sleep.
     uint32_t clock_drift_ppm = 10000;
     /// Worst-case error left once the node has calibrated its sleep clock
-    uint32_t calibrated_drift_ppm = 2000;
+    uint32_t calibrated_drift_ppm = 3000;
 
     /**
      * @brief Worst-case error of the sleep clock over a sleep

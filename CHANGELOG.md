@@ -58,6 +58,14 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   from the beacons after light and deep sleeps, and correct both. Light sleep
   wakes early enough for the clock's worst-case error
   (`DeepSleepPolicy::clock_drift_ppm` / `calibrated_drift_ppm`).
+- Light and deep sleep are calibrated separately: the RC sleep clock runs at
+  different rates in the two, and each has its own estimate in the resume
+  snapshot (format v3). No calibration sample is taken when the node was
+  awake for more than half a superframe before the beacon.
+- `DeepSleepPolicy::calibrated_drift_ppm` defaults to 3000.
+- A beacon that arrives up to half a superframe before the node's own
+  superframe start counts for the superframe that starts, so a schedule
+  slightly behind the network's no longer counts missed beacons.
 - Route aging spans at least three routing-broadcast rotations, so with long
   superframes a member that misses one broadcast (a late deep-sleep resume)
   keeps its route and its data slots in the manager's table.
