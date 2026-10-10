@@ -333,13 +333,17 @@ mesher->Start();  // after a deep sleep: resumes the membership
   before the discovery band at the end of the superframe), so it is awake for the discovery band.
   After waking it listens, without transmitting, until a beacon confirms its schedule;
   `IsReadyToSend()` fails meanwhile, so check it before queueing messages.
-- Light and deep sleep run on the same RTC clock: the node learns its error from the beacons and
-  corrects both kinds of sleep.
+- A message queued after the node's data slots of a superframe keeps it from deep-sleeping
+  (it light-sleeps until the message is sent). Send right after the node becomes ready, as
+  `examples/battery_optimized_example` does; `IsReadyToSend()` returns `kQueueFull` once the queue
+  holds what the node's data slots carry in a superframe.
+- Light and deep sleep run on the RTC clock, at different rates: the node learns the error of each
+  from the beacons and corrects both kinds of sleep.
 - Nodes stay awake (the radio still sleeps) until they have joined and heard three beacons in a
   row, while they relay a join, and, for the manager, until it answers a join.
-- Set `boot_time_ms` to the time your application takes from the wake-up to `Start()`; a node that
-  starts late misses its first slots. One that wakes more than a superframe late rejoins through a
-  warm restart.
+- Set `boot_time_ms` to cover everything from the wake-up to `Start()`, your application's set-up
+  included; a node that starts late misses its first slots, and the messages sent to it in them.
+  One that wakes more than a superframe late rejoins through a warm restart.
 - Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
   already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
   `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).
@@ -372,8 +376,9 @@ NetworkStatus status = mesher->GetNetworkStatus();
 
 ```cpp
 if (Result r = mesher->IsReadyToSend(); !r) {
-    // Not synchronized, no TX slot allocated, wrong protocol state, or
-    // waiting for a beacon after a deep-sleep resume.
+    // Not synchronized, no TX slot allocated, wrong protocol state,
+    // waiting for a beacon after a deep-sleep resume, or (kQueueFull) the
+    // queue already holds what the node's data slots carry in a superframe.
 }
 if (Result r = mesher->IsReadyToSend(dst); !r) {
     // Same checks plus self-send rejection and route lookup.

@@ -405,6 +405,57 @@ TEST_P(DeepSleepTest, ResumedMemberIsReadyToSendOnlyAfterItsBeacon) {
     EXPECT_EQ(ExpectDataFlows(*resumed, manager, 3), 3u);
 }
 
+TEST_P(DeepSleepTest, ReadinessBoundsTheQueueAndKeepsDeepSleep) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& farthest = *nodes.back();
+    ASSERT_TRUE(WaitForResumes(nodes, 1)) << DescribeNetwork(nodes);
+    const auto ready = [&]() {
+        return farthest.protocol != nullptr &&
+               farthest.protocol->IsReadyToSend(manager.address);
+    };
+    ASSERT_TRUE(
+        AdvanceTime(superframe_ms_ * 2, superframe_ms_ * 2, kStepMs, 0, ready))
+        << DescribeNetwork(nodes);
+
+    // Readiness stops the application once the queue holds what the
+    // node's data slots carry in a superframe
+    const uint8_t data_slots = farthest.protocol->GetDataSlotsPerSuperframe();
+    ASSERT_GT(data_slots, 0u);
+    uint8_t queued = 0;
+    while (ready() && queued <= data_slots) {
+        ASSERT_TRUE(
+            SendMessage(farthest, manager, {kDataMarker, 0xEE, queued}));
+        ++queued;
+    }
+    EXPECT_EQ(queued, data_slots);
+    EXPECT_EQ(farthest.protocol->IsReadyToSend(manager.address).getErrorCode(),
+              LoraMesherErrorCode::kQueueFull);
+
+    // The data slots carry the queue before the SLEEP run, and an
+    // application that sends once per wake, as soon as the node is ready,
+    // keeps it deep-sleeping every superframe
+    const size_t sleeps = CountOf(deep_sleeps_, farthest.address);
+    size_t sent_at_resume = CountOf(resumed_boots_, farthest.address);
+    size_t sent = 0;
+    static_cast<void>(
+        AdvanceTime(superframe_ms_ * 8, superframe_ms_ * 8, kStepMs, 0, [&]() {
+            const size_t resumes = CountOf(resumed_boots_, farthest.address);
+            if (resumes != sent_at_resume && ready()) {
+                EXPECT_TRUE(SendMessage(
+                    farthest, manager,
+                    {kDataMarker, 0xEF, static_cast<uint8_t>(sent)}));
+                sent_at_resume = resumes;
+                ++sent;
+            }
+            return false;
+        }));
+    EXPECT_GE(CountOf(deep_sleeps_, farthest.address), sleeps + 7)
+        << DescribeNetwork(nodes);
+    EXPECT_GE(sent, 6u);
+}
+
 TEST_P(DeepSleepTest, NewNodeJoinsThroughADeepSleepingSponsor) {
     auto nodes = FormNetwork(GetParam());
     ASSERT_FALSE(HasFatalFailure());

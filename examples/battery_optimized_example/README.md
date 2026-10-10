@@ -117,6 +117,14 @@ builder.withStateStore(std::make_shared<storage::RtcStateStore>())
 the node light-sleep instead. Long SLEEP runs need a low duty cycle (the
 default target is 1%).
 
+A member is awake only a few seconds per superframe, and a message still
+queued when its long SLEEP run starts keeps it from deep-sleeping. `loop()`
+therefore checks `IsReadyToSend()` every 500 ms while the node is joining or
+waiting for the beacon after a resume, and sends once as soon as it is ready:
+the message goes out in the node's data slots before the SLEEP run.
+`IsReadyToSend()` also fails with `kQueueFull` once the queue holds what the
+node's data slots carry in a superframe.
+
 ## Battery Monitoring
 
 Access battery information through the PMU (defined in `initDevices.cpp`):

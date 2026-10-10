@@ -60,6 +60,8 @@ using namespace loramesher;
 
 std::unique_ptr<LoraMesher> mesher = nullptr;
 uint8_t message_counter = 0;
+/// Retry interval while the node waits to become ready to send (ms)
+constexpr uint32_t kNotReadyRetryMs = 500;
 
 // ============================================================================
 // Power Management Callbacks
@@ -132,23 +134,30 @@ void printNetworkStatus() {
               << std::endl;
 }
 
-void sendTestMessage() {
+/**
+ * @brief Send one message to the next known node, if the node is ready
+ *
+ * @return true if the node is not ready yet for a reason that clears within
+ *         a superframe (joining, or waiting for the beacon after a deep-sleep
+ *         resume), so the caller should try again soon
+ */
+bool sendTestMessage() {
     auto routes = mesher->GetRoutingTable();
     if (routes.empty()) {
-        return;
+        return false;
     }
 
     AddressType dest = routes[message_counter % routes.size()].destination;
     if (dest == mesher->GetNodeAddress()) {
         message_counter++;
-        return;
+        return false;
     }
 
     Result ready = mesher->IsReadyToSend(dest);
     if (!ready) {
         std::cerr << "Not ready to send to 0x" << std::hex << dest << std::dec
                   << ": " << ready.GetErrorMessage() << std::endl;
-        return;
+        return ready.getErrorCode() == LoraMesherErrorCode::kInvalidState;
     }
 
     std::string msg = "Hello from node!";
@@ -161,6 +170,7 @@ void sendTestMessage() {
     } else {
         std::cerr << "Send failed: " << result.GetErrorMessage() << std::endl;
     }
+    return false;
 }
 
 // ============================================================================
@@ -251,9 +261,14 @@ void loop() {
         restartPreservingMeshState();
     }
 
+    // A deep-sleeping member is awake for a few seconds per superframe: it
+    // sends once per wake, as soon as the beacon confirms its schedule
+    if (sendTestMessage()) {
+        delay(kNotReadyRetryMs);
+        return;
+    }
     printRoutingTable();
     printNetworkStatus();
-    sendTestMessage();
 
     auto routes = mesher->GetRoutingTable();
     uint32_t delay_ms = routes.empty() ? 10000 : 10000 * routes.size();

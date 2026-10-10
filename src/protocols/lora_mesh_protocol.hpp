@@ -211,7 +211,9 @@ class LoRaMeshProtocol : public Protocol {
      * Returns Success when the protocol is in NORMAL_OPERATION or
      * NETWORK_MANAGER, both network and superframe services are
      * synchronized, a member that resumed from deep sleep has heard a beacon
-     * since, and at least one TX data slot is allocated. Returns a
+     * since, at least one TX data slot is allocated, and the TX queue holds
+     * fewer messages than the node's data slots carry in a superframe
+     * (kQueueFull otherwise). Returns a
      * specific error code identifying the first failed condition otherwise.
      *
      * @return Result Success if a Send() / SendBroadcast() call is expected
@@ -669,6 +671,8 @@ class LoRaMeshProtocol : public Protocol {
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;
     power::PowerState current_power_state_ = power::PowerState::ACTIVE;
+    /// Last reason logged for keeping the MCU awake (nullptr: none)
+    const char* logged_sleep_hold_ = nullptr;
 
     // Subslot scheduling state
     bool in_subslotted_slot_ =

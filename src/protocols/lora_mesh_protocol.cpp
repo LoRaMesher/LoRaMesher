@@ -645,7 +645,7 @@ bool LoRaMeshProtocol::IsSynchronized() const {
 }
 
 Result LoRaMeshProtocol::IsReadyToSend() const {
-    if (!network_service_ || !superframe_service_) {
+    if (!network_service_ || !superframe_service_ || !message_queue_service_) {
         return Result(LoraMesherErrorCode::kNotInitialized,
                       "Services not initialized");
     }
@@ -664,9 +664,17 @@ Result LoRaMeshProtocol::IsReadyToSend() const {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Waiting for a beacon after resuming");
     }
-    if (GetDataSlotsPerSuperframe() == 0) {
+    const uint8_t data_slots = GetDataSlotsPerSuperframe();
+    if (data_slots == 0) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "No TX data slot allocated");
+    }
+    // More than the data slots carry in a superframe only builds a backlog,
+    // which also keeps the node from deep-sleeping
+    if (message_queue_service_->GetQueueSize(SlotAllocation::SlotType::TX) >=
+        data_slots) {
+        return Result(LoraMesherErrorCode::kQueueFull,
+                      "TX queue holds a superframe of messages");
     }
     return Result::Success();
 }
@@ -1622,8 +1630,14 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
         (!prepare_sleep_callback_ && !config_.getDeepSleepPolicy().enabled)) {
         return;
     }
-    if (const char* hold = network_service_->GetSleepHold()) {
-        LOG_DEBUG("MCU stays awake: %s", hold);
+    const char* hold = network_service_->GetSleepHold();
+    if (hold != logged_sleep_hold_) {
+        if (hold) {
+            LOG_DEBUG("MCU stays awake: %s", hold);
+        }
+        logged_sleep_hold_ = hold;
+    }
+    if (hold) {
         return;
     }
     const uint16_t next_active = GetNextActiveSlot();
