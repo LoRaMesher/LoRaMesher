@@ -507,6 +507,36 @@ TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {
                  "reliable messages in flight");
 }
 
+TEST_F(NetworkServiceResumeTest, RouteOutlivesOneMissedSuperframe) {
+    // A two-minute superframe, longer than the route timeout's floor
+    constexpr uint16_t kSlots = 120;
+    constexpr uint32_t kSlotMs = 1000;
+    constexpr uint32_t kSuperframeMs = kSlots * kSlotMs;
+    auto queue = std::make_shared<MessageQueueService>(10);
+    auto superframe = std::make_shared<SuperframeService>(kSlots, kSlotMs);
+    NetworkService manager(kManager, queue, superframe, nullptr);
+    INetworkService::NetworkConfig cfg;
+    cfg.node_address = kManager;
+    cfg.default_data_slots = 2;
+    cfg.max_network_nodes = kMaxNodes;
+    ASSERT_TRUE(manager.Configure(cfg));
+    ASSERT_TRUE(manager.UpdateRouteEntry(kMember, kMember, 1, 200, 2, 0));
+
+    // A member that resumed late misses one superframe's routing broadcast,
+    // and the cleanup runs a while after its next one was due
+    mock_->advanceTime(2 * kSuperframeMs + 60000);
+    manager.RemoveInactiveNodes();
+    auto route = manager.GetRoutingTable()->FindNode(kMember);
+    ASSERT_TRUE(route.has_value());
+    EXPECT_TRUE(route->is_active);
+
+    // A member gone for longer still expires
+    mock_->advanceTime(2 * kSuperframeMs);
+    manager.RemoveInactiveNodes();
+    route = manager.GetRoutingTable()->FindNode(kMember);
+    EXPECT_TRUE(!route.has_value() || !route->is_active);
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

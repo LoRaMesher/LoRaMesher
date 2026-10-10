@@ -210,7 +210,8 @@ class LoRaMeshProtocol : public Protocol {
      *
      * Returns Success when the protocol is in NORMAL_OPERATION or
      * NETWORK_MANAGER, both network and superframe services are
-     * synchronized, and at least one TX data slot is allocated. Returns a
+     * synchronized, a member that resumed from deep sleep has heard a beacon
+     * since, and at least one TX data slot is allocated. Returns a
      * specific error code identifying the first failed condition otherwise.
      *
      * @return Result Success if a Send() / SendBroadcast() call is expected

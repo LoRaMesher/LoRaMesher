@@ -660,6 +660,10 @@ Result LoRaMeshProtocol::IsReadyToSend() const {
     if (!IsSynchronized()) {
         return Result(LoraMesherErrorCode::kInvalidState, "Not synchronized");
     }
+    if (network_service_->IsAwaitingResync()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Waiting for a beacon after resuming");
+    }
     if (GetDataSlotsPerSuperframe() == 0) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "No TX data slot allocated");

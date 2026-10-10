@@ -318,8 +318,8 @@ mesher->Start();  // after a deep sleep: resumes the membership
 | `power::DeepSleepPolicy` field | Default | Meaning |
 |---|---|---|
 | `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
-| `boot_time_ms` | 1000 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms) |
-| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated |
+| `boot_time_ms` | 1200 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms, 900 ms at DEBUG) |
+| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
 | `calibrated_drift_ppm` | 2000 | Worst-case error once the node has calibrated its sleep clock |
 
 - Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
@@ -331,8 +331,12 @@ mesher->Start();  // after a deep sleep: resumes the membership
   (flash) the node logs a warning and only light-sleeps.
 - The node deep-sleeps through the SLEEP run that leads to its next beacon (usually the long run
   before the discovery band at the end of the superframe), so it is awake for the discovery band.
-  After waking it listens, without transmitting, until a beacon confirms its schedule, and it
-  learns the error of its RTC clock from that beacon to correct later sleeps.
+  After waking it listens, without transmitting, until a beacon confirms its schedule;
+  `IsReadyToSend()` fails meanwhile, so check it before queueing messages.
+- Light and deep sleep run on the same RTC clock: the node learns its error from the beacons and
+  corrects both kinds of sleep.
+- Nodes stay awake (the radio still sleeps) until they have joined and heard three beacons in a
+  row, while they relay a join, and, for the manager, until it answers a join.
 - Set `boot_time_ms` to the time your application takes from the wake-up to `Start()`; a node that
   starts late misses its first slots. One that wakes more than a superframe late rejoins through a
   warm restart.
@@ -368,7 +372,8 @@ NetworkStatus status = mesher->GetNetworkStatus();
 
 ```cpp
 if (Result r = mesher->IsReadyToSend(); !r) {
-    // Not synchronized, no TX slot allocated, or wrong protocol state.
+    // Not synchronized, no TX slot allocated, wrong protocol state, or
+    // waiting for a beacon after a deep-sleep resume.
 }
 if (Result r = mesher->IsReadyToSend(dst); !r) {
     // Same checks plus self-send rejection and route lookup.

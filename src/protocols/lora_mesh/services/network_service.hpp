@@ -75,6 +75,10 @@ static constexpr uint32_t kElectionListenSuperframesPerHop = 4;
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
 
+/// Routing-broadcast rotations a route may go unheard before it expires:
+/// one missed broadcast, plus a rotation of slack for the cleanup's timing
+static constexpr uint32_t kRouteAgingRotations = 3;
+
 /**
  * @brief Unified implementation of network service
  * 

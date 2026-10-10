@@ -309,6 +309,51 @@ TEST_P(DeepSleepTest, ResumeAfterTheBeaconWaitsForTheNextBeacon) {
     EXPECT_TRUE(LinksIntact(nodes, farthest));
 }
 
+TEST_P(DeepSleepTest, ResumedMemberIsReadyToSendOnlyAfterItsBeacon) {
+    auto nodes = FormNetwork(GetParam());
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    ASSERT_TRUE(WaitForResumes(nodes, 1)) << DescribeNetwork(nodes);
+
+    // The next wake-up comes after the beacon slot of its superframe, so the
+    // member waits most of a superframe for a beacon
+    next_wake_delay_ms_ = superframe_ms_ / 3;
+    TestNode* resumed = nullptr;
+    const auto awaiting_resync = [&]() {
+        for (size_t i = 1; i < nodes.size(); ++i) {
+            if (nodes[i]->protocol != nullptr &&
+                nodes[i]
+                    ->protocol->GetNetworkServiceForTest()
+                    ->IsAwaitingResync()) {
+                resumed = nodes[i];
+                return true;
+            }
+        }
+        return false;
+    };
+    ASSERT_TRUE(AdvanceTime(superframe_ms_ * 4, superframe_ms_ * 4, kStepMs, 0,
+                            awaiting_resync))
+        << DescribeNetwork(nodes);
+
+    const Result waiting = resumed->protocol->IsReadyToSend();
+    EXPECT_FALSE(waiting) << resumed->name;
+    EXPECT_EQ(waiting.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+    EXPECT_FALSE(resumed->protocol->IsReadyToSend(manager.address));
+
+    // The beacon confirms the schedule, and uplinks sent right away arrive
+    const auto confirmed = [&]() {
+        return resumed->protocol != nullptr &&
+               !resumed->protocol->GetNetworkServiceForTest()
+                    ->IsAwaitingResync();
+    };
+    ASSERT_TRUE(AdvanceTime(superframe_ms_ * 2, superframe_ms_ * 2, kStepMs, 0,
+                            confirmed))
+        << DescribeNetwork(nodes);
+    EXPECT_TRUE(resumed->protocol->IsReadyToSend(manager.address))
+        << resumed->name;
+    EXPECT_EQ(ExpectDataFlows(*resumed, manager, 3), 3u);
+}
+
 TEST_P(DeepSleepTest, NewNodeJoinsThroughADeepSleepingSponsor) {
     auto nodes = FormNetwork(GetParam());
     ASSERT_FALSE(HasFatalFailure());

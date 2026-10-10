@@ -293,7 +293,8 @@ size_t NetworkService::RemoveInactiveNodes() {
 
     // Scale aging timeouts to the rotation period so a node whose
     // route appears in a sliced broadcast every ceil(N/k) superframes
-    // is not pruned by a single missed cycle. Margin = 2 full rotations.
+    // is not pruned by a single missed cycle, however late in its
+    // superframe the cleanup runs.
     const size_t rotation_steps = ComputeRotationSteps();
     const uint32_t superframe_ms =
         superframe_service_ ? superframe_service_->GetSuperframeDuration()
@@ -301,8 +302,8 @@ size_t NetworkService::RemoveInactiveNodes() {
     const uint32_t rotation_period_ms =
         static_cast<uint32_t>(rotation_steps) * superframe_ms;
 
-    const uint32_t scaled_route_timeout =
-        std::max<uint32_t>(config_.route_timeout_ms, 2u * rotation_period_ms);
+    const uint32_t scaled_route_timeout = std::max<uint32_t>(
+        config_.route_timeout_ms, kRouteAgingRotations * rotation_period_ms);
     const uint32_t node_grace_ms =
         (config_.node_timeout_ms > config_.route_timeout_ms)
             ? (config_.node_timeout_ms - config_.route_timeout_ms)

@@ -52,8 +52,18 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   joining; a late wake-up falls back to a warm restart. See
   `PROTOCOL_SPEC.md` §5.8.4. `RtcStateStore` holds 4 KB, and the battery
   example has an `ENABLE_DEEP_SLEEP` option. A resumed member listens without
-  transmitting until a beacon confirms its schedule, and calibrates its sleep
-  clock from that beacon's drift.
+  transmitting until a beacon confirms its schedule, and `IsReadyToSend()`
+  fails until then.
+- Sleep-clock calibration: members learn the error of their RTC sleep clock
+  from the beacons after light and deep sleeps, and correct both. Light sleep
+  wakes early enough for the clock's worst-case error
+  (`DeepSleepPolicy::clock_drift_ppm` / `calibrated_drift_ppm`).
+- Route aging spans at least three routing-broadcast rotations, so with long
+  superframes a member that misses one broadcast (a late deep-sleep resume)
+  keeps its route and its data slots in the manager's table.
+- Nodes do not sleep the MCU before they have joined and settled (three
+  consecutive beacons), while they relay a join, or, as manager, while a join
+  is pending.
 - Node reboot test suite (`test_node_reboot`): power-cycles nodes of
   simulated line, star and mesh networks, alone or all together, warm and
   cold.

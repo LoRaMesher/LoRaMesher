@@ -74,7 +74,7 @@ struct DeepSleepPolicy {
     /// Shortest deep sleep worth a reboot (ms)
     uint32_t min_sleep_ms = 30000;
     /// Time from the wake-up to the protocol running again (ms)
-    uint32_t boot_time_ms = 1000;
+    uint32_t boot_time_ms = 1200;
     /// Worst-case error of an uncalibrated sleep clock (parts per million).
     /// It times both light and deep sleep.
     uint32_t clock_drift_ppm = 10000;
