@@ -895,7 +895,7 @@ Result NetworkService::Configure(const NetworkConfig& config) {
                                          min_consecutive_for_reactivation_);
 
     LOG_INFO("Network service configured with node address 0x%04X, role: %d",
-             node_address_, static_cast<int>(node_role_));
+             node_address_, static_cast<int>(node_role_.load()));
 
     return Result::Success();
 }

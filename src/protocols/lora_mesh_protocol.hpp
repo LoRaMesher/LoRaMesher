@@ -8,6 +8,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "config/task_config.hpp"
@@ -17,6 +18,7 @@
 #include "lora_mesh/services/subslot_scheduler.hpp"
 #include "lora_mesh/services/superframe_service.hpp"
 #include "os/rtos.hpp"
+#include "os/task_run_gate.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/protocols/protocol.hpp"
 #include "utils/compat/span.hpp"
@@ -49,9 +51,10 @@ class LoRaMeshProtocol : public Protocol {
         RADIO_EVENT = 1,  ///< Radio event received, process radio queue
         STATE_TIMEOUT,    ///< State timeout occurred, check state transitions
         STATE_CHANGE,     ///< Protocol state changed, update behavior
-        SHUTDOWN,         ///< Protocol shutdown requested
+        SHUTDOWN,         ///< Protocol task exit requested
         SLOT_TRANSITION,  ///< Superframe slot boundary reached; drain slot_transition_queue_
-        ROLE_CHANGE_REQUEST  ///< Application requested a runtime NodeRole change; apply pending_role_
+        ROLE_CHANGE_REQUEST,  ///< Application requested a runtime NodeRole change; apply pending_role_
+        PAUSE  ///< Protocol task park requested
     };
 
     /**
@@ -94,15 +97,33 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Start protocol operation
-     * 
+     *
+     * Starts the radio, the superframe and network discovery, then lets the
+     * protocol task run. Calling Start() on a started protocol is a no-op.
+     * After a Stop() that timed out, Start() first completes that stop.
+     * Called from the protocol task, it returns kInvalidState.
+     *
      * @return Result Success or error details
      */
     Result Start() override;
 
     /**
      * @brief Stop protocol operation
-     * 
-     * @return Result Success or error details
+     *
+     * Parks the protocol and superframe tasks at a point where they hold no
+     * locks, waiting at most max(5 s, 3 slot durations) for the protocol task
+     * to finish its current work. It then disconnects the radio and
+     * superframe callbacks and discards the network state, queued messages
+     * and pending reliable deliveries, so a later Start() joins a network
+     * from scratch. Calling Stop() on a stopped protocol is a no-op.
+     *
+     * Must not be called from the protocol task, which runs the data, route,
+     * state and delivery callbacks: such a call returns kInvalidState and
+     * the protocol keeps running.
+     *
+     * @return Result Success, or an error if the protocol task did not park
+     *         in time (nothing is torn down and Stop() can be called again)
+     *         or if called from the protocol task
      */
     Result Stop() override;
 
@@ -179,14 +200,19 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Pause all protocol services
-     * 
-     * @return Result Success or error details
+     *
+     * Parks the protocol task, freezes superframe advancement and puts the
+     * radio to sleep. Network state is kept for Resume(). Like Stop(), it
+     * returns kInvalidState when called from the protocol task.
+     *
+     * @return Result Success, or an error if the protocol task did not park
+     *         in time or if called from the protocol task
      */
     Result Pause();
 
     /**
      * @brief Resume all protocol services
-     * 
+     *
      * @return Result Success or error details
      */
     Result Resume();
@@ -320,8 +346,12 @@ class LoRaMeshProtocol : public Protocol {
      * synchronously after queueing — the actual state transition happens
      * asynchronously.
      *
+     * A change requested while the protocol is stopped is applied at the
+     * next Start().
+     *
      * @param role Desired NodeRole (AUTO, NETWORK_MANAGER, or NODE_ONLY)
-     * @return Result Success if queued; error if the protocol is not running
+     * @return Result Success if queued; error if the protocol is not
+     *         initialized
      */
     Result RequestNodeRoleChange(NodeRole role);
 
@@ -336,6 +366,10 @@ class LoRaMeshProtocol : public Protocol {
 #ifdef DEBUG
     lora_mesh::NetworkService* GetNetworkServiceForTest() {
         return network_service_.get();
+    }
+
+    lora_mesh::SuperframeService* GetSuperframeServiceForTest() {
+        return superframe_service_.get();
     }
 #endif
 
@@ -478,6 +512,54 @@ class LoRaMeshProtocol : public Protocol {
     void DrainRadioEventQueue();
 
     /**
+     * @brief Discard pending radio events, notifications and slot transitions
+     */
+    void DrainProtocolQueues();
+
+    /**
+     * @brief Connect the radio and superframe callbacks to the protocol queues
+     *
+     * @return Result Success, or the hardware error if the radio callback
+     *         could not be set
+     */
+    Result WireCallbacks();
+
+    /**
+     * @brief Disconnect the radio and superframe callbacks
+     */
+    void UnwireCallbacks();
+
+    /**
+     * @brief Stop() body; caller holds lifecycle_mutex_
+     */
+    Result StopLocked();
+
+    /**
+     * @brief Undo the steps of a Start() that failed after wiring callbacks
+     */
+    void RollbackStart();
+
+    /**
+     * @brief Park the protocol task and wait until it is parked
+     *
+     * @return Result Success, or kTimeout if the task did not park within
+     *         StopTimeoutMs()
+     */
+    Result ParkProtocolTask();
+
+    /**
+     * @brief Make the protocol task leave its loop and delete it
+     */
+    void ShutdownProtocolTask();
+
+    /**
+     * @brief Bound on waiting for the protocol task to park or exit
+     *
+     * @return max(5 s, 3 slot durations) in milliseconds
+     */
+    uint32_t StopTimeoutMs() const;
+
+    /**
      * @brief Send notification to protocol task for event-driven processing
      *
      * @param notification_type Type of notification to send
@@ -548,6 +630,13 @@ class LoRaMeshProtocol : public Protocol {
 
     // Task management
     os::TaskHandle_t protocol_task_handle_;
+    os::TaskRunGate
+        task_gate_;  ///< Parks, releases and stops the protocol task
+    std::mutex lifecycle_mutex_;  ///< Serializes Start/Stop/Pause/Resume
+    std::atomic<bool> started_{
+        false};  ///< Between a successful Start() and Stop()
+    bool stop_pending_ =
+        false;  ///< A Stop() timed out waiting for the task to park; guarded by lifecycle_mutex_
     os::QueueHandle_t radio_event_queue_;
     os::QueueHandle_t
         protocol_notification_queue_;  ///< Queue for protocol event notifications
@@ -588,6 +677,12 @@ class LoRaMeshProtocol : public Protocol {
         16;  ///< Protocol notification queue size
     static constexpr uint32_t QUEUE_WAIT_TIMEOUT_MS = 100;
     static constexpr uint32_t DEFAULT_HELLO_INTERVAL_MS = 60000;
+    /// Bound on waiting for a newly created protocol task to park
+    static constexpr uint32_t kTaskStartTimeoutMs = 2000;
+    /// Lower bound of StopTimeoutMs()
+    static constexpr uint32_t kMinStopTimeoutMs = 5000;
+    /// Slot durations covered by StopTimeoutMs()
+    static constexpr uint32_t kStopTimeoutSlots = 3;
 };
 
 }  // namespace protocols
