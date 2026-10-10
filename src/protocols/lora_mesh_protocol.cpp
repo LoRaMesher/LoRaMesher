@@ -31,24 +31,17 @@ LoRaMeshProtocol::LoRaMeshProtocol()
 
 LoRaMeshProtocol::~LoRaMeshProtocol() {
     LOG_DEBUG("LoRaMeshProtocol destructor called");
-    // Clean up protocol task if it exists
-    if (protocol_task_handle_) {
-        LOG_DEBUG("LoRaMeshProtocol destructor deleting task handle: %p",
-                  protocol_task_handle_);
-        GetRTOS().DeleteTask(protocol_task_handle_);
-        protocol_task_handle_ = nullptr;
-        LOG_DEBUG("LoRaMeshProtocol task handle set to nullptr");
-    } else {
-        LOG_DEBUG("LoRaMeshProtocol task handle already null");
+
+    // Stop the protocol task first: while it runs it may restart the
+    // superframe. Parking the superframe task then ensures no slot callback
+    // is in flight when the callbacks and queues go away.
+    ShutdownProtocolTask();
+    if (superframe_service_ && superframe_service_->IsRunning()) {
+        superframe_service_->StopSuperframe();
     }
 
     // Clear callbacks to prevent use-after-free
-    if (hardware_) {
-        hardware_->setActionReceive(nullptr);
-    }
-    if (superframe_service_) {
-        superframe_service_->SetSuperframeCallback(nullptr);
-    }
+    UnwireCallbacks();
 
     // Clean up radio event queue
     if (radio_event_queue_) {
@@ -83,6 +76,15 @@ LoRaMeshProtocol::~LoRaMeshProtocol() {
 Result LoRaMeshProtocol::Init(
     std::shared_ptr<hardware::IHardwareManager> hardware,
     AddressType node_address) {
+    // The protocol task and services exist once; a repeated Init() must not
+    // create a second task bound to the same instance
+    if (protocol_task_handle_) {
+        if (hardware == hardware_ && node_address == node_address_) {
+            return Result::Success();
+        }
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Protocol already initialized");
+    }
 
     hardware->SetLocalAddress(node_address);
 
@@ -142,8 +144,61 @@ Result LoRaMeshProtocol::Init(
                       "Failed to create slot transition queue");
     }
 
-    // Set up hardware radio callback to send events to NetworkService
-    hw_result = hardware_->setActionReceive(
+    hw_result = WireCallbacks();
+    if (!hw_result) {
+        return hw_result;
+    }
+
+    // Network service route update callback
+    network_service_->SetRouteUpdateCallback(
+        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
+            LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
+                      updated ? "updated" : "removed", dest, next_hop, hops);
+        });
+
+    // State-change callback: wake up the protocol task immediately
+    network_service_->SetStateChangeCallback(
+        [this](lora_mesh::INetworkService::ProtocolState new_state) {
+            OnStateChange(new_state);
+        });
+
+    if (!task_gate_.IsValid()) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create protocol task synchronization");
+    }
+
+    // Create main protocol task; it parks until Start()
+    bool task_created =
+        GetRTOS().CreateTask(ProtocolTaskFunction, "LoRaMeshMain",
+                             config::TaskConfig::kProtocolMainStackSize, this,
+                             TASK_PRIORITY, &protocol_task_handle_);
+
+    if (!task_created) {
+        return Result(LoraMesherErrorCode::kConfigurationError,
+                      "Failed to create protocol task");
+    }
+
+    if (!task_gate_.WaitParked(kTaskStartTimeoutMs)) {
+        return Result(LoraMesherErrorCode::kTimeout,
+                      "Protocol task did not start");
+    }
+
+    // Apply default configuration
+    config_ = LoRaMeshProtocolConfig(node_address);
+#ifdef DEBUG
+    service_config_ = CreateServiceConfigForTest(config_);
+#else
+    service_config_ = CreateServiceConfig(config_);
+#endif  // DEBUG
+
+    LOG_INFO("LoRaMesh protocol initialized for node 0x%04X", node_address_);
+
+    return Result::Success();
+}
+
+Result LoRaMeshProtocol::WireCallbacks() {
+    // Radio callback: hand events to the protocol task
+    Result result = hardware_->setActionReceive(
         [this](std::unique_ptr<radio::RadioEvent> event) {
             if (!event) {
                 LOG_WARNING("Received null radio event");
@@ -172,11 +227,9 @@ Result LoRaMeshProtocol::Init(
             NotifyProtocolTask(ProtocolNotificationType::RADIO_EVENT);
         });
 
-    if (!hw_result) {
-        return hw_result;
+    if (!result) {
+        return result;
     }
-
-    // Set up callbacks from services
 
     // Superframe callback: post slot data to the queue and notify the protocol
     // task. Non-blocking so the superframe timing task is never stalled by
@@ -189,44 +242,16 @@ Result LoRaMeshProtocol::Init(
             NotifyProtocolTask(ProtocolNotificationType::SLOT_TRANSITION);
         });
 
-    // Network service route update callback
-    network_service_->SetRouteUpdateCallback(
-        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
-            LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
-                      updated ? "updated" : "removed", dest, next_hop, hops);
-        });
-
-    // State-change callback: wake up the protocol task immediately
-    network_service_->SetStateChangeCallback(
-        [this](lora_mesh::INetworkService::ProtocolState new_state) {
-            OnStateChange(new_state);
-        });
-
-    // Create main protocol task
-    bool task_created =
-        GetRTOS().CreateTask(ProtocolTaskFunction, "LoRaMeshMain",
-                             config::TaskConfig::kProtocolMainStackSize, this,
-                             TASK_PRIORITY, &protocol_task_handle_);
-
-    if (!task_created) {
-        return Result(LoraMesherErrorCode::kConfigurationError,
-                      "Failed to create protocol task");
-    }
-
-    // Wait until receive task is suspended
-    GetRTOS().SuspendTask(protocol_task_handle_);
-
-    // Apply default configuration
-    config_ = LoRaMeshProtocolConfig(node_address);
-#ifdef DEBUG
-    service_config_ = CreateServiceConfigForTest(config_);
-#else
-    service_config_ = CreateServiceConfig(config_);
-#endif  // DEBUG
-
-    LOG_INFO("LoRaMesh protocol initialized for node 0x%04X", node_address_);
-
     return Result::Success();
+}
+
+void LoRaMeshProtocol::UnwireCallbacks() {
+    if (hardware_) {
+        hardware_->setActionReceive(nullptr);
+    }
+    if (superframe_service_) {
+        superframe_service_->SetSuperframeCallback(nullptr);
+    }
 }
 
 Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
@@ -312,46 +337,48 @@ Result LoRaMeshProtocol::Start() {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Hardware not initialized");
     }
-
-    LOG_DEBUG("Starting LoRaMesh protocol...");
-
-    if (!radio_event_queue_) {
-        radio_event_queue_ =
-            GetRTOS().CreateQueue(RADIO_QUEUE_SIZE, sizeof(radio::RadioEvent*));
-        if (!radio_event_queue_) {
-            LOG_ERROR("Failed to create radio event queue");
-            return Result(LoraMesherErrorCode::kConfigurationError,
-                          "Failed to create radio event queue");
-        }
+    if (!protocol_task_handle_ || !radio_event_queue_ ||
+        !protocol_notification_queue_ || !slot_transition_queue_) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "Protocol not initialized");
     }
 
-    if (!protocol_notification_queue_) {
-        protocol_notification_queue_ = GetRTOS().CreateQueue(
-            PROTOCOL_NOTIFICATION_QUEUE_SIZE, sizeof(ProtocolNotificationType));
-        if (!protocol_notification_queue_) {
-            LOG_ERROR("Failed to create protocol notification queue");
-            return Result(LoraMesherErrorCode::kConfigurationError,
-                          "Failed to create protocol notification queue");
-        }
+    // Completing a pending stop would make the protocol task wait for itself
+    if (task_gate_.IsCurrentTask()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Start() cannot be called from the protocol task; call "
+                      "it from another task");
     }
 
-    if (!slot_transition_queue_) {
-        slot_transition_queue_ =
-            GetRTOS().CreateQueue(4, sizeof(SlotTransitionData));
-        if (!slot_transition_queue_) {
-            LOG_ERROR("Failed to create slot transition queue");
-            return Result(LoraMesherErrorCode::kConfigurationError,
-                          "Failed to create slot transition queue");
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    if (started_) {
+        if (!stop_pending_) {
+            return Result::Success();
+        }
+        // Complete the Stop() that timed out before starting again
+        Result stop_result = StopLocked();
+        if (!stop_result) {
+            return stop_result;
         }
     }
 
     LOG_DEBUG("Starting LoRaMesh protocol... for node 0x%04X", node_address_);
 
+    DrainProtocolQueues();
+
+    Result result = WireCallbacks();
+    if (!result) {
+        LOG_ERROR("Failed to set radio callback: %s",
+                  result.GetErrorMessage().c_str());
+        return result;
+    }
+
     // Start hardware
-    Result result = hardware_->Start();
+    result = hardware_->Start();
     if (!result) {
         LOG_ERROR("Failed to start hardware: %s",
                   result.GetErrorMessage().c_str());
+        UnwireCallbacks();
         return result;
     }
 
@@ -360,6 +387,7 @@ Result LoRaMeshProtocol::Start() {
     if (!result) {
         LOG_ERROR("Failed to start superframe service: %s",
                   result.GetErrorMessage().c_str());
+        RollbackStart();
         return result;
     }
 
@@ -367,68 +395,123 @@ Result LoRaMeshProtocol::Start() {
     if (!result) {
         LOG_ERROR("Failed to start discovery: %s",
                   result.GetErrorMessage().c_str());
+        RollbackStart();
         return result;
     }
 
-    // Resume protocol task
-    GetRTOS().ResumeTask(protocol_task_handle_);
+    // A role change requested while stopped was drained above
+    if (pending_role_.load(std::memory_order_acquire) !=
+        network_service_->GetNodeRole()) {
+        NotifyProtocolTask(ProtocolNotificationType::ROLE_CHANGE_REQUEST);
+    }
+
+    if (network_service_->GetNodeRole() == NodeRole::AUTO) {
+        LOG_WARNING(
+            "Node role AUTO: if the Network Manager is lost, election can "
+            "split the mesh into networks that never merge (cross-network "
+            "merge is not implemented). Set NETWORK_MANAGER on one node and "
+            "NODE_ONLY on the others.");
+    }
+
+    task_gate_.RequestRun();
+    started_ = true;
 
     LOG_INFO("LoRaMesh protocol started");
     return Result::Success();
 }
 
-Result LoRaMeshProtocol::Stop() {
-    LOG_DEBUG("Stopping LoRaMesh protocol... for node 0x%04X", node_address_);
-
-    if (protocol_task_handle_) {
-        LOG_DEBUG("Stop method deleting task handle: %p",
-                  protocol_task_handle_);
-        GetRTOS().DeleteTask(protocol_task_handle_);
-        protocol_task_handle_ = nullptr;
-        LOG_DEBUG("Stop method task handle set to nullptr");
-    } else {
-        LOG_DEBUG("Stop method task handle already null");
-    }
-
-    LOG_DEBUG("Protocol task deletion requested");
-
-    // Stop services after task is suspended
-    if (superframe_service_) {
+void LoRaMeshProtocol::RollbackStart() {
+    if (superframe_service_->IsRunning()) {
         superframe_service_->StopSuperframe();
     }
+    superframe_service_->ResetForRestart();
+    network_service_->ResetNetworkState();
+    UnwireCallbacks();
+    DrainProtocolQueues();
+}
 
-    // Reset network state to prevent memory leaks (after task is suspended)
-    if (network_service_) {
-        network_service_->ResetNetworkState();
+Result LoRaMeshProtocol::Stop() {
+    // The protocol task would wait for itself to park
+    if (task_gate_.IsCurrentTask()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Stop()/Pause() cannot be called from the protocol "
+                      "task; call it from another task");
     }
 
-    // Clear callbacks to prevent use-after-free
-    if (hardware_) {
-        hardware_->setActionReceive(nullptr);
-    }
-    if (superframe_service_) {
-        superframe_service_->SetSuperframeCallback(nullptr);
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return StopLocked();
+}
+
+Result LoRaMeshProtocol::StopLocked() {
+    if (!started_) {
+        return Result::Success();
     }
 
-    // Clean up queues
-    if (radio_event_queue_) {
-        DrainRadioEventQueue();
-        GetRTOS().DeleteQueue(radio_event_queue_);
-        radio_event_queue_ = nullptr;
-    }
+    LOG_DEBUG("Stopping LoRaMesh protocol... for node 0x%04X", node_address_);
 
-    if (protocol_notification_queue_) {
-        GetRTOS().DeleteQueue(protocol_notification_queue_);
-        protocol_notification_queue_ = nullptr;
+    // Park the protocol task before the superframe: while it runs it may
+    // restart the superframe to resynchronize.
+    Result result = ParkProtocolTask();
+    if (!result) {
+        stop_pending_ = true;
+        LOG_ERROR("Stop aborted: %s", result.GetErrorMessage().c_str());
+        return result;
     }
+    stop_pending_ = false;
 
-    if (slot_transition_queue_) {
-        GetRTOS().DeleteQueue(slot_transition_queue_);
-        slot_transition_queue_ = nullptr;
+    if (superframe_service_->IsRunning()) {
+        superframe_service_->StopSuperframe();
     }
+    superframe_service_->SetAutoAdvance(true);
 
+    UnwireCallbacks();
+
+    // Both tasks are parked: discard every piece of network state
+    network_service_->ResetNetworkState();
+    message_queue_service_->ClearAllQueues();
+    superframe_service_->ResetForRestart();
+    DrainProtocolQueues();
+    in_subslotted_slot_ = false;
+    in_rx_slot_ = false;
+
+    started_ = false;
     LOG_INFO("LoRaMesh protocol stopped");
     return Result::Success();
+}
+
+Result LoRaMeshProtocol::ParkProtocolTask() {
+    task_gate_.RequestPark();
+    NotifyProtocolTask(ProtocolNotificationType::PAUSE);
+
+    const uint32_t timeout_ms = StopTimeoutMs();
+    if (!task_gate_.WaitParked(timeout_ms)) {
+        return Result(LoraMesherErrorCode::kTimeout,
+                      "Protocol task did not park within " +
+                          std::to_string(timeout_ms) + " ms");
+    }
+    return Result::Success();
+}
+
+void LoRaMeshProtocol::ShutdownProtocolTask() {
+    if (!protocol_task_handle_) {
+        return;
+    }
+
+    task_gate_.RequestExit();
+    NotifyProtocolTask(ProtocolNotificationType::SHUTDOWN);
+    if (!task_gate_.WaitExited(StopTimeoutMs())) {
+        LOG_ERROR("Protocol task did not exit within %u ms; deleting it",
+                  StopTimeoutMs());
+    }
+
+    GetRTOS().DeleteTask(protocol_task_handle_);
+    protocol_task_handle_ = nullptr;
+}
+
+uint32_t LoRaMeshProtocol::StopTimeoutMs() const {
+    uint32_t slot_duration_ms =
+        superframe_service_ ? superframe_service_->GetSlotDuration() : 0;
+    return std::max(kMinStopTimeoutMs, kStopTimeoutSlots * slot_duration_ms);
 }
 
 Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
@@ -566,12 +649,20 @@ void LoRaMeshProtocol::SetDataReceivedExCallback(
 }
 
 Result LoRaMeshProtocol::Pause() {
-    // Suspend the protocol task
-    if (protocol_task_handle_) {
-        bool suspended = GetRTOS().SuspendTask(protocol_task_handle_);
-        if (!suspended) {
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Failed to suspend protocol task");
+    // The protocol task would wait for itself to park
+    if (task_gate_.IsCurrentTask()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Stop()/Pause() cannot be called from the protocol "
+                      "task; call it from another task");
+    }
+
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+
+    // Park the protocol task
+    if (started_ && task_gate_.IsRunRequested()) {
+        Result result = ParkProtocolTask();
+        if (!result) {
+            return result;
         }
     }
 
@@ -590,13 +681,11 @@ Result LoRaMeshProtocol::Pause() {
 }
 
 Result LoRaMeshProtocol::Resume() {
-    // Resume the protocol task
-    if (protocol_task_handle_) {
-        bool resumed = GetRTOS().ResumeTask(protocol_task_handle_);
-        if (!resumed) {
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Failed to resume protocol task");
-        }
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+
+    // Release the protocol task; a stopped protocol stays parked until Start()
+    if (started_ && !stop_pending_) {
+        task_gate_.RequestRun();
     }
 
     // Resume superframe service
@@ -754,6 +843,8 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
     }
 
     auto& rtos = GetRTOS();
+    os::TaskRunGate& gate = protocol->task_gate_;
+    gate.BindCurrentTask();
 
     // Set node address in RTOS for multi-node identification in logs
     char address_str[8];
@@ -771,7 +862,12 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
     Result result = Result::Success();
 
-    while (!rtos.ShouldStopOrPause()) {
+    while (!gate.ShouldExit()) {
+        if (!gate.IsRunRequested()) {
+            gate.Park();
+            continue;
+        }
+
         const uint32_t now_ms = rtos.getTickCount();
         if (now_ms - last_stack_log_ms >= kStackLogIntervalMs) {
             utils::TaskMonitor::PollAllAndWarn();
@@ -910,8 +1006,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 }
 
                 case ProtocolNotificationType::SHUTDOWN:
-                    LOG_INFO("Protocol shutdown requested");
-                    return;
+                case ProtocolNotificationType::PAUSE:
+                    // Handled by the gate at the top of the loop
+                    break;
 
                 case ProtocolNotificationType::ROLE_CHANGE_REQUEST: {
                     NodeRole requested =
@@ -990,9 +1087,10 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
         rtos.YieldTask();
     }
 
+    utils::TaskMonitor::UnregisterCurrentTask();
     LOG_INFO("Protocol task ending");
-    // Note: Task handle is cleared and DeleteTask is called from Stop() method
-    LOG_DEBUG("LoRaMeshProtocol ProtocolTaskFunction exiting naturally");
+    gate.SignalExited();
+    gate.WaitForDeletion();
 }
 
 void LoRaMeshProtocol::ProcessRadioEvents() {
@@ -1662,6 +1760,21 @@ void LoRaMeshProtocol::DrainRadioEventQueue() {
         std::unique_ptr<radio::RadioEvent> event(raw_event_ptr);
         // Event is automatically cleaned up when it goes out of scope
     }
+}
+
+void LoRaMeshProtocol::DrainProtocolQueues() {
+    auto& rtos = GetRTOS();
+    DrainRadioEventQueue();
+
+    ProtocolNotificationType notification;
+    while (protocol_notification_queue_ &&
+           rtos.ReceiveFromQueue(protocol_notification_queue_, &notification,
+                                 0) == os::QueueResult::kOk) {}
+
+    SlotTransitionData transition;
+    while (slot_transition_queue_ &&
+           rtos.ReceiveFromQueue(slot_transition_queue_, &transition, 0) ==
+               os::QueueResult::kOk) {}
 }
 
 void LoRaMeshProtocol::NotifyProtocolTask(

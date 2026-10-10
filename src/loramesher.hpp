@@ -66,17 +66,30 @@ class LoraMesher {
 
     /**
      * @brief Start the LoraMesher network
-     * 
-     * Initializes hardware, protocols, and starts all required tasks.
-     * 
-     * @return Result Success if started successfully, error details otherwise
+     *
+     * Initializes hardware and protocols on the first call, then starts the
+     * protocol. Calling Start() again after Stop() restarts the node, which
+     * rediscovers and rejoins a network from scratch. Calling it while
+     * running is a no-op.
+     *
+     * Must not be called from a library callback: the protocol rejects it
+     * with kInvalidState.
+     *
+     * @return Result Success if started successfully, otherwise the error of
+     *         the protocol that failed to start (LoraMesher stays stopped)
      */
     [[nodiscard]] Result Start();
 
     /**
      * @brief Stop the LoraMesher network
-     * 
-     * Stops all tasks and releases resources.
+     *
+     * Parks the library's tasks, puts the radio to sleep and discards the
+     * network state, queued messages and pending reliable deliveries. The
+     * instance can be started again with Start().
+     *
+     * Must not be called from a library callback (data, delivery, route or
+     * state callbacks run on the protocol task): such a call is rejected,
+     * logs an error and leaves LoraMesher running. Call it from another task.
      */
     void Stop();
 
@@ -363,14 +376,20 @@ class LoraMesher {
      *  - NODE_ONLY/AUTO -> NETWORK_MANAGER before joining a network: the
      *    node creates a network immediately.
      *  - NODE_ONLY/AUTO -> NETWORK_MANAGER while already joined: the node
-     *    broadcasts NM_CLAIM with its new priority; the incumbent NM
-     *    yields via the standard merge protocol.
+     *    broadcasts NM_CLAIM with its new priority; an incumbent NM with a
+     *    worse priority surrenders and the network re-elects the claimant.
+     *    This is same-network election, independent of the disabled
+     *    cross-network merge.
      *  - NETWORK_MANAGER -> NODE_ONLY/AUTO while acting as NM: the node
      *    surrenders and enters DISCOVERY; the rest of the network runs an
      *    election to pick a new NM (~5 superframes of disruption).
      *
      * Typical use: boot all nodes as NODE_ONLY; promote one to
      * NETWORK_MANAGER from an external event (e.g. Wi-Fi connect).
+     *
+     * Do not switch nodes to AUTO: while cross-network merge is disabled, an
+     * election among AUTO nodes can split the mesh into networks that never
+     * merge.
      *
      * @param role Desired NodeRole
      * @return Result Success if queued; error if LoraMesher is not running

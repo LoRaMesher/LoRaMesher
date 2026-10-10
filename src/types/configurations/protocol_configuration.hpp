@@ -172,9 +172,15 @@ class PingPongProtocolConfig : public BaseProtocolConfig {
  * @brief Node role for network formation behavior
  *
  * Controls how a node behaves during network discovery and formation.
+ *
+ * @warning Do not deploy AUTO until cross-network merge is implemented
+ * (kNetworkMergeEnabled is false): losing the Network Manager starts an
+ * election that can split the mesh into networks that never merge again.
+ * Configure one node as NETWORK_MANAGER and the others as NODE_ONLY. AUTO
+ * remains the default for compatibility, and Start() logs a warning for it.
  */
 enum class NodeRole : uint8_t {
-    AUTO = 0,         ///< Create network if discovery times out (default)
+    AUTO = 0,  ///< Create network if discovery times out (default; see warning)
     NETWORK_MANAGER,  ///< Immediately create network (skip discovery wait)
     NODE_ONLY         ///< Never create network, wait indefinitely to join
 };
@@ -500,6 +506,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
 
     /**
      * @brief Set the node role for network formation
+     *
+     * Use NETWORK_MANAGER on exactly one node and NODE_ONLY on the others;
+     * AUTO is unsafe while cross-network merge is disabled (see NodeRole).
      *
      * @param role Node role (AUTO, NETWORK_MANAGER, or NODE_ONLY)
      */

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <vector>
 #include "os/rtos.hpp"
+#include "os/task_run_gate.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/protocols/lora_mesh/superframe.hpp"
@@ -350,9 +351,17 @@ class SuperframeService : public ISuperframeService {
     bool CreateUpdateTask();
 
     /**
-      * @brief Delete RTOS task
+      * @brief Stop the update task cooperatively and delete it
       */
     void DeleteUpdateTask();
+
+    /**
+     * @brief Copy of the superframe callback, taken under callback_mutex_
+     *
+     * Callers invoke the copy without holding the mutex, so
+     * SetSuperframeCallback() never waits for a running callback.
+     */
+    SuperframeCallback GetSuperframeCallback() const;
 
     /**
       * @brief Static task function for update task
@@ -438,6 +447,7 @@ class SuperframeService : public ISuperframeService {
     uint32_t update_interval_ms_;
     os::TaskHandle_t update_task_handle_;
     os::QueueHandle_t notification_queue_;
+    os::TaskRunGate update_gate_;  ///< Parks and stops the update task
 
     // Statistics
     std::atomic<uint32_t> superframes_completed_;
@@ -450,6 +460,8 @@ class SuperframeService : public ISuperframeService {
     static constexpr uint32_t DEFAULT_UPDATE_INTERVAL_MS = 20;
     static constexpr uint32_t TASK_PRIORITY = 14;
     static constexpr uint32_t NOTIFICATION_QUEUE_SIZE = 32;
+    /// Bound on waiting for the update task to park or exit
+    static constexpr uint32_t kUpdateTaskStopTimeoutMs = 2000;
 };
 
 }  // namespace lora_mesh

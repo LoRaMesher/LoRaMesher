@@ -456,6 +456,7 @@ class RTOSMock : public RTOS {
                 task_name = it->second.name;
                 was_suspended = it->second.suspended;
                 task_info = &(it->second);
+                CountTaskHandleUse(it->second, /*is_delete=*/true);
 
                 // LOG_DEBUG(
                 //     "MOCK: Deleting task '%s' (thread ID: %p, suspended: %d)",
@@ -482,6 +483,7 @@ class RTOSMock : public RTOS {
             }
         }
         if (task_not_found) {
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
             LOG_WARNING("MOCK: Task handle %p not found in tasks map",
                         taskHandle);
             return;
@@ -592,11 +594,13 @@ class RTOSMock : public RTOS {
                     thread_id = it->second.thread_id;
                     task_name = it->second.name;
                     task_info = &(it->second);
+                    CountTaskHandleUse(it->second, /*is_delete=*/false);
                 } else {
                     task_not_found = true;
                 }
             }
             if (task_not_found) {
+                invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("MOCK: Task handle %p not found for suspension",
                             taskHandle);
                 return false;
@@ -732,16 +736,20 @@ class RTOSMock : public RTOS {
                     thread_id = it->second.thread_id;
                     task_name = it->second.name;
                     task_info = &(it->second);
+                    CountTaskHandleUse(it->second, /*is_delete=*/false);
                 } else {
                     task_not_found = true;
                 }
             }
             if (task_not_found) {
+                invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("MOCK: Task handle %p not found for resume",
                             taskHandle);
                 return false;
             }
         } else {
+            // vTaskResume(NULL) is an assertion failure on FreeRTOS
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
             thread_id = std::this_thread::get_id();
 
             // Find task info for current thread
@@ -2297,6 +2305,19 @@ class RTOSMock : public RTOS {
     }
 
     /**
+     * @brief Count a misuse of an existing task's handle: any call on a task
+     * whose function returned, and a delete from another thread of a task
+     * that is still running
+     */
+    void CountTaskHandleUse(const TaskInfo& info, bool is_delete) {
+        if (info.exited.load(std::memory_order_acquire)) {
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
+        } else if (is_delete && info.thread_id != std::this_thread::get_id()) {
+            external_deletes_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    /**
      * @brief Whether @p info is blocked in a registered delay, notification
      * or queue wait
      */
@@ -2581,6 +2602,53 @@ class RTOSMock : public RTOS {
         reblock_timeouts_.store(0, std::memory_order_relaxed);
     }
 
+    /**
+     * @brief Task API calls since the last reset that FreeRTOS rejects or
+     * that act on a dangling handle: ResumeTask(nullptr), and SuspendTask(),
+     * ResumeTask() or DeleteTask() on a handle that is unknown or whose task
+     * function already returned
+     */
+    uint32_t getInvalidHandleCallCount() const {
+        return invalid_handle_calls_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief DeleteTask() calls since the last reset that deleted, from
+     * another thread, a task whose function had not returned
+     *
+     * On FreeRTOS such a call kills the task wherever it is, including while
+     * it holds a lock.
+     */
+    uint32_t getExternalDeleteCount() const {
+        return external_deletes_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset the counters returned by getInvalidHandleCallCount() and
+     * getExternalDeleteCount()
+     */
+    void resetTaskMisuseCounters() {
+        invalid_handle_calls_.store(0, std::memory_order_relaxed);
+        external_deletes_.store(0, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Whether a non-task thread is blocked in a virtual-time wait
+     *
+     * Such a wait ends only when its condition holds or advanceTime() reaches
+     * its deadline, so the thread that drives the clock uses this to advance
+     * time while a helper thread waits.
+     */
+    bool HasExternalWait() {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        for (const auto& [id, waiter] : waiters_) {
+            if (waiter.owner == nullptr) {
+                return true;
+            }
+        }
+        return false;
+    }
+
    private:
     struct TaskInfo {
         std::string name;
@@ -2674,6 +2742,8 @@ class RTOSMock : public RTOS {
     std::mutex tasks_blocked_mutex_;
 
     std::atomic<uint32_t> reblock_timeouts_{0};
+    std::atomic<uint32_t> invalid_handle_calls_{0};
+    std::atomic<uint32_t> external_deletes_{0};
 
     /// Real-time poll interval of virtual-time waits
     static constexpr uint32_t kWaitPollMs = 20;

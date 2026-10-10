@@ -50,6 +50,9 @@ using namespace loramesher;
 #define LORA_CRC true             // Enable CRC checking
 #define LORA_PREAMBLE_LENGTH 8U   // Preamble symbols
 
+// The node with this address is the Network Manager; all others only join
+#define NODE_MANAGER_ADDRESS 0x3ADF
+
 // =============================================================================
 // Global Variables
 // =============================================================================
@@ -179,8 +182,14 @@ void ConfigureAndUseLoraMesher() {
     // RadioConfig radioConfig(RadioType::kSx1262, 868.0F, 7U, 125.0, 7U, 14, 20U, true, 8U);
     // radioConfig.setTcxoVoltage(1.8F);
 
-    // Step 3: Create protocol configuration (uses defaults)
+    // Step 3: Create protocol configuration: one Network Manager, the other
+    // nodes join its network
     LoRaMeshProtocolConfig mesh_config;
+    if (LoraMesher::GenerateAddressFromHardware() == NODE_MANAGER_ADDRESS) {
+        mesh_config.setNodeRole(NodeRole::NETWORK_MANAGER);
+    } else {
+        mesh_config.setNodeRole(NodeRole::NODE_ONLY);
+    }
 
     // Step 4: Build and configure LoraMesher instance
     mesher = LoraMesher::Builder()

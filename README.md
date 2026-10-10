@@ -58,7 +58,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **Mesh routing** — distance-vector protocol with automatic route discovery and maintenance
 - **TDMA superframe** — deterministic slot scheduling; nodes sleep when not transmitting
 - **Auto join / network formation** — nodes discover nearby networks or create a new one
-- **Network manager election** — distributed NM election with configurable priority
+- **Network manager election** — distributed NM election with configurable priority (see the [`AUTO` role warning](#use-one-network_manager-and-node_only-everywhere-else) before relying on it)
 - **Runtime role changes** — promote a node to `NETWORK_MANAGER` or demote it back to `NODE_ONLY` at runtime via `SetNodeRole()`
 - **Capability-aware discovery** — find the closest gateway or any node matching a capability bitmap (`GetClosestGateway`, `GetClosestNodeByCapability`)
 - **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
@@ -122,7 +122,7 @@ if (!r) {
 }
 ```
 
-`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` halts all tasks and releases resources — there is no `resume`, rebuild a new instance to restart.
+`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` parks the library's tasks, puts the radio to sleep and discards the network state, queued messages and pending reliable deliveries. Calling `Start()` again restarts the node, which then rediscovers and rejoins a network from scratch. Both calls are idempotent.
 
 **Common board presets:**
 
@@ -297,8 +297,10 @@ NodeRole current = mesher->GetNodeRole();
 
 Transitions:
 - `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` before joining: node creates a network immediately.
-- `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` while joined: broadcasts NM_CLAIM; incumbent NM yields.
+- `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` while joined: broadcasts NM_CLAIM; an incumbent NM with a worse election priority surrenders and its members re-elect the claimant (same-network election).
 - `NETWORK_MANAGER` → `NODE_ONLY`/`AUTO` while NM: surrenders and triggers a re-election (~5 superframes of disruption).
+
+Avoid switching nodes to `AUTO` at runtime; see the warning in [Deployment Tips](#use-one-network_manager-and-node_only-everywhere-else).
 
 **Capability-based discovery**
 
@@ -320,13 +322,16 @@ size_t pending_rx = mesher->GetRxQueueSize();
 
 ### Deployment Tips
 
-#### Pre-designate a Network Manager for faster network formation
+#### Use one `NETWORK_MANAGER` and `NODE_ONLY` everywhere else
 
-By default every node boots in `NodeRole::AUTO` and listens for ~30 s (`DEFAULT_DISCOVERY_TIMEOUT_MS`, with up to ±5 s of jitter) before deciding no network is reachable and creating its own. Pre-designating exactly one node as `NETWORK_MANAGER` skips that wait — the NM creates the network at boot and emits `SYNC_BEACON` immediately, so peers join in seconds instead of minutes.
+> **Warning — do not deploy `NodeRole::AUTO` until network merge is implemented.** With `AUTO`, losing the Network Manager starts an election, and an election (or two nodes that both time out discovery) can split the mesh into separate networks. Cross-network merge is disabled (`kNetworkMergeEnabled = false`, see `PROTOCOL_SPEC.md` §10.6.9 and `docs/todo_network_merge.md`), so those networks never merge again. `AUTO` stays the default only for compatibility, and `Start()` logs a warning when it is in effect.
+
+Configure exactly one node as `NETWORK_MANAGER` and every other node as `NODE_ONLY`. The NM creates the network at boot and emits `SYNC_BEACON` immediately, so peers join in seconds instead of waiting ~30 s (`DEFAULT_DISCOVERY_TIMEOUT_MS`, with up to ±5 s of jitter) of discovery. A `NODE_ONLY` node never creates a network: if the NM is lost, it keeps rediscovering until the NM is back.
 
 ```cpp
 LoRaMeshProtocolConfig protocol;
-protocol.setNodeRole(NodeRole::NETWORK_MANAGER);   // one node per network
+protocol.setNodeRole(is_manager ? NodeRole::NETWORK_MANAGER   // one node
+                                : NodeRole::NODE_ONLY);       // all others
 
 auto mesher = LoraMesher::Builder()
     .withPinConfig(pins)
@@ -335,14 +340,14 @@ auto mesher = LoraMesher::Builder()
     .Build();
 ```
 
-All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — automatic merging of two networks is currently disabled (see `PROTOCOL_SPEC.md` §10.6.9), so their networks stay separate.
+Avoid configuring two NMs in the same area — their networks stay separate for the same reason.
 
 **Approximate time from boot to a fully joined node** (at SF7 / BW 125 kHz with the default 10-slot, 10 s discovery-phase superframes):
 
 | Setup | NM up | Peer joined |
 |---|---|---|
-| All nodes `AUTO` (default) | ~30 s (discovery timeout + jitter) | NM time + 1–3 superframes ≈ **40–60 s** |
-| One node `NETWORK_MANAGER`, peers `AUTO` / `NODE_ONLY` | **0 s** (network exists at boot) | 1–3 superframes after first beacon ≈ **10–30 s** |
+| One node `NETWORK_MANAGER`, peers `NODE_ONLY` (recommended) | **0 s** (network exists at boot) | 1–3 superframes after first beacon ≈ **10–30 s** |
+| All nodes `AUTO` (default, not recommended) | ~30 s (discovery timeout + jitter) | NM time + 1–3 superframes ≈ **40–60 s** |
 
 Once the network is operational, the NM scales slot duration to actual time-on-air — expect ~200 ms slots at SF7/BW125 and ~550 ms slots at SF10/BW125 (the formula is `ceil_50(ToA(max_packet_size) + guard + 50 ms margin)`). See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) §5 and §6 for the full timing rules.
 

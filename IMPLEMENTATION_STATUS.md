@@ -169,7 +169,7 @@ SYSTEM_MESSAGE   = 0x40,  // System management
 - RETRY_LATER handling with exponential backoff
 
 **🔄 MINOR GAPS:**
-- No advanced network merging when multiple networks detected
+- Cross-network merge disabled (`kNetworkMergeEnabled = false`, see `docs/todo_network_merge.md`): networks that split never merge again, so `NodeRole::AUTO` must not be deployed until it is implemented; use one `NETWORK_MANAGER` and `NODE_ONLY` on all other nodes. `Start()` warns when the role is `AUTO`
 - Limited handling of network partitions and healing
 - No secure authentication during join process (future enhancement)
 

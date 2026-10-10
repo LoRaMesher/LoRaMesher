@@ -76,6 +76,11 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - `battery_level` is removed from `JOIN_REQUEST` and `NM_CLAIM` (and from
   `JoinRequestMessage::Create()` / `NMClaimMessage::Create()`).
 - Cross-network Network Manager merge is disabled.
+- `NodeRole::AUTO` is not safe to deploy while merge is disabled: losing the
+  Network Manager can split the mesh into networks that never merge again.
+  `Start()` logs a warning when the role is `AUTO`; configure one
+  `NETWORK_MANAGER` and `NODE_ONLY` on the other nodes. `AUTO` stays the
+  default for compatibility, and the examples set roles explicitly.
 - Joining: a node sends its `JOIN_REQUEST` in a random even discovery slot
   (sponsored joins in the first one) and the Network Manager answers in the
   next slot; unanswered requests back off 0–3 superframes, the retry count
@@ -96,6 +101,16 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - Thread safety: send APIs are safe to call from the application thread, the
   routing table is only read under its lock, and the slot table, protocol
   state and Network Manager address are synchronized with the protocol task.
+- `Stop()`/`Start()` restart the protocol (#112): `Stop()` parks the protocol
+  and superframe tasks where they hold no locks instead of deleting the
+  protocol task, so a restart no longer crashes in `vTaskResume` or deadlocks,
+  and `Start()` reconnects the radio and superframe callbacks. `Stop()` waits
+  at most max(5 s, 3 slots) for the current slot work, discards queued
+  messages, and both calls are idempotent. `LoraMesher::Start()` returns the
+  protocol's error when it fails to start instead of reporting success.
+  Repeating `LoRaMeshProtocol::Init()` with the same hardware and address no
+  longer creates a second protocol task, and `GetNodeRole()` no longer races
+  the protocol task applying a role change.
 - Stop/Start: a network reset no longer deadlocks when a state-change or
   route callback calls back into the library, clears election, sponsor and
   sync-beacon state, and keeps the packet sequence counter so neighbours do

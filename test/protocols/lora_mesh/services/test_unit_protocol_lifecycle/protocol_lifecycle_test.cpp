@@ -8,6 +8,7 @@
 #include <memory>
 #include <thread>
 
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
@@ -36,6 +37,7 @@ class ProtocolLifecycleTest : public ::testing::Test {
             pin_config_, radio_config_);
 
         ASSERT_TRUE(hardware_manager_->Initialize());
+        ResetTaskMisuseCounters();
     }
 
     void TearDown() override {
@@ -97,15 +99,16 @@ TEST_F(ProtocolLifecycleTest, StartAndStop) {
 
     // Start protocol
     result = protocol->Start();
-    EXPECT_TRUE(result) << "Protocol start failed: "
+    ASSERT_TRUE(result) << "Protocol start failed: "
                         << result.GetErrorMessage();
-
-    // Let it run briefly
-    GetRTOS().delay(100);
+    EXPECT_TRUE(ProtocolTaskResponds(*protocol));
+    EXPECT_TRUE(SuperframeRunning(*protocol));
 
     // Stop protocol
     result = protocol->Stop();
     EXPECT_TRUE(result) << "Protocol stop failed: " << result.GetErrorMessage();
+    EXPECT_FALSE(SuperframeRunning(*protocol));
+    ExpectNoTaskMisuse();
 
     // Destroy protocol
     protocol.reset();
@@ -126,17 +129,37 @@ TEST_F(ProtocolLifecycleTest, MultipleStartStop) {
 
     // Test multiple start/stop cycles
     for (int i = 0; i < 3; ++i) {
+        SCOPED_TRACE(testing::Message() << "iteration " << i);
         result = protocol->Start();
-        EXPECT_TRUE(result) << "Start failed on iteration " << i;
-
-        GetRTOS().delay(100);
+        ASSERT_TRUE(result) << result.GetErrorMessage();
+        EXPECT_TRUE(ProtocolTaskResponds(*protocol));
+        EXPECT_TRUE(SuperframeRunning(*protocol));
 
         result = protocol->Stop();
-        EXPECT_TRUE(result) << "Stop failed on iteration " << i;
+        ASSERT_TRUE(result) << result.GetErrorMessage();
+        EXPECT_FALSE(SuperframeRunning(*protocol));
     }
+    ExpectNoTaskMisuse();
 
-    // Final cleanup delay
-    GetRTOS().delay(100);
+    protocol.reset();
+}
+
+/**
+ * @brief A repeated Init() keeps the single protocol task, so the protocol
+ * still starts, stops and is destroyed cleanly
+ */
+TEST_F(ProtocolLifecycleTest, RepeatedInitKeepsOneTask) {
+    auto protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+    ASSERT_TRUE(protocol->Init(hardware_manager_, 0x1001));
+    EXPECT_TRUE(protocol->Init(hardware_manager_, 0x1001));
+    EXPECT_FALSE(protocol->Init(hardware_manager_, 0x1002))
+        << "Init() with another address must be rejected";
+
+    ASSERT_TRUE(protocol->Start());
+    EXPECT_TRUE(ProtocolTaskResponds(*protocol));
+    EXPECT_TRUE(protocol->Stop());
+    ExpectNoTaskMisuse();
+
     protocol.reset();
 }
 

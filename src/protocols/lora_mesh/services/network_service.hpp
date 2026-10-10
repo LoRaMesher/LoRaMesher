@@ -1413,7 +1413,9 @@ class NetworkService : public INetworkService {
         0;  ///< Local node's allocated data slots
 
     // Node role configuration
-    NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+    /// Node role for network formation; written by the protocol task, read
+    /// by application threads through GetNodeRole()
+    std::atomic<NodeRole> node_role_{NodeRole::AUTO};
 
     // Duty cycle regulation
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
