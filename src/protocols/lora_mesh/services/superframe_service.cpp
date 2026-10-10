@@ -866,6 +866,16 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
 
     // Calculate time until next slot boundary
     uint16_t current_slot = GetCurrentSlot();
+
+    // A slot boundary passed after the last state update, e.g. while the
+    // slot callback ran or a higher-priority task held the CPU right after a
+    // wake-up notice. Handle that slot now: waiting for the boundary after
+    // the current slot would skip it, and leave this task a slot behind.
+    const uint16_t last_slot = last_slot_;
+    if (last_slot != 0xFFFF && current_slot != last_slot) {
+        return 1;
+    }
+
     uint32_t current_slot_start =
         superframe_start_time_ + (current_slot * slot_duration_ms_);
     uint32_t next_slot_time = current_slot_start + slot_duration_ms_;
@@ -898,9 +908,12 @@ uint32_t SuperframeService::CalculateNextEventTimeout() const {
 
     uint32_t timeout = next_event_time - current_time;
 
-    // Cap timeout to reasonable maximum and minimum to ensure periodic updates
+    // Cap timeout to reasonable maximum and minimum to ensure periodic updates.
+    // A wait that ends just before a boundary (a notification, or the RTOS
+    // tick running slightly ahead of the clock) re-waits only until the
+    // boundary, not past it.
     const uint32_t MAX_TIMEOUT_MS = 5000;  // 5 seconds maximum sleep
-    const uint32_t MIN_TIMEOUT_MS = 20;    // 20ms minimum sleep
+    const uint32_t MIN_TIMEOUT_MS = 1;
     return std::max(std::min(timeout, MAX_TIMEOUT_MS), MIN_TIMEOUT_MS);
 }
 

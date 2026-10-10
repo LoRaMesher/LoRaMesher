@@ -37,8 +37,18 @@ class SuperframeWakeTest : public ::testing::Test {
         mock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
         service_ = std::make_shared<SuperframeService>(kSlots, kSlotMs);
         service_->SetSuperframeCallback([this](uint16_t slot, bool) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            slots_.push_back(slot);
+            uint32_t busy_ms = 0;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                slots_.push_back(slot);
+                times_.push_back(GetRTOS().getTickCount());
+                std::swap(busy_ms, next_callback_busy_ms_);
+            }
+            // Stands for the work done right after a transition: posting to
+            // the protocol task, which preempts this task, and its logging
+            if (busy_ms > 0) {
+                GetRTOS().delay(busy_ms);
+            }
         });
     }
 
@@ -55,10 +65,23 @@ class SuperframeWakeTest : public ::testing::Test {
         return slots_;
     }
 
+    std::vector<uint32_t> Times() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return times_;
+    }
+
+    /// The next slot callback keeps the update task busy for @p ms
+    void BusyInNextCallback(uint32_t ms) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        next_callback_busy_ms_ = ms;
+    }
+
     os::RTOSMock* mock_ = nullptr;
     std::shared_ptr<SuperframeService> service_;
     std::mutex mutex_;
     std::vector<uint16_t> slots_;
+    std::vector<uint32_t> times_;
+    uint32_t next_callback_busy_ms_ = 0;
 };
 
 TEST_F(SuperframeWakeTest, SlotStartedBeforeTheWakeNoticeIsNotSkipped) {
@@ -96,6 +119,49 @@ TEST_F(SuperframeWakeTest, WakeNoticeBeforeTheBoundaryEmitsNothingEarly) {
     mock_->advanceTime(50);
     ASSERT_EQ(Slots().size(), 1u);
     EXPECT_EQ(Slots().front(), 1u);
+}
+
+TEST_F(SuperframeWakeTest, BoundaryPassedWhileHandlingTheWakeIsNotSkipped) {
+    const uint32_t start = GetRTOS().getTickCount();
+    ASSERT_TRUE(service_->ResumeAt(start, kSlots, kSlotMs, 0));
+    mock_->advanceTime(50);
+
+    // The MCU sleeps through slot 1 and wakes 5 ms before slot 2 begins.
+    // Handling slot 1 then takes until after that boundary.
+    os::TaskHandle_t task = service_->TestGetUpdateTask();
+    ASSERT_NE(task, nullptr);
+    GetRTOS().SuspendTask(task);
+    mock_->advanceTime(145);  // 195
+    BusyInNextCallback(10);
+    service_->NotifyWokeUp();
+    GetRTOS().ResumeTask(task);
+    mock_->advanceTime(55);  // 250
+
+    // Slot 2 is handled as soon as the task is free, not skipped
+    const auto slots = Slots();
+    const auto times = Times();
+    ASSERT_EQ(slots, (std::vector<uint16_t>{1, 2}));
+    EXPECT_LE(times[1] - start, 2 * kSlotMs + 15);
+
+    // And the next slot starts on time: the task is not left a slot behind
+    mock_->advanceTime(60);  // 310
+    ASSERT_EQ(Slots().size(), 3u);
+    EXPECT_EQ(Slots()[2], 3u);
+    EXPECT_EQ(Times()[2] - start, 3 * kSlotMs);
+}
+
+TEST_F(SuperframeWakeTest, WaitEndingJustBeforeABoundaryIsNotStretched) {
+    const uint32_t start = GetRTOS().getTickCount();
+    ASSERT_TRUE(service_->ResumeAt(start, kSlots, kSlotMs, 0));
+    mock_->advanceTime(195);
+    ASSERT_EQ(Slots(), (std::vector<uint16_t>{1}));
+
+    // A notification wakes the task 5 ms before slot 2
+    service_->NotifyWokeUp();
+    mock_->advanceTime(10);  // 205
+
+    ASSERT_EQ(Slots(), (std::vector<uint16_t>{1, 2}));
+    EXPECT_EQ(Times()[1] - start, 2 * kSlotMs);
 }
 
 }  // namespace test
