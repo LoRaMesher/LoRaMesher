@@ -1,6 +1,8 @@
 // src/utilities/task_monitor.hpp
 #pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -64,17 +66,46 @@ class TaskMonitor {
      * @brief Register the calling task in the global watch list.
      *
      * Called once at task entry. Subsequent PollAllAndWarn() calls iterate
-     * this list to log each task's high-water-mark in bytes.
+     * this list to log each task's high-water-mark in bytes. An entry with
+     * the same name is replaced, so a recreated task is listed once.
      */
     static void RegisterCurrentTask(const char* task_name,
                                     uint32_t configured_bytes) {
 #ifdef LORAMESHER_BUILD_ARDUINO
         os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
         std::lock_guard<std::mutex> lock(GetRegistry().mutex);
-        GetRegistry().entries.push_back({handle, task_name, configured_bytes});
+        auto& entries = GetRegistry().entries;
+        auto it = std::find_if(entries.begin(), entries.end(),
+                               [task_name](const Registration& reg) {
+                                   return std::strcmp(reg.name, task_name) == 0;
+                               });
+        if (it != entries.end()) {
+            *it = {handle, task_name, configured_bytes};
+        } else {
+            entries.push_back({handle, task_name, configured_bytes});
+        }
 #else
         (void)task_name;
         (void)configured_bytes;
+#endif
+    }
+
+    /**
+     * @brief Remove the calling task from the global watch list.
+     *
+     * Called by a task before it exits, so PollAllAndWarn() never queries
+     * the handle of a deleted task.
+     */
+    static void UnregisterCurrentTask() {
+#ifdef LORAMESHER_BUILD_ARDUINO
+        os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
+        std::lock_guard<std::mutex> lock(GetRegistry().mutex);
+        auto& entries = GetRegistry().entries;
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                     [handle](const Registration& reg) {
+                                         return reg.handle == handle;
+                                     }),
+                      entries.end());
 #endif
     }
 

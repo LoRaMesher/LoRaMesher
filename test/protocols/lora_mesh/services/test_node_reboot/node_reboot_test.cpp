@@ -347,6 +347,36 @@ TEST_F(NodeRebootTest, RepeatedRebootsKeepNetworkIdentity) {
     EXPECT_EQ(ExpectDataFlows(manager, *nodes.back(), 3), 3u);
 }
 
+TEST_F(NodeRebootTest, SaveStateStopStartWarmRestart) {
+    NetworkSpec spec;
+    spec.member_role = NodeRole::NODE_ONLY;
+    auto nodes = BuildNetwork(spec);
+    ASSERT_NO_FATAL_FAILURE(StartAndFormNetwork(nodes));
+    TestNode& manager = *nodes.front();
+    TestNode& member = *nodes.back();
+    EXPECT_EQ(ExpectDataFlows(member, manager, 3), 3u);
+
+    // Restart the protocol in place: the snapshot saved before Stop() is
+    // restored by Start(), so the network keeps its id and member slots
+    for (TestNode* node : {&manager, &member}) {
+        SCOPED_TRACE(node->name);
+        ASSERT_TRUE(SaveNodeState(*node));
+        ASSERT_TRUE(StopNode(*node));
+        ASSERT_TRUE(StartNode(*node));
+        ASSERT_TRUE(WaitForHealthyNetwork(nodes, manager.address,
+                                          RecoveryBudgetMs(nodes),
+                                          formed_network_id_))
+            << DescribeNetwork(nodes);
+        EXPECT_EQ(ControlSlotsOf(nodes), formed_control_slots_);
+    }
+    EXPECT_TRUE(unexpected_managers_.empty());
+    ExpectNoTaskMisuse();
+
+    // Sequence numbers continued, so no message is dropped as a duplicate
+    EXPECT_EQ(ExpectDataFlows(member, manager, 3), 3u);
+    EXPECT_EQ(ExpectDataFlows(manager, member, 3), 3u);
+}
+
 TEST_F(NodeRebootTest, ManagerBackAfterSuccessorElectedJoinsSuccessor) {
     NetworkSpec spec;
     spec.topology = Topology::kFullMesh;

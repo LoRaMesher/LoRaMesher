@@ -89,21 +89,20 @@ Result LoraMesher::Start() {
 
     LOG_INFO("Starting LoraMesher");
 
-    Result protocol_result = Result::Success();
-
     // Start protocols
     if (protocol_manager_) {
         Result protocol_result = protocol_manager_->StartAllProtocols();
         if (!protocol_result) {
             LOG_ERROR("Failed to start protocols: %s",
                       protocol_result.GetErrorMessage().c_str());
-            protocol_result.MergeErrors(protocol_result);
+            protocol_manager_->StopAllProtocols();
+            return protocol_result;
         }
     }
 
     is_running_ = true;
     LOG_INFO("LoraMesher started successfully");
-    return protocol_result;
+    return Result::Success();
 }
 
 void LoraMesher::Stop() {
@@ -117,8 +116,9 @@ void LoraMesher::Stop() {
     if (protocol_manager_) {
         Result protocol_result = protocol_manager_->StopAllProtocols();
         if (!protocol_result) {
-            LOG_ERROR("Protocol Stop with errors %s",
+            LOG_ERROR("Protocol Stop with errors %s; LoraMesher keeps running",
                       protocol_result.GetErrorMessage().c_str());
+            return;
         }
     }
 

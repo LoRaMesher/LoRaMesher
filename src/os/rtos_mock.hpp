@@ -458,6 +458,7 @@ class RTOSMock : public RTOS {
                 task_name = it->second.name;
                 was_suspended = it->second.suspended;
                 task_info = &(it->second);
+                CountTaskHandleUse(it->second, /*is_delete=*/true);
 
                 // LOG_DEBUG(
                 //     "MOCK: Deleting task '%s' (thread ID: %p, suspended: %d)",
@@ -484,6 +485,7 @@ class RTOSMock : public RTOS {
             }
         }
         if (task_not_found) {
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
             LOG_WARNING("MOCK: Task handle %p not found in tasks map",
                         taskHandle);
             return;
@@ -491,37 +493,7 @@ class RTOSMock : public RTOS {
 
         // Notify the task to wake up - do this outside the tasksMutex_ lock to prevent deadlock
         if (task_info) {
-            // Update stop_requested and suspended under task_info->mutex so that
-            // ShouldStopOrPause's re-check (also under task_info->mutex) sees
-            // the updated state before we call notify_all().  This closes the
-            // missed-notification race where notify fires before the waiter
-            // enters cv.wait_for.
-            {
-                std::lock_guard<std::mutex> lock(task_info->mutex);
-                task_info->stop_requested.store(true,
-                                                std::memory_order_release);
-                task_info->suspended.store(false, std::memory_order_release);
-
-                // CRITICAL: Notify all queue condition variables the task is waiting on
-                for (auto* queue_cv : task_info->waiting_on_queue_cvs) {
-                    if (queue_cv) {
-                        queue_cv->notify_all();  // For ReceiveFromQueue calls
-                    }
-                }
-            }
-
-            // CRITICAL: Notify ALL condition variables the task might be waiting on
-            task_info->cv.notify_all();         // For ShouldStopOrPause
-            task_info->notify_cv.notify_all();  // For WaitForNotify
-            task_info->suspend_ack_cv
-                .notify_all();  // For suspend acknowledgment
-            task_info->resume_ack_cv.notify_all();  // For resume acknowledgment
-            task_info->delay_cv.notify_all();       // For delay() calls
-            tasks_blocked_cv_.notify_all();
-
-            // LOG_DEBUG(
-            //     "MOCK: Notified all condition variables for task '%s' deletion",
-            //     task_name.c_str());
+            WakeTaskToStop(*task_info);
         }
 
         if (thread_id != std::thread::id()) {
@@ -563,6 +535,36 @@ class RTOSMock : public RTOS {
     }
 
     /**
+     * @brief Stop every task of a node at once, as a power cut does
+     *
+     * Each task sees a stop request wherever it is: a delay unwinds the task
+     * and a wait returns an error. The tasks exit without being joined; their
+     * handles stay valid for DeleteTask(), which does not count them as
+     * misuse.
+     *
+     * @param node_address Node address as passed to
+     *        SetCurrentTaskNodeAddress() (e.g. "0x1001")
+     */
+    void PowerOffNodeTasks(const std::string& node_address) {
+        std::vector<TaskInfo*> targets;
+        {
+            std::lock_guard<std::timed_mutex> lock(tasksMutex_);
+            for (auto& [thread_ptr, task_info] : tasks_) {
+                if (node_address == task_info.node_address) {
+                    task_info.powered_off.store(true,
+                                                std::memory_order_release);
+                    task_info.delay_interrupted.store(
+                        true, std::memory_order_release);
+                    targets.push_back(&task_info);
+                }
+            }
+        }
+        for (TaskInfo* task_info : targets) {
+            WakeTaskToStop(*task_info);
+        }
+    }
+
+    /**
      * @brief Release the state of detached tasks whose thread has exited;
      * caller holds tasksMutex_
      */
@@ -594,11 +596,13 @@ class RTOSMock : public RTOS {
                     thread_id = it->second.thread_id;
                     task_name = it->second.name;
                     task_info = &(it->second);
+                    CountTaskHandleUse(it->second, /*is_delete=*/false);
                 } else {
                     task_not_found = true;
                 }
             }
             if (task_not_found) {
+                invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("MOCK: Task handle %p not found for suspension",
                             taskHandle);
                 return false;
@@ -734,16 +738,20 @@ class RTOSMock : public RTOS {
                     thread_id = it->second.thread_id;
                     task_name = it->second.name;
                     task_info = &(it->second);
+                    CountTaskHandleUse(it->second, /*is_delete=*/false);
                 } else {
                     task_not_found = true;
                 }
             }
             if (task_not_found) {
+                invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARNING("MOCK: Task handle %p not found for resume",
                             taskHandle);
                 return false;
             }
         } else {
+            // vTaskResume(NULL) is an assertion failure on FreeRTOS
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
             thread_id = std::this_thread::get_id();
 
             // Find task info for current thread
@@ -2445,6 +2453,53 @@ class RTOSMock : public RTOS {
     }
 
     /**
+     * @brief Request a task stop and wake it from whatever it waits on
+     */
+    void WakeTaskToStop(TaskInfo& task_info) {
+        // Update stop_requested and suspended under task_info.mutex so that
+        // ShouldStopOrPause's re-check (also under task_info.mutex) sees the
+        // updated state before notify_all(). This closes the
+        // missed-notification race where notify fires before the waiter
+        // enters cv.wait_for.
+        {
+            std::lock_guard<std::mutex> lock(task_info.mutex);
+            task_info.stop_requested.store(true, std::memory_order_release);
+            task_info.suspended.store(false, std::memory_order_release);
+
+            // Notify all queue condition variables the task is waiting on
+            for (auto* queue_cv : task_info.waiting_on_queue_cvs) {
+                if (queue_cv) {
+                    queue_cv->notify_all();  // For ReceiveFromQueue calls
+                }
+            }
+        }
+
+        // Notify all condition variables the task might be waiting on
+        task_info.cv.notify_all();              // For ShouldStopOrPause
+        task_info.notify_cv.notify_all();       // For WaitForNotify
+        task_info.suspend_ack_cv.notify_all();  // For suspend acknowledgment
+        task_info.resume_ack_cv.notify_all();   // For resume acknowledgment
+        task_info.delay_cv.notify_all();        // For delay() calls
+        tasks_blocked_cv_.notify_all();
+    }
+
+    /**
+     * @brief Count a misuse of an existing task's handle: any call on a task
+     * whose function returned, and a delete from another thread of a task
+     * that is still running. Tasks stopped by PowerOffNodeTasks() are exempt.
+     */
+    void CountTaskHandleUse(const TaskInfo& info, bool is_delete) {
+        if (info.powered_off.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (info.exited.load(std::memory_order_acquire)) {
+            invalid_handle_calls_.fetch_add(1, std::memory_order_relaxed);
+        } else if (is_delete && info.thread_id != std::this_thread::get_id()) {
+            external_deletes_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    /**
      * @brief Whether @p info is blocked in a registered delay, notification
      * or queue wait
      */
@@ -2729,6 +2784,53 @@ class RTOSMock : public RTOS {
         reblock_timeouts_.store(0, std::memory_order_relaxed);
     }
 
+    /**
+     * @brief Task API calls since the last reset that FreeRTOS rejects or
+     * that act on a dangling handle: ResumeTask(nullptr), and SuspendTask(),
+     * ResumeTask() or DeleteTask() on a handle that is unknown or whose task
+     * function already returned
+     */
+    uint32_t getInvalidHandleCallCount() const {
+        return invalid_handle_calls_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief DeleteTask() calls since the last reset that deleted, from
+     * another thread, a task whose function had not returned
+     *
+     * On FreeRTOS such a call kills the task wherever it is, including while
+     * it holds a lock.
+     */
+    uint32_t getExternalDeleteCount() const {
+        return external_deletes_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Reset the counters returned by getInvalidHandleCallCount() and
+     * getExternalDeleteCount()
+     */
+    void resetTaskMisuseCounters() {
+        invalid_handle_calls_.store(0, std::memory_order_relaxed);
+        external_deletes_.store(0, std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Whether a non-task thread is blocked in a virtual-time wait
+     *
+     * Such a wait ends only when its condition holds or advanceTime() reaches
+     * its deadline, so the thread that drives the clock uses this to advance
+     * time while a helper thread waits.
+     */
+    bool HasExternalWait() {
+        std::lock_guard<std::mutex> lock(timeMutex_);
+        for (const auto& [id, waiter] : waiters_) {
+            if (waiter.owner == nullptr) {
+                return true;
+            }
+        }
+        return false;
+    }
+
    private:
     struct TaskInfo {
         std::string name;
@@ -2773,6 +2875,8 @@ class RTOSMock : public RTOS {
 
         // Set once the task function has returned
         std::atomic<bool> exited{false};
+        /// Stopped by PowerOffNodeTasks(); its handle may still be deleted
+        std::atomic<bool> powered_off{false};
 
         // For timed-join in DeleteTask()
         std::shared_ptr<std::promise<void>> exit_signal;
@@ -2842,6 +2946,8 @@ class RTOSMock : public RTOS {
     std::mutex tasks_blocked_mutex_;
 
     std::atomic<uint32_t> reblock_timeouts_{0};
+    std::atomic<uint32_t> invalid_handle_calls_{0};
+    std::atomic<uint32_t> external_deletes_{0};
 
     /// Real-time poll interval of virtual-time waits
     static constexpr uint32_t kWaitPollMs = 20;

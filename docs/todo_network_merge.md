@@ -5,6 +5,14 @@ network manager) is **disabled** because its only-partly-working implementation 
 tests flaky and could converge to the wrong winner. This document captures the full diagnosis and the
 deterministic fix design so it can be implemented later.
 
+> **User impact:** without merge, `NodeRole::AUTO` is unsafe to deploy — losing the Network Manager
+> starts an election that can split the mesh into networks that never merge again. Until this is
+> implemented, deployments use one `NETWORK_MANAGER` and `NODE_ONLY` on every other node;
+> `LoRaMeshProtocol::Start()` logs a warning when the role is `AUTO`. When merge is re-enabled, remove
+> that warning and the matching disclaimers in `README.md`, `MIGRATION.md`, `PROTOCOL_SPEC.md` §6.1.2,
+> `IMPLEMENTATION_STATUS.md`, `src/loramesher.hpp` and
+> `src/types/configurations/protocol_configuration.hpp`.
+
 ## Current state (how it is disabled)
 
 - **Feature gate:** `kNetworkMergeEnabled` in

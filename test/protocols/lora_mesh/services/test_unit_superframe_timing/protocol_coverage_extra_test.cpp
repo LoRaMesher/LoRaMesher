@@ -21,6 +21,7 @@
 #include <memory>
 #include <thread>
 
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/services/superframe_service.hpp"
@@ -252,23 +253,27 @@ TEST_F(ProtocolCoverageExtraTest, ConfigureInvalidConfigFails) {
 // ---------------------------------------------------------------------------
 
 TEST_F(ProtocolCoverageExtraTest, RestartAfterStop) {
+    ResetTaskMisuseCounters();
     auto protocol = CreateInitialized();
 
     Result start1 = protocol->Start();
-    EXPECT_TRUE(start1) << start1.GetErrorMessage();
+    ASSERT_TRUE(start1) << start1.GetErrorMessage();
 
     Result stop = protocol->Stop();
-    EXPECT_TRUE(stop) << stop.GetErrorMessage();
+    ASSERT_TRUE(stop) << stop.GetErrorMessage();
+    EXPECT_FALSE(SuperframeRunning(*protocol));
 
-    // Re-configure to re-setup internal state
+    // Reconfiguring a stopped protocol is allowed
     LoRaMeshProtocolConfig config(0x1001);
     EXPECT_TRUE(protocol->Configure(config));
 
-    // Re-init needed after stop since radio_event_queue_ is deleted
     Result start2 = protocol->Start();
-    EXPECT_TRUE(start2) << start2.GetErrorMessage();
+    ASSERT_TRUE(start2) << start2.GetErrorMessage();
+    EXPECT_TRUE(ProtocolTaskResponds(*protocol));
+    EXPECT_TRUE(SuperframeRunning(*protocol));
 
-    protocol->Stop();
+    EXPECT_TRUE(protocol->Stop());
+    ExpectNoTaskMisuse();
 }
 
 }  // namespace test
