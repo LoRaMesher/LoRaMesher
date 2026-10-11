@@ -3134,8 +3134,6 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
         return Result::Success();
     }
 
-    last_sync_beacon_received_ = current_time;
-
     // Foreign-beacon guard for stable operating states: don't silently adopt a
     // different network's identity.  DISCOVERY / FAULT_RECOVERY / NM_ELECTION
     // may join any live network, so they fall through.
@@ -3174,6 +3172,10 @@ Result NetworkService::ProcessSyncBeacon(const BaseMessage& message,
             control_slot_reservations_.clear();
         }
     }
+
+    // Only a beacon of the network this node follows counts as received, so
+    // a foreign network nearby does not hide the loss of its own manager
+    last_sync_beacon_received_ = current_time;
 
     {
         std::lock_guard<std::mutex> lock(network_mutex_);
