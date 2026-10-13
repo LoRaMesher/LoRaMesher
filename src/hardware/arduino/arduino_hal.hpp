@@ -35,7 +35,9 @@ class LoraMesherArduinoHal : public IHal {
      */
     explicit LoraMesherArduinoHal(const PinConfig& pin_config)
         :
-#ifdef ARDUINO_ARCH_ESP32
+#if defined(CONFIG_IDF_TARGET_ESP32C3) // Heltek HT-CT62
+          LM_SPI(FSPI),
+#elif defined( ARDUINO_ARCH_ESP32 )
           LM_SPI(HSPI),
 #else
           LM_SPI(),
