@@ -1339,11 +1339,19 @@ slice_capacity = (max_packet_size − BaseHeader::Size() − RoutingTableHeader:
                   / RoutingTableEntry::Size()
 ```
 
-clamped to `RoutingTableMessage::kMaxRoutingEntries = 24`. At SF12/BW125 (`max_packet_size = 51`) this yields 3 entries per broadcast; at SF7–SF9 the entire table fits in one slice and the cursor never advances past zero, so behavior is unchanged.
+clamped to `RoutingTableMessage::kMaxRoutingEntries = 24`, and further to the largest slice whose time on air fits the control slot when the transmission starts up to 100 ms into the slot:
+
+```
+start_latency (100) + guard_time + ToA(slice) + rx_processing_margin (20) ≤ slot_duration
+```
+
+A transmission that does not fit the rest of its slot is skipped, so a slice sized only by `max_packet_size` could be skipped whenever the node handles its control slot late. At SF12/BW125 (`max_packet_size = 51`) this yields 3 entries per broadcast; at SF7–SF9 a small table fits in one slice and the cursor never advances past zero.
 
 The slice helper, `GetNextBroadcastSlice(exclude_address, max_entries)`, filters out the sender's own address and inactive entries, then partitions the remaining routes into a **priority** set (entries whose `capabilities` bitmap is non-zero, e.g. gateways) and a **normal** set. Priority entries are emitted in every slice so capability-bearing routes reach far nodes without waiting for a full rotation; the normal set rotates through the remaining per-slice budget via a contiguous-window cursor.
 
-To prevent priority entries from starving the rotation, at least one slot per slice is reserved for the normal set whenever it is non-empty (priority reservation is capped at `max_entries − 1`). When priority entries exceed their reservation they rotate through a second cursor. Both cursors (`next_broadcast_offset_` for normal, `next_priority_offset_` for priority) live on `DistanceVectorRoutingTable` and reset to 0 on `Clear()`. Because the two sets are disjoint, a destination never appears twice in one slice.
+To prevent priority entries from starving the rotation, at least one slot per slice is reserved for the normal set whenever it is non-empty (priority reservation is capped at `max_entries − 1`). When priority entries exceed their reservation they rotate through a second cursor. Both cursors live on `DistanceVectorRoutingTable` and reset to 0 on `Clear()`. Because the two sets are disjoint, a destination never appears twice in one slice.
+
+The cursors move past a slice only when it is transmitted (`NotifyLocalRoutingBroadcast()`, called just before the radio sends the message). A slice whose transmission was skipped is built again, with current values, for the next control slot, so every route keeps appearing once per rotation and no neighbour misses its own entry for longer than that.
 
 ---
 
@@ -1396,8 +1404,10 @@ layout does not depend on which nodes its routing table contains:
 | Owner of index `c` | Slot type |
 |--------------------|-----------|
 | this node (`c == my_control_slot_index`) | TX |
-| an active direct neighbour | RX (that neighbour) |
+| an active direct neighbour, or a node heard directly in the last 3 superframes whatever the route to it | RX (that node) |
 | anyone else, or unassigned | SLEEP |
+
+A node whose route goes through relays, for instance because it does not hear us, can still be heard by us, so we keep listening to its data slots.
 
 A direct neighbour's index comes from its routing-table header
 (`source_control_slot_index`, §3.2.3). The Network Manager holds index 0.

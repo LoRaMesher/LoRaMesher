@@ -13,6 +13,7 @@
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
+#include "protocols/lora_mesh/services/slot_tx_budget.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "utils/time_utils.hpp"
 
@@ -193,6 +194,11 @@ SlotScheduler::Context NetworkService::MakeSlotContext() const {
     ctx.target_duty_cycle = target_duty_cycle_;
     ctx.min_sleep_fraction = min_sleep_fraction_;
     ctx.churn_margin_slots = churn_margin_slots_;
+    ctx.now_ms = GetRTOS().getTickCount();
+    ctx.direct_reception_window_ms =
+        superframe_service_ ? kDirectReceptionWindowSuperframes *
+                                  superframe_service_->GetSuperframeDuration()
+                            : 0;
     return ctx;
 }
 
@@ -914,9 +920,25 @@ size_t NetworkService::ComputeBroadcastSliceCapacity() const {
     if (config_.max_packet_size <= header_overhead) {
         return 0;
     }
-    const size_t cap =
+    size_t cap =
         (config_.max_packet_size - header_overhead) / RoutingTableEntry::Size();
-    return std::min<size_t>(cap, RoutingTableMessage::kMaxRoutingEntries);
+    cap = std::min<size_t>(cap, RoutingTableMessage::kMaxRoutingEntries);
+
+    // The slice must also fit the control slot's airtime when the node gets
+    // to transmit late in the slot; a slice that does not is skipped
+    const uint32_t slot_ms =
+        superframe_service_ ? superframe_service_->GetSlotDuration() : 0;
+    if (slot_ms == 0) {
+        return cap;
+    }
+    while (cap > 1 &&
+           !FitsInSlot(kTxStartLatencyBudgetMs, config_.guard_time_ms,
+                       CalculateTimeOnAir(static_cast<uint8_t>(
+                           header_overhead + cap * RoutingTableEntry::Size())),
+                       slot_ms)) {
+        --cap;
+    }
+    return cap;
 }
 
 size_t NetworkService::ComputeRotationSteps() const {

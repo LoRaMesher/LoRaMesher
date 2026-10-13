@@ -87,6 +87,15 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- A routing-table slice whose transmission was skipped (it did not fit the
+  rest of its control slot) is no longer lost: the rotation moves on only
+  when a slice is sent, and slices are sized to fit the slot's airtime with
+  up to 100 ms of start latency. Neighbours missing from the transmitted
+  slices had marked the sender unidirectional, rerouted it through relays
+  and stopped listening in its data slots, losing its broadcast and group
+  messages.
+- A node keeps listening in the data slots of any node it heard directly in
+  the last 3 superframes, whatever its route to it.
 - ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
   tasks ran with a quarter of the configured stack and the stack monitor
   reported four times the real free space. The configured sizes now state

@@ -190,7 +190,12 @@ AddressType SlotScheduler::FindDataSlotOwner(
     AddressType owner = 0;
     uint32_t owner_last_seen = 0;
     for (const auto& node : nodes) {
-        if (!node.IsDirectNeighbor()) {
+        // We listen to every node we hear, whatever our route to it
+        const bool heard = node.IsDirectNeighbor() ||
+                           (ctx.direct_reception_window_ms > 0 &&
+                            node.HeardDirectlyWithin(
+                                ctx.now_ms, ctx.direct_reception_window_ms));
+        if (!heard) {
             continue;
         }
         uint8_t index = node.control_slot_index;
