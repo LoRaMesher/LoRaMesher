@@ -417,6 +417,47 @@ TEST(SlotSchedulerAlignmentTest, DuplicateIndexPrefersMostRecentlySeen) {
     }
 }
 
+TEST(SlotSchedulerAlignmentTest, NodeHeardDirectlyKeepsItsRxSlotsWhenRerouted) {
+    // A judged A unreachable directly (A may not hear B) and routes it through
+    // others, but B still hears A: B must keep listening in A's data slots
+    SchedulerRig b(kNodeB, 2, 1);
+    b.AddNode(kNm, 0, 1, /*is_manager=*/true);
+    auto& a = b.AddNode(kNodeA, 1, /*hops=*/3);
+    a.link_stats.messages_received = 5;
+    a.link_stats.last_message_time = 9000;
+
+    SlotScheduler::Context ctx = b.Context(kNm);
+    ctx.now_ms = 10000;
+    ctx.direct_reception_window_ms = 3000;
+    ASSERT_TRUE(b.scheduler->UpdateSlotTableIfDirty(ctx, true).IsSuccess());
+    const auto table = b.scheduler->GetSlotTable();
+    constexpr size_t d = SchedulerRig::kDataSlots;
+    for (size_t j = 0; j < d; j++) {
+        EXPECT_EQ(table[SchedulerRig::kDataStart + d + j].type, SlotType::RX);
+        EXPECT_EQ(table[SchedulerRig::kDataStart + d + j].target_address,
+                  kNodeA);
+    }
+}
+
+TEST(SlotSchedulerAlignmentTest, ReroutedNodeNotHeardRecentlyGetsNoRxSlots) {
+    SchedulerRig b(kNodeB, 2, 1);
+    b.AddNode(kNm, 0, 1, /*is_manager=*/true);
+    auto& a = b.AddNode(kNodeA, 1, /*hops=*/3);
+    a.link_stats.messages_received = 5;
+    a.link_stats.last_message_time = 5000;
+
+    SlotScheduler::Context ctx = b.Context(kNm);
+    ctx.now_ms = 10000;
+    ctx.direct_reception_window_ms = 3000;
+    ASSERT_TRUE(b.scheduler->UpdateSlotTableIfDirty(ctx, true).IsSuccess());
+    const auto table = b.scheduler->GetSlotTable();
+    constexpr size_t d = SchedulerRig::kDataSlots;
+    for (size_t j = 0; j < d; j++) {
+        EXPECT_EQ(table[SchedulerRig::kDataStart + d + j].type,
+                  SlotType::SLEEP);
+    }
+}
+
 TEST(SlotSchedulerAlignmentTest, IndexBeyondDataBudgetGetsNoDataSlots) {
     // Budget of 4 data slots covers indices 0 and 1 only.
     SchedulerRig b(kNodeB, /*control_index=*/2, 1);

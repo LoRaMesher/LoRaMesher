@@ -7,6 +7,7 @@
 #include "lora_mesh_protocol.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
+#include "protocols/lora_mesh/services/slot_tx_budget.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/radio/radio_event.hpp"
 #include "types/storage/resume_snapshot_codec.hpp"
@@ -20,10 +21,6 @@ using namespace loramesher::types::protocols::lora_mesh;
 
 namespace loramesher {
 namespace protocols {
-
-/// Margin for the receiver to finish processing a packet before the slot ends.
-/// Covers SPI transfer, interrupt latency, and queue insertion on the RX side.
-static constexpr uint32_t kRxProcessingMarginMs = 20;
 
 LoRaMeshProtocol::LoRaMeshProtocol()
     : Protocol(ProtocolType::kLoraMesh),
@@ -1401,14 +1398,16 @@ bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
         return false;
     }
 
-    uint32_t needed =
-        time_in_slot + additional_delay_ms + toa_ms + kRxProcessingMarginMs;
-    if (needed > slot_duration) {
+    if (!lora_mesh::FitsInSlot(time_in_slot, additional_delay_ms, toa_ms,
+                               slot_duration)) {
         LOG_WARNING(
             "TX skip: in_slot=%u + delay=%u + ToA=%u + margin=%u = %u > "
             "slot=%u",
-            time_in_slot, additional_delay_ms, toa_ms, kRxProcessingMarginMs,
-            needed, slot_duration);
+            time_in_slot, additional_delay_ms, toa_ms,
+            lora_mesh::kRxProcessingMarginMs,
+            time_in_slot + additional_delay_ms + toa_ms +
+                lora_mesh::kRxProcessingMarginMs,
+            slot_duration);
         return false;
     }
     return true;
@@ -1923,6 +1922,7 @@ LoRaMeshProtocol::CreateServiceConfigForTest(
         service_config.network_config.hello_interval_ms * 3;
     service_config.network_config.node_timeout_ms =
         service_config.network_config.hello_interval_ms * 3;
+    service_config.network_config.guard_time_ms = config.getGuardTime();
     service_config.network_config.max_hops = config.getMaxHops();
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =

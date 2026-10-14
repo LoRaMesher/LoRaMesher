@@ -79,6 +79,10 @@ static constexpr uint32_t kCleanupIntervalMs =
 /// one missed broadcast, plus a rotation of slack for the cleanup's timing
 static constexpr uint32_t kRouteAgingRotations = 3;
 
+/// Superframes after its last direct reception that a node keeps its data RX
+/// slots, whatever the route to it
+static constexpr uint32_t kDirectReceptionWindowSuperframes = 3;
+
 /**
  * @brief Unified implementation of network service
  * 
@@ -604,7 +608,9 @@ class NetworkService : public INetworkService {
      *
      * Used both by CreateRoutingTableMessage() to size the rotation slice
      * and by RemoveInactiveNodes() to scale aging timeouts to the
-     * rotation period. Clamped to RoutingTableMessage::kMaxRoutingEntries.
+     * rotation period. Clamped to RoutingTableMessage::kMaxRoutingEntries,
+     * and to what fits the slot's airtime when the transmission starts up to
+     * kTxStartLatencyBudgetMs into the slot (at least one entry).
      *
      * @return size_t Slice capacity (0 if header overhead exceeds the cap)
      */
