@@ -188,7 +188,9 @@ class IRoutingTable {
      * cursor reaches the end. Self entries and @p exclude_address are
      * filtered out. Used by the sender to fragment the routing table
      * across superframes when the full table cannot fit in a single
-     * radio frame.
+     * radio frame. The cursor moves past the slice only when
+     * NotifyLocalRoutingBroadcast() reports it sent, so a slice that was not
+     * transmitted is returned again.
      *
      * @param exclude_address Address to exclude (typically own address)
      * @param max_entries Maximum entries to return in this slice
@@ -337,9 +339,10 @@ class IRoutingTable {
     /**
      * @brief Record that this node broadcast its routing table
      *
-     * Peers list us as a reception only after hearing several of our tables,
-     * so a peer's omission of us counts toward a unidirectional verdict only
-     * after enough local broadcasts since that peer was first heard.
+     * Moves the broadcast rotation past the last slice built. Peers list us as
+     * a reception only after hearing several of our tables, so a peer's
+     * omission of us counts toward a unidirectional verdict only after enough
+     * local broadcasts since that peer was first heard.
      */
     virtual void NotifyLocalRoutingBroadcast() = 0;
 

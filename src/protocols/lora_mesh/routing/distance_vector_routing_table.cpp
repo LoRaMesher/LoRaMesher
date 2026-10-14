@@ -456,10 +456,11 @@ DistanceVectorRoutingTable::GetNextBroadcastSlice(AddressType exclude_address,
     }
 
     if ((priority.empty() && normal.empty()) || max_entries == 0) {
-        next_broadcast_offset_ = 0;
-        next_priority_offset_ = 0;
+        broadcast_cursor_ = {};
+        pending_broadcast_cursor_ = {};
         return {};
     }
+    BroadcastCursor cursor = broadcast_cursor_;
 
     // Reserve at least one slot for the normal rotation whenever normal routes
     // exist, so priority entries can never starve it.
@@ -476,32 +477,33 @@ DistanceVectorRoutingTable::GetNextBroadcastSlice(AddressType exclude_address,
     if (priority_budget > 0) {
         if (priority.size() <= priority_budget) {
             slice.insert(slice.end(), priority.begin(), priority.end());
-            next_priority_offset_ = 0;
+            cursor.priority = 0;
         } else {
-            if (next_priority_offset_ >= priority.size()) {
-                next_priority_offset_ = 0;
+            if (cursor.priority >= priority.size()) {
+                cursor.priority = 0;
             }
             for (size_t i = 0; i < priority_budget; ++i) {
                 slice.push_back(
-                    priority[(next_priority_offset_ + i) % priority.size()]);
+                    priority[(cursor.priority + i) % priority.size()]);
             }
-            next_priority_offset_ =
-                (next_priority_offset_ + priority_budget) % priority.size();
+            cursor.priority =
+                (cursor.priority + priority_budget) % priority.size();
         }
     }
 
     // Fill the remaining budget from the rotating normal window.
     const size_t normal_budget = max_entries - slice.size();
     if (!normal.empty() && normal_budget > 0) {
-        if (next_broadcast_offset_ >= normal.size()) {
-            next_broadcast_offset_ = 0;
+        if (cursor.normal >= normal.size()) {
+            cursor.normal = 0;
         }
-        const size_t start = next_broadcast_offset_;
+        const size_t start = cursor.normal;
         const size_t end = std::min(start + normal_budget, normal.size());
         slice.insert(slice.end(), normal.begin() + start, normal.begin() + end);
-        next_broadcast_offset_ = (end >= normal.size()) ? 0 : end;
+        cursor.normal = (end >= normal.size()) ? 0 : end;
     }
 
+    pending_broadcast_cursor_ = cursor;
     return slice;
 }
 
@@ -631,8 +633,8 @@ void DistanceVectorRoutingTable::Clear() {
     lookup_count_ = 0;
     update_count_ = 0;
     last_cleanup_time_ = 0;
-    next_broadcast_offset_ = 0;
-    next_priority_offset_ = 0;
+    broadcast_cursor_ = {};
+    pending_broadcast_cursor_ = {};
 
     LOG_INFO("Cleared routing table for node 0x%04X", node_address_);
 }
@@ -790,6 +792,7 @@ void DistanceVectorRoutingTable::UpdateLinkStatistics() {
 
 void DistanceVectorRoutingTable::NotifyLocalRoutingBroadcast() {
     std::lock_guard<std::mutex> lock(table_mutex_);
+    broadcast_cursor_ = pending_broadcast_cursor_;
     for (auto& node : nodes_) {
         node.link_stats.RecordLocalBroadcast();
     }

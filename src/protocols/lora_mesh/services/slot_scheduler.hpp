@@ -70,6 +70,11 @@ class SlotScheduler {
         float target_duty_cycle = 0.01f;
         float min_sleep_fraction = 0.30f;
         uint8_t churn_margin_slots = 2;
+        /// Current time (ms)
+        uint32_t now_ms = 0;
+        /// A node heard directly within this window gets RX in its data
+        /// slots whatever its route (ms, 0: direct neighbours only)
+        uint32_t direct_reception_window_ms = 0;
     };
 
     /**
@@ -185,7 +190,10 @@ class SlotScheduler {
                              const SlotPlan& plan, uint8_t our_hop_distance);
 
     /**
-     * @brief Active direct neighbour holding @p control_index, or 0 if none.
+     * @brief Node we hear holding @p control_index, or 0 if none.
+     *
+     * An active direct neighbour, or a node heard directly within
+     * Context::direct_reception_window_ms whatever the route to it.
      *
      * The Network Manager is treated as index 0 when its index is unknown.
      * When several neighbours claim the index, the most recently seen wins.

@@ -285,13 +285,21 @@ class DistanceVectorRoutingTable : public IRoutingTable {
     mutable uint32_t update_count_;       ///< Number of route updates
     mutable uint32_t last_cleanup_time_;  ///< Last cleanup timestamp
 
-    /// Rotation cursor for sliced routing broadcasts; advances by slice
-    /// size and wraps when the active set is exhausted. Reset on Clear().
-    size_t next_broadcast_offset_ = 0;
+    /// Rotation cursors for sliced routing broadcasts
+    struct BroadcastCursor {
+        /// Next normal entry; wraps when the active set is exhausted
+        size_t normal = 0;
+        /// Next capability-bearing entry, when there are more of them than
+        /// fit in the per-slice priority reservation
+        size_t priority = 0;
+    };
 
-    /// Rotation cursor for capability-bearing entries when there are more of
-    /// them than fit in the per-slice priority reservation. Reset on Clear().
-    size_t next_priority_offset_ = 0;
+    /// Where the next slice starts. It moves on to pending_broadcast_cursor_
+    /// only when the slice is sent (NotifyLocalRoutingBroadcast()), so a
+    /// slice whose transmission was skipped is built again. Reset on Clear().
+    BroadcastCursor broadcast_cursor_;
+    /// Where the slice after the last one built starts
+    BroadcastCursor pending_broadcast_cursor_;
 
     /// Fixed-capacity memory of last-known capabilities for the closest
     /// capability-bearing nodes. Survives route aging so a re-learned node

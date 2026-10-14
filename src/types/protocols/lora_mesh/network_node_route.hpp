@@ -218,6 +218,18 @@ class NetworkNodeRoute {
     bool IsDirectNeighbor() const;
 
     /**
+     * @brief Whether this node received a message directly from the node
+     *        within the last @p window_ms
+     *
+     * Independent of the route: a node routed through others, for instance
+     * because it does not hear us, can still be heard by us.
+     *
+     * @param current_time Current time (ms)
+     * @param window_ms How far back a direct reception counts (ms)
+     */
+    bool HeardDirectlyWithin(uint32_t current_time, uint32_t window_ms) const;
+
+    /**
      * @brief Check if this route is better than another route
      *
      * Uses a composite cost metric: cost = hop_count × 35 + (255 - link_quality).
