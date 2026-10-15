@@ -220,11 +220,28 @@ jobs:
         echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
         echo "COVERAGE_COLOR=$COLOR" >> $GITHUB_ENV
 
+    # The badge is published only when the gist secrets are configured (absent in forks).
+    - name: Check Coverage Badge Secrets
+      id: badge_secrets
+      if: always()
+      env:
+        GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        GIST_ID: ${{ secrets.GIST_ID }}
+      run: |
+        if [ -n "$GIST_TOKEN" ] && [ -n "$GIST_ID" ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "Gist secrets not configured; skipping coverage badge update."
+        fi
+
     - name: Update Coverage Badge
       if: >
         always() &&
         github.event_name == 'push' &&
-        github.ref == 'refs/heads/main'
+        github.ref == 'refs/heads/main' &&
+        steps.badge_secrets.outputs.available == 'true' &&
+        env.COVERAGE != ''
       uses: schneegans/dynamic-badges-action@v1.8.0
       with:
         auth: ${{ secrets.GIST_TOKEN }}
