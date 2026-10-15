@@ -591,7 +591,19 @@ class LoRaMeshProtocol : public Protocol {
     void DrainProtocolQueues();
 
     /**
+     * @brief Connect the network service callbacks to the protocol
+     *
+     * Called once from Init(). The bindings last for the protocol's lifetime
+     * and are not touched by Start()/Stop(), so a route update callback set
+     * by the application survives a restart.
+     */
+    void BindNetworkServiceCallbacks();
+
+    /**
      * @brief Connect the radio and superframe callbacks to the protocol queues
+     *
+     * Called by Start(); the callbacks stay connected while the protocol is
+     * started, including while it is paused or the MCU sleeps.
      *
      * @return Result Success, or the hardware error if the radio callback
      *         could not be set
@@ -600,6 +612,8 @@ class LoRaMeshProtocol : public Protocol {
 
     /**
      * @brief Disconnect the radio and superframe callbacks
+     *
+     * Called by Stop(), a failed Start() and the destructor.
      */
     void UnwireCallbacks();
 

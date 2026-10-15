@@ -42,6 +42,9 @@ LoRaMeshProtocol::~LoRaMeshProtocol() {
 
     // Clear callbacks to prevent use-after-free
     UnwireCallbacks();
+    if (network_service_) {
+        network_service_->SetStateChangeCallback(nullptr);
+    }
 
     // Clean up radio event queue
     if (radio_event_queue_) {
@@ -144,23 +147,7 @@ Result LoRaMeshProtocol::Init(
                       "Failed to create slot transition queue");
     }
 
-    hw_result = WireCallbacks();
-    if (!hw_result) {
-        return hw_result;
-    }
-
-    // Network service route update callback
-    network_service_->SetRouteUpdateCallback(
-        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
-            LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
-                      updated ? "updated" : "removed", dest, next_hop, hops);
-        });
-
-    // State-change callback: wake up the protocol task immediately
-    network_service_->SetStateChangeCallback(
-        [this](lora_mesh::INetworkService::ProtocolState new_state) {
-            OnStateChange(new_state);
-        });
+    BindNetworkServiceCallbacks();
 
     if (!task_gate_.IsValid()) {
         return Result(LoraMesherErrorCode::kMemoryError,
@@ -194,6 +181,20 @@ Result LoRaMeshProtocol::Init(
     LOG_INFO("LoRaMesh protocol initialized for node 0x%04X", node_address_);
 
     return Result::Success();
+}
+
+void LoRaMeshProtocol::BindNetworkServiceCallbacks() {
+    network_service_->SetRouteUpdateCallback(
+        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
+            LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
+                      updated ? "updated" : "removed", dest, next_hop, hops);
+        });
+
+    // Wake up the protocol task immediately on a state change
+    network_service_->SetStateChangeCallback(
+        [this](lora_mesh::INetworkService::ProtocolState new_state) {
+            OnStateChange(new_state);
+        });
 }
 
 Result LoRaMeshProtocol::WireCallbacks() {
@@ -928,12 +929,16 @@ uint32_t LoRaMeshProtocol::GetSlotDuration() const {
 
 void LoRaMeshProtocol::SetRouteUpdateCallback(
     lora_mesh::INetworkService::RouteUpdateCallback callback) {
-    network_service_->SetRouteUpdateCallback(callback);
+    if (network_service_) {
+        network_service_->SetRouteUpdateCallback(std::move(callback));
+    }
 }
 
 void LoRaMeshProtocol::SetDataReceivedCallback(
     lora_mesh::INetworkService::DataReceivedCallback callback) {
-    network_service_->SetDataReceivedCallback(callback);
+    if (network_service_) {
+        network_service_->SetDataReceivedCallback(std::move(callback));
+    }
 }
 
 void LoRaMeshProtocol::SetNodeCapabilities(uint8_t capabilities) {

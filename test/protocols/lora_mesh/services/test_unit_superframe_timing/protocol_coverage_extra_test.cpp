@@ -17,9 +17,11 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <vector>
 
 #include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
@@ -109,15 +111,51 @@ class ProtocolCoverageExtraTest : public ::testing::Test {
 };
 
 // ---------------------------------------------------------------------------
-// Init() with setActionReceive failure
+// Radio callback wiring is scoped to Start()/Stop()
 // ---------------------------------------------------------------------------
 
-TEST_F(ProtocolCoverageExtraTest, InitFailsWhenSetActionReceiveFails) {
+TEST_F(ProtocolCoverageExtraTest, StartFailsWhenSetActionReceiveFails) {
     auto hw = std::make_shared<ActionReceiveFailHW>();
     auto protocol = std::make_unique<protocols::LoRaMeshProtocol>();
 
-    Result result = protocol->Init(hw, 0x2001);
+    ASSERT_TRUE(protocol->Init(hw, 0x2001));
+    ASSERT_TRUE(protocol->Configure(LoRaMeshProtocolConfig(0x2001)));
+
+    Result result = protocol->Start();
     EXPECT_FALSE(result);
+    EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kHardwareError);
+}
+
+// ---------------------------------------------------------------------------
+// Application callbacks before Init() and across Stop()/Start()
+// ---------------------------------------------------------------------------
+
+TEST_F(ProtocolCoverageExtraTest, SetCallbacksBeforeInitIsSafe) {
+    auto protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+
+    protocol->SetRouteUpdateCallback(
+        [](bool, AddressType, AddressType, uint8_t) {});
+    protocol->SetDataReceivedCallback(
+        [](AddressType, const std::vector<uint8_t>&) {});
+}
+
+TEST_F(ProtocolCoverageExtraTest, RouteUpdateCallbackSurvivesRestart) {
+    auto protocol = CreateInitialized();
+    std::atomic<int> route_updates{0};
+    protocol->SetRouteUpdateCallback(
+        [&route_updates](bool, AddressType, AddressType, uint8_t) {
+            route_updates.fetch_add(1);
+        });
+
+    ASSERT_TRUE(protocol->Start());
+    ASSERT_TRUE(protocol->Stop());
+    ASSERT_TRUE(protocol->Start());
+    ASSERT_TRUE(protocol->Stop());
+
+    ASSERT_TRUE(protocol->GetNetworkServiceForTest()->UpdateRouteEntry(
+        0x2000, 0x3000, /*hop_count=*/0, /*link_quality=*/200,
+        /*allocated_slots=*/1, /*capabilities=*/0));
+    EXPECT_GT(route_updates.load(), 0);
 }
 
 // ---------------------------------------------------------------------------
