@@ -20,7 +20,7 @@
 
 A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-vector routing protocol. Uses [RadioLib](https://github.com/jgromes/RadioLib) for radio communication and FreeRTOS for task scheduling.
 
-> **Coming from 0.0.x?** The 1.0.0 release is a full rewrite — see [MIGRATION.md](MIGRATION.md) for the porting guide. Per-version changes live in [CHANGELOG.md](CHANGELOG.md); the wire protocol is documented in [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md).
+> **Upgrading?** 2.0.0 changes the wire format (flash every node together) and 1.0.0 was a full rewrite of 0.0.x — see [MIGRATION.md](MIGRATION.md) for both upgrade paths. Per-version changes live in [CHANGELOG.md](CHANGELOG.md); the wire protocol is documented in [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md).
 
 ---
 
@@ -32,7 +32,9 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Initialization](#initialization)
   - [Receiving Packets](#receiving-packets)
   - [Sending Packets](#sending-packets)
+  - [Reliable and Group Messaging](#reliable-and-group-messaging)
   - [Timing-Aware Sending (TDMA)](#timing-aware-sending-tdma)
+  - [Restarts: OTA Updates and Deep Sleep](#restarts-ota-updates-and-deep-sleep)
   - [Diagnostics & Advanced](#diagnostics--advanced)
   - [Deployment Tips](#deployment-tips)
 - [Configuration](#configuration)
@@ -44,6 +46,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Coverage](#profiling--code-coverage-llvm)
   - [XRay Profiling](#function-profiling-llvm-xray)
   - [Static Analysis](#static-analysis-clang-tidy)
+  - [Network Stress Test](#network-stress-test)
 - [Contributing](#contributing)
 - [Protocol Design](#protocol-design)
 - [Citation](#citation)
@@ -56,7 +59,8 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **Mesh routing** — distance-vector protocol with automatic route discovery and maintenance
 - **TDMA superframe** — deterministic slot scheduling; nodes sleep when not transmitting
 - **Auto join / network formation** — nodes discover nearby networks or create a new one
-- **Network manager election** — distributed NM election with configurable priority
+- **Network manager election** — distributed NM election with configurable priority (see the [`AUTO` role warning](#use-one-network_manager-and-node_only-everywhere-else) before relying on it)
+- **Warm restart** — keep the network id, member slots and sequence numbers across OTA reboots and deep sleep (`SaveState()`)
 - **Runtime role changes** — promote a node to `NETWORK_MANAGER` or demote it back to `NODE_ONLY` at runtime via `SetNodeRole()`
 - **Capability-aware discovery** — find the closest gateway or any node matching a capability bitmap (`GetClosestGateway`, `GetClosestNodeByCapability`)
 - **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
@@ -69,6 +73,8 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 
 ## Quick Start
 
+### PlatformIO (recommended)
+
 1. Install [Visual Studio Code](https://code.visualstudio.com/) and the [PlatformIO extension](https://platformio.org/install/ide?install=vscode).
 2. Clone this repository.
 3. Open PlatformIO Home → **Projects** → **Add Existing** → pick the example below that matches your use case.
@@ -80,6 +86,23 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 | `examples/simple_example` | First time with the library — minimal Builder + callback flow |
 | `examples/queued_receive_example` | RX should be handled in a separate FreeRTOS task instead of inside the callback |
 | `examples/battery_optimized_example` | Battery-powered nodes that sleep between TDMA slots |
+| `examples/reliable_example` | Messages must be acknowledged — `SendReliable()` with delivery outcomes |
+| `examples/group_example` | One message to many nodes — `JoinGroup()` / `SendGroup()` with member acknowledgements |
+
+### Arduino IDE
+
+LoRaMesher is an **ESP32-only** library and requires a **C++20** toolchain.
+
+1. Install the **ESP32 Arduino core 3.x or newer** via Boards Manager. Core 3.x
+   compiles at C++20 by default; **core 2.x compiles at C++11 and will not
+   build this library** (the Arduino IDE has no per-library way to raise the C++
+   standard).
+2. Install the library: either download this repository as a ZIP and use
+   **Sketch → Include Library → Add .ZIP Library…**, or (once it is listed)
+   install **LoRaMesher** from **Tools → Manage Libraries…**.
+3. Install the **RadioLib** dependency from **Tools → Manage Libraries…**.
+4. Open **File → Examples → LoRaMesher → SimpleMesh**, select your ESP32 board,
+   and upload.
 
 ---
 
@@ -118,7 +141,7 @@ if (!r) {
 }
 ```
 
-`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` halts all tasks and releases resources — there is no `resume`, rebuild a new instance to restart.
+`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` parks the library's tasks, puts the radio to sleep and discards the network state, queued messages and pending reliable deliveries. Calling `Start()` again restarts the node, which then rediscovers and rejoins a network from scratch — unless `SaveState()` stored a snapshot before `Stop()`, which `Start()` restores (see [Restarts](#restarts-ota-updates-and-deep-sleep)). Both calls are idempotent.
 
 **Common board presets:**
 
@@ -151,6 +174,15 @@ mesher->SetDataCallback(OnDataReceived);
 
 For a ready-made pattern that pushes incoming payloads onto a queue and drains them from a dedicated FreeRTOS task, see `examples/queued_receive_example/`.
 
+To also get the destination (this node, a group or broadcast), the sender's sequence number and the hops travelled, register `SetDataCallbackEx()`. It reports the same messages as one `ReceivedData`; when both callbacks are set, both fire:
+
+```cpp
+mesher->SetDataCallbackEx([](const ReceivedData& message) {
+    // message.source, message.dest, message.seq, message.hops
+    // message.payload is valid only during the callback
+});
+```
+
 ---
 
 ### Sending Packets
@@ -168,6 +200,40 @@ if (!rb) { /* ... */ }
 ```
 
 Both `Send` and `SendBroadcast` are `[[nodiscard]]` — always check the returned `Result`. Common failure modes (node not yet synchronized, no TX slot allocated, unknown destination) come back as distinct error codes; use [`IsReadyToSend()`](#diagnostics--advanced) to probe before sending.
+
+---
+
+### Reliable and Group Messaging
+
+`SendReliable()` asks the destination to acknowledge the message and retransmits until it does or the retries run out. `SendGroup()` floods one message to every member of a group (`0x8000`–`0xFFFE`), optionally collecting the members' acknowledgements. Both return a `MessageId` (`id.source == 0` means the send was rejected), and `SetDeliveryCallback()` later reports what happened to it:
+
+```cpp
+mesher->SetDeliveryCallback([](const LoraMesher::DeliveryResult& result) {
+    // Delivered:         result.by acknowledged, result.rtt_ms round trip
+    //                    (once per member for an acknowledged group send)
+    // Failed:            no acknowledgement after all retries
+    // GroupWindowClosed: group window ended, result.ack_count members answered
+});
+
+LoraMesher::MessageId id = mesher->SendReliable(dst, payload, ReliableOptions{});
+
+mesher->JoinGroup(0x8001);
+GroupSendOptions group_options;
+group_options.request_acks = true;
+LoraMesher::MessageId gid = mesher->SendGroup(0x8001, payload, group_options);
+```
+
+The three callbacks report different things:
+
+| Callback | Reports |
+|---|---|
+| `SetDataCallback(source, data)` | Messages received by this node |
+| `SetDataCallbackEx(const ReceivedData&)` | The same messages, with destination, sequence number and hops |
+| `SetDeliveryCallback(const DeliveryResult&)` | What happened to this node's `SendReliable()` / acknowledged `SendGroup()` |
+
+**Traffic budget.** Each node sends at most `GetDataSlotsPerSuperframe()` packets per superframe, and those slots also carry the messages it forwards and the ACKs it returns. A reliable message over `h` hops costs about `2h` transmissions; a group message costs about one transmission per node, plus the members' ACKs. Signs of overload are a `MessageId` with `source == 0`, `kQueueFull`, and `Failed` outcomes. Do not send at a fixed rate: send the next message after the previous outcome arrives and `GetTxQueueSize()` is 0, as the examples do.
+
+See `examples/reliable_example` and `examples/group_example`.
 
 ---
 
@@ -204,6 +270,101 @@ Both functions return `0` when the node has not yet joined a network — pair th
 
 ---
 
+### Restarts: OTA Updates and Deep Sleep
+
+A reset normally makes a node start from scratch: a rebooted network manager forms a new network,
+and every node restarts its message sequence numbers, so neighbours drop its first messages as
+duplicates. With a state store the node saves a small snapshot (at most a few hundred bytes) right
+before the reset and resumes in the same network afterwards:
+
+```cpp
+#include "loramesher.hpp"
+
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    // RtcStateStore survives deep sleep and esp_restart(); NvsStateStore
+    // (flash) also survives a firmware update and power loss
+    .withStateStore(std::make_shared<storage::NvsStateStore>())
+    .Build();
+mesher->Start();  // restores and erases the snapshot, if any
+
+// Before an OTA reboot or deep sleep:
+mesher->SaveState();  // before Stop(), which clears the state
+esp_restart();        // or esp_deep_sleep_start()
+```
+
+| Store | Survives | Notes |
+|---|---|---|
+| `RtcStateStore` | deep sleep, `esp_restart()` | No flash wear; a new firmware image may move it, so use NVS for OTA |
+| `NvsStateStore` | OTA update, any reset, power loss | One flash write per save; save before planned resets only |
+| `MemoryStateStore` | protocol restart in the same process | Native builds and tests |
+
+What a restart restores:
+
+- **Network manager**: listens 1.5 superframes for its network (and joins a successor if one was
+  elected meanwhile), then resumes the network under the same id. Members keep their control
+  slots; slots of members that never come back are released after `node_timeout_ms`.
+- **Every node**: continues its message sequence numbers, so nothing is dropped as a duplicate.
+- **Members**: rejoin automatically; after a reset of the whole network they wait longer before
+  forming a network of their own.
+
+Members wait at least two superframes after losing the manager's beacons before electing a
+successor, so a short reboot of the manager does not hand its role to another node. Routes,
+timing and slot tables are learned again after every restart. See `PROTOCOL_SPEC.md` §6.5.
+
+#### Deep sleep without rejoining
+
+Members can deep-sleep through the long SLEEP run of each superframe and resume their place in the
+mesh when they wake, without discovery or joining. The node saves its routes, link statistics,
+slot table and message sequences (a few hundred bytes) in RTC memory before every sleep, and wakes
+early enough to boot before its next active slot:
+
+```cpp
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    .withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep()  // or withDeepSleep(policy) to tune it
+    .Build();
+mesher->Start();  // after a deep sleep: resumes the membership
+```
+
+| `power::DeepSleepPolicy` field | Default | Meaning |
+|---|---|---|
+| `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
+| `boot_time_ms` | 1200 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms, 900 ms at DEBUG) |
+| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
+| `calibrated_drift_ppm` | 3000 | Worst-case error once the node has calibrated its sleep clock |
+
+- Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
+  awake or light-sleeps.
+- The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
+  light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
+  callback.
+- Deep sleep needs `RtcStateStore`: it is written before every sleep, so with `NvsStateStore`
+  (flash) the node logs a warning and only light-sleeps.
+- The node deep-sleeps through the SLEEP run that leads to its next beacon (usually the long run
+  before the discovery band at the end of the superframe), so it is awake for the discovery band.
+  After waking it listens, without transmitting, until a beacon confirms its schedule;
+  `IsReadyToSend()` fails meanwhile, so check it before queueing messages.
+- A message queued after the node's data slots of a superframe keeps it from deep-sleeping
+  (it light-sleeps until the message is sent). Send right after the node becomes ready, as
+  `examples/battery_optimized_example` does; `IsReadyToSend()` returns `kQueueFull` once the queue
+  holds what the node's data slots carry in a superframe.
+- Light and deep sleep run on the RTC clock, at different rates: the node learns the error of each
+  from the beacons and corrects both kinds of sleep.
+- Nodes stay awake (the radio still sleeps) until they have joined and heard three beacons in a
+  row, while they relay a join, and, for the manager, until it answers a join.
+- Set `boot_time_ms` to cover everything from the wake-up to `Start()`, your application's set-up
+  included; a node that starts late misses its first slots, and the messages sent to it in them.
+  One that wakes more than a superframe late rejoins through a warm restart.
+- Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
+  already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
+  `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).
+
 ### Diagnostics & Advanced
 
 The methods below are public on `LoraMesher` and useful once the basic flow is working.
@@ -232,7 +393,9 @@ NetworkStatus status = mesher->GetNetworkStatus();
 
 ```cpp
 if (Result r = mesher->IsReadyToSend(); !r) {
-    // Not synchronized, no TX slot allocated, or wrong protocol state.
+    // Not synchronized, no TX slot allocated, wrong protocol state,
+    // waiting for a beacon after a deep-sleep resume, or (kQueueFull) the
+    // queue already holds what the node's data slots carry in a superframe.
 }
 if (Result r = mesher->IsReadyToSend(dst); !r) {
     // Same checks plus self-send rejection and route lookup.
@@ -250,8 +413,10 @@ NodeRole current = mesher->GetNodeRole();
 
 Transitions:
 - `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` before joining: node creates a network immediately.
-- `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` while joined: broadcasts NM_CLAIM; incumbent NM yields.
+- `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` while joined: broadcasts NM_CLAIM; an incumbent NM with a worse election priority surrenders and its members re-elect the claimant (same-network election).
 - `NETWORK_MANAGER` → `NODE_ONLY`/`AUTO` while NM: surrenders and triggers a re-election (~5 superframes of disruption).
+
+Avoid switching nodes to `AUTO` at runtime; see the warning in [Deployment Tips](#use-one-network_manager-and-node_only-everywhere-else).
 
 **Capability-based discovery**
 
@@ -273,13 +438,16 @@ size_t pending_rx = mesher->GetRxQueueSize();
 
 ### Deployment Tips
 
-#### Pre-designate a Network Manager for faster network formation
+#### Use one `NETWORK_MANAGER` and `NODE_ONLY` everywhere else
 
-By default every node boots in `NodeRole::AUTO` and listens for ~30 s (`DEFAULT_DISCOVERY_TIMEOUT_MS`, with up to ±5 s of jitter) before deciding no network is reachable and creating its own. Pre-designating exactly one node as `NETWORK_MANAGER` skips that wait — the NM creates the network at boot and emits `SYNC_BEACON` immediately, so peers join in seconds instead of minutes.
+> **Warning — do not deploy `NodeRole::AUTO` until network merge is implemented.** With `AUTO`, losing the Network Manager starts an election, and an election (or two nodes that both time out discovery) can split the mesh into separate networks. Cross-network merge is disabled (`kNetworkMergeEnabled = false`, see `PROTOCOL_SPEC.md` §10.6.9 and `docs/todo_network_merge.md`), so those networks never merge again. `AUTO` stays the default only for compatibility, and `Start()` logs a warning when it is in effect.
+
+Configure exactly one node as `NETWORK_MANAGER` and every other node as `NODE_ONLY`. The NM creates the network at boot and emits `SYNC_BEACON` immediately, so peers join in seconds instead of waiting ~30 s (`DEFAULT_DISCOVERY_TIMEOUT_MS`, with up to ±5 s of jitter) of discovery. A `NODE_ONLY` node never creates a network: if the NM is lost, it keeps rediscovering until the NM is back.
 
 ```cpp
 LoRaMeshProtocolConfig protocol;
-protocol.setNodeRole(NodeRole::NETWORK_MANAGER);   // one node per network
+protocol.setNodeRole(is_manager ? NodeRole::NETWORK_MANAGER   // one node
+                                : NodeRole::NODE_ONLY);       // all others
 
 auto mesher = LoraMesher::Builder()
     .withPinConfig(pins)
@@ -288,14 +456,14 @@ auto mesher = LoraMesher::Builder()
     .Build();
 ```
 
-All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — when they meet, the merge protocol forces one to step down, costing ~5 superframes of disruption (the same trade-off is documented for runtime `SetNodeRole()` demotions).
+Avoid configuring two NMs in the same area — their networks stay separate for the same reason.
 
 **Approximate time from boot to a fully joined node** (at SF7 / BW 125 kHz with the default 10-slot, 10 s discovery-phase superframes):
 
 | Setup | NM up | Peer joined |
 |---|---|---|
-| All nodes `AUTO` (default) | ~30 s (discovery timeout + jitter) | NM time + 1–3 superframes ≈ **40–60 s** |
-| One node `NETWORK_MANAGER`, peers `AUTO` / `NODE_ONLY` | **0 s** (network exists at boot) | 1–3 superframes after first beacon ≈ **10–30 s** |
+| One node `NETWORK_MANAGER`, peers `NODE_ONLY` (recommended) | **0 s** (network exists at boot) | 1–3 superframes after first beacon ≈ **10–30 s** |
+| All nodes `AUTO` (default, not recommended) | ~30 s (discovery timeout + jitter) | NM time + 1–3 superframes ≈ **40–60 s** |
 
 Once the network is operational, the NM scales slot duration to actual time-on-air — expect ~200 ms slots at SF7/BW125 and ~550 ms slots at SF10/BW125 (the formula is `ceil_50(ToA(max_packet_size) + guard + 50 ms margin)`). See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) §5 and §6 for the full timing rules.
 
@@ -369,6 +537,29 @@ pio test -e test_native --list-tests
 ```
 
 > Run as a background task — integration tests take several minutes.
+
+#### Faster local runs (optional)
+
+The commands above work unchanged. Most of the time goes into building, not running: each of
+the 27 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
+recompiles all of `src/` (~100 s per suite, while most suites run in seconds). Optional
+settings that cut this down (measured on WSL2, repo on `/mnt/d`):
+
+| Setting | Effect |
+|---|---|
+| `ccache` on `PATH` (`sudo apt install ccache`) | Used automatically by `scripts/extra_script.py`; ~99% of the recompiles become cache hits: ~100 s → ~47 s per suite |
+| `export PLATFORMIO_BUILD_DIR=$HOME/.cache/loramesher-pio` | Build output on the Linux filesystem, where objects are reused between suites: 39–48 s per suite with ccache |
+| `export LORAMESHER_TEST_LOG_DIR=/tmp/loramesher-test-logs` | Per-test log files (`<Suite>_<Test>.log`, default `./test_logs`) go to a fast location |
+
+**Windows:** if the repo lives on a Windows drive, running PlatformIO natively on Windows (with
+an MSYS2 `clang64` toolchain on `PATH`) avoids the WSL file-system penalty. `test_native`
+(ASAN/UBSAN) and `test_native_profile` both build and pass there; `test_integration` took 28 s
+for build + run versus ~121 s from WSL on `/mnt/d`. When switching between WSL and Windows, give
+each its own `PLATFORMIO_BUILD_DIR` and `PLATFORMIO_LIBDEPS_DIR`. `test_native_tsan` and
+`test_native_xray` are Linux-only; CI runs on Linux.
+
+Failing integration tests print `Reproduce with LORAMESHER_TEST_SEED=N`; set that variable to
+replay the same deterministic run.
 
 ### CMake
 
@@ -502,6 +693,45 @@ clang-tidy -p build/ src/protocols/lora_mesh/services/network_service.cpp  # sin
 ```
 
 Checks enabled: `clang-analyzer-*`, `bugprone-*`, `cppcoreguidelines-owning-memory`, `concurrency-mt-unsafe`, and others (see `.clang-tidy`).
+
+---
+
+### Network Stress Test
+
+`test/protocols/lora_mesh/services/test_network_stress/` runs a simulated multi-hop mesh under mixed traffic and reports delivery, latency, queue depth and TDMA schedule alignment.
+
+**Topology:** clusters of 5 nodes (one head + 4 leaves in a star) whose heads form a backbone line; the Network Manager is the centre head. **Traffic:** non-reliable leaf→head telemetry, reliable unicast across the backbone, and reliable group sends from the Network Manager.
+
+| Cell | Nodes | Worst-case hops | Asserts | Approx. run time |
+|------|-------|-----------------|---------|------------------|
+| `10n_uniform` | 10 | 3 | Pass/fail on 1-hop delivery, relay queue, TDMA alignment | ~1 min |
+| `25n_uniform` | 25 | 6 | TDMA alignment only (other metrics reported); **opt-in** | ~5–10 min |
+
+Build the suite once, then run a single cell directly (the full suite runs every cell):
+
+```bash
+# Build only (library + suite)
+pio test -e test_native -f "protocols/lora_mesh/services/test_network_stress" --without-testing
+
+# Run one cell, writing the (multi-MB, verbose) output to a file
+.pio/build/test_native/program --gtest_filter='*10n_uniform' > stress.log 2>&1
+
+# The 25-node cell is skipped unless explicitly enabled (it is not run in CI)
+LORAMESHER_STRESS_FULL=1 .pio/build/test_native/program --gtest_filter='*25n_uniform' > stress25.log 2>&1
+
+# Extract the results
+grep -aE "STRESS SCORECARD|^(reliable|non-reliable|group|relay|collision|TDMA|superframe|VERDICT)|##METRICS##|##MISALIGNED##|  OK |FAILED" stress.log
+```
+
+**Reading the output:**
+
+- **Scorecard:** delivery ratio per traffic class, reliable RTT and one-way latency, relay TX-queue depth (max / mean of the final quarter; queue capacity is 10), link collision rate, TDMA misalignments (a count, 0 when every neighbour listens in every slot a node transmits), superframe length and convergence time, and a `HEALTHY` / `COLLAPSED` verdict.
+- `##METRICS## {...}`: the same values as one JSON line, for scripting.
+- `##DATA## N<i> | ...`: each node's data band after settling — `T` = own TX slot, `R<j>` = listening to node `j`.
+- `##ALLOC## N<i> ...`: per-node TX / RX / sleep slot counts and frame length.
+- `##MISALIGNED## slot <s>: ...`: a slot where a node transmits but a neighbour is not listening to it.
+
+**Tips:** always redirect to a file and search it with `grep -a` (the log contains colour codes); do not edit sources while a build is running; allow a long timeout for the 25-node cell. The fixture writes per-test logs to `test_logs/` in the current directory — on WSL, run the binary from a Linux directory (not `/mnt/<drive>`), since slow log writes there make the tests stall.
 
 ---
 

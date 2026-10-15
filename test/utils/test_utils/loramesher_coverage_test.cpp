@@ -257,6 +257,44 @@ TEST_F(LoraMesherCoverageTest, GetDataSlotsPerSuperframe) {
 }
 
 // ---------------------------------------------------------------------------
+// GetSuperframeDuration()
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief GetSuperframeDuration() is a whole number of slots once running and
+ *        matches the protocol value.
+ */
+TEST_F(LoraMesherCoverageTest, GetSuperframeDurationIsWholeSlots) {
+    auto mesher = CreateMeshMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    auto protocol = mesher->GetLoRaMeshProtocol();
+    ASSERT_NE(protocol, nullptr);
+
+    uint32_t slot = protocol->GetSlotDuration();
+    uint32_t superframe = mesher->GetSuperframeDuration();
+    ASSERT_GT(slot, 0u);
+    EXPECT_GT(superframe, slot);
+    EXPECT_EQ(superframe % slot, 0u);
+    EXPECT_EQ(protocol->GetSuperframeDuration(), superframe);
+
+    StopAndReset(mesher);
+}
+
+/**
+ * @brief GetSuperframeDuration() returns 0 when the active protocol is not
+ *        LoRaMesh.
+ */
+TEST_F(LoraMesherCoverageTest, GetSuperframeDurationNoMeshProtocol) {
+    auto mesher = CreatePingPongMesher();
+    ASSERT_NE(mesher, nullptr);
+
+    EXPECT_EQ(mesher->GetSuperframeDuration(), 0u);
+
+    StopAndReset(mesher);
+}
+
+// ---------------------------------------------------------------------------
 // Send() fallback for PingPong protocol — loramesher.cpp lines 177-186
 // ---------------------------------------------------------------------------
 
@@ -1251,31 +1289,20 @@ TEST_F(HardwareManagerCoverageTest, GetTimeOnAirAfterInit) {
 class JoinRequestHeaderCoverageTest : public ::testing::Test {};
 
 /**
- * @brief SetJoinRequestInfo() success path (battery 0-100).
+ * @brief SetJoinRequestInfo() success path.
  */
 TEST_F(JoinRequestHeaderCoverageTest, SetJoinRequestInfoSuccess) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 50, 2);
-    Result r = hdr.SetJoinRequestInfo(80, 3);
+    JoinRequestHeader hdr(0x1234, 0x5678, 2);
+    Result r = hdr.SetJoinRequestInfo(3);
     EXPECT_TRUE(r.IsSuccess());
-    EXPECT_EQ(hdr.GetBatteryLevel(), 80u);
     EXPECT_EQ(hdr.GetRequestedSlots(), 3u);
-}
-
-/**
- * @brief SetJoinRequestInfo() failure path (battery > 100).
- */
-TEST_F(JoinRequestHeaderCoverageTest, SetJoinRequestInfoInvalidBattery) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 50, 2);
-    Result r = hdr.SetJoinRequestInfo(101, 3);
-    EXPECT_FALSE(r.IsSuccess());
-    EXPECT_EQ(r.getErrorCode(), LoraMesherErrorCode::kInvalidParameter);
 }
 
 /**
  * @brief SetRequestedSlots() success path.
  */
 TEST_F(JoinRequestHeaderCoverageTest, SetRequestedSlots) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 50, 2);
+    JoinRequestHeader hdr(0x1234, 0x5678, 2);
     Result r = hdr.SetRequestedSlots(5);
     EXPECT_TRUE(r.IsSuccess());
     EXPECT_EQ(hdr.GetRequestedSlots(), 5u);
@@ -1285,7 +1312,7 @@ TEST_F(JoinRequestHeaderCoverageTest, SetRequestedSlots) {
  * @brief SetSponsorAddress() success path.
  */
 TEST_F(JoinRequestHeaderCoverageTest, SetSponsorAddress) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 50, 2);
+    JoinRequestHeader hdr(0x1234, 0x5678, 2);
     Result r = hdr.SetSponsorAddress(0xBEEF);
     EXPECT_TRUE(r.IsSuccess());
     EXPECT_EQ(hdr.GetSponsorAddress(), 0xBEEFu);
@@ -1295,7 +1322,7 @@ TEST_F(JoinRequestHeaderCoverageTest, SetSponsorAddress) {
  * @brief GetNextHop() and GetHopCount() accessors.
  */
 TEST_F(JoinRequestHeaderCoverageTest, GetNextHopAndHopCount) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 50, 2, /*next_hop=*/0xCAFE,
+    JoinRequestHeader hdr(0x1234, 0x5678, 2, /*next_hop=*/0xCAFE,
                           /*additional=*/0, /*sponsor=*/0, /*hop=*/3);
     EXPECT_EQ(hdr.GetNextHop(), 0xCAFEu);
     EXPECT_EQ(hdr.GetHopCount(), 3u);
@@ -1305,7 +1332,7 @@ TEST_F(JoinRequestHeaderCoverageTest, GetNextHopAndHopCount) {
  * @brief IncrementHopCount() increments the hop count.
  */
 TEST_F(JoinRequestHeaderCoverageTest, IncrementHopCount) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 50, 2, 0, 0, 0, 2);
+    JoinRequestHeader hdr(0x1234, 0x5678, 2, 0, 0, 0, 2);
     hdr.IncrementHopCount();
     EXPECT_EQ(hdr.GetHopCount(), 3u);
 }
@@ -1314,7 +1341,7 @@ TEST_F(JoinRequestHeaderCoverageTest, IncrementHopCount) {
  * @brief JoinRequestHeader::Deserialize() success path.
  */
 TEST_F(JoinRequestHeaderCoverageTest, DeserializeSuccess) {
-    JoinRequestHeader hdr(0x1234, 0x5678, 75, 3, 0xCAFE, 0, 0xBEEF, 1);
+    JoinRequestHeader hdr(0x1234, 0x5678, 3, 0xCAFE, 0, 0xBEEF, 1);
 
     std::vector<uint8_t> buf(hdr.GetSize(), 0);
     utils::ByteSerializer ser(buf);
@@ -1324,7 +1351,6 @@ TEST_F(JoinRequestHeaderCoverageTest, DeserializeSuccess) {
         std::span<const uint8_t>(buf.data(), buf.size()));
     auto opt = JoinRequestHeader::Deserialize(deser);
     ASSERT_TRUE(opt.has_value());
-    EXPECT_EQ(opt->GetBatteryLevel(), 75u);
     EXPECT_EQ(opt->GetRequestedSlots(), 3u);
     EXPECT_EQ(opt->GetNextHop(), 0xCAFEu);
     EXPECT_EQ(opt->GetSponsorAddress(), 0xBEEFu);

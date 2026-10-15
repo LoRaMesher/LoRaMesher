@@ -140,14 +140,13 @@ void OnDataReceived(AddressType source, const std::vector<uint8_t>& data) {
 
 ### Adjust Timing
 
-```cpp
-void loop() {
-    // ... status display ...
+The loop sends only when the TX queue is empty and waits for the node's next data slot; `kLoopIntervalMs` sets the time between iterations:
 
-    // Change delay between messages (in milliseconds)
-    delay(5000);  // 5 seconds instead of 10
-}
+```cpp
+constexpr uint32_t kLoopIntervalMs = 10000;  // Time between loop() iterations
 ```
+
+Shortening it only helps while the network has spare capacity. A node's data slots (`GetDataSlotsPerSuperframe()` per superframe) also carry the messages it forwards for other nodes, so a rate that works for two neighbours can overload a larger or multi-hop network. See the Traffic Budget section in `examples/reliable_example`.
 
 ## Troubleshooting
 

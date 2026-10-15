@@ -25,19 +25,16 @@ class NMClaimMessage : public IConvertibleToBaseMessage {
      *
      * @param src Source (claiming) node address
      * @param priority Election priority (lower = higher priority)
-     * @param battery_level Battery level (0-100%)
      * @param network_node_count Known network size
      * @param network_id Stable network identifier
      * @return std::optional<NMClaimMessage>
      */
     static std::optional<NMClaimMessage> Create(AddressType src,
                                                 uint8_t priority,
-                                                uint8_t battery_level,
                                                 uint8_t network_node_count,
                                                 uint16_t network_id) {
         NMClaimHeader header(kBroadcastAddress,  // broadcast
-                             src, priority, battery_level, network_node_count,
-                             network_id);
+                             src, priority, network_node_count, network_id);
         return NMClaimMessage(header);
     }
 
@@ -62,16 +59,14 @@ class NMClaimMessage : public IConvertibleToBaseMessage {
         }
         utils::ByteDeserializer deserializer(payload);
         auto priority = deserializer.ReadUint8();
-        auto battery_level = deserializer.ReadUint8();
         auto network_node_count = deserializer.ReadUint8();
         auto network_id = deserializer.ReadUint16();
-        if (!priority || !battery_level || !network_node_count || !network_id) {
+        if (!priority || !network_node_count || !network_id) {
             LOG_ERROR("Failed to read NM claim payload fields");
             return std::nullopt;
         }
         NMClaimHeader header(message.GetDestination(), message.GetSource(),
-                             *priority, *battery_level, *network_node_count,
-                             *network_id);
+                             *priority, *network_node_count, *network_id);
         return NMClaimMessage(header);
     }
 
@@ -96,8 +91,6 @@ class NMClaimMessage : public IConvertibleToBaseMessage {
 
     uint8_t GetPriority() const { return header_.GetPriority(); }
 
-    uint8_t GetBatteryLevel() const { return header_.GetBatteryLevel(); }
-
     uint8_t GetNetworkNodeCount() const {
         return header_.GetNetworkNodeCount();
     }
@@ -115,7 +108,6 @@ class NMClaimMessage : public IConvertibleToBaseMessage {
         std::array<uint8_t, BaseMessage::kMaxPayloadSize> buf{};
         utils::ByteSerializer serializer(buf.data(), payload_size);
         serializer.WriteUint8(header_.GetPriority());
-        serializer.WriteUint8(header_.GetBatteryLevel());
         serializer.WriteUint8(header_.GetNetworkNodeCount());
         serializer.WriteUint16(header_.GetNetworkId());
         return BaseMessage(

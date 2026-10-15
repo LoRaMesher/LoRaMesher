@@ -49,6 +49,8 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * @param entries Vector of network node routes
      * @param source_capabilities Source node capabilities bitmap
      * @param source_allocated_data_slots Source node's allocated data slots
+     * @param source_control_slot_index Source node's own control slot index
+     *        (0xFF = unassigned)
      * @return std::optional<RoutingTableMessage> Valid message if creation succeeded,
      *         std::nullopt otherwise
      */
@@ -56,7 +58,8 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
         AddressType dest, AddressType src, AddressType network_manager_addr,
         uint8_t table_version, const std::vector<RoutingTableEntry>& entries,
         uint8_t source_capabilities = 0,
-        uint8_t source_allocated_data_slots = 0);
+        uint8_t source_allocated_data_slots = 0,
+        uint8_t source_control_slot_index = 0xFF);
 
     /**
      * @brief Creates a routing table message from serialized data
@@ -85,7 +88,7 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
     /**
      * @brief Maximum number of routing table entries that fit in one message
      *
-     * (255 - BaseHeader::Size(6) - RoutingTableFieldsSize(6)) / RoutingTableEntry::Size(10) = 24
+     * (255 - BaseHeader::Size(6) - RoutingTableFieldsSize(7)) / RoutingTableEntry::Size(10) = 24
      */
     // TODO: Make it programatically
     static constexpr uint8_t kMaxRoutingEntries = 24;
@@ -131,6 +134,13 @@ class RoutingTableMessage : public IConvertibleToBaseMessage {
      * @return uint8_t Number of allocated data slots for the source node
      */
     uint8_t GetSourceAllocatedDataSlots() const;
+
+    /**
+     * @brief Gets the source node's own control slot index
+     *
+     * @return uint8_t Control slot index of the source (0xFF = unassigned)
+     */
+    uint8_t GetSourceControlSlotIndex() const;
 
     /**
      * @brief Gets the total size of the payload message

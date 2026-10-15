@@ -25,13 +25,16 @@ class AddressGenerator {
             address_mask;  ///< Mask for address generation (default: full 16-bit)
         bool
             use_legacy_mac_formula;  ///< Use (mac[4]<<8)|mac[5] — original LoRaMesher formula
+        bool restrict_to_unicast_range;  ///< Fold generated addresses into the
+                                         ///< unicast range [0x0001, 0x7FFF]
 
         /// Default constructor with sensible defaults
         Config()
             : use_hardware_id(true),
               avoid_reserved_addresses(true),
               address_mask(0xFFFF),
-              use_legacy_mac_formula(true) {}
+              use_legacy_mac_formula(true),
+              restrict_to_unicast_range(true) {}
     };
 
     /**
@@ -61,9 +64,12 @@ class AddressGenerator {
      *
      * @param address Address to validate
      * @param avoid_reserved Whether to reject reserved addresses (0x0000, 0xFFFF)
+     * @param restrict_to_unicast Whether to reject group-range addresses
+     *                            (0x8000-0xFFFE)
      * @return bool True if address is valid for use
      */
-    static bool IsValidAddress(AddressType address, bool avoid_reserved = true);
+    static bool IsValidAddress(AddressType address, bool avoid_reserved = true,
+                               bool restrict_to_unicast = false);
 
     /**
      * @brief Get information about the last address generation
@@ -90,6 +96,16 @@ class AddressGenerator {
      * @return uint16_t FNV-1a hash value
      */
     static uint16_t CalculateFNV1a(const uint8_t* data, size_t length);
+
+    /**
+     * @brief Fold an address into the unicast range [0x0001, 0x7FFF]
+     *
+     * Clears the group-range high bit and remaps the reserved zero address.
+     *
+     * @param address Address to fold
+     * @return AddressType Address guaranteed to be in the unicast range
+     */
+    static AddressType FoldToUnicastRange(AddressType address);
 
     /// Last generation source description
     static const char* last_generation_source_;

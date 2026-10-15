@@ -41,12 +41,17 @@ LoRaMesher implements a distance-vector routing protocol for LoRa mesh networks 
 - Automatic progression: `DISCOVERY → JOINING → NORMAL_OPERATION`
 - State-specific message handling and timeouts
 - Optimized state checking performance
+- Warm restart: `SaveState()` keeps the network id, the manager's member control slots and the
+  sequence counter in an `IStateStore` (RTC memory, NVS flash or RAM) across OTA reboots and deep
+  sleep (`PROTOCOL_SPEC.md` Section 6.5, tests in `test_node_reboot`)
+- Member deep sleep: with a deep-sleep policy a member deep-sleeps through long SLEEP runs and
+  resumes its membership after the reboot without rejoining (`PROTOCOL_SPEC.md` Section 5.8.4,
+  tests in `test_node_reboot/deep_sleep_test.cpp`)
 
 **🔄 MINOR GAPS:**
-- No persistence of state across device restarts
 - Configurable timeout values are hardcoded in some transitions
 
-**Next Steps**: Add state persistence and make timeouts configurable via `ProtocolConfig`.
+**Next Steps**: Make timeouts configurable via `ProtocolConfig`.
 
 ### 1.2 Hardware Abstraction Layer 🟢 **Production Ready (98%)**
 
@@ -169,7 +174,7 @@ SYSTEM_MESSAGE   = 0x40,  // System management
 - RETRY_LATER handling with exponential backoff
 
 **🔄 MINOR GAPS:**
-- No advanced network merging when multiple networks detected
+- Cross-network merge disabled (`kNetworkMergeEnabled = false`, see `docs/todo_network_merge.md`): networks that split never merge again, so `NodeRole::AUTO` must not be deployed until it is implemented; use one `NETWORK_MANAGER` and `NODE_ONLY` on all other nodes. `Start()` warns when the role is `AUTO`
 - Limited handling of network partitions and healing
 - No secure authentication during join process (future enhancement)
 
@@ -375,7 +380,7 @@ auto slots = mesher->GetSlotTable();         // Slot allocation info
 
 **🔄 GAPS:**
 - Power management optimization needed
-- Deep sleep integration missing
+- Deep-sleep defaults (boot time, RTC drift) still need hardware measurements
 - Watchdog timer integration needed
 
 ### 7.2 Desktop Testing Support 🟢 **Production Ready (95%)**
@@ -417,7 +422,7 @@ auto slots = mesher->GetSlotTable();         // Slot allocation info
 1. **Security Implementation** - Basic encryption and authentication
 2. **Advanced Routing Algorithm** - Implement delivery success tracking and sophisticated link quality metrics
 3. **Hardware Testing** - Real device validation and optimization
-4. **Power Management** - ESP32 deep sleep integration
+4. **Power Management** - Calibrate the deep-sleep wake margin on hardware
 5. **Network Healing** - Partition detection and recovery
 
 ### Phase 3: Advanced Features (Future Enhancements)

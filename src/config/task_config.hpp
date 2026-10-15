@@ -9,38 +9,32 @@ namespace config {
 /**
  * @brief Configuration for FreeRTOS task stack sizes.
  *
- * Convention: every value here is in **bytes**. Call sites pass
- * `kFooStackSize / kStackBytesPerWord` to xTaskCreate, since this build's
- * FreeRTOS port (Arduino-ESP32 / IDF) interprets `usStackDepth` as words.
- * Watermark APIs return bytes — they convert in the wrapper.
+ * Every value here is in bytes. The RTOS layer converts to the port's
+ * stack-depth unit.
  */
 struct TaskConfig {
-    /// FreeRTOS stack-element width on this target. ESP32 = 4 bytes/word.
-    static constexpr size_t kStackBytesPerWord = 4;
-
     /// Minimum reasonable usable stack size (bytes).
     static constexpr size_t kMinStackWatermark = 512;
 
     /// Periodic-monitor warning threshold (bytes free).
     static constexpr size_t kStackWarnBytes = 1024;
 
-    /// Radio event task. Determined empirically: 28% margin (~3664 B free)
-    /// at the heaviest tested radio-IRQ load.
-    static constexpr size_t kRadioEventStackSize = 13120;
+    /// Radio event task. Measured peak ~2.7 KB on a 13-node ESP32 network.
+    static constexpr size_t kRadioEventStackSize = 4096;
 
-    /// Main protocol task. Observed peak ~7 KB during single-node boot;
-    /// sized at 16 KB to absorb deeper paths under multi-neighbor mesh
-    /// traffic (routing-table processing, message deserialization).
-    static constexpr size_t kProtocolMainStackSize = 16384;
+    /// Main protocol task. It also runs the application data callbacks.
+    /// Measured peak ~3.6 KB on a 13-node ESP32 network with data traffic.
+    static constexpr size_t kProtocolMainStackSize = 6144;
 
-    /// Superframe update task. Observed peak ~7.2 KB; 12 KB gives ~40% margin.
-    static constexpr size_t kSuperframeStackSize = 12288;
+    /// Superframe update task. Measured peak ~1.9 KB on a 13-node ESP32
+    /// network.
+    static constexpr size_t kSuperframeStackSize = 3072;
 
     /// PingPong message-processing task.
-    static constexpr size_t kPingPongProcessStackSize = 8192;
+    static constexpr size_t kPingPongProcessStackSize = 2048;
 
     /// PingPong timeout task.
-    static constexpr size_t kPingPongTimeoutStackSize = 8192;
+    static constexpr size_t kPingPongTimeoutStackSize = 2048;
 };
 
 /**

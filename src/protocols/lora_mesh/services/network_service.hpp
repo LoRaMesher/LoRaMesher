@@ -6,19 +6,28 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
+#include <optional>
 #include <vector>
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_routing_table.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
+#include "protocols/lora_mesh/services/message_cache.hpp"
+#include "protocols/lora_mesh/services/reliable_messaging.hpp"
+#include "protocols/lora_mesh/services/slot_scheduler.hpp"
+#include "protocols/lora_mesh/services/sync_beacon_service.hpp"
+#include "protocols/reliability/reliable_delivery.hpp"
+#include "types/application/application_types.hpp"
 #include "types/hardware/i_hardware_manager.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
 #include "types/messages/loramesher/broadcast_message.hpp"
 #include "types/messages/loramesher/data_message.hpp"
+#include "types/messages/loramesher/group_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_header.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
@@ -29,6 +38,8 @@
 #include "types/messages/loramesher/sync_beacon_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/network_snapshot.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
@@ -39,16 +50,38 @@ namespace lora_mesh {
 static const uint8_t kMaxNoReceivedSyncBeacons =
     5;  ///< Max number of superframes without receiving sync beacons
 
-static const uint8_t kExpandListeningThreshold =
-    2;  ///< Missed beacons before expanding all sync slots to RX
+/// Cross-network NM merge (Path A) is disabled: its detection depends on the
+/// TDMA phase of the two networks and can converge to the wrong NM. See
+/// docs/todo_network_merge.md.
+static constexpr bool kNetworkMergeEnabled = false;
 
-/// Minimum listen window before election fires (ms). 2 superframes @ 500ms ea.
+/// Discovery windows a surrendered node keeps listening for the election
+/// winner before assuming it is gone and re-forming its own network. Each
+/// window is one discovery timeout (~a few superframes); this must cover the
+/// worst-case TDMA phase-alignment + join handshake between two networks.
+static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
+
+/// Minimum listen window before an election fires (ms).
 static constexpr uint32_t kElectionListenWindowMs = 5000;
+
+/// Superframes a node one hop from the manager listens before an election
+/// fires, so a manager that resets and comes back is heard first.
+static constexpr uint32_t kElectionListenSuperframes = 2;
+
+/// Extra listen superframes per additional hop: every relay on the path has
+/// to rejoin the manager before it forwards the manager's beacons again.
+static constexpr uint32_t kElectionListenSuperframesPerHop = 4;
 
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
 
-static const uint8_t kMinSlots = 16;  ///< Minimum number of slots in superframe
+/// Routing-broadcast rotations a route may go unheard before it expires:
+/// one missed broadcast, plus a rotation of slack for the cleanup's timing
+static constexpr uint32_t kRouteAgingRotations = 3;
+
+/// Superframes after its last direct reception that a node keeps its data RX
+/// slots, whatever the route to it
+static constexpr uint32_t kDirectReceptionWindowSuperframes = 3;
 
 /**
  * @brief Unified implementation of network service
@@ -89,14 +122,12 @@ class NetworkService : public INetworkService {
      * Handles network manager updates and triggers superframe changes if needed.
      * 
      * @param node_address Node address to update
-     * @param battery_level Battery level (0-100%)
      * @param is_network_manager Whether this node is the network manager
      * @param allocated_data_slots Allocated data slots for this node
      * @param capabilities Node capabilities bitmap, if 0, get the previous value
      * @return bool True if node was added or significantly updated
      */
-    bool UpdateNetworkNode(AddressType node_address, uint8_t battery_level,
-                           bool is_network_manager,
+    bool UpdateNetworkNode(AddressType node_address, bool is_network_manager,
                            uint8_t allocated_data_slots,
                            uint8_t capabilities = 0) override;
 
@@ -122,18 +153,12 @@ class NetworkService : public INetworkService {
     bool IsNodeInNetwork(AddressType node_address) const override;
 
     /**
-     * @brief Get all network nodes with their routing information
-     * 
-     * Note: Caller must be careful with concurrent access as this returns
-     * a reference to the internal vector.
-     * 
-     * @return const std::vector<NetworkNodeRoute>& Reference to all nodes
+     * @brief Get a snapshot of all network nodes with their routing information
+     *
+     * @return std::vector<NetworkNodeRoute> Copy of all nodes and their routes
      */
-    const std::vector<types::protocols::lora_mesh::NetworkNodeRoute>&
-    GetNetworkNodes() const override;
-
-    std::vector<types::protocols::lora_mesh::NetworkNodeRoute>
-    GetNetworkNodesCopy() const override;
+    std::vector<types::protocols::lora_mesh::NetworkNodeRoute> GetNetworkNodes()
+        const override;
 
     /**
      * @brief Get the number of nodes in the network
@@ -289,6 +314,165 @@ class NetworkService : public INetworkService {
     Result StartDiscovery(uint32_t discovery_timeout_ms) override;
 
     /**
+     * @brief Capture the state this node keeps across a reset
+     *
+     * A network manager also records the control slot of every member it
+     * knows (and of members it still holds slots for after its own restart).
+     * Safe to call from the application thread while the protocol runs.
+     *
+     * @return Snapshot of the current state
+     */
+    storage::NetworkSnapshot CaptureSnapshot() const;
+
+    /**
+     * @brief Restore state captured by CaptureSnapshot() before a reset
+     *
+     * Call after Configure() and before StartDiscovery(). The sequence counter
+     * continues past every number the node may have used. A network manager
+     * snapshot (ignored for NODE_ONLY nodes) makes StartDiscovery() listen
+     * briefly for its network and then resume it with the same network id,
+     * holding the members' control slots until they are heard again. A member
+     * snapshot makes the first discovery wait for the network to come back
+     * before forming a new one.
+     *
+     * @param snapshot Snapshot taken by this node
+     * @return Success, or kInvalidParameter if it was taken by another node
+     */
+    Result ApplySnapshot(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Capture the state a member needs to resume after a deep sleep
+     *
+     * Fills every part of the snapshot but the timing, which belongs to the
+     * caller. Call from the protocol task.
+     *
+     * @return The snapshot, or std::nullopt when the node is not a member in
+     *         normal operation
+     */
+    std::optional<storage::ResumeSnapshot> CaptureResumeSnapshot() const;
+
+    /**
+     * @brief Resume the membership saved by CaptureResumeSnapshot()
+     *
+     * Restores the routes, the membership, the message sequences and the
+     * slot table, and enters normal operation. Call after Configure() instead
+     * of StartDiscovery(); the caller then resumes the superframe schedule.
+     *
+     * @param snapshot Snapshot taken by this node before it slept
+     * @return Success, or kInvalidParameter (nothing restored) if the
+     *         snapshot is invalid, was taken by another node or the node is
+     *         configured as network manager
+     */
+    Result ApplyResumeSnapshot(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief Reason the node cannot deep-sleep and resume now
+     *
+     * A node may only resume a state that needs nothing from the network
+     * while it sleeps: a member in normal operation, in sync, with no
+     * reliable message in flight.
+     *
+     * @return The reason, or nullptr if the node may deep-sleep
+     */
+    const char* GetDeepSleepBlocker() const;
+
+    /**
+     * @brief True if a sync beacon arrived in the current superframe
+     *
+     * A beacon up to half a superframe before the node's own superframe
+     * start counts, so a clock slightly ahead of the network's still counts
+     * the beacon it just synchronized to.
+     */
+    bool HeardSyncBeaconThisSuperframe() const;
+
+    /**
+     * @brief True if a sync beacon arrived within the last @p window_ms
+     */
+    bool ReceivedSyncBeaconWithin(uint32_t window_ms) const;
+
+    /**
+     * @brief Reason the MCU must stay awake now, if any
+     *
+     * Sleep makes the clock drift, so the node stays awake while it, or a
+     * join it relays, depends on precise timing: until it has joined and
+     * heard beacons in kSettleSuperframes consecutive superframes, while it
+     * relays a join request or response (until the joiner is reachable or
+     * the superframe after the relay ends), and, as manager, while it answers
+     * a join. The radio still sleeps in SLEEP slots.
+     *
+     * @return The reason, or nullptr if the MCU may sleep
+     */
+    const char* GetSleepHold() const;
+
+    /**
+     * @brief True from a resume until a sync beacon confirms the schedule
+     *
+     * The resumed schedule is only as accurate as the sleep clock, so the
+     * node listens instead of transmitting until then.
+     */
+    bool IsAwaitingResync() const {
+        return awaiting_resync_ && state_ == ProtocolState::NORMAL_OPERATION;
+    }
+
+    /**
+     * @brief Learned error of the sleep clock in @p kind sleep
+     */
+    power::SleepClockCalibration GetSleepClockCalibration(
+        power::SleepKind kind) const {
+        return kind == power::SleepKind::LIGHT ? light_sleep_clock_
+                                               : deep_sleep_clock_;
+    }
+
+    /**
+     * @brief Count a sleep that just ended towards the next calibration
+     *        sample
+     *
+     * At the next sync beacon, the drift the schedule gained since the
+     * previous beacon is the error the sleep clock made over all sleeps in
+     * between (the node runs on its crystal while awake). It calibrates the
+     * kind of sleep that took longer; the other kind counts as corrected by
+     * its own estimate. No sample is taken
+     * if a beacon was missed in between, or if the node was awake for more
+     * than half a superframe before the beacon.
+     *
+     * @param kind Kind of the sleep
+     * @param slept_ms Corrected length of the sleep
+     */
+    void RecordSleepForCalibration(power::SleepKind kind, uint32_t slept_ms);
+
+    /**
+     * @brief Identifier of the network this node belongs to (0 = none)
+     */
+    uint16_t GetNetworkId() const { return network_id_.load(); }
+
+    /**
+     * @brief This node's control slot index (0xFF = unassigned)
+     */
+    uint8_t GetMyControlSlotIndex() const { return my_control_slot_index_; }
+
+    /**
+     * @brief Consecutive superframes without a sync beacon (members only)
+     */
+    uint8_t GetMissedSyncBeaconCount() const {
+        return no_received_sync_beacon_count_;
+    }
+
+    /**
+     * @brief Number of control slots allocated in the slot table.
+     */
+    uint8_t GetAllocatedControlSlots() const {
+        return slot_scheduler_->GetAllocatedControlSlots();
+    }
+
+    /**
+     * @brief Milliseconds until a warm-restarted manager stops listening for
+     *        its network and resumes it
+     *
+     * @return 0 when no such wait is pending, otherwise at least 1
+     */
+    uint32_t GetManagerResumeDelayRemaining() const;
+
+    /**
      * @brief Start joining an existing network
      * * Initiates the joining process by sending a join request to the
      * network manager. If no manager is found, it will create a new network.
@@ -411,12 +595,39 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Create a routing table message for broadcast
-     * 
+     *
      * @param destination Destination address (default broadcast)
      * @return std::unique_ptr<BaseMessage> Message ready for transmission
      */
     std::unique_ptr<BaseMessage> CreateRoutingTableMessage(
         AddressType destination = 0xFFFF);
+
+    /**
+     * @brief Compute the maximum number of routing entries that fit in
+     *        a single broadcast frame given the current PHY cap.
+     *
+     * Used both by CreateRoutingTableMessage() to size the rotation slice
+     * and by RemoveInactiveNodes() to scale aging timeouts to the
+     * rotation period. Clamped to RoutingTableMessage::kMaxRoutingEntries,
+     * and to what fits the slot's airtime when the transmission starts up to
+     * kTxStartLatencyBudgetMs into the slot (at least one entry).
+     *
+     * @return size_t Slice capacity (0 if header overhead exceeds the cap)
+     */
+    size_t ComputeBroadcastSliceCapacity() const;
+
+    /**
+     * @brief Number of sliced broadcasts a peer needs to cycle its whole
+     *        active table once: ceil(table_size / slice_capacity).
+     *
+     * Used to scale both route aging (RemoveInactiveNodes) and the
+     * unidirectional-detection threshold to the rotation period, so a node
+     * whose entry only appears once per rotation is not mistaken for a missed
+     * or unidirectional link.
+     *
+     * @return size_t Rotation steps (at least 1)
+     */
+    size_t ComputeRotationSteps() const;
 
     /**
      * @brief Join an existing network
@@ -514,10 +725,24 @@ class NetworkService : public INetworkService {
      *
      * @param message Data message to process
      * @param reception_timestamp When the message was received
+     * @param reliable Whether this is a reliable (acknowledged) data message
      * @return Result Success or error
      */
     Result ProcessDataMessage(const BaseMessage& message,
-                              uint32_t reception_timestamp);
+                              uint32_t reception_timestamp,
+                              bool reliable = false);
+
+    /**
+     * @brief Process a received acknowledgement message
+     *
+     * Matches the acknowledgement against the reliable-delivery component when
+     * this node is the final destination, or forwards it toward the original
+     * sender otherwise.
+     *
+     * @param message Acknowledgement message to process
+     * @return Result Success or error
+     */
+    Result ProcessAckMessage(const BaseMessage& message);
 
     /**
      * @brief Forward a data message to the next hop
@@ -541,6 +766,66 @@ class NetworkService : public INetworkService {
      * @return Result Success or error (e.g., no route found)
      */
     Result SendData(AddressType destination, const std::vector<uint8_t>& data);
+
+    // Reliable delivery methods
+
+    /**
+     * @brief Send user data with acknowledged (reliable) delivery
+     *
+     * Transmits the data as a reliable DATA message and tracks it in the
+     * reliable-delivery component, retransmitting up to max_retries times until
+     * an acknowledgement arrives. The registered delivery callback fires with
+     * the terminal outcome (Delivered or Failed).
+     *
+     * @param destination Final destination address
+     * @param data User data payload
+     * @param max_retries Maximum retransmissions after the first attempt
+     * @param timeout_override_ms If non-zero, overrides the computed timeout
+     * @return reliability::MessageId Assigned id, or {0,0} if the send failed
+     */
+    reliability::MessageId SendReliable(AddressType destination,
+                                        const std::vector<uint8_t>& data,
+                                        uint8_t max_retries,
+                                        uint32_t timeout_override_ms = 0);
+
+    /**
+     * @brief Register the callback fired on reliable-delivery outcomes
+     *
+     * @param callback Callback invoked with each delivery outcome
+     */
+    void SetDeliveryCallback(reliability::DeliveryCallback callback);
+
+    /**
+     * @brief Inbound data callback carrying the message metadata
+     */
+    using DataReceivedExCallback = loramesher::DataReceivedExCallback;
+
+    /**
+     * @brief Register an inbound callback that also reports the destination,
+     *        sequence number and hop count
+     *
+     * SetDataReceivedCallback keeps working; when both are set, both fire.
+     *
+     * @param callback Callback invoked on application delivery
+     */
+    void SetDataReceivedExCallback(DataReceivedExCallback callback);
+
+    /**
+     * @brief Advance reliable-delivery retransmission timers
+     *
+     * Called from the protocol task's periodic tick; retransmits or fails out
+     * expired entries.
+     */
+    void ProcessReliableTimers();
+
+    /**
+     * @brief Number of reliable messages currently awaiting acknowledgement
+     *
+     * @return size_t Pending reliable-delivery entries
+     */
+    size_t GetReliablePendingCount() const {
+        return reliable_messaging_->GetReliablePendingCount();
+    }
 
     // Broadcast message methods
 
@@ -566,6 +851,66 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result SendBroadcast(std::span<const uint8_t> data);
+
+    // Group (multicast) methods
+
+    /**
+     * @brief Join a logical group (local membership only)
+     *
+     * @param group Group address (must satisfy IsGroupAddress)
+     * @return Result Success, or kInvalidArgument / kBufferFull
+     */
+    Result JoinGroup(AddressType group);
+
+    /**
+     * @brief Leave a logical group
+     *
+     * @param group Group address
+     * @return Result Success or kInvalidArgument
+     */
+    Result LeaveGroup(AddressType group);
+
+    /**
+     * @brief Whether this node is a member of the given group
+     *
+     * @param group Group address
+     * @return bool True if a member
+     */
+    bool IsMemberOfGroup(AddressType group) const;
+
+    /**
+     * @brief Get the set of groups this node belongs to
+     *
+     * @return std::vector<AddressType> Member groups
+     */
+    std::vector<AddressType> GetGroups() const;
+
+    /**
+     * @brief Send data to a group via membership-gated flooding
+     *
+     * @param group Destination group address
+     * @param data User data payload
+     * @return Result Success or error
+     */
+    Result SendGroup(AddressType group, std::span<const uint8_t> data);
+
+    /**
+     * @brief Send data to a group and collect per-recipient acknowledgements
+     *
+     * Floods the group like SendGroup, but requests an acknowledgement from each
+     * member. The delivery callback fires Delivered once per distinct responder,
+     * then GroupWindowClosed with the responder count when window_ms elapses.
+     *
+     * @param group Destination group address
+     * @param data User data payload
+     * @param max_retries Reserved for whole-group rebroadcast (currently unused)
+     * @param window_ms Acknowledgement-collection window duration
+     * @return reliability::MessageId Assigned id, or {0,0} if the send failed
+     */
+    reliability::MessageId SendGroupReliable(AddressType group,
+                                             std::span<const uint8_t> data,
+                                             uint8_t max_retries,
+                                             uint32_t window_ms);
 
     // Multi-hop synchronization beacon processing
 
@@ -624,6 +969,24 @@ class NetworkService : public INetworkService {
      * @return Result Success or error
      */
     Result HandleSuperframeStart();
+
+    /**
+     * @brief Handle the start of a discovery slot
+     *
+     * While joining, queues the scheduled JOIN_REQUEST when its discovery
+     * slot begins, so it is transmitted in that slot.
+     *
+     * @param discovery_index Position of the slot within the discovery band
+     */
+    void HandleDiscoverySlotStart(uint8_t discovery_index);
+
+    /**
+     * @brief Consecutive join attempts that went unanswered
+     *
+     * Kept across rejoins of a network; reset once the node is accepted or
+     * creates its own network.
+     */
+    uint8_t GetJoinRetryCount() const { return join_retry_count_; }
 
     /**
      * @brief Expand all sync beacon slots to RX after missed beacons
@@ -730,11 +1093,23 @@ class NetworkService : public INetworkService {
     /**
      * @brief Get current slot table
      *
-     * @return Span over active slot allocations (valid for object lifetime)
+     * @return Consistent copy of the active slot allocations
      */
-    std::span<const types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
+    std::vector<types::protocols::lora_mesh::SlotAllocation> GetSlotTable()
         const {
-        return {slot_table_.data(), slot_count_};
+        return slot_scheduler_->GetSlotTable();
+    }
+
+    /**
+     * @brief Visit every active slot allocation without copying the table
+     *
+     * @param visitor Called once per slot in slot order; must not call back
+     *                into the slot table
+     */
+    void ForEachSlot(const std::function<
+                     void(const types::protocols::lora_mesh::SlotAllocation&)>&
+                         visitor) const {
+        slot_scheduler_->ForEachSlot(visitor);
     }
 
     // Discovery methods
@@ -827,7 +1202,7 @@ class NetworkService : public INetworkService {
     /**
      * @brief Returns true if an NM election backoff is currently in progress
      */
-    bool IsElectionPending() const { return election_end_time_ != 0; }
+    bool IsElectionPending() const { return election_deadline_ms_.has_value(); }
 
     /**
      * @brief Initiate NM election backoff (called when entering FAULT_RECOVERY)
@@ -836,6 +1211,21 @@ class NetworkService : public INetworkService {
      * NODE_ONLY nodes never start an election.
      */
     void StartElectionBackoff();
+
+    /**
+     * @brief Milliseconds until the pending election backoff expires
+     *
+     * @return 0 when it has expired or no election is pending
+     */
+    uint32_t GetElectionBackoffRemaining() const;
+
+    /**
+     * @brief Enter NM_ELECTION once the election backoff has expired
+     *
+     * Queues this node's NM_CLAIM. Called by the protocol task when the
+     * backoff deadline passes, and at each superframe start.
+     */
+    void CheckElectionBackoff();
 
     /**
      * @brief Process a received NM_CLAIM message
@@ -858,11 +1248,6 @@ class NetworkService : public INetworkService {
     Result ApplyRoleChange(NodeRole new_role) override;
 
    private:
-    /**
-     * @brief Log a compact grid visualization of the current slot table
-     */
-    void LogSlotTable() const;
-
     /**
      * @brief Get comprehensive link quality for a node
      *
@@ -900,30 +1285,6 @@ class NetworkService : public INetworkService {
      * @return bool True if topology changed significantly
      */
     bool UpdateNetworkTopology(bool notify_superframe = true);
-
-    /**
-     * @brief Advanced link quality metrics structure
-     */
-    struct LinkQualityMetrics {
-        uint8_t reception_ratio;  ///< Message reception ratio (0-255)
-        uint8_t signal_strength;  ///< Signal strength (0-255)
-        uint8_t stability;        ///< Link stability metric (0-255)
-
-        /**
-         * @brief Calculate combined quality from all metrics
-         * 
-         * @return uint8_t Combined quality (0-255)
-         */
-        uint8_t CalculateCombinedQuality() const;
-    };
-
-    /**
-     * @brief Calculate comprehensive link quality using multiple metrics
-     * 
-     * @param node_address Address of node to evaluate
-     * @return uint8_t Comprehensive link quality (0-255)
-     */
-    uint8_t CalculateComprehensiveLinkQuality(AddressType node_address);
 
     /**
      * @brief Calculate Time-on-Air for a message
@@ -978,6 +1339,25 @@ class NetworkService : public INetworkService {
                                               uint8_t pending_slot_count = 0);
 
     /**
+     * @brief Pick the discovery slot of the next join attempt
+     *
+     * Discovery slots pair up as request/response. A direct join requests in
+     * a random even slot so the network manager answers in the next one; a
+     * sponsored join starts in the first slot, since relaying it to the
+     * network manager and back takes the whole discovery band.
+     */
+    void ScheduleJoinAttempt();
+
+    /// Random number of superframes to wait before retrying a join
+    uint8_t DrawJoinBackoff() const;
+
+    /// Whether the join request is relayed by a sponsor
+    bool IsSponsoredJoin() const;
+
+    /// Forget join attempts, once joined or no longer joining
+    void ResetJoinRetryState();
+
+    /**
      * @brief Forward a join request to the network manager
      * 
      * Implements dynamic discovery slot forwarding: temporarily switches 
@@ -1024,23 +1404,6 @@ class NetworkService : public INetworkService {
     bool ScheduleDiscoverySlotForwarding();
 
     /**
-     * @brief Allocate data slots based on routing information
-     * 
-     * @param is_network_manager Whether this node is network manager
-     * @param available_data_slots Number of available data slots
-     */
-    void AllocateDataSlotsBasedOnRouting(bool is_network_manager,
-                                         uint16_t available_data_slots);
-
-    /**
-     * @brief Find next available slot
-     * 
-     * @param start_slot Starting slot to search from
-     * @return uint16_t Next available slot or UINT16_MAX if none
-     */
-    uint16_t FindNextAvailableSlot(uint16_t start_slot);
-
-    /**
      * @brief Get number of allocated data slots
      * 
      * @return uint8_t Number of allocated slots
@@ -1049,22 +1412,58 @@ class NetworkService : public INetworkService {
 
     /**
      * @brief Convert slot table to superframe format
-     * 
+     *
      * @return Result Success or error details
      */
     Result SlotTableToSuperframe();
 
+    // --- Slot-table accessor seam (delegates to SlotScheduler) -------------
+
     /**
-     * @brief Set pre-send callback on a sync beacon message
-     *
-     * Attaches a callback that captures GetTimeSinceSuperframeStart() right
-     * before transmission and writes it into the beacon's propagation_delay
-     * field. Used for both original (NM) and forwarded sync beacons so the
-     * delay accurately includes any subslot wait time.
-     *
-     * @param base_msg The base message to attach the callback to
+     * @brief Mark the slot table dirty so the next rebuild regenerates it.
      */
-    void SetSyncBeaconPreSendCallback(BaseMessage& base_msg);
+    void MarkSlotTableDirty() { slot_scheduler_->MarkDirty(); }
+
+    /**
+     * @brief Rebuild the slot table when dirty, or unconditionally when forced.
+     *
+     * @param force Rebuild even if the dirty flag is clear.
+     * @return Result Success or error
+     */
+    Result UpdateSlotTableIfDirty(bool force);
+
+    /**
+     * @brief Number of valid slots in the slot table.
+     */
+    uint16_t GetSlotCount() const { return slot_scheduler_->GetSlotCount(); }
+
+    /**
+     * @brief Build the callbacks through which ReliableMessaging reaches this
+     *        service (queue, routing, delivery, configuration and clock).
+     */
+    ReliableMessaging::Host MakeReliableMessagingHost();
+
+    /**
+     * @brief Build the callbacks through which the slot scheduler reads
+     *        routing state and updates the superframe.
+     */
+    SlotScheduler::Host MakeSlotSchedulerHost();
+
+    /**
+     * @brief Build the callbacks through which the sync-beacon service
+     *        reaches this service.
+     */
+    SyncBeaconService::Host MakeSyncBeaconHost();
+
+    /**
+     * @brief Build a read-only context snapshot for the slot scheduler.
+     */
+    SlotScheduler::Context MakeSlotContext() const;
+
+    /**
+     * @brief Build a read-only context snapshot for the sync-beacon service.
+     */
+    SyncBeaconService::Context MakeSyncContext() const;
 
     /**
      * @brief Handle a foreign-network sync beacon (NM state only)
@@ -1104,32 +1503,30 @@ class NetworkService : public INetworkService {
      */
     uint8_t FindLowestAvailableControlSlot();
 
-    // Message de-duplication helpers
-
-    /**
-     * @brief Check if a message has already been seen (broadcast or unicast)
-     */
-    bool IsMessageDuplicate(AddressType source, uint8_t seq_num) const;
-
-    /**
-     * @brief Record a message in the de-duplication cache
-     */
-    void AddToMessageCache(AddressType source, uint8_t seq_num);
-
     /**
      * @brief Forward a broadcast message with decremented TTL
      */
     Result ForwardBroadcastMessage(const BroadcastMessage& original);
 
     /**
-     * @brief Check if an address has an allocated RX slot in the TDMA schedule
+     * @brief Serialize a typed message into a BaseMessage and enqueue it for TX
      *
-     * Must be called while holding network_mutex_.
+     * Centralizes the repeated make_unique<BaseMessage>(msg.ToBaseMessage())
+     * plus AddMessageToQueue boilerplate shared by every send/forward path.
      *
-     * @param address Node address to check
-     * @return true if we have an RX slot for this address
+     * @tparam MessageT Any message type exposing ToBaseMessage()
+     * @param slot_type Transmit slot to enqueue into
+     * @param message Typed message to serialize and send
+     * @return Result of the enqueue operation
      */
-    bool IsTDMANeighbor(AddressType address) const;
+    template <typename MessageT>
+    Result EnqueueForTransmission(
+        types::protocols::lora_mesh::SlotAllocation::SlotType slot_type,
+        const MessageT& message) {
+        auto base_msg = std::make_unique<BaseMessage>(message.ToBaseMessage());
+        return message_queue_service_->AddMessageToQueue(slot_type,
+                                                         std::move(base_msg));
+    }
 
     // Member variables
     AddressType node_address_;  ///< Local node address
@@ -1137,22 +1534,16 @@ class NetworkService : public INetworkService {
     std::shared_ptr<ISuperframeService> superframe_service_;
     std::shared_ptr<hardware::IHardwareManager> hardware_manager_;
 
-    // ToA cache for performance optimization
-    mutable std::unordered_map<uint8_t, uint32_t> toa_cache_;
-
     // Network state
     std::unique_ptr<IRoutingTable> routing_table_;
 
-    /// Fixed-size slot table — max 256 slots, no heap allocation
-    static constexpr size_t kMaxSlots = 256;
-    std::array<types::protocols::lora_mesh::SlotAllocation, kMaxSlots>
-        slot_table_{};
-    uint16_t slot_count_ = 0;  ///< Number of valid slots in slot_table_
-    NetworkConfig config_;
+    NetworkConfig config_;  ///< Written under network_mutex_
     RouteUpdateCallback route_update_callback_;
     DataReceivedCallback data_received_callback_;
-    ProtocolState state_;
-    AddressType network_manager_ = 0;
+    /// Written by the protocol task, read by application-thread sends.
+    std::atomic<ProtocolState> state_;
+    /// Written by the protocol task, read by application-thread sends.
+    std::atomic<AddressType> network_manager_{0};
     bool network_found_;
     bool network_creator_;
     bool is_synchronized_;
@@ -1163,10 +1554,6 @@ class NetworkService : public INetworkService {
     uint32_t joining_start_time_;
     AddressType selected_sponsor_ =
         0;  ///< Sponsor node selected during discovery (first sync beacon sender)
-    uint8_t allocated_control_slots_ =
-        ISuperframeService::DEFAULT_CONTROL_SLOT_COUNT;
-    uint8_t allocated_discovery_slots_ =
-        ISuperframeService::DEFAULT_DISCOVERY_SLOT_COUNT;
 
     // Superframe parameters
     uint8_t current_network_depth_ =
@@ -1198,7 +1585,9 @@ class NetworkService : public INetworkService {
         0;  ///< Local node's allocated data slots
 
     // Node role configuration
-    NodeRole node_role_ = NodeRole::AUTO;  ///< Node role for network formation
+    /// Node role for network formation; written by the protocol task, read
+    /// by application threads through GetNodeRole()
+    std::atomic<NodeRole> node_role_{NodeRole::AUTO};
 
     // Duty cycle regulation
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle
@@ -1213,48 +1602,161 @@ class NetworkService : public INetworkService {
         2;  ///< Consecutive receptions to re-activate
 
     // Join retry backoff (Slotted ALOHA)
-    uint8_t join_retry_count_ = 0;  ///< Number of join retries so far
+    /// Progress of the join attempt of the current superframe
+    enum class JoinAttempt : uint8_t {
+        kIdle,       ///< No attempt pending
+        kScheduled,  ///< Waiting for its discovery slot
+        kSent,       ///< JOIN_REQUEST queued, waiting for the response
+    };
+    static constexpr uint8_t kMaxJoinBackoffExponent =
+        2;  ///< Backoff window caps at 2^2 superframes
+    static constexpr uint32_t kJoinTimeoutSuperframes =
+        13;  ///< First superframe plus three attempts at the full window
+    uint8_t join_retry_count_ = 0;  ///< Consecutive unanswered join attempts
     uint8_t join_backoff_remaining_ =
         0;  ///< Superframes to skip before next retry
+    JoinAttempt join_attempt_ = JoinAttempt::kIdle;
+    uint8_t join_request_disc_index_ =
+        0;  ///< Discovery slot of the scheduled attempt
 
     // Periodic cleanup
     uint32_t last_cleanup_time_ = 0;  ///< Last time route cleanup was performed
 
     // NM election state
-    uint32_t election_end_time_ =
-        0;  ///< Tick count when election backoff expires (0 = none)
+    /// Tick count when the election backoff expires (empty when none)
+    std::optional<uint32_t> election_deadline_ms_;
     uint8_t election_priority_ =
         0xFF;  ///< Our election priority (lower = higher priority)
-    uint32_t nm_election_start_time_ =
-        0;  ///< Tick count when NM_ELECTION began
+    /// Tick count when NM_ELECTION began (empty when not electing)
+    std::optional<uint32_t> nm_election_start_ms_;
     bool surrendered_in_election_ =
         false;  ///< True if this node yielded to a higher-priority claimant
+    uint8_t surrender_discovery_retries_ =
+        0;  ///< Discovery windows spent waiting for the winner after surrender
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
-    uint16_t network_id_ = 0;
+    std::atomic<uint16_t> network_id_{0};
+
+    // Warm restart state (see ApplySnapshot())
+    /// Listen time of a warm-restarted manager, in percent of a superframe,
+    /// before it resumes its network
+    static constexpr uint32_t kManagerResumeListenPercent = 150;
+    /// Superframes per hop a warm-restarted member allows the network to
+    /// take to reach it again before forming its own
+    static constexpr uint32_t kWarmDiscoverySuperframesPerHop = 4;
+    /// Listen time before a warm-restarted manager resumes its network
+    /// (0 = no warm resume pending)
+    uint32_t manager_resume_listen_ms_ = 0;
+    bool resume_as_manager_ = false;
+    /// Tick count when a warm-restarted manager resumes its network
+    std::optional<uint32_t> manager_resume_deadline_ms_;
+    /// Extra discovery time of a warm-restarted member (first discovery only)
+    uint32_t warm_discovery_extension_ms_ = 0;
+    /// Resumed after a deep sleep and no sync beacon heard since
+    std::atomic<bool> awaiting_resync_{false};
+    /// Consecutive superframes with a sync beacon a member needs after joining
+    /// before it sleeps
+    static constexpr uint8_t kSettleSuperframes = 3;
+    /// Consecutive superframes with a sync beacon since joining (saturating)
+    uint8_t settled_superframes_ = 0;
+    /// Joiner whose join this node relays (0 = none)
+    AddressType relayed_joiner_ = 0;
+    /// Tick count when the hold for a relayed join ends
+    uint32_t relay_hold_until_ms_ = 0;
+
+    /// Hold sleep while the join of @p joiner is relayed
+    void HoldSleepForRelayedJoin(AddressType joiner);
+    /// Learned errors of the sleep clock (kept across network resets)
+    power::SleepClockCalibration light_sleep_clock_;
+    power::SleepClockCalibration deep_sleep_clock_;
+
+    /// Sleeps since the last sync beacon, for the next calibration sample
+    struct SleepTally {
+        uint32_t light_ms = 0;    ///< Time in light sleep
+        uint32_t deep_ms = 0;     ///< Time in deep sleep
+        uint32_t woke_at_ms = 0;  ///< Tick count at the end of the last sleep
+    };
+
+    SleepTally sleep_tally_;
+    /// How far ahead of the network the schedule was left at the last beacon
+    /// (drifts below the resync threshold are not corrected)
+    int32_t schedule_offset_ms_ = 0;
+
+    /// Fold the drift seen at a beacon into the sleep-clock calibration
+    /// when the node slept since the previous beacon
+    void RecordSleepClockDrift(int32_t drift_ms);
+
+    /**
+     * @brief Control slot a warm-restarted manager holds for a member
+     */
+    struct ControlSlotReservation {
+        AddressType address;
+        uint8_t control_slot_index;
+        uint32_t expires_at_ms;  ///< Tick count when the hold lapses
+    };
+
+    /// Members' control slots held until they are heard again; guarded by
+    /// reservations_mutex_
+    std::vector<ControlSlotReservation> control_slot_reservations_;
+    mutable std::mutex reservations_mutex_;
+
+    /// Resume the network of a warm-restarted manager
+    Result ResumeNetworkAsManager();
+
+    /**
+     * @brief Drop reservations of members that are back or timed out
+     *
+     * @return true if a reservation was dropped
+     */
+    bool PruneControlSlotReservations();
+
+    /// Reserved control slot of @p address (0xFF = none)
+    uint8_t FindReservedControlSlot(AddressType address) const;
+
+    /// Highest reserved control slot index (0 = none)
+    uint8_t GetHighestReservedControlSlot() const;
 
     // State-change notification callback
     StateChangeCallback state_change_callback_;
 
-    // Unified message de-duplication cache (shared by DATA and DATA_BROADCAST)
-    struct MessageCacheEntry {
-        AddressType source = 0;
-        uint8_t seq_num = 0;
-        bool valid = false;
-    };
-
-    static constexpr size_t kMessageCacheSize = 32;
     static constexpr uint8_t kDefaultTTL = 10;
-    std::array<MessageCacheEntry, kMessageCacheSize> message_cache_{};
-    uint8_t message_cache_head_ = 0;
-    uint8_t message_seq_ =
-        0;  ///< Per-node sequence counter (shared by unicast + broadcast)
 
-    // Slot table dirty flag — set when any input to UpdateSlotTable() changes.
-    // Only read/written on the protocol task, no synchronization needed.
-    bool slot_table_dirty_ = true;
+    /// Per-node sequence counter and de-duplication cache, shared by every
+    /// send and receive path.
+    MessageCache message_cache_;
 
-    // Thread safety
+    // Reliable delivery / group multicast subsystem
+    DataReceivedExCallback data_received_ex_callback_;
+
+    /// Deliver a received payload addressed to @p dest (this node, a group or
+    /// broadcast) to both the legacy and extended callbacks.
+    void DeliverToApp(AddressType source, uint8_t seq, AddressType dest,
+                      uint8_t hops, std::span<const uint8_t> payload);
+
+    /// Estimate hops travelled from a message's remaining TTL.
+    uint8_t HopsFromTtl(uint8_t remaining_ttl) const;
+
+    /// Group multicast + reliable-delivery subsystem; owns the reliability
+    /// state machine, group membership, and ack-collection windows.
+    std::unique_ptr<ReliableMessaging> reliable_messaging_;
+
+    /// TDMA slot-table scheduler; sole owner of the slot table and the
+    /// slot-shaping operations extracted from this coordinator.
+    std::unique_ptr<SlotScheduler> slot_scheduler_;
+
+    /// Sync-beacon transmit/forward path (build, forward, time-stamp beacons).
+    std::unique_ptr<SyncBeaconService> sync_beacon_service_;
+
+    /**
+     * @brief Guards config_, the local node attributes and compound
+     *        routing-table updates.
+     *
+     * Lock order, outermost first: ReliableMessaging's mutex, network_mutex_,
+     * the routing table's mutex, then the slot scheduler's and the message
+     * queue's mutexes. No path holding an inner lock calls back into an outer
+     * component, and user callbacks are never invoked while network_mutex_ is
+     * held.
+     */
     mutable std::mutex network_mutex_;
 };
 

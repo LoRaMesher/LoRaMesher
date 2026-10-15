@@ -17,19 +17,13 @@ JoinRequestMessage::JoinRequestMessage(
     : header_(header), additional_info_(additional_info) {}
 
 std::optional<JoinRequestMessage> JoinRequestMessage::Create(
-    AddressType dest, AddressType src, uint8_t battery_level,
-    uint8_t requested_slots, const std::vector<uint8_t>& additional_info,
-    AddressType next_hop, AddressType sponsor_address, uint8_t hop_count) {
-
-    // Validate battery level
-    if (battery_level > 100) {
-        LOG_ERROR("Invalid battery level: %d", battery_level);
-        return std::nullopt;
-    }
+    AddressType dest, AddressType src, uint8_t requested_slots,
+    const std::vector<uint8_t>& additional_info, AddressType next_hop,
+    AddressType sponsor_address, uint8_t hop_count) {
 
     // Create the header with the join request information
-    JoinRequestHeader header(dest, src, battery_level, requested_slots,
-                             next_hop, additional_info.size(), sponsor_address,
+    JoinRequestHeader header(dest, src, requested_slots, next_hop,
+                             additional_info.size(), sponsor_address,
                              hop_count);
 
     return JoinRequestMessage(header, additional_info);
@@ -88,14 +82,12 @@ std::optional<JoinRequestMessage> JoinRequestMessage::CreateFromBaseMessage(
 
     utils::ByteDeserializer deserializer(payload);
 
-    auto battery_level = deserializer.ReadUint8();
     auto requested_slots = deserializer.ReadUint8();
     auto next_hop = deserializer.ReadUint16();
     auto sponsor_address = deserializer.ReadUint16();
     auto hop_count = deserializer.ReadUint8();
 
-    if (!battery_level || !requested_slots || !next_hop || !sponsor_address ||
-        !hop_count) {
+    if (!requested_slots || !next_hop || !sponsor_address || !hop_count) {
         LOG_ERROR("Failed to read join request payload fields");
         return std::nullopt;
     }
@@ -106,16 +98,11 @@ std::optional<JoinRequestMessage> JoinRequestMessage::CreateFromBaseMessage(
         additional_info.assign(payload.begin() + fields_size, payload.end());
     }
 
-    JoinRequestHeader header(message.GetDestination(), message.GetSource(),
-                             *battery_level, *requested_slots, *next_hop,
-                             additional_info.size(), *sponsor_address,
-                             *hop_count);
+    JoinRequestHeader header(
+        message.GetDestination(), message.GetSource(), *requested_slots,
+        *next_hop, additional_info.size(), *sponsor_address, *hop_count);
 
     return JoinRequestMessage(header, additional_info);
-}
-
-uint8_t JoinRequestMessage::GetBatteryLevel() const {
-    return header_.GetBatteryLevel();
 }
 
 uint8_t JoinRequestMessage::GetRequestedSlots() const {
@@ -159,7 +146,6 @@ BaseMessage JoinRequestMessage::ToBaseMessage() const {
     utils::ByteSerializer serializer(payload_buf.data(), payload_size);
 
     // Serialize only the JOIN_REQUEST specific fields (not the BaseHeader part)
-    serializer.WriteUint8(header_.GetBatteryLevel());
     serializer.WriteUint8(header_.GetRequestedSlots());
     serializer.WriteUint16(header_.GetNextHop());
     serializer.WriteUint16(header_.GetSponsorAddress());

@@ -420,6 +420,58 @@ TEST_F(RoutingTableMessageTest, HeaderDeserializeSuccess) {
 }
 
 /**
+ * @brief The sender's own control-slot index survives header serialization.
+ */
+TEST_F(RoutingTableMessageTest, HeaderCarriesSourceControlSlotIndex) {
+    RoutingTableHeader hdr(dest, src, network_id, table_version,
+                           static_cast<uint8_t>(entries.size()), 0x10, 2,
+                           /*source_control_slot_index=*/7);
+    EXPECT_EQ(hdr.GetSourceControlSlotIndex(), 7u);
+
+    std::vector<uint8_t> buf(hdr.GetSize(), 0);
+    utils::ByteSerializer ser(buf);
+    ASSERT_TRUE(hdr.Serialize(ser).IsSuccess());
+
+    utils::ByteDeserializer deser(
+        std::span<const uint8_t>(buf.data(), buf.size()));
+    auto opt = RoutingTableHeader::Deserialize(deser);
+    ASSERT_TRUE(opt.has_value());
+    EXPECT_EQ(opt->GetSourceAllocatedDataSlots(), 2u);
+    EXPECT_EQ(opt->GetSourceControlSlotIndex(), 7u);
+}
+
+TEST_F(RoutingTableMessageTest, SourceControlSlotIndexDefaultsToUnassigned) {
+    RoutingTableHeader hdr(dest, src, network_id, table_version,
+                           static_cast<uint8_t>(entries.size()));
+    EXPECT_EQ(hdr.GetSourceControlSlotIndex(), 0xFFu);
+}
+
+/**
+ * @brief The index round-trips through the BaseMessage payload path used on
+ *        the air (ToBaseMessage / CreateFromBaseMessage).
+ */
+TEST_F(RoutingTableMessageTest,
+       SourceControlSlotIndexRoundTripsViaBaseMessage) {
+    auto opt = RoutingTableMessage::Create(dest, src, network_id, table_version,
+                                           entries, 0x55, 2,
+                                           /*source_control_slot_index=*/4);
+    ASSERT_TRUE(opt.has_value());
+    EXPECT_EQ(opt->GetSourceControlSlotIndex(), 4u);
+
+    BaseMessage base = opt->ToBaseMessage();
+    EXPECT_EQ(base.GetPayload().size(),
+              RoutingTableHeader::RoutingTableFieldsSize() +
+                  entries.size() * RoutingTableEntry::Size());
+
+    auto parsed = RoutingTableMessage::CreateFromBaseMessage(base);
+    ASSERT_TRUE(parsed.has_value());
+    EXPECT_EQ(parsed->GetSourceCapabilities(), 0x55u);
+    EXPECT_EQ(parsed->GetSourceAllocatedDataSlots(), 2u);
+    EXPECT_EQ(parsed->GetSourceControlSlotIndex(), 4u);
+    EXPECT_EQ(parsed->GetEntries().size(), entries.size());
+}
+
+/**
  * @brief RoutingTableHeader::Deserialize() fails on wrong message type.
  *
  * Exercises routing_table_header.cpp lines 64-68 (type-mismatch branch).

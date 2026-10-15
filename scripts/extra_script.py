@@ -7,14 +7,27 @@
 
 Import("env")
 import os
+import shutil
 import subprocess
 from os.path import join, realpath
 
 current_platform = env.get("PIOPLATFORM", "")
 current_env = env.get("PIOENV", "")
 
+# Native builds compile through ccache when it is installed. PlatformIO adds
+# each test suite's directory to the include path, so without a cache every
+# suite recompiles all of src/; ccache's preprocessor mode ignores -I changes.
+NATIVE_CC = "clang"
+NATIVE_CXX = "clang++"
 if current_platform in ["native", "test_native"]:
-    env.Replace(CC="clang", CXX="clang++", LINK="clang++")
+    _ccache = shutil.which("ccache")
+    if _ccache:
+        NATIVE_CC = f"{_ccache} clang"
+        NATIVE_CXX = f"{_ccache} clang++"
+        print(f"LoRaMesher: compiling through {_ccache}")
+
+if current_platform in ["native", "test_native"]:
+    env.Replace(CC=NATIVE_CC, CXX=NATIVE_CXX, LINK="clang++")
 
 if current_platform == "native" and current_env not in ("test_native_profile", "test_native_xray"):
     project_dir = env.subst("$PROJECT_DIR")
@@ -80,7 +93,7 @@ set_platform_cpp_standard(global_env, current_platform)
 for lb in env.GetLibBuilders():
     set_platform_cpp_standard(lb.env, current_platform)
     if current_platform in ["native", "test_native"]:
-        lb.env.Replace(CC="clang", CXX="clang++", LINK="clang++")
+        lb.env.Replace(CC=NATIVE_CC, CXX=NATIVE_CXX, LINK="clang++")
 
     # If newer versions of googletest are used, the following lines can be uncommented to include specific paths
     # # Include specific paths for GoogleTest library
@@ -99,7 +112,7 @@ Import("projenv")
 set_platform_cpp_standard(projenv, current_platform)
 if current_platform in ["native", "test_native"]:
     for e in [projenv, global_env]:
-        e.Replace(CC="clang", CXX="clang++", LINK="clang++")
+        e.Replace(CC=NATIVE_CC, CXX=NATIVE_CXX, LINK="clang++")
 
 if current_env == "test_native_profile":
     for e in [projenv, global_env]:

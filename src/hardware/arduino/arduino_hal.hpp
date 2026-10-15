@@ -20,6 +20,23 @@
 namespace loramesher {
 namespace hal {
 
+#ifdef ARDUINO_ARCH_ESP32
+/**
+ * @brief SPI host driven by the radio.
+ *
+ * Arduino assigns the FSPI/HSPI names to different host indices per target.
+ * On the original ESP32, FSPI is the host wired to the flash and HSPI is the
+ * first host available for general use. On every later target FSPI is the
+ * first general-purpose host, and HSPI names a second host that exists only
+ * on the S2, S3 and P4.
+ */
+#ifdef CONFIG_IDF_TARGET_ESP32
+constexpr uint8_t kSpiHost = HSPI;
+#else
+constexpr uint8_t kSpiHost = FSPI;
+#endif
+#endif
+
 /**
  * @brief Hardware abstraction layer implementation for Arduino.
  */
@@ -36,7 +53,7 @@ class LoraMesherArduinoHal : public IHal {
     explicit LoraMesherArduinoHal(const PinConfig& pin_config)
         :
 #ifdef ARDUINO_ARCH_ESP32
-          LM_SPI(HSPI),
+          LM_SPI(kSpiHost),
 #else
           LM_SPI(),
 #endif

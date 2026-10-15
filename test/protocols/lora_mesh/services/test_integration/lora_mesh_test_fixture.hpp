@@ -7,19 +7,24 @@
 #define LORAMESHER_TEST_STORE_LOGS  // If defined it will enable file logging for tests
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <thread>
 #include <vector>
 
 #include "../test/utils/network_testing_impl.hpp"
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh_protocol.hpp"
+#include "protocols/reliability/reliable_delivery.hpp"
 #include "types/configurations/protocol_configuration.hpp"
 #include "types/radio/radio_state.hpp"
 #include "utils/file_log_handler.hpp"
@@ -42,10 +47,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
         AddressType address;
         PinConfig pin_config;
         RadioConfig radio_config;
+        NodeRole node_role = NodeRole::AUTO;
+        /// Applied to the protocol configuration on every (re)build
+        std::function<void(LoRaMeshProtocolConfig&)> config_customizer;
         std::shared_ptr<hardware::HardwareManager> hardware_manager;
         std::unique_ptr<protocols::LoRaMeshProtocol> protocol;
         std::vector<BaseMessage> received_messages;
-        radio::test::MockRadio* mock_radio;
+        std::vector<protocols::reliability::DeliveryResult> delivery_outcomes;
+        radio::test::MockRadio* mock_radio = nullptr;
+        RadioToNetworkAdapter* network_adapter = nullptr;
     };
 
     VirtualNetwork virtual_network_;
@@ -53,31 +63,80 @@ class LoRaMeshTestFixture : public ::testing::Test {
     std::vector<std::shared_ptr<TestNode>> nodes_;
     std::map<AddressType, std::vector<BaseMessage>> message_log_;
     std::vector<std::unique_ptr<RadioToNetworkAdapter>> network_adapters_;
+    /// Radio of every powered-off node
+    PoweredOffReceiver powered_off_receiver_;
+
+    /// Seed of the per-node random streams and the network's loss decisions
+    uint32_t test_seed_ = kDefaultTestSeed;
+
+    /// Virtual time advanced per step while StopNode() waits for Stop()
+    static constexpr uint32_t kStopTimeStepMs = 10;
 
     // File logging support
-    std::unique_ptr<FileLogHandler> file_log_handler_;
-    std::unique_ptr<LogHandler> original_log_handler_;
+    FileLogHandler* file_log_handler_ = nullptr;  ///< Owned by LOG while set
     std::string log_directory_;
 
     LoRaMeshTestFixture()
-        : time_controller_(virtual_network_), log_directory_("test_logs") {}
+        : time_controller_(virtual_network_),
+          log_directory_(TestLogDirectoryFromEnvironment()) {}
 
     void SetUp() override {
         GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        test_seed_ = TestSeedFromEnvironment();
+        RecordProperty("seed", static_cast<int>(test_seed_));
+        virtual_network_.SetSeed(test_seed_);
         if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
-            mock->SeedRandom(42);
+            mock->SeedRandom(test_seed_);
+            mock->resetReblockTimeoutCount();
         }
+        ResetTaskMisuseCounters();
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
 #endif
     }
 
+    /**
+     * @brief Pin the seed instead of LORAMESHER_TEST_SEED
+     *
+     * Call before creating nodes, to keep a known scenario as a regression.
+     */
+    void UseTestSeed(uint32_t seed) {
+        test_seed_ = seed;
+        RecordProperty("seed", static_cast<int>(test_seed_));
+        virtual_network_.SetSeed(test_seed_);
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            mock->SeedRandom(test_seed_);
+        }
+    }
+
     void TearDown() override {
-        // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            EXPECT_EQ(mock->getReblockTimeoutCount(), 0u)
+                << "Virtual-time steps did not complete deterministically "
+                   "(a woken task did not block again); see the MOCK reblock "
+                   "timeout lines in the test log";
+        }
+        if (HasFailure()) {
+            // No "[ ... ]" prefix: PlatformIO parses those as gtest status lines
+            std::cout << "Reproduce with LORAMESHER_TEST_SEED=" << test_seed_
+                      << std::endl;
+        }
+
+        // Stop every protocol while the clock runs, so tasks finish their
+        // current slot work and park before the protocols are destroyed
         for (auto& node : nodes_) {
             if (node->protocol) {
-                // Stop the protocol and wait for all tasks to exit
+                Result stop_result = StopNode(*node);
+                EXPECT_TRUE(stop_result)
+                    << "Stopping " << node->name
+                    << " failed: " << stop_result.GetErrorMessage();
+            }
+        }
+        ExpectNoTaskMisuse();
+
+        for (auto& node : nodes_) {
+            if (node->protocol) {
                 node->protocol.reset();
             }
         }
@@ -111,11 +170,15 @@ class LoRaMeshTestFixture : public ::testing::Test {
     TestNode& CreateNode(const std::string& name, AddressType address,
                          NodeRole node_role = NodeRole::AUTO,
                          const PinConfig& pin_config = PinConfig(),
-                         const RadioConfig& radio_config = RadioConfig()) {
+                         const RadioConfig& radio_config = RadioConfig(),
+                         const std::function<void(LoRaMeshProtocolConfig&)>&
+                             config_customizer = nullptr) {
         // Create a node with unique address and pin configuration
         auto node = std::make_shared<TestNode>();
         node->name = name;
         node->address = address;
+        node->node_role = node_role;
+        node->config_customizer = config_customizer;
 
         // Use provided pin config or create a unique one
         if (pin_config.getNss() == 0) {
@@ -143,90 +206,159 @@ class LoRaMeshTestFixture : public ::testing::Test {
         mock_config.setPreambleLength(radio_config.getPreambleLength());
         node->radio_config = mock_config;
 
-        // Create and initialize the hardware manager with our pin and radio config
-        node->hardware_manager = std::make_shared<hardware::HardwareManager>(
-            node->pin_config, mock_config);
-
-        // Set test thread address to this node for correct log attribution
-        char addr_str[8];
-        snprintf(addr_str, sizeof(addr_str), "0x%04X", address);
-        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
-
-        node->hardware_manager->SetLocalAddress(address);
-        Result result = node->hardware_manager->Initialize();
-        if (!result) {
-            std::cerr << "Failed to initialize hardware manager for " << name
-                      << ": " << result.GetErrorMessage() << std::endl;
-            // Create an empty node as failure
-            auto empty_node = std::make_shared<TestNode>();
-            nodes_.push_back(empty_node);
-            return *empty_node;
-        }
-
-        // Get the mock radio and connect it to our virtual network
-        auto* radio_ptr = dynamic_cast<radio::RadioLibRadio*>(
-            node->hardware_manager->getRadio());
-        if (!radio_ptr) {
-            std::cerr << "Failed to get RadioLibRadio instance for " << name
-                      << std::endl;
-            auto empty_node = std::make_shared<TestNode>();
-            nodes_.push_back(empty_node);
-            return *empty_node;
-        }
-
-        // Get the mock radio from RadioLibRadio
-        node->mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
-
-        // Connect the mock radio to our virtual network
-        ConnectRadioToNetwork(node->mock_radio, node->address, radio_ptr,
-                              mock_config);
-
-        // Create the protocol instance
-        node->protocol = std::make_unique<protocols::LoRaMeshProtocol>();
-
-        // Initialize the protocol with our hardware manager
-        result = node->protocol->Init(node->hardware_manager, address);
-        if (!result) {
-            std::cerr << "Failed to initialize protocol for " << name << ": "
-                      << result.GetErrorMessage() << std::endl;
+        if (!BuildStack(*node)) {
             // Return an empty node as failure
             auto empty_node = std::make_shared<TestNode>();
             nodes_.push_back(empty_node);
             return *empty_node;
         }
 
-        // Configure the protocol with default configuration and node role
-        LoRaMeshProtocolConfig config(address);
-        config.setNodeRole(node_role);
-        config.setTargetDutyCycle(
-            1.0f);  // Tests: no duty-cycle-driven slot inflation
-        result = node->protocol->Configure(config);
+        // Add the node to our collection and return a reference to it
+        nodes_.push_back(node);
+        return *node;
+    }
+
+    /**
+     * @brief Build a node's hardware, radio link and protocol from its spec
+     *
+     * Used to create a node and to boot it again after ShutdownNode(). The
+     * node keeps its address, pins, radio configuration, role and config
+     * customizer, so a rebuilt node is the same device after a reset.
+     *
+     * @param node Node to build; its stack must not exist yet
+     * @return true if the whole stack was built and configured
+     */
+    bool BuildStack(TestNode& node) {
+        // Set test thread address to this node for correct log attribution and
+        // per-node deterministic task ordering and random streams
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+        bool built = BuildStackForCurrentNode(node);
+        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        return built;
+    }
+
+    /**
+     * @brief BuildStack() body, run with the test thread bound to the node
+     */
+    bool BuildStackForCurrentNode(TestNode& node) {
+        node.hardware_manager = std::make_shared<hardware::HardwareManager>(
+            node.pin_config, node.radio_config);
+        node.hardware_manager->SetLocalAddress(node.address);
+        Result result = node.hardware_manager->Initialize();
         if (!result) {
-            std::cerr << "Failed to configure protocol for " << name << ": "
-                      << result.GetErrorMessage() << std::endl;
+            std::cerr << "Failed to initialize hardware manager for "
+                      << node.name << ": " << result.GetErrorMessage()
+                      << std::endl;
+            return false;
         }
 
-        // Register data received callback to populate received_messages
-        // Callback signature: void(AddressType source, const std::vector<uint8_t>& data)
-        node->protocol->SetDataReceivedCallback(
-            [node_ptr = node.get()](AddressType source,
-                                    const std::vector<uint8_t>& data) {
-                // Create a BaseMessage from the received data
-                auto msg_opt = BaseMessage::Create(
-                    node_ptr->address,  // destination (this node)
-                    source,             // source
-                    MessageType::DATA, data);
+        auto* radio_ptr = dynamic_cast<radio::RadioLibRadio*>(
+            node.hardware_manager->getRadio());
+        if (!radio_ptr) {
+            std::cerr << "Failed to get RadioLibRadio instance for "
+                      << node.name << std::endl;
+            return false;
+        }
+
+        // Connect the mock radio inside RadioLibRadio to the virtual network
+        node.mock_radio = &radio::GetRadioLibMockForTesting(*radio_ptr);
+        node.network_adapter = ConnectRadioToNetwork(
+            node.mock_radio, node.address, radio_ptr, node.radio_config);
+
+        node.protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+        result = node.protocol->Init(node.hardware_manager, node.address);
+        if (!result) {
+            std::cerr << "Failed to initialize protocol for " << node.name
+                      << ": " << result.GetErrorMessage() << std::endl;
+            return false;
+        }
+
+        LoRaMeshProtocolConfig config(node.address);
+        config.setNodeRole(node.node_role);
+        // Tests: no duty-cycle-driven slot inflation
+        config.setTargetDutyCycle(1.0f);
+        if (node.config_customizer) {
+            node.config_customizer(config);
+        }
+        result = node.protocol->Configure(config);
+        if (!result) {
+            std::cerr << "Failed to configure protocol for " << node.name
+                      << ": " << result.GetErrorMessage() << std::endl;
+        }
+
+        node.protocol->SetDataReceivedCallback(
+            [node_ptr = &node](AddressType source,
+                               const std::vector<uint8_t>& data) {
+                auto msg_opt = BaseMessage::Create(node_ptr->address, source,
+                                                   MessageType::DATA, data);
                 if (msg_opt.has_value()) {
                     node_ptr->received_messages.push_back(msg_opt.value());
                 }
             });
 
-        // Restore test thread address
-        GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
+        // Record reliable-delivery outcomes for assertions
+        node.protocol->GetNetworkServiceForTest()->SetDeliveryCallback(
+            [node_ptr =
+                 &node](const protocols::reliability::DeliveryResult& outcome) {
+                node_ptr->delivery_outcomes.push_back(outcome);
+            });
+        return true;
+    }
 
-        // Add the node to our collection and return a reference to it
-        nodes_.push_back(node);
-        return *node;
+    /**
+     * @brief Power a node off as if it lost power or reset
+     *
+     * Destroys the protocol (its tasks stop wherever they are, without
+     * Stop()), detaches the radio from the virtual network and destroys the
+     * hardware. Packets addressed to the node are dropped until BootNode().
+     *
+     * @param node Node to power off
+     */
+    void ShutdownNode(TestNode& node) {
+        // A power cut stops the node's tasks wherever they are, also in a
+        // delay or a deep sleep that would never let them exit on their own
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            char addr_str[8];
+            snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+            mock->PowerOffNodeTasks(addr_str);
+        }
+        node.protocol.reset();
+        if (virtual_network_.IsNodeRegistered(node.address)) {
+            virtual_network_.ReplaceRadio(node.address, &powered_off_receiver_);
+        }
+        node.hardware_manager.reset();
+        node.mock_radio = nullptr;
+        if (node.network_adapter != nullptr) {
+            auto it = std::find_if(
+                network_adapters_.begin(), network_adapters_.end(),
+                [&node](const std::unique_ptr<RadioToNetworkAdapter>& a) {
+                    return a.get() == node.network_adapter;
+                });
+            if (it != network_adapters_.end()) {
+                network_adapters_.erase(it);
+            }
+            node.network_adapter = nullptr;
+        }
+    }
+
+    /**
+     * @brief Boot a powered-off node: rebuild its stack and start it
+     *
+     * @param node Node previously powered off with ShutdownNode()
+     * @return Result of starting the protocol
+     */
+    Result BootNode(TestNode& node) {
+        if (node.protocol) {
+            return Result(LoraMesherErrorCode::kInvalidState,
+                          "Node is already running");
+        }
+        if (!BuildStack(node)) {
+            return Result(LoraMesherErrorCode::kConfigurationError,
+                          "Failed to rebuild node stack");
+        }
+        return StartNode(node);
     }
 
     /**
@@ -258,11 +390,12 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param address Node address to use
      * @param radio_lib_instance RadioLibRadio instance for instance-aware notifications
      * @param radio_config Radio configuration for ToA calculations
+     * @return The adapter now registered for @p address
      */
-    void ConnectRadioToNetwork(radio::test::MockRadio* mock_radio,
-                               AddressType address,
-                               radio::RadioLibRadio* radio_lib_instance,
-                               const RadioConfig& radio_config) {
+    RadioToNetworkAdapter* ConnectRadioToNetwork(
+        radio::test::MockRadio* mock_radio, AddressType address,
+        radio::RadioLibRadio* radio_lib_instance,
+        const RadioConfig& radio_config) {
         // Create and track the adapter for proper cleanup
         auto adapter = std::make_unique<RadioToNetworkAdapter>(
             mock_radio, virtual_network_, address, radio_lib_instance);
@@ -270,11 +403,16 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Set the radio configuration for ToA calculations
         adapter->SetRadioConfig(radio_config);
 
-        // Register the node with the virtual network
-        virtual_network_.RegisterNode(address, adapter.get(), radio_config);
+        // A rebooted node keeps its registration and links; only its radio
+        // changes
+        if (!virtual_network_.ReplaceRadio(address, adapter.get())) {
+            virtual_network_.RegisterNode(address, adapter.get(), radio_config);
+        }
 
         // Store the adapter for cleanup
+        RadioToNetworkAdapter* registered = adapter.get();
         network_adapters_.push_back(std::move(adapter));
+        return registered;
     }
 
     /**
@@ -307,7 +445,38 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Protocol not initialized");
         }
-        return node.protocol->Stop();
+
+        // Stop() waits for the node's tasks to park, which may take until
+        // the end of the current slot. It runs on a helper thread while this
+        // thread advances virtual time whenever the helper is blocked waiting.
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        std::atomic<bool> done{false};
+        Result result = Result::Success();
+        std::thread stopper([&]() {
+            GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+            result = node.protocol->Stop();
+            done.store(true, std::memory_order_release);
+        });
+
+        auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+        while (!done.load(std::memory_order_acquire)) {
+            if (mock != nullptr &&
+                mock->getTimeMode() == os::RTOSMock::TimeMode::kVirtualTime &&
+                mock->HasExternalWait()) {
+                // Let a just-satisfied wait return before moving the clock
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (done.load(std::memory_order_acquire) ||
+                    !mock->HasExternalWait()) {
+                    continue;
+                }
+                time_controller_.AdvanceTime(kStopTimeStepMs);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+        stopper.join();
+        return result;
     }
 
     /**
@@ -349,11 +518,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Continue checking until timeout or condition is met
         while (elapsed_ms < kEffectiveTimeoutMs) {
             // Calculate time to advance in this iteration
-            uint32_t time_to_advance = kOptimalTimeStepMs;
+            const uint32_t time_to_advance = std::max<uint32_t>(
+                1, std::min(kOptimalTimeStepMs, MaxTimeStepMs()));
 
             // Advance simulation time
             time_controller_.AdvanceTime(time_to_advance);
             elapsed_ms += time_to_advance;
+            OnTimeAdvanced();
 
             // Minimal real sleep to allow tasks to execute
             if (real_sleep_ms > 0) {
@@ -368,6 +539,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
 
         return !condition;  // Timeout occurred
+    }
+
+    /**
+     * @brief Called after every AdvanceTime() step
+     *
+     * Lets a fixture act at exact virtual instants (for example power a node
+     * on), together with MaxTimeStepMs().
+     */
+    virtual void OnTimeAdvanced() {}
+
+    /**
+     * @brief Longest step AdvanceTime() may take next
+     */
+    virtual uint32_t MaxTimeStepMs() const {
+        return std::numeric_limits<uint32_t>::max();
     }
 
     /**
@@ -955,17 +1141,20 @@ class LoRaMeshTestFixture : public ::testing::Test {
             ::testing::UnitTest::GetInstance()->current_test_info();
         std::string test_name = std::string(test_info->test_case_name()) + "_" +
                                 std::string(test_info->name());
+        // Parameterized test names contain '/'
+        std::replace(test_name.begin(), test_name.end(), '/', '_');
 
         // Create unique log filename
         std::string log_filename = log_directory_ + "/" + test_name + ".log";
 
         try {
             // Create file log handler
-            file_log_handler_ =
+            auto handler =
                 std::make_unique<FileLogHandler>(log_filename, false, true);
+            file_log_handler_ = handler.get();
 
             // Set the file handler as the active logger
-            LOG.SetHandler(std::move(file_log_handler_));
+            LOG.SetHandler(std::move(handler));
 
             // Log test start
             LOG_INFO("=== Test Started: %s ===", test_name.c_str());
@@ -989,11 +1178,11 @@ class LoRaMeshTestFixture : public ::testing::Test {
             // Get the log filename before cleanup
             std::string log_filename = file_log_handler_->GetFilename();
 
-            // Reset to default console handler
-            LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
-
-            // Clean up file handler
-            file_log_handler_.reset();
+            // Restore the console handler, then close the file handler here
+            std::unique_ptr<LogHandler> file_handler =
+                LOG.SetHandler(std::make_unique<ConsoleLogHandler>());
+            file_log_handler_ = nullptr;
+            file_handler.reset();
 
             // Print log file location for user
             std::cout << "Test log saved to: " << log_filename << std::endl;

@@ -8,11 +8,12 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include "protocols/lora_mesh/services/subslot_scheduler.hpp"
 #include "types/configurations/radio_configuration.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/power/power_types.hpp"
+#include "types/protocols/lora_mesh/subslot_config.hpp"
 #include "types/protocols/protocol.hpp"
+#include "types/storage/i_state_store.hpp"
 
 namespace loramesher {
 
@@ -172,9 +173,15 @@ class PingPongProtocolConfig : public BaseProtocolConfig {
  * @brief Node role for network formation behavior
  *
  * Controls how a node behaves during network discovery and formation.
+ *
+ * @warning Do not deploy AUTO until cross-network merge is implemented
+ * (kNetworkMergeEnabled is false): losing the Network Manager starts an
+ * election that can split the mesh into networks that never merge again.
+ * Configure one node as NETWORK_MANAGER and the others as NODE_ONLY. AUTO
+ * remains the default for compatibility, and Start() logs a warning for it.
  */
 enum class NodeRole : uint8_t {
-    AUTO = 0,         ///< Create network if discovery times out (default)
+    AUTO = 0,  ///< Create network if discovery times out (default; see warning)
     NETWORK_MANAGER,  ///< Immediately create network (skip discovery wait)
     NODE_ONLY         ///< Never create network, wait indefinitely to join
 };
@@ -186,6 +193,10 @@ enum class NodeRole : uint8_t {
  */
 class LoRaMeshProtocolConfig : public BaseProtocolConfig {
    public:
+    /// Largest hop count the protocol supports; also bounds the network depth
+    /// a sync beacon may announce.
+    static constexpr uint8_t kMaxHopsLimit = 16;
+
     /**
      * @brief Constructor with LoRaMesh-specific parameters
      * 
@@ -199,13 +210,15 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param max_network_nodes Maximum number of nodes in the network
      * @param guard_time_ms TX guard time for RX readiness in milliseconds
      * @param wake_up_guard_ms Guard time before slot boundary for MCU wake-up in ms
+     * @param max_data_slots Maximum total data slots allocatable in the superframe
      */
     explicit LoRaMeshProtocolConfig(
         AddressType node_address = 0, uint32_t hello_interval = 60000,
         uint32_t route_timeout = 180000, uint8_t max_hops = 5,
-        uint8_t max_packet_size = 255, uint8_t default_data_slots = 1,
+        uint8_t max_packet_size = 255, uint8_t default_data_slots = 2,
         uint32_t joining_timeout_ms = 30000, uint8_t max_network_nodes = 50,
-        uint32_t guard_time_ms = 50, uint32_t wake_up_guard_ms = 100)
+        uint32_t guard_time_ms = 50, uint32_t wake_up_guard_ms = 20,
+        uint8_t max_data_slots = 100)
         : BaseProtocolConfig(node_address),
           hello_interval_(hello_interval),
           route_timeout_(route_timeout),
@@ -214,6 +227,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
           default_data_slots_(default_data_slots),
           joining_timeout_ms_(joining_timeout_ms),
           max_network_nodes_(max_network_nodes),
+          max_data_slots_(max_data_slots),
           guard_time_ms_(guard_time_ms),
           wake_up_guard_ms_(wake_up_guard_ms) {}
 
@@ -278,8 +292,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     /**
      * @brief Set the maximum packet size
      *
-     * Marks the value as explicitly user-set so ApplySfDerivedDefaults()
-     * preserves it (and only emits a warning if it exceeds the SF-safe cap).
+     * Marks the value as explicitly user-set, so LoRaMeshProtocol::Configure()
+     * warns when it exceeds the SF-safe cap that ApplySfDerivedDefaults()
+     * clamps it to.
      *
      * @param size Maximum packet size
      */
@@ -299,11 +314,13 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     /**
      * @brief Apply SF-derived defaults to the configuration
      *
-     * If max_packet_size has not been explicitly set via setMaxPacketSize(),
-     * overwrites it with RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz).
-     * If the user has explicitly set a value greater than the SF-safe cap,
-     * the value is kept and the caller is expected to log a warning; this
-     * method remains silent and returns the cap so the caller can decide.
+     * Treats max_packet_size as an upper bound that is itself capped by the
+     * physical SF-safe limit: the effective value becomes
+     * min(max_packet_size, RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz)).
+     * A user request below the cap is respected; a request above it (or the
+     * 255 default) is reduced to the cap so it can never drive an impossible
+     * slot duration. Returns the SF-safe cap so the caller can warn when a
+     * user-set value exceeded it.
      *
      * @param sf Active spreading factor
      * @param bw_khz Active bandwidth in kHz
@@ -312,9 +329,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      */
     uint8_t ApplySfDerivedDefaults(uint8_t sf, float bw_khz) {
         uint8_t sf_safe = RadioConfig::GetMaxPacketSizeForSf(sf, bw_khz);
-        if (!max_packet_size_user_set_) {
-            max_packet_size_ = sf_safe;
-        }
+        max_packet_size_ = std::min(max_packet_size_, sf_safe);
         return sf_safe;
     }
 
@@ -367,6 +382,20 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
     /**
+     * @brief Get the maximum total data slots allocatable in the superframe
+     *
+     * @return uint8_t Maximum total data slots
+     */
+    uint8_t getMaxDataSlots() const { return max_data_slots_; }
+
+    /**
+     * @brief Set the maximum total data slots allocatable in the superframe
+     *
+     * @param max_slots Maximum total data slots
+     */
+    void setMaxDataSlots(uint8_t max_slots) { max_data_slots_ = max_slots; }
+
+    /**
      * @brief Get the TX guard time for RX readiness
      * 
      * @return uint32_t Guard time in milliseconds
@@ -414,6 +443,20 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     /** @brief Set the minimum sleep fraction (0.0–0.9) */
     void setMinSleepFraction(float fraction) {
         min_sleep_fraction_ = std::clamp(fraction, 0.0f, 0.9f);
+    }
+
+    /**
+     * @brief Whether RTENTRY log lines include capability/data-slot fields.
+     *
+     * Off by default. When enabled, RTENTRY DEBUG lines carry
+     * `cap=0x.. slots=..` so external tools (e.g. the network planner) can
+     * reconstruct gateway roles and per-node data-slot allocations from a log.
+     */
+    bool getLogRoutingCapabilities() const { return log_routing_capabilities_; }
+
+    /** @brief Enable/disable RTENTRY capability/data-slot logging. */
+    void setLogRoutingCapabilities(bool enable) {
+        log_routing_capabilities_ = enable;
     }
 
     /** @brief Get the churn margin (absolute extra slots, default 2) */
@@ -464,6 +507,9 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
 
     /**
      * @brief Set the node role for network formation
+     *
+     * Use NETWORK_MANAGER on exactly one node and NODE_ONLY on the others;
+     * AUTO is unsafe while cross-network merge is disabled (see NodeRole).
      *
      * @param role Node role (AUTO, NETWORK_MANAGER, or NODE_ONLY)
      */
@@ -522,12 +568,53 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     }
 
     /**
+     * @brief Set the store that keeps protocol state across resets
+     *
+     * With a store, SaveState() writes a snapshot before a planned reset (OTA
+     * reboot, deep sleep) and Start() restores it once, so the node resumes in
+     * the same network instead of forming or joining a new one.
+     *
+     * @param store State store, or nullptr to disable warm restarts
+     */
+    void setStateStore(std::shared_ptr<storage::IStateStore> store) {
+        state_store_ = std::move(store);
+    }
+
+    /**
+     * @brief Get the store that keeps protocol state across resets
+     *
+     * @return The state store, or nullptr when warm restarts are disabled
+     */
+    std::shared_ptr<storage::IStateStore> getStateStore() const {
+        return state_store_;
+    }
+
+    /**
+     * @brief Set when a member deep-sleeps through a run of SLEEP slots
+     *
+     * Deep sleep needs a state store that allows a write before every sleep
+     * (RtcStateStore on ESP32); without one the node only light-sleeps.
+     *
+     * @param policy Deep-sleep policy
+     */
+    void setDeepSleepPolicy(const power::DeepSleepPolicy& policy) {
+        deep_sleep_policy_ = policy;
+    }
+
+    /**
+     * @brief Get the deep-sleep policy
+     */
+    const power::DeepSleepPolicy& getDeepSleepPolicy() const {
+        return deep_sleep_policy_;
+    }
+
+    /**
      * @brief Get the subslot config for sync beacon slots
      *
      * @return const SubslotConfig& Sync beacon subslot configuration
      */
-    const protocols::lora_mesh::SubslotConfig& getSyncBeaconSubslotConfig()
-        const {
+    const types::protocols::lora_mesh::SubslotConfig&
+    getSyncBeaconSubslotConfig() const {
         return sync_beacon_subslot_config_;
     }
 
@@ -537,7 +624,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param config Subslot configuration
      */
     void setSyncBeaconSubslotConfig(
-        const protocols::lora_mesh::SubslotConfig& config) {
+        const types::protocols::lora_mesh::SubslotConfig& config) {
         sync_beacon_subslot_config_ = config;
     }
 
@@ -546,8 +633,8 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      *
      * @return const SubslotConfig& Discovery subslot configuration
      */
-    const protocols::lora_mesh::SubslotConfig& getDiscoverySubslotConfig()
-        const {
+    const types::protocols::lora_mesh::SubslotConfig&
+    getDiscoverySubslotConfig() const {
         return discovery_subslot_config_;
     }
 
@@ -557,7 +644,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @param config Subslot configuration
      */
     void setDiscoverySubslotConfig(
-        const protocols::lora_mesh::SubslotConfig& config) {
+        const types::protocols::lora_mesh::SubslotConfig& config) {
         discovery_subslot_config_ = config;
     }
 
@@ -566,17 +653,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * 
      * @return bool True if configuration is valid
      */
-    bool IsValid() const override {
-        return hello_interval_ >= 5000 &&     // At least 5s interval
-               hello_interval_ <= 3600000 &&  // Maximum 1 hour
-               route_timeout_ >
-                   hello_interval_ &&  // Route timeout must be greater than hello interval
-               max_hops_ > 0 &&           // At least 1 hop
-               max_hops_ <= 16 &&         // Maximum 16 hops
-               guard_time_ms_ >= 10 &&    // At least 10ms guard time
-               guard_time_ms_ <= 500 &&   // Maximum 500ms guard time
-               wake_up_guard_ms_ <= 500;  // Maximum 500ms wake-up guard
-    }
+    bool IsValid() const override { return Validate().empty(); }
 
     /**
      * @brief Validate the configuration and return error message if invalid
@@ -584,6 +661,11 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
      * @return std::string Empty string if valid, otherwise error description
      */
     std::string Validate() const override {
+        // Group addresses and broadcast are destinations, never node identities.
+        if (node_address_ != 0 && !IsUnicastAddress(node_address_)) {
+            return "Node address must be unicast (0x0001-0x7FFF) or 0 for "
+                   "auto-assignment";
+        }
         if (hello_interval_ < 5000) {
             return "Hello interval too short (minimum 5s)";
         }
@@ -596,7 +678,7 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (max_hops_ == 0) {
             return "Max hops must be at least 1";
         }
-        if (max_hops_ > 16) {
+        if (max_hops_ > kMaxHopsLimit) {
             return "Max hops too large (maximum 16)";
         }
         if (guard_time_ms_ < 10) {
@@ -608,10 +690,30 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
         if (wake_up_guard_ms_ > 500) {
             return "Wake-up guard time too long (maximum 500ms)";
         }
-        return "";
+        return ValidateDeepSleepPolicy();
     }
 
    private:
+    std::string ValidateDeepSleepPolicy() const {
+        if (!deep_sleep_policy_.enabled) {
+            return "";
+        }
+        if (node_role_ == NodeRole::NETWORK_MANAGER) {
+            return "A network manager never deep-sleeps";
+        }
+        if (deep_sleep_policy_.min_sleep_ms < 1000) {
+            return "Deep sleep minimum too short (minimum 1s)";
+        }
+        if (deep_sleep_policy_.boot_time_ms > 60000) {
+            return "Deep sleep boot time too long (maximum 60s)";
+        }
+        if (deep_sleep_policy_.clock_drift_ppm > 100000 ||
+            deep_sleep_policy_.calibrated_drift_ppm > 100000) {
+            return "Deep sleep clock drift too large (maximum 100000 ppm)";
+        }
+        return "";
+    }
+
     uint32_t hello_interval_ =
         60000;  ///< Interval between hello messages in ms
     uint32_t route_timeout_ =
@@ -620,20 +722,23 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     uint8_t max_packet_size_ = 255;  ///< Maximum packet size
     bool max_packet_size_user_set_ =
         false;  ///< True when setMaxPacketSize() was called
-    uint8_t default_data_slots_ =
-        1;  ///< Default Number of data slots in the superframe
+    uint8_t default_data_slots_ = 2;  ///< Data slots allocated to each node
     uint32_t joining_timeout_ms_ =
         hello_interval_ * 3;  ///< Joining timeout in ms
     uint8_t max_network_nodes_ =
-        50;                        ///< Maximum number of nodes in the network
+        50;  ///< Maximum number of nodes in the network
+    uint8_t max_data_slots_ =
+        100;  ///< Ceiling on total data slots allocatable in the superframe
     uint32_t guard_time_ms_ = 50;  ///< TX guard time for RX readiness in ms
     uint32_t wake_up_guard_ms_ =
-        100;  ///< Guard time before slot boundary for MCU wake-up
+        20;  ///< Guard time before slot boundary for MCU wake-up
     float target_duty_cycle_ = 0.01f;  ///< Target TX duty cycle (default 1%)
     float min_sleep_fraction_ =
         0.30f;  ///< Minimum fraction of superframe as sleep
     uint8_t churn_margin_slots_ =
         2;  ///< Absolute extra slots reserved by NM to absorb routing churn
+    /// When true, RTENTRY log lines include capability/data-slot fields.
+    bool log_routing_capabilities_ = false;
     float link_quality_ewma_alpha_ =
         0.30f;  ///< EWMA smoothing factor for link quality
     uint8_t consecutive_missed_for_inactivation_ =
@@ -644,15 +749,23 @@ class LoRaMeshProtocolConfig : public BaseProtocolConfig {
     power::PrepareSleepCallback prepare_sleep_callback_ = nullptr;
     power::WakeUpCallback wake_up_callback_ = nullptr;
     uint8_t node_capabilities_ = 0;  ///< Node capabilities bitmap
+    /// Keeps protocol state across resets (nullptr = cold start every boot)
+    std::shared_ptr<storage::IStateStore> state_store_;
+    /// When a member deep-sleeps (disabled by default)
+    power::DeepSleepPolicy deep_sleep_policy_;
 
-    /// Subslot config for sync beacon TX slots (ADDRESS_MODULO by default)
-    protocols::lora_mesh::SubslotConfig sync_beacon_subslot_config_{
+    /// Subslot config for sync beacon TX slots (ADDRESS_HASH by default).
+    /// A deterministic per-superframe hash of the address reshuffles same-hop
+    /// forwarders each superframe, so two forwarders whose addresses are
+    /// congruent modulo the subslot count do not collide every superframe.
+    types::protocols::lora_mesh::SubslotConfig sync_beacon_subslot_config_{
         5, guard_time_ms_,
-        protocols::lora_mesh::SubslotAssignment::ADDRESS_MODULO};
+        types::protocols::lora_mesh::SubslotAssignment::ADDRESS_HASH};
 
     /// Subslot config for discovery RX/TX slots (RANDOM for Slotted ALOHA)
-    protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
-        5, guard_time_ms_, protocols::lora_mesh::SubslotAssignment::RANDOM};
+    types::protocols::lora_mesh::SubslotConfig discovery_subslot_config_{
+        5, guard_time_ms_,
+        types::protocols::lora_mesh::SubslotAssignment::RANDOM};
 };
 
 /**

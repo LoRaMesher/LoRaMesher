@@ -7,6 +7,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include "os/rtos_mock.hpp"
@@ -126,6 +128,505 @@ class RTOSMockTimeTest : public ::testing::Test {
     // Vector to track dynamically allocated task parameters for cleanup
     std::vector<std::function<void()>> taskParameterCleanup_;
 };
+
+/**
+ * @brief Every switch to virtual time starts the clock at the same epoch
+ */
+TEST_F(RTOSMockTimeTest, VirtualTimeStartsAtFixedEpoch) {
+    rtosMock_->advanceTime(1234);
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+    uint32_t first_epoch = rtos_->getTickCount();
+
+    rtosMock_->advanceTime(4321);
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+    uint32_t second_epoch = rtos_->getTickCount();
+
+    EXPECT_EQ(first_epoch, second_epoch);
+    EXPECT_EQ(first_epoch, initialTime_);
+}
+
+/**
+ * @brief A delayed task wakes at its exact deadline even when time is
+ * advanced in a larger step
+ */
+TEST_F(RTOSMockTimeTest, DelayWakesAtExactDeadlineWithinStep) {
+    struct State {
+        std::atomic<bool> ready{false};
+        std::atomic<uint32_t> wake_time{0};
+    } state;
+
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<State*>(param);
+            s->ready = true;
+            GetRTOS().delay(7);
+            s->wake_time = GetRTOS().getTickCount();
+            GetRTOS().delay(100000);
+        },
+        "ExactWake", 2048, &state, 1, &task));
+    taskHandles_.push_back(task);
+
+    for (int i = 0; i < 100 && !state.ready; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(50);
+
+    EXPECT_EQ(state.wake_time.load(), initialTime_ + 7);
+    EXPECT_EQ(rtos_->getTickCount(), initialTime_ + 50);
+}
+
+/**
+ * @brief Tasks due at the same instant run one at a time in a stable order
+ */
+TEST_F(RTOSMockTimeTest, SameDeadlineTasksRunSerially) {
+    struct State {
+        std::mutex mutex;
+        std::vector<std::string> order;
+        std::atomic<int> ready{0};
+    } state;
+
+    struct Param {
+        State* state;
+        const char* name;
+        int real_work_ms;
+    };
+
+    // "B" is created first and does no work; "A" sorts first and does slow
+    // work. Running them concurrently would record B before A.
+    Param b{&state, "B", 0};
+    Param a{&state, "A", 20};
+
+    auto task_fn = [](void* param) {
+        auto* p = static_cast<Param*>(param);
+        p->state->ready++;
+        GetRTOS().delay(10);
+        std::this_thread::sleep_for(std::chrono::milliseconds(p->real_work_ms));
+        {
+            std::lock_guard<std::mutex> lock(p->state->mutex);
+            p->state->order.push_back(p->name);
+        }
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task_b = nullptr;
+    os::TaskHandle_t task_a = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "B", 2048, &b, 1, &task_b));
+    taskHandles_.push_back(task_b);
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "A", 2048, &a, 1, &task_a));
+    taskHandles_.push_back(task_a);
+
+    for (int i = 0; i < 100 && state.ready < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(20);
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    EXPECT_EQ(state.order, (std::vector<std::string>{"A", "B"}));
+}
+
+/**
+ * @brief Timed waits that expire at the same virtual instant are woken one at
+ * a time, even when the first task works longer than the wait poll interval
+ */
+TEST_F(RTOSMockTimeTest, SameDeadlineWaitsRunSerially) {
+    struct State {
+        std::mutex mutex;
+        std::vector<std::string> order;
+        std::atomic<int> ready{0};
+        std::atomic<bool> a_running{false};
+        std::atomic<bool> overlap{false};
+    } state;
+
+    struct Param {
+        State* state;
+        const char* name;
+        int real_work_ms;
+    };
+
+    Param b{&state, "B", 0};
+    Param a{&state, "A", 150};
+
+    auto task_fn = [](void* param) {
+        auto* p = static_cast<Param*>(param);
+        const bool is_a = p->real_work_ms > 0;
+        p->state->ready++;
+        GetRTOS().WaitForNotify(10);
+        if (is_a) {
+            p->state->a_running = true;
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(p->real_work_ms));
+            p->state->a_running = false;
+        } else if (p->state->a_running) {
+            p->state->overlap = true;
+        }
+        {
+            std::lock_guard<std::mutex> lock(p->state->mutex);
+            p->state->order.push_back(p->name);
+        }
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task_b = nullptr;
+    os::TaskHandle_t task_a = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "B", 2048, &b, 1, &task_b));
+    taskHandles_.push_back(task_b);
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "A", 2048, &a, 1, &task_a));
+    taskHandles_.push_back(task_a);
+
+    for (int i = 0; i < 100 && state.ready < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(20);
+
+    EXPECT_FALSE(state.overlap);
+    std::lock_guard<std::mutex> lock(state.mutex);
+    EXPECT_EQ(state.order, (std::vector<std::string>{"A", "B"}));
+}
+
+/**
+ * @brief A task that outlives DeleteTask's join timeout keeps valid task state
+ * until it exits
+ */
+TEST_F(RTOSMockTimeTest, TaskDetachedByDeleteTaskExitsSafely) {
+    struct State {
+        os::RTOSMock* mock;
+        std::mutex mutex;
+        std::condition_variable cv;
+        std::atomic<bool> waiting{false};
+        std::atomic<bool> done{false};
+    } state;
+
+    state.mock = rtosMock_;
+
+    auto task_fn = [](void* param) {
+        auto* s = static_cast<State*>(param);
+        std::unique_lock<std::mutex> lock(s->mutex);
+        s->waiting = true;
+        // Ignores the stop request, so DeleteTask gives up waiting for it.
+        s->mock->waitFor(
+            s->cv, lock, 1000, []() { return false; },
+            os::RTOSMock::WaitKind::kDelay);
+        s->done = true;
+    };
+
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "Stubborn", 2048, &state, 1, &task));
+    for (int i = 0; i < 100 && !state.waiting; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtos_->DeleteTask(task);
+    rtosMock_->advanceTime(1000);
+
+    for (int i = 0; i < 200 && !state.done; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_TRUE(state.done);
+    // Let the detached thread finish before its state goes out of scope.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
+/**
+ * @brief A task blocked sending to a full queue is busy once room appears
+ */
+TEST_F(RTOSMockTimeTest, BlockedSenderIsBusyOnceQueueHasRoom) {
+    os::QueueHandle_t queue = rtos_->CreateQueue(1, sizeof(uint32_t));
+    queueHandles_.push_back(queue);
+    uint32_t item = 1;
+    ASSERT_EQ(rtos_->SendToQueue(queue, &item, 0), os::QueueResult::kOk);
+
+    struct Param {
+        os::QueueHandle_t queue;
+        std::atomic<bool> started{false};
+    } param{queue};
+
+    auto task_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        uint32_t value = 2;
+        param->started = true;
+        GetRTOS().SendToQueue(param->queue, &value, 100000);
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "Sender", 2048, &param, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !param.started; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    // Make room while holding the queue lock, so the sender cannot run yet.
+    // No advanceTime() is running, so waiting here cannot deadlock.
+    auto* q = static_cast<os::RTOSMock::QueueData*>(queue);
+    {
+        std::lock_guard<std::mutex> lock(q->mutex);
+        q->data.pop();
+        q->size.fetch_sub(1);
+        q->notFull.notify_one();
+        rtosMock_->waitForTasksToReblock(200);
+    }
+
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 1u);
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+}
+
+namespace {
+
+/// Task body that checks for suspension and then sleeps in virtual time.
+void SleepyTask(void* param) {
+    auto* started = static_cast<std::atomic<bool>*>(param);
+    started->store(true);
+    while (true) {
+        GetRTOS().ShouldStopOrPause();
+        GetRTOS().delay(1000);
+    }
+}
+
+}  // namespace
+
+/**
+ * @brief The test thread can suspend a task that is sleeping in virtual time
+ * without advancing the clock
+ */
+TEST_F(RTOSMockTimeTest, SuspendSleepingTaskFromTestThreadReturns) {
+    std::atomic<bool> started{false};
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(
+        rtos_->CreateTask(SleepyTask, "Sleepy", 2048, &started, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !started; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    std::atomic<bool> returned{false};
+    std::thread suspender([&]() {
+        rtos_->SuspendTask(task);
+        returned = true;
+    });
+    for (int i = 0; i < 400 && !returned; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    EXPECT_TRUE(returned) << "SuspendTask waited on a clock nobody advances";
+    for (int i = 0; i < 100 && !returned; ++i) {
+        rtosMock_->advanceTime(20);
+    }
+    suspender.join();
+    rtos_->ResumeTask(task);
+}
+
+/**
+ * @brief A task suspending a sleeping task does not stall virtual time
+ */
+TEST_F(RTOSMockTimeTest, SuspendFromTaskDoesNotStallVirtualTime) {
+    std::atomic<bool> started{false};
+    os::TaskHandle_t sleepy = nullptr;
+    ASSERT_TRUE(
+        rtos_->CreateTask(SleepyTask, "Sleepy", 2048, &started, 1, &sleepy));
+    taskHandles_.push_back(sleepy);
+
+    struct Param {
+        os::TaskHandle_t target;
+        std::atomic<bool> started{false};
+    } param{sleepy};
+
+    auto suspender_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        param->started = true;
+        GetRTOS().delay(10);
+        GetRTOS().SuspendTask(param->target);
+        GetRTOS().WaitForNotify(UINT32_MAX);
+    };
+    os::TaskHandle_t suspender = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(suspender_fn, "Suspender", 2048, &param, 1,
+                                  &suspender));
+    taskHandles_.push_back(suspender);
+
+    for (int i = 0; i < 100 && !(started && param.started); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    rtosMock_->advanceTime(50);
+
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 0u);
+    rtosMock_->resetReblockTimeoutCount();
+    rtos_->ResumeTask(sleepy);
+}
+
+/**
+ * @brief advanceTime stops at an instant with too many events instead of
+ * skipping the deadlines after it
+ */
+TEST_F(RTOSMockTimeTest, EventLimitStopsAtTheOverloadedInstant) {
+    class RepeatingSource : public os::RTOSMock::VirtualEventSource {
+       public:
+        explicit RepeatingSource(uint64_t at) : at_(at) {}
+
+        std::optional<uint64_t> NextEventTime() override {
+            if (count_ > os::RTOSMock::kMaxEventsPerInstant) {
+                return std::nullopt;
+            }
+            return at_;
+        }
+
+        void ProcessNextEvent(uint64_t) override { ++count_; }
+
+       private:
+        uint64_t at_;
+        uint32_t count_ = 0;
+    };
+
+    struct Param {
+        std::atomic<bool> started{false};
+        std::atomic<uint32_t> woke_at{0};
+    } param;
+
+    auto task_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        param->started = true;
+        GetRTOS().delay(50);
+        param->woke_at = GetRTOS().getTickCount();
+        GetRTOS().delay(100000);
+    };
+
+    const uint32_t t0 = rtos_->getTickCount();
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "Sleeper", 2048, &param, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !param.started; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    RepeatingSource source(t0 + 10);
+    rtosMock_->advanceTime(100, &source);
+    rtosMock_->advanceTime(100);
+
+    EXPECT_EQ(param.woke_at, t0 + 50);
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 1u);
+    rtosMock_->resetReblockTimeoutCount();
+}
+
+/**
+ * @brief Tasks with the same name keep distinct, creation-ordered keys across
+ * a switch to virtual time
+ */
+TEST_F(RTOSMockTimeTest, SameNameTasksKeepCreationOrderAcrossModeSwitch) {
+    struct State {
+        std::mutex mutex;
+        std::vector<std::string> order;
+        std::atomic<bool> released{false};
+        std::atomic<int> ready{0};
+    } state;
+
+    struct Param {
+        State* state;
+        const char* name;
+    };
+
+    Param a{&state, "A"};
+    Param b{&state, "B"};
+
+    auto task_fn = [](void* p) {
+        auto* param = static_cast<Param*>(p);
+        param->state->ready++;
+        while (!param->state->released) {
+            GetRTOS().WaitForNotify(UINT32_MAX);
+        }
+        GetRTOS().delay(100);
+        {
+            std::lock_guard<std::mutex> lock(param->state->mutex);
+            param->state->order.push_back(param->name);
+        }
+        GetRTOS().delay(100000);
+    };
+
+    os::TaskHandle_t task_a = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "t", 2048, &a, 1, &task_a));
+    taskHandles_.push_back(task_a);
+    for (int i = 0; i < 100 && state.ready < 1; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kRealTime);
+    rtosMock_->setTimeMode(os::RTOSMock::TimeMode::kVirtualTime);
+
+    // B registers its delay before A does, so only the task keys can put A,
+    // created first, ahead of B.
+    state.released = true;
+    os::TaskHandle_t task_b = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(task_fn, "t", 2048, &b, 1, &task_b));
+    taskHandles_.push_back(task_b);
+    for (int i = 0; i < 100 && state.ready < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtos_->NotifyTask(task_a, 0);
+    rtosMock_->waitForTasksToReblock(1000);
+
+    rtosMock_->advanceTime(100);
+
+    std::lock_guard<std::mutex> lock(state.mutex);
+    EXPECT_EQ(state.order, (std::vector<std::string>{"A", "B"}));
+}
+
+/**
+ * @brief A task that does not block again after waking is counted as a
+ * reblock timeout
+ */
+TEST_F(RTOSMockTimeTest, ReblockTimeoutIsCounted) {
+    struct State {
+        std::atomic<bool> ready{false};
+        std::atomic<bool> release{false};
+    } state;
+
+    os::TaskHandle_t task = nullptr;
+    ASSERT_TRUE(rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<State*>(param);
+            s->ready = true;
+            GetRTOS().delay(5);
+            while (!s->release) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            GetRTOS().delay(100000);
+        },
+        "Spinner", 2048, &state, 1, &task));
+    taskHandles_.push_back(task);
+    for (int i = 0; i < 100 && !state.ready; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+
+    rtosMock_->advanceTime(10);
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 1u);
+
+    state.release = true;
+    rtosMock_->waitForTasksToReblock(1000);
+    rtosMock_->resetReblockTimeoutCount();
+    rtosMock_->advanceTime(10);
+    EXPECT_EQ(rtosMock_->getReblockTimeoutCount(), 0u);
+}
 
 /**
  * @brief Basic test for virtual time operation
@@ -561,6 +1062,64 @@ TEST_F(RTOSMockTimeTest, WaitForTasksReblocksAfterQueueDataArrives) {
     EXPECT_EQ(42, state->received.load())
         << "Task had not processed queue data before waitForTasksToReblock "
            "returned";
+}
+
+TEST_F(RTOSMockTimeTest, ReblockUnaffectedByItemConsumedByAnotherThread) {
+    auto q = CreateTrackedQueue(5, sizeof(int));
+
+    struct State {
+        std::atomic<int> popped{0};
+    };
+
+    auto state = std::make_shared<State>();
+    auto* p =
+        new std::pair<os::QueueHandle_t, std::shared_ptr<State>>(q, state);
+    taskParameterCleanup_.push_back([p] { delete p; });
+
+    // Consumer: take one item, then sleep before waiting on the queue again.
+    os::TaskHandle_t task = nullptr;
+    rtos_->CreateTask(
+        [](void* param) {
+            auto* s = static_cast<
+                std::pair<os::QueueHandle_t, std::shared_ptr<State>>*>(param);
+            int v = 0;
+            while (!GetRTOS().ShouldStopOrPause()) {
+                if (GetRTOS().ReceiveFromQueue(s->first, &v, 100000) ==
+                    os::QueueResult::kOk) {
+                    s->second->popped++;
+                    GetRTOS().delay(1000);
+                }
+            }
+        },
+        "Consumer", 2048, p, 1, &task);
+    taskHandles_.push_back(task);
+    rtosMock_->waitForTasksToReblock(1000);
+
+    // Two items arrive while the consumer waits; it takes only the first.
+    int a = 1;
+    int b = 2;
+    rtos_->SendToQueue(q, &a, 0);
+    rtos_->SendToQueue(q, &b, 0);
+    for (int i = 0; i < 100 && state->popped.load() == 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    ASSERT_EQ(state->popped.load(), 1);
+
+    // Another thread drains the second item while the consumer sleeps.
+    int drained = 0;
+    ASSERT_EQ(rtos_->ReceiveFromQueue(q, &drained, 0), os::QueueResult::kOk);
+
+    // The consumer wakes and waits on the now-empty queue: every task is
+    // blocked, so advancing time must not wait for the reblock timeout.
+    auto start = std::chrono::steady_clock::now();
+    rtosMock_->advanceTime(1000);
+    rtosMock_->advanceTime(10);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start);
+
+    EXPECT_EQ(state->popped.load(), 1);
+    EXPECT_LT(elapsed.count(), 500)
+        << "advanceTime waited for a task that was already blocked";
 }
 
 }  // namespace test

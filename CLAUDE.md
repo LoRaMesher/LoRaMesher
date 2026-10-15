@@ -20,6 +20,37 @@ pio test -e test_native -v
 - Use `-f {test_name}` to filter a function.
 - Use `--list-tests` to get the tests names.
 
+#### Fast iteration on a single test (avoid re-running a whole slow suite)
+
+`pio test -f <suite>` runs *every* test in the matched suite, and some integration
+suites (e.g. `protocols/lora_mesh/services/test_routing`) take a very long time
+(multi-hop formation tests can be ~150s each). To iterate on one or a few tests,
+build the suite binary once, then run it directly with a GoogleTest filter:
+
+```bash
+# Build only (no test run); recompiles changed files + links the binary
+pio test -e test_native -f "protocols/lora_mesh/services/test_routing" --without-testing
+
+# Run just the test(s) you want (seconds–minutes each)
+.pio/build/test_native/program --gtest_filter='GroupAckTests.*'
+```
+
+- `-f` matches the suite *path* (see `--list-tests`); `--gtest_filter` matches
+  GoogleTest names. The binary is at `.pio/build/test_native/program`.
+- Do NOT edit source while a build is running — the binary becomes inconsistent.
+- Capture binary output directly to a file (`> log 2>&1`); piping to `grep`
+  block-buffers and loses output if the run is killed/timed out.
+
+#### Build time dominates
+
+With the build directory on `/mnt/d`, each suite recompiles all of `src/` (~100 s per
+suite) while most suites run in seconds. Optional speed-ups (see README "Faster local
+runs"): `ccache` on `PATH` is used automatically (~47 s per suite);
+`PLATFORMIO_BUILD_DIR` on the Linux filesystem lets objects be reused between suites
+(the binary is then `$PLATFORMIO_BUILD_DIR/test_native/program`);
+`LORAMESHER_TEST_LOG_DIR` moves the per-test logs. Run binaries from a Linux directory (not `/mnt/<drive>`), and copy the
+binary before building another suite if a run is still using it.
+
 ### ESP32 Compilation Check
 
 ```bash
@@ -86,6 +117,7 @@ Follows Google C++ Style Guide with specific conventions:
 - **trailing underscore**: Private members (`config_`)
 - **Doxygen comments** for public APIs
 - **RAII principles** with smart pointers
+- **Code organization**: keep related code together; place new functions near the code that uses them, and reserve the start of a file for its general setup (includes, construction, destruction)
 
 When adding or modifying comments in code, keep them generic and describe *what* the code does, not *why* a specific change was made. Do not reference bug fixes, issues, or past problems in comments. Only add comments where the logic is not self-evident; do not comment self-explanatory code.
 

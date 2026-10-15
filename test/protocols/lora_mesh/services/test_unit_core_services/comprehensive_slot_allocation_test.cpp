@@ -13,6 +13,10 @@
 #include "protocols/lora_mesh/interfaces/i_network_service.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
+#include "types/messages/loramesher/join_request_message.hpp"
+#include "types/messages/loramesher/routing_table_entry.hpp"
+#include "types/messages/loramesher/routing_table_message.hpp"
+#include "types/messages/loramesher/slot_request_message.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 
 namespace loramesher {
@@ -1058,7 +1062,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
     // election_priority_ defaults to 0xFF — any claim with priority < 0xFF wins
     network_service_->SetState(ProtocolState::NETWORK_MANAGER);
 
-    auto claim = NMClaimMessage::Create(0x2000, /*priority=*/1, 100, 3, 0xBEEF);
+    auto claim = NMClaimMessage::Create(0x2000, /*priority=*/1, 3, 0xBEEF);
     ASSERT_TRUE(claim.has_value());
     BaseMessage base = claim->ToBaseMessage();
 
@@ -1074,8 +1078,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
     // election_priority_ = 0xFF; claim with 0xFF is not strictly less → we win
     network_service_->SetState(ProtocolState::NETWORK_MANAGER);
 
-    auto claim =
-        NMClaimMessage::Create(0x2000, /*priority=*/0xFF, 100, 3, 0xBEEF);
+    auto claim = NMClaimMessage::Create(0x2000, /*priority=*/0xFF, 3, 0xBEEF);
     ASSERT_TRUE(claim.has_value());
     BaseMessage base = claim->ToBaseMessage();
 
@@ -1090,7 +1093,7 @@ TEST_F(ComprehensiveSlotAllocationTest,
        ProcessNMClaimInNormalOperationReturnsSuccess) {
     network_service_->SetState(ProtocolState::NORMAL_OPERATION);
 
-    auto claim = NMClaimMessage::Create(0x2000, 10, 100, 3, 0xBEEF);
+    auto claim = NMClaimMessage::Create(0x2000, 10, 3, 0xBEEF);
     ASSERT_TRUE(claim.has_value());
     BaseMessage base = claim->ToBaseMessage();
 
@@ -1447,6 +1450,45 @@ TEST_F(ComprehensiveSlotAllocationTest,
     EXPECT_TRUE(result.IsSuccess());
 }
 
+TEST_F(ComprehensiveSlotAllocationTest, DataSlotBudgetIndependentOfNodeCap) {
+    // The data-slot budget (max_data_slots) governs slot admission independently
+    // of the node cap (max_network_nodes). With a generous node cap but a 6-slot
+    // budget and 2 data slots per node, only 3 nodes' worth of slots may be
+    // admitted regardless of how many nodes the node cap alone would permit.
+    NetworkConfig cfg;
+    cfg.node_address = test_node_address_;
+    cfg.max_network_nodes = 50;  // node cap is not the limiter here
+    cfg.max_data_slots = 6;      // budget allows 3 nodes * 2 slots
+    cfg.default_data_slots = 2;
+    ASSERT_TRUE(network_service_->Configure(cfg).IsSuccess());
+
+    network_service_->SetState(ProtocolState::NETWORK_MANAGER);
+    network_service_->SetNetworkManager(test_node_address_);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+
+    // Attempt to admit 6 nodes, each requesting 2 data slots. Apply each join
+    // immediately so the committed budget gates subsequent admissions.
+    for (int i = 0; i < 6; ++i) {
+        AddressType addr = static_cast<AddressType>(0x2001 + i);
+        auto msg_opt = JoinRequestMessage::Create(test_node_address_, addr,
+                                                  /*requested_slots=*/2);
+        ASSERT_TRUE(msg_opt.has_value());
+        BaseMessage base = msg_opt->ToBaseMessage();
+        EXPECT_TRUE(
+            network_service_->ProcessReceivedMessage(base, 0).IsSuccess());
+        network_service_->ApplyPendingJoin();
+    }
+
+    // Total admitted data slots must be clamped to the 6-slot budget, not the
+    // 50-node cap (which would admit all 6 nodes = 12 slots).
+    uint16_t total_allocated = 0;
+    for (const auto& node : routing_table->GetNodesCopy()) {
+        total_allocated += node.GetAllocatedDataSlots();
+    }
+    EXPECT_EQ(total_allocated, 6u);
+}
+
 TEST_F(ComprehensiveSlotAllocationTest,
        ProcessReceivedMessageSlotAllocationReturnsSuccess) {
     // SLOT_ALLOCATION handler is currently a no-op stub → returns success
@@ -1689,6 +1731,171 @@ TEST_F(ComprehensiveSlotAllocationTest,
     Result result = network_service_->StartJoining(0x1001, 5000);
     EXPECT_FALSE(result.IsSuccess());
     EXPECT_EQ(result.getErrorCode(), LoraMesherErrorCode::kInvalidState);
+}
+
+// =============================================================================
+// Slot request grant: updates data slots, preserves capabilities
+// =============================================================================
+
+/**
+ * @brief A SLOT_REQUEST grant must increase the requesting node's allocated
+ *        data slots without overwriting its advertised capabilities.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       ProcessSlotRequestGrantsSlotsWithoutClobberingCapabilities) {
+    constexpr AddressType kRequester = 0x2000;
+    constexpr uint8_t kCustomCapability = 0x04;
+    constexpr uint8_t kRequestedSlots = 2;
+
+    // We are the network manager handling the request.
+    network_service_->SetState(ProtocolState::NETWORK_MANAGER);
+    network_service_->SetNetworkManager(test_node_address_);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    uint32_t now = GetRTOS().getTickCount();
+
+    // Local node plus a direct-neighbor requester that already advertises a
+    // custom capability and holds no data slots yet.
+    routing_table->UpdateRoute(test_node_address_, test_node_address_, 0, 100,
+                               0, 0, now);
+    routing_table->UpdateRoute(kRequester, kRequester, 1, 100, 0,
+                               kCustomCapability, now);
+
+    auto request = SlotRequestMessage::Create(test_node_address_, kRequester,
+                                              kRequestedSlots);
+    ASSERT_TRUE(request.has_value());
+    BaseMessage base = request->ToBaseMessage();
+
+    Result result = network_service_->ProcessSlotRequest(base, now);
+    ASSERT_TRUE(result.IsSuccess()) << result.GetErrorMessage();
+
+    bool found = false;
+    for (const auto& node : network_service_->GetNetworkNodes()) {
+        if (node.routing_entry.destination == kRequester) {
+            found = true;
+            EXPECT_EQ(node.routing_entry.capabilities, kCustomCapability)
+                << "Slot grant must not overwrite node capabilities";
+            EXPECT_GT(node.routing_entry.allocated_data_slots, 0)
+                << "Slot grant must update allocated data slots";
+        }
+    }
+    EXPECT_TRUE(found) << "Requesting node missing from routing table";
+}
+
+// =================== POISONED SLOT-VALUE ROBUSTNESS TESTS ===================
+//
+// A single out-of-range control_slot_index / allocated_data_slots ingested from
+// the radio must never overflow the superframe arithmetic and produce a corrupt
+// schedule that the Network Manager then broadcasts to the whole network.
+// config in the fixture: max_network_nodes = 10, max_data_slots = 50 (default).
+
+/**
+ * @brief NM must build a valid, bounded superframe even when a routing entry
+ *        carries a garbage control_slot_index and allocated_data_slots count.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       NMSurvivesPoisonedControlSlotAndDataSlots) {
+    const AddressType nm = test_node_address_;
+    const AddressType victim = 0x1001;
+
+    SetupNetworkTopology(nm, ProtocolState::NETWORK_MANAGER, nm,
+                         {{victim, 1}, {0x1002, 1}, {0x1003, 2}}, 3);
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    uint32_t now = GetRTOS().getTickCount();
+
+    // Poison: out-of-range control slot index + absurd per-node data-slot count.
+    routing_table->SetControlSlotIndex(victim, 247);
+    routing_table->UpdateRoute(nm, victim, 1, 100, 200, 0, now);
+
+    Result result = network_service_->UpdateSlotTable();
+    ASSERT_TRUE(result.IsSuccess())
+        << "UpdateSlotTable must survive poisoned values: "
+        << result.GetErrorMessage();
+
+    const auto& slot_table = network_service_->GetSlotTable();
+    EXPECT_GT(slot_table.size(), 0u);
+    EXPECT_LE(slot_table.size(), 255u)
+        << "Superframe must fit the uint8 beacon wire field";
+
+    size_t control_slots =
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_TX) +
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_RX);
+    EXPECT_LE(control_slots, 10u)
+        << "Control slots must stay bounded by max_network_nodes";
+
+    EXPECT_GT(CountSlotsOfType(SlotAllocation::SlotType::DISCOVERY_RX), 0u)
+        << "Discovery tail must survive";
+
+    // The poisoned control index must not have been retained.
+    auto node = routing_table->FindNode(victim);
+    ASSERT_TRUE(node.has_value());
+    EXPECT_NE(node->control_slot_index, 247)
+        << "Out-of-range control slot index must be rejected";
+}
+
+/**
+ * @brief NM must reject an out-of-range control_slot_index advertised in a
+ *        routing table message received over the radio.
+ */
+TEST_F(ComprehensiveSlotAllocationTest,
+       NMRejectsOutOfRangeControlSlotFromRoutingMessage) {
+    const AddressType nm = test_node_address_;
+    const AddressType peer = 0x1001;
+    const AddressType faraway = 0x1002;
+
+    SetupNetworkTopology(nm, ProtocolState::NETWORK_MANAGER, nm, {{peer, 1}},
+                         3);
+
+    // Routing table message from `peer` advertising a garbage control_slot_index
+    // for `faraway` (2 hops away via peer).
+    std::vector<RoutingTableEntry> entries;
+    entries.emplace_back(faraway, /*hops=*/2, /*quality=*/200, /*data_slots=*/1,
+                         /*caps=*/0, /*control_slot_index=*/247);
+    auto msg =
+        RoutingTableMessage::Create(0xFFFF, peer, nm, /*version=*/1, entries);
+    ASSERT_TRUE(msg.has_value());
+    BaseMessage base = msg->ToBaseMessage();
+
+    uint32_t now = GetRTOS().getTickCount();
+    Result r = network_service_->ProcessRoutingTableMessage(base, now);
+    ASSERT_TRUE(r.IsSuccess()) << r.GetErrorMessage();
+
+    auto* routing_table = network_service_->GetRoutingTable();
+    auto node = routing_table->FindNode(faraway);
+    if (node) {
+        EXPECT_NE(node->control_slot_index, 247)
+            << "Out-of-range control slot index from radio must not be stored";
+    }
+}
+
+/**
+ * @brief A follower must clamp an absurd node count / slot count adopted from a
+ *        corrupt sync beacon instead of overflowing its own slot table.
+ */
+TEST_F(ComprehensiveSlotAllocationTest, FollowerClampsBadBeaconNodeCount) {
+    const AddressType nm = 0x1001;
+
+    SetupNetworkTopology(test_node_address_, ProtocolState::NORMAL_OPERATION,
+                         nm, {{nm, 1}, {0x1002, 1}}, 3);
+
+    // Simulate having adopted a corrupt beacon.
+    network_service_->SetBeaconNodeCount(248);
+    network_service_->SetNumberOfSlotsPerSuperframe(233);
+
+    Result result = network_service_->UpdateSlotTable();
+    ASSERT_TRUE(result.IsSuccess())
+        << "Follower must survive a corrupt beacon: "
+        << result.GetErrorMessage();
+
+    const auto& slot_table = network_service_->GetSlotTable();
+    EXPECT_LE(slot_table.size(), 255u);
+
+    size_t control_slots =
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_TX) +
+        CountSlotsOfType(SlotAllocation::SlotType::CONTROL_RX);
+    EXPECT_LE(control_slots, 10u)
+        << "Follower control slots must stay bounded by max_network_nodes";
 }
 
 }  // namespace test

@@ -12,12 +12,46 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#ifdef ARDUINO_ARCH_ESP32
+#include <driver/uart.h>
+#include <esp_sleep.h>
+#include <esp_timer.h>
+#if defined(CONFIG_IDF_TARGET_ESP32)
+#include "esp32/rtc.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
+#include "esp32s2/rtc.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+#include "esp32s3/rtc.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32C3)
+#include "esp32c3/rtc.h"
+#endif
+#endif
+
+#include <atomic>
+
 #include "config/task_config.hpp"
 #include "os/rtos.hpp"
 #include "utils/logger.hpp"
 
 namespace loramesher {
 namespace os {
+
+/**
+ * @brief Convert a stack size in bytes to the port's stack-depth unit
+ *
+ * ESP-IDF counts stack depth in bytes (StackType_t is uint8_t); vanilla
+ * FreeRTOS counts it in StackType_t words.
+ */
+constexpr uint32_t StackBytesToDepth(uint32_t bytes) {
+    return bytes / sizeof(StackType_t);
+}
+
+/**
+ * @brief Convert a port stack depth (e.g. a high-water mark) to bytes
+ */
+constexpr uint32_t StackDepthToBytes(uint32_t depth) {
+    return depth * sizeof(StackType_t);
+}
 
 class RTOSFreeRTOS : public RTOS {
    private:
@@ -58,8 +92,9 @@ class RTOSFreeRTOS : public RTOS {
             new TaskData{.function = taskFunction, .parameters = parameters};
 
         // Create the task
-        BaseType_t result = xTaskCreate(taskWrapper, name, stackSize, taskData,
-                                        priority, taskHandle);
+        BaseType_t result =
+            xTaskCreate(taskWrapper, name, StackBytesToDepth(stackSize),
+                        taskData, priority, taskHandle);
 
         if (result != pdPASS) {
             delete taskData;
@@ -147,7 +182,7 @@ class RTOSFreeRTOS : public RTOS {
     void delay(uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
     void LightSleep(uint32_t ms) override {
-#ifdef LORAMESHER_BUILD_ARDUINO
+#ifdef ARDUINO_ARCH_ESP32
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
         esp_light_sleep_start();
 #else
@@ -155,15 +190,37 @@ class RTOSFreeRTOS : public RTOS {
 #endif
     }
 
-    uint32_t getTickCount() override { return xTaskGetTickCount(); }
+    /**
+     * @brief Milliseconds since boot, continued across deep sleep by
+     *        ContinueTickCountFrom()
+     */
+    uint32_t getTickCount() override {
+        return ClockMs() + tick_offset_ms_.load(std::memory_order_relaxed);
+    }
+
+#ifdef ARDUINO_ARCH_ESP32
+    /**
+     * @brief RTC timer time, which runs through deep sleep (not power loss)
+     */
+    uint64_t GetPersistentTimeUs() override { return esp_rtc_get_time_us(); }
+
+    void DeepSleep(uint32_t ms) override {
+        // Let the console finish the last log lines before the power goes
+        uart_wait_tx_idle_polling(
+            static_cast<uart_port_t>(CONFIG_ESP_CONSOLE_UART_NUM));
+        esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
+        esp_deep_sleep_start();
+    }
+#endif
+
+    void ContinueTickCountFrom(uint32_t tick_ms) override {
+        tick_offset_ms_.store(tick_ms - ClockMs(), std::memory_order_relaxed);
+    }
 
     void StartScheduler() override { vTaskStartScheduler(); }
 
     uint32_t getTaskStackWatermark(TaskHandle_t taskHandle) override {
-        // uxTaskGetStackHighWaterMark returns words on this port; report
-        // bytes to match the rest of the codebase.
-        return uxTaskGetStackHighWaterMark(taskHandle) *
-               config::TaskConfig::kStackBytesPerWord;
+        return StackDepthToBytes(uxTaskGetStackHighWaterMark(taskHandle));
     }
 
     TaskState getTaskState(TaskHandle_t taskHandle) override {
@@ -420,7 +477,23 @@ class RTOSFreeRTOS : public RTOS {
     }
 
    private:
+    /**
+     * @brief Milliseconds since boot from a clock that runs during light sleep
+     *
+     * On ESP32 this is esp_timer time; the FreeRTOS tick count stands still
+     * while the MCU light-sleeps.
+     */
+    static uint32_t ClockMs() {
+#ifdef ARDUINO_ARCH_ESP32
+        return static_cast<uint32_t>(esp_timer_get_time() / 1000);
+#else
+        return xTaskGetTickCount() * portTICK_PERIOD_MS;
+#endif
+    }
+
     char current_node_address_[8] = {};
+    /// Added to ClockMs() so the tick count continues across deep sleep
+    std::atomic<uint32_t> tick_offset_ms_{0};
 };
 
 }  // namespace os

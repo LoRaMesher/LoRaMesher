@@ -22,6 +22,32 @@ using AddressType = uint16_t;
 /** Broadcast destination address — delivered to all nodes in range */
 static constexpr AddressType kBroadcastAddress = 0xFFFF;
 
+/** Lowest address reserved for group / multicast destinations */
+static constexpr AddressType kGroupAddressMin = 0x8000;
+
+/** Highest address reserved for group / multicast destinations */
+static constexpr AddressType kGroupAddressMax = 0xFFFE;
+
+/**
+ * @brief Check whether an address denotes a group / multicast destination.
+ *
+ * @param address Address to classify
+ * @return true if the address is in the group range [0x8000, 0xFFFE]
+ */
+constexpr bool IsGroupAddress(AddressType address) {
+    return address >= kGroupAddressMin && address <= kGroupAddressMax;
+}
+
+/**
+ * @brief Check whether an address denotes a unicast node destination.
+ *
+ * @param address Address to classify
+ * @return true if the address is in the unicast range [0x0001, 0x7FFF]
+ */
+constexpr bool IsUnicastAddress(AddressType address) {
+    return address >= 0x0001 && address <= 0x7FFF;
+}
+
 /**
  * @brief Base header class for all message types
  * 

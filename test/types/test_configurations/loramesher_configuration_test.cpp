@@ -115,15 +115,33 @@ TEST(LoRaMeshProtocolConfigSfDefaultsTest, AppliesDefaultWhenNotUserSet) {
     EXPECT_EQ(config.getMaxPacketSize(), 51);
 }
 
-TEST(LoRaMeshProtocolConfigSfDefaultsTest, RespectsUserOverride) {
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, CapsUserOverrideAbovePhysicalLimit) {
     LoRaMeshProtocolConfig config;
     config.setMaxPacketSize(200);
     EXPECT_TRUE(config.IsMaxPacketSizeUserSet());
 
     uint8_t cap = config.ApplySfDerivedDefaults(10, 125.0F);
-    EXPECT_EQ(cap, 51);  // Cap reported for caller's warning logic
+    EXPECT_EQ(cap, 51);  // Physical SF-safe cap reported for warning logic
     EXPECT_EQ(config.getMaxPacketSize(),
-              200);  // User value preserved unchanged
+              51);  // Request above the cap is clamped to it
+}
+
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, CapsMaxRequestAtSf12) {
+    LoRaMeshProtocolConfig config;
+    config.setMaxPacketSize(255);
+
+    uint8_t cap = config.ApplySfDerivedDefaults(12, 125.0F);
+    EXPECT_EQ(cap, 51);
+    EXPECT_EQ(config.getMaxPacketSize(), 51);
+}
+
+TEST(LoRaMeshProtocolConfigSfDefaultsTest, KeepsRequestBelowCapAtSf12) {
+    LoRaMeshProtocolConfig config;
+    config.setMaxPacketSize(30);
+
+    uint8_t cap = config.ApplySfDerivedDefaults(12, 125.0F);
+    EXPECT_EQ(cap, 51);
+    EXPECT_EQ(config.getMaxPacketSize(), 30);  // Lower request is respected
 }
 
 TEST(LoRaMeshProtocolConfigSfDefaultsTest, UserValueBelowCapIsKept) {

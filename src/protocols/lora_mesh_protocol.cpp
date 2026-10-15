@@ -7,9 +7,13 @@
 #include "lora_mesh_protocol.hpp"
 #include "os/os_port.hpp"
 #include "protocols/lora_mesh/routing/distance_vector_routing_table.hpp"
+#include "protocols/lora_mesh/services/slot_tx_budget.hpp"
 #include "types/messages/message_type.hpp"
 #include "types/radio/radio_event.hpp"
+#include "types/storage/resume_snapshot_codec.hpp"
+#include "types/storage/snapshot_codec.hpp"
 #include "utils/task_monitor.hpp"
+#include "utils/time_utils.hpp"
 
 namespace {
 using namespace loramesher::types::protocols::lora_mesh;
@@ -17,10 +21,6 @@ using namespace loramesher::types::protocols::lora_mesh;
 
 namespace loramesher {
 namespace protocols {
-
-/// Margin for the receiver to finish processing a packet before the slot ends.
-/// Covers SPI transfer, interrupt latency, and queue insertion on the RX side.
-static constexpr uint32_t kRxProcessingMarginMs = 20;
 
 LoRaMeshProtocol::LoRaMeshProtocol()
     : Protocol(ProtocolType::kLoraMesh),
@@ -31,23 +31,19 @@ LoRaMeshProtocol::LoRaMeshProtocol()
 
 LoRaMeshProtocol::~LoRaMeshProtocol() {
     LOG_DEBUG("LoRaMeshProtocol destructor called");
-    // Clean up protocol task if it exists
-    if (protocol_task_handle_) {
-        LOG_DEBUG("LoRaMeshProtocol destructor deleting task handle: %p",
-                  protocol_task_handle_);
-        GetRTOS().DeleteTask(protocol_task_handle_);
-        protocol_task_handle_ = nullptr;
-        LOG_DEBUG("LoRaMeshProtocol task handle set to nullptr");
-    } else {
-        LOG_DEBUG("LoRaMeshProtocol task handle already null");
+
+    // Stop the protocol task first: while it runs it may restart the
+    // superframe. Parking the superframe task then ensures no slot callback
+    // is in flight when the callbacks and queues go away.
+    ShutdownProtocolTask();
+    if (superframe_service_ && superframe_service_->IsRunning()) {
+        superframe_service_->StopSuperframe();
     }
 
     // Clear callbacks to prevent use-after-free
-    if (hardware_) {
-        hardware_->setActionReceive(nullptr);
-    }
-    if (superframe_service_) {
-        superframe_service_->SetSuperframeCallback(nullptr);
+    UnwireCallbacks();
+    if (network_service_) {
+        network_service_->SetStateChangeCallback(nullptr);
     }
 
     // Clean up radio event queue
@@ -83,6 +79,15 @@ LoRaMeshProtocol::~LoRaMeshProtocol() {
 Result LoRaMeshProtocol::Init(
     std::shared_ptr<hardware::IHardwareManager> hardware,
     AddressType node_address) {
+    // The protocol task and services exist once; a repeated Init() must not
+    // create a second task bound to the same instance
+    if (protocol_task_handle_) {
+        if (hardware == hardware_ && node_address == node_address_) {
+            return Result::Success();
+        }
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Protocol already initialized");
+    }
 
     hardware->SetLocalAddress(node_address);
 
@@ -106,10 +111,12 @@ Result LoRaMeshProtocol::Init(
     superframe_service_ = std::make_shared<lora_mesh::SuperframeService>();
     superframe_service_->SetNodeAddress(node_address);
 
-    // Create distance vector routing table
+    // Create distance vector routing table; NetworkService::Configure applies
+    // the configured node limit.
     auto routing_table =
         std::make_unique<lora_mesh::DistanceVectorRoutingTable>(
-            node_address, 50);  // max 50 nodes
+            node_address,
+            lora_mesh::INetworkService::NetworkConfig{}.max_network_nodes);
 
     // Create network service
     network_service_ = std::make_shared<lora_mesh::NetworkService>(
@@ -140,8 +147,59 @@ Result LoRaMeshProtocol::Init(
                       "Failed to create slot transition queue");
     }
 
-    // Set up hardware radio callback to send events to NetworkService
-    hw_result = hardware_->setActionReceive(
+    BindNetworkServiceCallbacks();
+
+    if (!task_gate_.IsValid()) {
+        return Result(LoraMesherErrorCode::kMemoryError,
+                      "Failed to create protocol task synchronization");
+    }
+
+    // Create main protocol task; it parks until Start()
+    bool task_created =
+        GetRTOS().CreateTask(ProtocolTaskFunction, "LoRaMeshMain",
+                             config::TaskConfig::kProtocolMainStackSize, this,
+                             TASK_PRIORITY, &protocol_task_handle_);
+
+    if (!task_created) {
+        return Result(LoraMesherErrorCode::kConfigurationError,
+                      "Failed to create protocol task");
+    }
+
+    if (!task_gate_.WaitParked(kTaskStartTimeoutMs)) {
+        return Result(LoraMesherErrorCode::kTimeout,
+                      "Protocol task did not start");
+    }
+
+    // Apply default configuration
+    config_ = LoRaMeshProtocolConfig(node_address);
+#ifdef DEBUG
+    service_config_ = CreateServiceConfigForTest(config_);
+#else
+    service_config_ = CreateServiceConfig(config_);
+#endif  // DEBUG
+
+    LOG_INFO("LoRaMesh protocol initialized for node 0x%04X", node_address_);
+
+    return Result::Success();
+}
+
+void LoRaMeshProtocol::BindNetworkServiceCallbacks() {
+    network_service_->SetRouteUpdateCallback(
+        [](bool updated, AddressType dest, AddressType next_hop, uint8_t hops) {
+            LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
+                      updated ? "updated" : "removed", dest, next_hop, hops);
+        });
+
+    // Wake up the protocol task immediately on a state change
+    network_service_->SetStateChangeCallback(
+        [this](lora_mesh::INetworkService::ProtocolState new_state) {
+            OnStateChange(new_state);
+        });
+}
+
+Result LoRaMeshProtocol::WireCallbacks() {
+    // Radio callback: hand events to the protocol task
+    Result result = hardware_->setActionReceive(
         [this](std::unique_ptr<radio::RadioEvent> event) {
             if (!event) {
                 LOG_WARNING("Received null radio event");
@@ -170,11 +228,9 @@ Result LoRaMeshProtocol::Init(
             NotifyProtocolTask(ProtocolNotificationType::RADIO_EVENT);
         });
 
-    if (!hw_result) {
-        return hw_result;
+    if (!result) {
+        return result;
     }
-
-    // Set up callbacks from services
 
     // Superframe callback: post slot data to the queue and notify the protocol
     // task. Non-blocking so the superframe timing task is never stalled by
@@ -187,47 +243,16 @@ Result LoRaMeshProtocol::Init(
             NotifyProtocolTask(ProtocolNotificationType::SLOT_TRANSITION);
         });
 
-    // Network service route update callback
-    network_service_->SetRouteUpdateCallback(
-        [this](bool updated, AddressType dest, AddressType next_hop,
-               uint8_t hops) {
-            LOG_DEBUG("Route %s: dest=0x%04X via=0x%04X hops=%d",
-                      updated ? "updated" : "removed", dest, next_hop, hops);
-            OnNetworkTopologyChange(updated, dest, next_hop, hops);
-        });
-
-    // State-change callback: wake up the protocol task immediately
-    network_service_->SetStateChangeCallback(
-        [this](lora_mesh::INetworkService::ProtocolState new_state) {
-            OnStateChange(new_state);
-        });
-
-    // Create main protocol task
-    bool task_created =
-        GetRTOS().CreateTask(ProtocolTaskFunction, "LoRaMeshMain",
-                             config::TaskConfig::kProtocolMainStackSize /
-                                 config::TaskConfig::kStackBytesPerWord,
-                             this, TASK_PRIORITY, &protocol_task_handle_);
-
-    if (!task_created) {
-        return Result(LoraMesherErrorCode::kConfigurationError,
-                      "Failed to create protocol task");
-    }
-
-    // Wait until receive task is suspended
-    GetRTOS().SuspendTask(protocol_task_handle_);
-
-    // Apply default configuration
-    config_ = LoRaMeshProtocolConfig(node_address);
-#ifdef DEBUG
-    service_config_ = CreateServiceConfigForTest(config_);
-#else
-    service_config_ = CreateServiceConfig(config_);
-#endif  // DEBUG
-
-    LOG_INFO("LoRaMesh protocol initialized for node 0x%04X", node_address_);
-
     return Result::Success();
+}
+
+void LoRaMeshProtocol::UnwireCallbacks() {
+    if (hardware_) {
+        hardware_->setActionReceive(nullptr);
+    }
+    if (superframe_service_) {
+        superframe_service_->SetSuperframeCallback(nullptr);
+    }
 }
 
 Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
@@ -241,20 +266,21 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     config_ = config;
     pending_role_.store(config.getNodeRole(), std::memory_order_release);
 
-    // Apply SF-derived max_packet_size default based on live radio settings.
-    // If the user explicitly set max_packet_size above the SF-safe cap, keep
-    // their value and warn so slot-duration inflation is traceable.
+    // Cap max_packet_size to the physical SF-safe limit for the live radio
+    // settings. A value above the cap (or the 255 default) is clamped so it
+    // can never produce a slot duration the radio cannot transmit within.
     if (hardware_) {
         uint8_t sf = hardware_->getSpreadingFactor();
         float bw_khz = hardware_->getBandwidth();
+        uint8_t requested = config_.getMaxPacketSize();
+        bool user_set = config_.IsMaxPacketSizeUserSet();
         uint8_t sf_safe = config_.ApplySfDerivedDefaults(sf, bw_khz);
-        if (config_.IsMaxPacketSizeUserSet() &&
-            config_.getMaxPacketSize() > sf_safe) {
+        if (user_set && requested > sf_safe) {
             LOG_WARNING(
-                "max_packet_size %u exceeds SF%u/BW%.0fkHz recommended cap %u; "
-                "slot duration will be inflated",
-                static_cast<unsigned>(config_.getMaxPacketSize()),
-                static_cast<unsigned>(sf), static_cast<double>(bw_khz),
+                "max_packet_size %u exceeds SF%u/BW%.0fkHz physical cap %u; "
+                "clamped to %u",
+                static_cast<unsigned>(requested), static_cast<unsigned>(sf),
+                static_cast<double>(bw_khz), static_cast<unsigned>(sf_safe),
                 static_cast<unsigned>(sf_safe));
         }
     }
@@ -273,6 +299,7 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
     net_config.target_duty_cycle = config.getTargetDutyCycle();
     net_config.min_sleep_fraction = config.getMinSleepFraction();
     net_config.churn_margin_slots = config.getChurnMarginSlots();
+    net_config.log_routing_capabilities = config.getLogRoutingCapabilities();
     net_config.link_quality_ewma_alpha = config.getLinkQualityEwmaAlpha();
     net_config.consecutive_missed_for_inactivation =
         config.getConsecutiveMissedForInactivation();
@@ -297,6 +324,14 @@ Result LoRaMeshProtocol::Configure(const LoRaMeshProtocolConfig& config) {
         wake_up_callback_ = config.getWakeUpCallback();
     }
 
+    const auto store = config.getStateStore();
+    if (config.getDeepSleepPolicy().enabled &&
+        (!store || !store->AllowsFrequentWrites())) {
+        LOG_WARNING(
+            "Deep sleep disabled: it needs a state store that allows a write "
+            "before every sleep (RtcStateStore)");
+    }
+
     // Set node capabilities from config
     if (config.getNodeCapabilities() != 0) {
         network_service_->SetLocalNodeCapabilities(
@@ -311,123 +346,184 @@ Result LoRaMeshProtocol::Start() {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "Hardware not initialized");
     }
-
-    LOG_DEBUG("Starting LoRaMesh protocol...");
-
-    if (!radio_event_queue_) {
-        radio_event_queue_ =
-            GetRTOS().CreateQueue(RADIO_QUEUE_SIZE, sizeof(radio::RadioEvent*));
-        if (!radio_event_queue_) {
-            LOG_ERROR("Failed to create radio event queue");
-            return Result(LoraMesherErrorCode::kConfigurationError,
-                          "Failed to create radio event queue");
-        }
+    if (!protocol_task_handle_ || !radio_event_queue_ ||
+        !protocol_notification_queue_ || !slot_transition_queue_) {
+        return Result(LoraMesherErrorCode::kNotInitialized,
+                      "Protocol not initialized");
     }
 
-    if (!protocol_notification_queue_) {
-        protocol_notification_queue_ = GetRTOS().CreateQueue(
-            PROTOCOL_NOTIFICATION_QUEUE_SIZE, sizeof(ProtocolNotificationType));
-        if (!protocol_notification_queue_) {
-            LOG_ERROR("Failed to create protocol notification queue");
-            return Result(LoraMesherErrorCode::kConfigurationError,
-                          "Failed to create protocol notification queue");
-        }
+    // Completing a pending stop would make the protocol task wait for itself
+    if (task_gate_.IsCurrentTask()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Start() cannot be called from the protocol task; call "
+                      "it from another task");
     }
 
-    if (!slot_transition_queue_) {
-        slot_transition_queue_ =
-            GetRTOS().CreateQueue(4, sizeof(SlotTransitionData));
-        if (!slot_transition_queue_) {
-            LOG_ERROR("Failed to create slot transition queue");
-            return Result(LoraMesherErrorCode::kConfigurationError,
-                          "Failed to create slot transition queue");
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    if (started_) {
+        if (!stop_pending_) {
+            return Result::Success();
+        }
+        // Complete the Stop() that timed out before starting again
+        Result stop_result = StopLocked();
+        if (!stop_result) {
+            return stop_result;
         }
     }
 
     LOG_DEBUG("Starting LoRaMesh protocol... for node 0x%04X", node_address_);
 
+    DrainProtocolQueues();
+
+    Result result = WireCallbacks();
+    if (!result) {
+        LOG_ERROR("Failed to set radio callback: %s",
+                  result.GetErrorMessage().c_str());
+        return result;
+    }
+
     // Start hardware
-    Result result = hardware_->Start();
+    result = hardware_->Start();
     if (!result) {
         LOG_ERROR("Failed to start hardware: %s",
                   result.GetErrorMessage().c_str());
+        UnwireCallbacks();
         return result;
     }
 
-    // Start superframe service
-    result = superframe_service_->StartSuperframe();
-    if (!result) {
-        LOG_ERROR("Failed to start superframe service: %s",
-                  result.GetErrorMessage().c_str());
-        return result;
+    // A node resumed from deep sleep continues its superframe; otherwise
+    // the superframe and discovery start, with any warm-restart state applied
+    if (RestoreState() != StartMode::kResumed) {
+        result = superframe_service_->StartSuperframe();
+        if (!result) {
+            LOG_ERROR("Failed to start superframe service: %s",
+                      result.GetErrorMessage().c_str());
+            RollbackStart();
+            return result;
+        }
+
+        result = StartDiscovery();
+        if (!result) {
+            LOG_ERROR("Failed to start discovery: %s",
+                      result.GetErrorMessage().c_str());
+            RollbackStart();
+            return result;
+        }
     }
 
-    result = StartDiscovery();
-    if (!result) {
-        LOG_ERROR("Failed to start discovery: %s",
-                  result.GetErrorMessage().c_str());
-        return result;
+    // A role change requested while stopped was drained above
+    if (pending_role_.load(std::memory_order_acquire) !=
+        network_service_->GetNodeRole()) {
+        NotifyProtocolTask(ProtocolNotificationType::ROLE_CHANGE_REQUEST);
     }
 
-    // Resume protocol task
-    GetRTOS().ResumeTask(protocol_task_handle_);
+    if (network_service_->GetNodeRole() == NodeRole::AUTO) {
+        LOG_WARNING(
+            "Node role AUTO: if the Network Manager is lost, election can "
+            "split the mesh into networks that never merge (cross-network "
+            "merge is not implemented). Set NETWORK_MANAGER on one node and "
+            "NODE_ONLY on the others.");
+    }
+
+    task_gate_.RequestRun();
+    started_ = true;
 
     LOG_INFO("LoRaMesh protocol started");
     return Result::Success();
 }
 
-Result LoRaMeshProtocol::Stop() {
-    LOG_DEBUG("Stopping LoRaMesh protocol... for node 0x%04X", node_address_);
-
-    if (protocol_task_handle_) {
-        LOG_DEBUG("Stop method deleting task handle: %p",
-                  protocol_task_handle_);
-        GetRTOS().DeleteTask(protocol_task_handle_);
-        protocol_task_handle_ = nullptr;
-        LOG_DEBUG("Stop method task handle set to nullptr");
-    } else {
-        LOG_DEBUG("Stop method task handle already null");
-    }
-
-    LOG_DEBUG("Protocol task deletion requested");
-
-    // Stop services after task is suspended
-    if (superframe_service_) {
+void LoRaMeshProtocol::RollbackStart() {
+    if (superframe_service_->IsRunning()) {
         superframe_service_->StopSuperframe();
     }
+    superframe_service_->ResetForRestart();
+    network_service_->ResetNetworkState();
+    UnwireCallbacks();
+    DrainProtocolQueues();
+}
 
-    // Reset network state to prevent memory leaks (after task is suspended)
-    if (network_service_) {
-        network_service_->ResetNetworkState();
+Result LoRaMeshProtocol::Stop() {
+    // The protocol task would wait for itself to park
+    if (task_gate_.IsCurrentTask()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Stop()/Pause() cannot be called from the protocol "
+                      "task; call it from another task");
     }
 
-    // Clear callbacks to prevent use-after-free
-    if (hardware_) {
-        hardware_->setActionReceive(nullptr);
-    }
-    if (superframe_service_) {
-        superframe_service_->SetSuperframeCallback(nullptr);
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return StopLocked();
+}
+
+Result LoRaMeshProtocol::StopLocked() {
+    if (!started_) {
+        return Result::Success();
     }
 
-    // Clean up queues
-    if (radio_event_queue_) {
-        DrainRadioEventQueue();
-        GetRTOS().DeleteQueue(radio_event_queue_);
-        radio_event_queue_ = nullptr;
-    }
+    LOG_DEBUG("Stopping LoRaMesh protocol... for node 0x%04X", node_address_);
 
-    if (protocol_notification_queue_) {
-        GetRTOS().DeleteQueue(protocol_notification_queue_);
-        protocol_notification_queue_ = nullptr;
+    // Park the protocol task before the superframe: while it runs it may
+    // restart the superframe to resynchronize.
+    Result result = ParkProtocolTask();
+    if (!result) {
+        stop_pending_ = true;
+        LOG_ERROR("Stop aborted: %s", result.GetErrorMessage().c_str());
+        return result;
     }
+    stop_pending_ = false;
 
-    if (slot_transition_queue_) {
-        GetRTOS().DeleteQueue(slot_transition_queue_);
-        slot_transition_queue_ = nullptr;
+    if (superframe_service_->IsRunning()) {
+        superframe_service_->StopSuperframe();
     }
+    superframe_service_->SetAutoAdvance(true);
 
+    UnwireCallbacks();
+
+    // Both tasks are parked: discard every piece of network state
+    network_service_->ResetNetworkState();
+    message_queue_service_->ClearAllQueues();
+    superframe_service_->ResetForRestart();
+    DrainProtocolQueues();
+    in_subslotted_slot_ = false;
+    in_rx_slot_ = false;
+
+    started_ = false;
     LOG_INFO("LoRaMesh protocol stopped");
     return Result::Success();
+}
+
+Result LoRaMeshProtocol::ParkProtocolTask() {
+    task_gate_.RequestPark();
+    NotifyProtocolTask(ProtocolNotificationType::PAUSE);
+
+    const uint32_t timeout_ms = StopTimeoutMs();
+    if (!task_gate_.WaitParked(timeout_ms)) {
+        return Result(LoraMesherErrorCode::kTimeout,
+                      "Protocol task did not park within " +
+                          std::to_string(timeout_ms) + " ms");
+    }
+    return Result::Success();
+}
+
+void LoRaMeshProtocol::ShutdownProtocolTask() {
+    if (!protocol_task_handle_) {
+        return;
+    }
+
+    task_gate_.RequestExit();
+    NotifyProtocolTask(ProtocolNotificationType::SHUTDOWN);
+    if (!task_gate_.WaitExited(StopTimeoutMs())) {
+        LOG_ERROR("Protocol task did not exit within %u ms; deleting it",
+                  StopTimeoutMs());
+    }
+
+    GetRTOS().DeleteTask(protocol_task_handle_);
+    protocol_task_handle_ = nullptr;
+}
+
+uint32_t LoRaMeshProtocol::StopTimeoutMs() const {
+    uint32_t slot_duration_ms =
+        superframe_service_ ? superframe_service_->GetSlotDuration() : 0;
+    return std::max(kMinStopTimeoutMs, kStopTimeoutSlots * slot_duration_ms);
 }
 
 Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
@@ -442,6 +538,9 @@ Result LoRaMeshProtocol::SendMessage(const BaseMessage& message) {
     switch (message.GetType()) {
         case MessageType::DATA:
         case MessageType::DATA_BROADCAST:
+        case MessageType::DATA_RELIABLE:
+        case MessageType::DATA_GROUP:
+        case MessageType::ACK:
             slot_type = SlotAllocation::SlotType::TX;
             break;
         case MessageType::ROUTE_TABLE:
@@ -491,13 +590,91 @@ Result LoRaMeshProtocol::SendBroadcast(std::span<const uint8_t> data) {
     return network_service_->SendBroadcast(data);
 }
 
+reliability::MessageId LoRaMeshProtocol::SendReliable(
+    AddressType destination, const std::vector<uint8_t>& data,
+    uint8_t max_retries, uint32_t timeout_ms) {
+    if (!network_service_) {
+        return {0, 0};
+    }
+    return network_service_->SendReliable(destination, data, max_retries,
+                                          timeout_ms);
+}
+
+Result LoRaMeshProtocol::SendGroup(AddressType group,
+                                   std::span<const uint8_t> data) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->SendGroup(group, data);
+}
+
+reliability::MessageId LoRaMeshProtocol::SendGroupReliable(
+    AddressType group, std::span<const uint8_t> data, uint8_t max_retries,
+    uint32_t window_ms) {
+    if (!network_service_) {
+        return {0, 0};
+    }
+    return network_service_->SendGroupReliable(group, data, max_retries,
+                                               window_ms);
+}
+
+Result LoRaMeshProtocol::JoinGroup(AddressType group) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->JoinGroup(group);
+}
+
+Result LoRaMeshProtocol::LeaveGroup(AddressType group) {
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network service not initialized");
+    }
+    return network_service_->LeaveGroup(group);
+}
+
+bool LoRaMeshProtocol::IsMemberOfGroup(AddressType group) const {
+    return network_service_ && network_service_->IsMemberOfGroup(group);
+}
+
+std::vector<AddressType> LoRaMeshProtocol::GetGroups() const {
+    if (!network_service_) {
+        return {};
+    }
+    return network_service_->GetGroups();
+}
+
+void LoRaMeshProtocol::SetDeliveryCallback(
+    reliability::DeliveryCallback callback) {
+    if (network_service_) {
+        network_service_->SetDeliveryCallback(std::move(callback));
+    }
+}
+
+void LoRaMeshProtocol::SetDataReceivedExCallback(
+    lora_mesh::NetworkService::DataReceivedExCallback callback) {
+    if (network_service_) {
+        network_service_->SetDataReceivedExCallback(std::move(callback));
+    }
+}
+
 Result LoRaMeshProtocol::Pause() {
-    // Suspend the protocol task
-    if (protocol_task_handle_) {
-        bool suspended = GetRTOS().SuspendTask(protocol_task_handle_);
-        if (!suspended) {
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Failed to suspend protocol task");
+    // The protocol task would wait for itself to park
+    if (task_gate_.IsCurrentTask()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Stop()/Pause() cannot be called from the protocol "
+                      "task; call it from another task");
+    }
+
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+
+    // Park the protocol task
+    if (started_ && task_gate_.IsRunRequested()) {
+        Result result = ParkProtocolTask();
+        if (!result) {
+            return result;
         }
     }
 
@@ -516,13 +693,11 @@ Result LoRaMeshProtocol::Pause() {
 }
 
 Result LoRaMeshProtocol::Resume() {
-    // Resume the protocol task
-    if (protocol_task_handle_) {
-        bool resumed = GetRTOS().ResumeTask(protocol_task_handle_);
-        if (!resumed) {
-            return Result(LoraMesherErrorCode::kInvalidState,
-                          "Failed to resume protocol task");
-        }
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+
+    // Release the protocol task; a stopped protocol stays parked until Start()
+    if (started_ && !stop_pending_) {
+        task_gate_.RequestRun();
     }
 
     // Resume superframe service
@@ -559,7 +734,7 @@ bool LoRaMeshProtocol::IsSynchronized() const {
 }
 
 Result LoRaMeshProtocol::IsReadyToSend() const {
-    if (!network_service_ || !superframe_service_) {
+    if (!network_service_ || !superframe_service_ || !message_queue_service_) {
         return Result(LoraMesherErrorCode::kNotInitialized,
                       "Services not initialized");
     }
@@ -574,9 +749,21 @@ Result LoRaMeshProtocol::IsReadyToSend() const {
     if (!IsSynchronized()) {
         return Result(LoraMesherErrorCode::kInvalidState, "Not synchronized");
     }
-    if (GetDataSlotsPerSuperframe() == 0) {
+    if (network_service_->IsAwaitingResync()) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Waiting for a beacon after resuming");
+    }
+    const uint8_t data_slots = GetDataSlotsPerSuperframe();
+    if (data_slots == 0) {
         return Result(LoraMesherErrorCode::kInvalidState,
                       "No TX data slot allocated");
+    }
+    // More than the data slots carry in a superframe only builds a backlog,
+    // which also keeps the node from deep-sleeping
+    if (message_queue_service_->GetQueueSize(SlotAllocation::SlotType::TX) >=
+        data_slots) {
+        return Result(LoraMesherErrorCode::kQueueFull,
+                      "TX queue holds a superframe of messages");
     }
     return Result::Success();
 }
@@ -603,6 +790,129 @@ AddressType LoRaMeshProtocol::GetNetworkManager() const {
     return network_service_->GetNetworkManagerAddress();
 }
 
+uint16_t LoRaMeshProtocol::GetNetworkId() const {
+    return network_service_->GetNetworkId();
+}
+
+Result LoRaMeshProtocol::SaveState() {
+    auto store = config_.getStateStore();
+    if (!store) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "No state store configured");
+    }
+    if (!network_service_) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Protocol not initialized");
+    }
+
+    const storage::NetworkSnapshot snapshot =
+        network_service_->CaptureSnapshot();
+    auto blob = storage::SnapshotCodec::Encode(snapshot);
+    if (!blob) {
+        return Result(LoraMesherErrorCode::kInvalidState,
+                      "Network state cannot be encoded");
+    }
+    Result result = store->Save(*blob);
+    if (result) {
+        LOG_INFO("Saved state: network 0x%04X, %s, %zu member slots, seq %u",
+                 snapshot.network_id,
+                 snapshot.was_network_manager ? "manager" : "member",
+                 snapshot.reservations.size(),
+                 static_cast<unsigned>(snapshot.last_sequence));
+    }
+    return result;
+}
+
+LoRaMeshProtocol::StartMode LoRaMeshProtocol::RestoreState() {
+    auto store = config_.getStateStore();
+    if (!store) {
+        return StartMode::kCold;
+    }
+    auto blob = store->Load();
+    if (!blob) {
+        LOG_INFO("No saved state: cold start");
+        return StartMode::kCold;
+    }
+    store->Clear();
+
+    if (storage::ResumeSnapshotCodec::HasMagic(*blob)) {
+        auto resume = storage::ResumeSnapshotCodec::Decode(*blob);
+        if (!resume) {
+            LOG_WARNING("Saved resume state is invalid: cold start");
+            return StartMode::kCold;
+        }
+        if (ResumeAfterDeepSleep(*resume)) {
+            return StartMode::kResumed;
+        }
+        return ApplyWarmRestart(resume->network);
+    }
+
+    auto snapshot = storage::SnapshotCodec::Decode(*blob);
+    if (!snapshot) {
+        LOG_WARNING("Saved state is invalid: cold start");
+        return StartMode::kCold;
+    }
+    return ApplyWarmRestart(*snapshot);
+}
+
+LoRaMeshProtocol::StartMode LoRaMeshProtocol::ApplyWarmRestart(
+    const storage::NetworkSnapshot& snapshot) {
+    Result result = network_service_->ApplySnapshot(snapshot);
+    if (!result) {
+        LOG_WARNING("Saved state not applied (%s): cold start",
+                    result.GetErrorMessage().c_str());
+        return StartMode::kCold;
+    }
+    return StartMode::kWarmRestart;
+}
+
+bool LoRaMeshProtocol::ResumeAfterDeepSleep(
+    const storage::ResumeSnapshot& snapshot) {
+    const storage::ResumeTiming& timing = snapshot.timing;
+    const uint64_t now_us = GetRTOS().GetPersistentTimeUs();
+    if (now_us < timing.persistent_time_at_save_us) {
+        LOG_WARNING("Cannot resume: the persistent clock restarted");
+        return false;
+    }
+    // The sleep clock's own count, corrected by its learned error
+    const uint64_t slept_ms = snapshot.member.deep_sleep_clock.ToRealMs(
+        (now_us - timing.persistent_time_at_save_us) / 1000);
+    const uint64_t planned_ms =
+        timing.wake_deadline_ms - timing.tick_at_save_ms;
+    const uint64_t superframe_ms =
+        static_cast<uint64_t>(timing.total_slots) * timing.slot_duration_ms;
+    if (slept_ms > planned_ms + superframe_ms) {
+        LOG_WARNING(
+            "Cannot resume: slept %llu ms, more than a superframe past its "
+            "next slot",
+            static_cast<unsigned long long>(slept_ms));
+        return false;
+    }
+
+    GetRTOS().ContinueTickCountFrom(timing.tick_at_save_ms +
+                                    static_cast<uint32_t>(slept_ms));
+    Result result = network_service_->ApplyResumeSnapshot(snapshot);
+    if (!result) {
+        LOG_WARNING("Cannot resume: %s", result.GetErrorMessage().c_str());
+        return false;
+    }
+    result = superframe_service_->ResumeAt(
+        timing.superframe_start_ms, timing.total_slots, timing.slot_duration_ms,
+        timing.superframes_completed);
+    if (!result) {
+        LOG_WARNING("Cannot resume the superframe: %s",
+                    result.GetErrorMessage().c_str());
+        network_service_->ResetNetworkState();
+        return false;
+    }
+    network_service_->RecordSleepForCalibration(
+        power::SleepKind::DEEP, static_cast<uint32_t>(slept_ms));
+    LOG_INFO("Resumed network 0x%04X after %llu ms of deep sleep",
+             snapshot.network.network_id,
+             static_cast<unsigned long long>(slept_ms));
+    return true;
+}
+
 uint16_t LoRaMeshProtocol::GetCurrentSlot() const {
     return superframe_service_->GetCurrentSlot();
 }
@@ -619,12 +929,16 @@ uint32_t LoRaMeshProtocol::GetSlotDuration() const {
 
 void LoRaMeshProtocol::SetRouteUpdateCallback(
     lora_mesh::INetworkService::RouteUpdateCallback callback) {
-    network_service_->SetRouteUpdateCallback(callback);
+    if (network_service_) {
+        network_service_->SetRouteUpdateCallback(std::move(callback));
+    }
 }
 
 void LoRaMeshProtocol::SetDataReceivedCallback(
     lora_mesh::INetworkService::DataReceivedCallback callback) {
-    network_service_->SetDataReceivedCallback(callback);
+    if (network_service_) {
+        network_service_->SetDataReceivedCallback(std::move(callback));
+    }
 }
 
 void LoRaMeshProtocol::SetNodeCapabilities(uint8_t capabilities) {
@@ -647,12 +961,8 @@ uint8_t LoRaMeshProtocol::GetNodeCapabilities(AddressType node_address) const {
     return 0;
 }
 
-const std::vector<NetworkNodeRoute>& LoRaMeshProtocol::GetNetworkNodes() const {
+std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodes() const {
     return network_service_->GetNetworkNodes();
-}
-
-std::vector<NetworkNodeRoute> LoRaMeshProtocol::GetNetworkNodesCopy() const {
-    return network_service_->GetNetworkNodesCopy();
 }
 
 Result LoRaMeshProtocol::RequestNodeRoleChange(NodeRole role) {
@@ -684,6 +994,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
     }
 
     auto& rtos = GetRTOS();
+    os::TaskRunGate& gate = protocol->task_gate_;
+    gate.BindCurrentTask();
+    os::ScopedExitSignal exit_signal(gate);
 
     // Set node address in RTOS for multi-node identification in logs
     char address_str[8];
@@ -701,7 +1014,12 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
     Result result = Result::Success();
 
-    while (!rtos.ShouldStopOrPause()) {
+    while (!gate.ShouldExit()) {
+        if (!gate.IsRunRequested()) {
+            gate.Park();
+            continue;
+        }
+
         const uint32_t now_ms = rtos.getTickCount();
         if (now_ms - last_stack_log_ms >= kStackLogIntervalMs) {
             utils::TaskMonitor::PollAllAndWarn();
@@ -722,17 +1040,28 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
         // Set state-specific timeouts for discovery and joining
         switch (state) {
-            case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
+            case lora_mesh::INetworkService::ProtocolState::DISCOVERY: {
                 timeout_ms =
                     std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                // Wake exactly when a warm-restarted manager resumes
+                const uint32_t resume_ms =
+                    protocol->network_service_
+                        ->GetManagerResumeDelayRemaining();
+                if (resume_ms > 0) {
+                    timeout_ms = std::min(timeout_ms, resume_ms);
+                }
                 break;
+            }
             case lora_mesh::INetworkService::ProtocolState::JOINING:
                 timeout_ms = std::min(timeout_ms, protocol->GetJoinTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                // Keep polling so we notice election_end_time_ expiry
-                timeout_ms =
-                    std::min(timeout_ms, protocol->GetDiscoveryTimeout());
+                // Wake exactly when the election backoff expires
+                timeout_ms = std::min(
+                    timeout_ms, protocol->network_service_->IsElectionPending()
+                                    ? protocol->network_service_
+                                          ->GetElectionBackoffRemaining()
+                                    : protocol->GetDiscoveryTimeout());
                 break;
             case lora_mesh::INetworkService::ProtocolState::NM_ELECTION:
                 timeout_ms = std::min(
@@ -781,9 +1110,13 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
 
                         case lora_mesh::INetworkService::ProtocolState::
                             FAULT_RECOVERY:
-                            // Election countdown is handled by HandleSuperframeStart.
-                            // For NODE_ONLY nodes (no election), restart discovery.
-                            if (!protocol->network_service_
+                            // An expired election backoff moves to NM_ELECTION;
+                            // without an election (NODE_ONLY), restart discovery.
+                            protocol->network_service_->CheckElectionBackoff();
+                            if (protocol->network_service_->GetState() ==
+                                    lora_mesh::INetworkService::ProtocolState::
+                                        FAULT_RECOVERY &&
+                                !protocol->network_service_
                                      ->IsElectionPending()) {
                                 LOG_WARNING(
                                     "FAULT_RECOVERY: no election pending, "
@@ -833,8 +1166,9 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                 }
 
                 case ProtocolNotificationType::SHUTDOWN:
-                    LOG_INFO("Protocol shutdown requested");
-                    return;
+                case ProtocolNotificationType::PAUSE:
+                    // Handled by the gate at the top of the loop
+                    break;
 
                 case ProtocolNotificationType::ROLE_CHANGE_REQUEST: {
                     NodeRole requested =
@@ -875,8 +1209,13 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
                     break;
 
                 case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-                    // For NODE_ONLY nodes (no election pending), restart discovery
-                    if (!protocol->network_service_->IsElectionPending()) {
+                    // An expired election backoff moves to NM_ELECTION;
+                    // without an election (NODE_ONLY), restart discovery.
+                    protocol->network_service_->CheckElectionBackoff();
+                    if (protocol->network_service_->GetState() ==
+                            lora_mesh::INetworkService::ProtocolState::
+                                FAULT_RECOVERY &&
+                        !protocol->network_service_->IsElectionPending()) {
                         LOG_WARNING(
                             "FAULT_RECOVERY timeout - restarting discovery");
                         result = protocol->StartDiscovery();
@@ -901,13 +1240,17 @@ void LoRaMeshProtocol::ProtocolTaskFunction(void* parameters) {
             }
         }
 
+        // Advance reliable-delivery retransmission timers (≤100 ms cadence).
+        protocol->network_service_->ProcessReliableTimers();
+
         // Yield to other tasks for responsive shutdown
         rtos.YieldTask();
     }
 
+    utils::TaskMonitor::UnregisterCurrentTask();
     LOG_INFO("Protocol task ending");
-    // Note: Task handle is cleared and DeleteTask is called from Stop() method
-    LOG_DEBUG("LoRaMeshProtocol ProtocolTaskFunction exiting naturally");
+    gate.SignalExited();
+    gate.WaitForDeletion();
 }
 
 void LoRaMeshProtocol::ProcessRadioEvents() {
@@ -932,15 +1275,18 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     network_service_->ProcessReceivedMessage(
                         *message, reception_timestamp, event->getRssi(),
                         event->getSnr());
-                    // During subslotted slots, stay in RX to catch more
-                    // transmissions from other subslots
-                    if (in_subslotted_slot_) {
+                    // Stay in RX for the rest of any listening window (a
+                    // subslotted slot or an RX/CONTROL_RX/SYNC_BEACON_RX slot)
+                    // so a later transmission in the same slot is still caught.
+                    // Sleeping after the first packet drops any neighbour whose
+                    // packet arrives later in the window.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
-                                "Failed to set radio to receive in "
-                                "subslotted slot: %s",
+                                "Failed to keep radio in receive during "
+                                "listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -954,15 +1300,15 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
                     }
                 } else if (event->getType() ==
                            radio::RadioEventType::kTransmitted) {
-                    // After TX in subslotted slots, return to RX to catch
-                    // transmissions from later subslots
-                    if (in_subslotted_slot_) {
+                    // After TX in a listening window (subslotted or RX slot),
+                    // return to RX to catch later transmissions in the slot.
+                    if (in_subslotted_slot_ || in_rx_slot_) {
                         Result result =
                             hardware_->setState(radio::RadioState::kReceive);
                         if (!result) {
                             LOG_WARNING(
                                 "Failed to set radio to receive after TX "
-                                "in subslotted slot: %s",
+                                "in listening slot: %s",
                                 result.GetErrorMessage().c_str());
                         }
                     } else {
@@ -989,8 +1335,9 @@ void LoRaMeshProtocol::ProcessRadioEvents() {
 
 void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
                                         bool new_superframe) {
-    // Reset subslotted slot flag at every slot transition
+    // Reset per-slot radio-window flags at every slot transition
     in_subslotted_slot_ = false;
+    in_rx_slot_ = false;
 
     // Finalize NM election once counter-claim window has closed
     if (network_service_->GetState() ==
@@ -1003,20 +1350,28 @@ void LoRaMeshProtocol::OnSlotTransition(uint16_t current_slot,
         network_service_->HandleSuperframeStart();
     }
 
-    // Get current slot type from allocation table
+    // Get current slot type and its position within the discovery band
     SlotAllocation::SlotType slot_type = SlotAllocation::SlotType::SLEEP;
+    uint8_t discovery_index = 0;
 
-    for (const auto& allocation : GetSlotTable()) {
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
         if (allocation.slot_number == current_slot) {
             slot_type = allocation.type;
-            break;
+        } else if (allocation.slot_number < current_slot &&
+                   allocation.IsDiscoverySlot()) {
+            discovery_index++;
         }
-    }
+    });
 
     LOG_INFO("Slot %d transition: type=%s start=%u%s", current_slot,
              slot_utils::SlotTypeToString(slot_type).c_str(),
              superframe_service_->GetSlotStartTime(current_slot),
              new_superframe ? " (new superframe)" : "");
+
+    if (slot_type == SlotAllocation::SlotType::DISCOVERY_RX ||
+        slot_type == SlotAllocation::SlotType::DISCOVERY_TX) {
+        network_service_->HandleDiscoverySlotStart(discovery_index);
+    }
 
     // Process messages based on slot type
     ProcessSlotMessages(slot_type);
@@ -1031,40 +1386,6 @@ void LoRaMeshProtocol::OnStateChange(
     NotifyProtocolTask(ProtocolNotificationType::STATE_CHANGE);
 }
 
-void LoRaMeshProtocol::OnNetworkTopologyChange(bool route_updated,
-                                               AddressType destination,
-                                               AddressType next_hop,
-                                               uint8_t hop_count) {
-    if (!route_updated) {
-        LOG_DEBUG("Route removed: dest=0x%04X via=0x%04X hops=%d", destination,
-                  next_hop, hop_count);
-        return;  // No route update needed
-    }
-    // Network topology changed - may need to update slot allocations
-    // This would be handled by NetworkService internally
-    // LOG_DEBUG("Network topology changed");
-
-    // // switch for state change
-    // auto state = network_service_->GetState();
-    // switch (state) {
-    //     case lora_mesh::INetworkService::ProtocolState::NORMAL_OPERATION:
-    //     case lora_mesh::INetworkService::ProtocolState::NETWORK_MANAGER:
-    //         // Update slot allocations based on new topology
-    //         network_service_->UpdateSlotAllocations();
-    //     case lora_mesh::INetworkService::ProtocolState::DISCOVERY:
-    //     case lora_mesh::INetworkService::ProtocolState::INITIALIZING:
-    //     case lora_mesh::INetworkService::ProtocolState::FAULT_RECOVERY:
-    //         break;
-
-    //     case lora_mesh::INetworkService::ProtocolState::JOINING:
-
-    //     default:
-    //         LOG_WARNING("Unhandled state for topology change: %d",
-    //                     static_cast<int>(state));
-    //         break;
-    // }
-}
-
 bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
                                     uint32_t additional_delay_ms) const {
     if (!hardware_ || !superframe_service_)
@@ -1074,22 +1395,24 @@ bool LoRaMeshProtocol::CanFitInSlot(uint8_t message_size,
     uint32_t time_in_slot = superframe_service_->GetTimeInSlot();
     uint32_t slot_duration = superframe_service_->GetSlotDuration();
 
-    // Guard against RadioLib overflow or SPI errors returning absurd values
+    // A packet whose airtime alone exceeds the slot can never fit; skip the
+    // TX rather than transmit and overrun into the following slot.
     if (toa_ms > slot_duration) {
-        LOG_ERROR(
-            "ToA sanity failed: %u ms for %u bytes (slot=%u). Using fallback.",
-            toa_ms, message_size, slot_duration);
-        toa_ms = static_cast<uint32_t>(message_size) * 10;
+        LOG_ERROR("ToA %u ms for %u bytes exceeds slot %u ms; skipping TX",
+                  toa_ms, message_size, slot_duration);
+        return false;
     }
 
-    uint32_t needed =
-        time_in_slot + additional_delay_ms + toa_ms + kRxProcessingMarginMs;
-    if (needed > slot_duration) {
+    if (!lora_mesh::FitsInSlot(time_in_slot, additional_delay_ms, toa_ms,
+                               slot_duration)) {
         LOG_WARNING(
             "TX skip: in_slot=%u + delay=%u + ToA=%u + margin=%u = %u > "
             "slot=%u",
-            time_in_slot, additional_delay_ms, toa_ms, kRxProcessingMarginMs,
-            needed, slot_duration);
+            time_in_slot, additional_delay_ms, toa_ms,
+            lora_mesh::kRxProcessingMarginMs,
+            time_in_slot + additional_delay_ms + toa_ms +
+                lora_mesh::kRxProcessingMarginMs,
+            slot_duration);
         return false;
     }
     return true;
@@ -1123,6 +1446,23 @@ Result LoRaMeshProtocol::TrySendGuardedMessage(
     return hardware_->SendMessage(*message);
 }
 
+uint16_t LoRaMeshProtocol::ComputeSubslotIdentifier(
+    const lora_mesh::SubslotConfig& config) {
+    switch (config.strategy) {
+        case lora_mesh::SubslotAssignment::RANDOM:
+            return static_cast<uint16_t>(GetRTOS().GetRandom());
+        case lora_mesh::SubslotAssignment::ADDRESS_HASH: {
+            uint32_t frame =
+                superframe_service_->GetSuperframeStats().superframes_completed;
+            return lora_mesh::SubslotScheduler::MixAddressFrame(node_address_,
+                                                                frame);
+        }
+        case lora_mesh::SubslotAssignment::ADDRESS_MODULO:
+        default:
+            return node_address_;
+    }
+}
+
 Result LoRaMeshProtocol::TrySendSubslottedMessage(
     SlotAllocation::SlotType slot_type, const lora_mesh::SubslotConfig& config,
     uint16_t identifier) {
@@ -1131,9 +1471,10 @@ Result LoRaMeshProtocol::TrySendSubslottedMessage(
         return Result::Success();
 
     uint8_t msg_size = static_cast<uint8_t>(message->GetTotalSize());
+    uint32_t msg_toa_ms = hardware_->getTimeOnAir(msg_size);
 
     auto subslot_timing = lora_mesh::SubslotScheduler::ComputeTiming(
-        superframe_service_->GetSlotDuration(), config, identifier);
+        superframe_service_->GetSlotDuration(), config, identifier, msg_toa_ms);
 
     bool use_subslot = false;
     if (subslot_timing.is_valid) {
@@ -1188,6 +1529,27 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
         current_power_state_ = power::PowerState::ACTIVE;
     }
 
+    // After a resume the schedule is only as accurate as the sleep clock:
+    // the node listens in every slot, without transmitting, until a sync
+    // beacon confirms it. With a calibrated sleep clock the error is within
+    // the subslot guard, so the discovery band before the beacon is served
+    // as usual.
+    const bool discovery_slot =
+        slot_type == SlotAllocation::SlotType::DISCOVERY_RX ||
+        slot_type == SlotAllocation::SlotType::DISCOVERY_TX;
+    if (network_service_->IsAwaitingResync() &&
+        !(discovery_slot &&
+          network_service_->GetSleepClockCalibration(power::SleepKind::DEEP)
+              .IsCalibrated())) {
+        result = hardware_->setState(radio::RadioState::kReceive);
+        if (!result) {
+            LOG_ERROR("Failed to set radio to receive: %s",
+                      result.GetErrorMessage().c_str());
+        }
+        in_rx_slot_ = true;
+        return;
+    }
+
     switch (slot_type) {
         case SlotAllocation::SlotType::CONTROL_TX: {
             auto state = network_service_->GetState();
@@ -1221,13 +1583,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
             }
             in_subslotted_slot_ = true;
 
-            uint16_t identifier = node_address_;
-            if (config_.getDiscoverySubslotConfig().strategy ==
-                lora_mesh::SubslotAssignment::RANDOM) {
-                identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
-            }
+            const auto& discovery_subslot_config =
+                config_.getDiscoverySubslotConfig();
             result = TrySendSubslottedMessage(
-                slot_type, config_.getDiscoverySubslotConfig(), identifier);
+                slot_type, discovery_subslot_config,
+                ComputeSubslotIdentifier(discovery_subslot_config));
             if (!result) {
                 LOG_ERROR("Failed to send discovery message: %s",
                           result.GetErrorMessage().c_str());
@@ -1255,9 +1615,11 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                         result.GetErrorMessage().c_str());
                 }
                 in_subslotted_slot_ = true;
+                const auto& sync_subslot_config =
+                    config_.getSyncBeaconSubslotConfig();
                 result = TrySendSubslottedMessage(
-                    slot_type, config_.getSyncBeaconSubslotConfig(),
-                    node_address_);
+                    slot_type, sync_subslot_config,
+                    ComputeSubslotIdentifier(sync_subslot_config));
             }
             if (!result) {
                 LOG_ERROR("Failed to send sync beacon: %s",
@@ -1276,14 +1638,12 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
 
             // Fallback TX: join responses are queued as DISCOVERY_TX but the
             // joining node has no DISCOVERY_TX slot yet.
-            uint16_t identifier = node_address_;
-            if (config_.getDiscoverySubslotConfig().strategy ==
-                lora_mesh::SubslotAssignment::RANDOM) {
-                identifier = static_cast<uint16_t>(GetRTOS().GetRandom());
-            }
+            const auto& discovery_subslot_config =
+                config_.getDiscoverySubslotConfig();
             result = TrySendSubslottedMessage(
                 SlotAllocation::SlotType::DISCOVERY_TX,
-                config_.getDiscoverySubslotConfig(), identifier);
+                discovery_subslot_config,
+                ComputeSubslotIdentifier(discovery_subslot_config));
             if (!result) {
                 LOG_ERROR("Failed to send discovery fallback TX: %s",
                           result.GetErrorMessage().c_str());
@@ -1299,64 +1659,228 @@ void LoRaMeshProtocol::ProcessSlotMessages(SlotAllocation::SlotType slot_type) {
                 LOG_ERROR("Failed to set radio to receive: %s",
                           result.GetErrorMessage().c_str());
             }
+            // An RX slot is a listening window that may carry more than one
+            // transmission (timing jitter can defer a neighbour's packet into
+            // this slot). Keep the radio in RX for the whole slot instead of
+            // sleeping after the first packet.
+            in_rx_slot_ = true;
             break;
 
         case SlotAllocation::SlotType::SLEEP:
-        default: {
-            // Build sleep context for user callback
-            // This provides all information needed to make intelligent sleep decisions
-            power::SleepContext ctx{};
-            ctx.requested_state = power::PowerState::LIGHT_SLEEP;
-            ctx.current_slot = superframe_service_->GetCurrentSlot();
-            ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
-
-            // Calculate sleep duration (time until next slot minus wake-up guard)
-            // The guard ensures the MCU wakes before the slot boundary for
-            // callback execution, radio transition, and peripheral init
-            uint32_t slot_duration = superframe_service_->GetSlotDuration();
-            uint32_t wake_guard = config_.getWakeUpGuardTime();
-            ctx.sleep_duration_ms =
-                (slot_duration > wake_guard) ? (slot_duration - wake_guard) : 0;
-
-            // Call user callback if registered
-            // This allows application-level power management (disable GPS, sensors, etc.)
-            if (prepare_sleep_callback_) {
-                LOG_DEBUG("Invoking prepare-sleep callback for slot %u",
-                          ctx.current_slot);
-                auto sleep_result = prepare_sleep_callback_(ctx);
-
-                if (!sleep_result.allow_sleep) {
-                    // User vetoed sleep - still set radio to sleep for power savings
-                    // but don't track as "sleeping" (wake callback won't fire)
-                    LOG_DEBUG("Sleep vetoed by user callback");
-                    result = hardware_->setState(radio::RadioState::kSleep);
-                    if (!result) {
-                        LOG_ERROR("Failed to set radio to sleep: %s",
-                                  result.GetErrorMessage().c_str());
-                    }
-                    // Note: current_power_state_ remains ACTIVE
-                    break;
-                }
-            }
-
-            // Set radio to sleep mode
-            result = hardware_->setState(radio::RadioState::kSleep);
-            if (!result) {
-                LOG_ERROR("Failed to set radio to sleep: %s",
-                          result.GetErrorMessage().c_str());
-            }
-
-            // Sleep the MCU until the next slot when power management is active
-            if (prepare_sleep_callback_ && ctx.sleep_duration_ms > 0) {
-                GetRTOS().LightSleep(ctx.sleep_duration_ms);
-            }
-
-            // Update power state to track for wake callback
-            // This ensures WakeUpCallback fires on next active slot
-            current_power_state_ = power::PowerState::LIGHT_SLEEP;
+        default:
+            SleepThroughSleepRun();
             break;
+    }
+}
+
+uint16_t LoRaMeshProtocol::GetNextActiveSlot() {
+    const uint16_t current_slot = superframe_service_->GetCurrentSlot();
+    uint16_t next_active = superframe_service_->GetTotalSlots();
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
+        if (allocation.slot_number > current_slot &&
+            allocation.slot_number < next_active &&
+            allocation.type != SlotAllocation::SlotType::SLEEP) {
+            next_active = allocation.slot_number;
+        }
+    });
+    return next_active;
+}
+
+uint32_t LoRaMeshProtocol::GetTimeUntilSlot(uint16_t slot) {
+    const uint32_t now = GetRTOS().getTickCount();
+    const uint32_t slot_start = superframe_service_->GetSlotStartTime(slot);
+    return utils::TimeReached(now, slot_start) ? 0 : slot_start - now;
+}
+
+bool LoRaMeshProtocol::ListensUntilSyncBeacon(uint16_t slot) {
+    const uint16_t total = superframe_service_->GetTotalSlots();
+    if (total == 0) {
+        return false;
+    }
+    std::vector<SlotAllocation::SlotType> types(
+        total, SlotAllocation::SlotType::SLEEP);
+    network_service_->ForEachSlot([&](const SlotAllocation& allocation) {
+        if (allocation.slot_number < total) {
+            types[allocation.slot_number] = allocation.type;
+        }
+    });
+    for (uint16_t i = 0; i < total; ++i) {
+        switch (types[(slot + i) % total]) {
+            case SlotAllocation::SlotType::SYNC_BEACON_RX:
+                return true;
+            case SlotAllocation::SlotType::TX:
+            case SlotAllocation::SlotType::CONTROL_TX:
+            case SlotAllocation::SlotType::SYNC_BEACON_TX:
+            case SlotAllocation::SlotType::DISCOVERY_TX:
+                return false;
+            default:
+                break;
         }
     }
+    return false;
+}
+
+void LoRaMeshProtocol::SleepThroughSleepRun() {
+    // The radio sleeps in every SLEEP slot
+    Result result = hardware_->setState(radio::RadioState::kSleep);
+    if (!result) {
+        LOG_ERROR("Failed to set radio to sleep: %s",
+                  result.GetErrorMessage().c_str());
+    }
+
+    // The MCU sleeps once per run of SLEEP slots, through the whole run: a
+    // node woken at the end of the run (or still asleep) only keeps the radio
+    // asleep in the run's later slots
+    if (current_power_state_ == power::PowerState::LIGHT_SLEEP ||
+        (!prepare_sleep_callback_ && !config_.getDeepSleepPolicy().enabled)) {
+        return;
+    }
+    const char* hold = network_service_->GetSleepHold();
+    if (hold != logged_sleep_hold_) {
+        if (hold) {
+            LOG_DEBUG("MCU stays awake: %s", hold);
+        }
+        logged_sleep_hold_ = hold;
+    }
+    if (hold) {
+        return;
+    }
+    const uint16_t next_active = GetNextActiveSlot();
+    const uint32_t until_active = GetTimeUntilSlot(next_active);
+    if (TryDeepSleep(until_active, next_active) || !prepare_sleep_callback_) {
+        return;
+    }
+
+    // Wake the MCU before the next active slot starts, so the callback,
+    // radio transition and peripheral init are done in time even when the
+    // sleep clock runs slow
+    const power::SleepClockCalibration sleep_clock =
+        network_service_->GetSleepClockCalibration(power::SleepKind::LIGHT);
+    const uint32_t wake_margin =
+        config_.getWakeUpGuardTime() +
+        config_.getDeepSleepPolicy().SleepClockAllowanceMs(
+            until_active, sleep_clock.IsCalibrated());
+    if (until_active <= wake_margin + kMinLightSleepMs) {
+        return;
+    }
+
+    power::SleepContext ctx{};
+    ctx.requested_state = power::PowerState::LIGHT_SLEEP;
+    ctx.current_slot = superframe_service_->GetCurrentSlot();
+    ctx.has_pending_messages = message_queue_service_->HasAnyMessages();
+    ctx.sleep_duration_ms = until_active - wake_margin;
+
+    // Application-level power management (disable GPS, sensors, etc.)
+    LOG_DEBUG("Invoking prepare-sleep callback for slot %u (%u ms)",
+              ctx.current_slot, ctx.sleep_duration_ms);
+    auto sleep_result = prepare_sleep_callback_(ctx);
+    if (!sleep_result.allow_sleep) {
+        // The radio still sleeps, but the wake callback will not fire
+        LOG_DEBUG("Sleep vetoed by user callback");
+        return;
+    }
+
+    // The sleep timer and the clock after the sleep run on the RC sleep
+    // clock: ask for the sleep in its time and remove its learned error from
+    // the clock afterwards
+    const auto counted_ms =
+        static_cast<uint32_t>(sleep_clock.ToClockMs(ctx.sleep_duration_ms));
+    GetRTOS().LightSleep(counted_ms);
+    const auto real_ms =
+        static_cast<uint32_t>(sleep_clock.ToRealMs(counted_ms));
+    if (counted_ms != real_ms) {
+        GetRTOS().ContinueTickCountFrom(GetRTOS().getTickCount() - counted_ms +
+                                        real_ms);
+    }
+    network_service_->RecordSleepForCalibration(power::SleepKind::LIGHT,
+                                                real_ms);
+    // Timers stood still while the MCU slept: let the superframe service
+    // recompute its next slot boundary from the current time
+    superframe_service_->NotifyWokeUp();
+
+    // The wake callback fires at the next active slot
+    current_power_state_ = power::PowerState::LIGHT_SLEEP;
+}
+
+bool LoRaMeshProtocol::TryDeepSleep(uint32_t until_active_ms,
+                                    uint16_t next_active_slot) {
+    const power::DeepSleepPolicy& policy = config_.getDeepSleepPolicy();
+    auto store = config_.getStateStore();
+    if (!policy.enabled || !store || !store->AllowsFrequentWrites()) {
+        return false;
+    }
+    const power::SleepClockCalibration sleep_clock =
+        network_service_->GetSleepClockCalibration(power::SleepKind::DEEP);
+    const uint32_t margin =
+        policy.WakeMarginMs(until_active_ms, config_.getWakeUpGuardTime(),
+                            sleep_clock.IsCalibrated());
+    if (until_active_ms <= margin ||
+        until_active_ms - margin < policy.min_sleep_ms) {
+        return false;
+    }
+    const uint32_t sleep_ms = until_active_ms - margin;
+
+    if (!ListensUntilSyncBeacon(next_active_slot)) {
+        LOG_DEBUG("No deep sleep: the node transmits before its next beacon");
+        return false;
+    }
+    if (message_queue_service_->HasAnyMessages()) {
+        LOG_DEBUG("No deep sleep: messages queued");
+        return false;
+    }
+    if (const char* blocker = network_service_->GetDeepSleepBlocker()) {
+        LOG_DEBUG("No deep sleep: %s", blocker);
+        return false;
+    }
+    auto snapshot = network_service_->CaptureResumeSnapshot();
+    if (!snapshot) {
+        return false;
+    }
+
+    const uint32_t now = GetRTOS().getTickCount();
+    storage::ResumeTiming& timing = snapshot->timing;
+    timing.tick_at_save_ms = now;
+    timing.persistent_time_at_save_us = GetRTOS().GetPersistentTimeUs();
+    timing.wake_deadline_ms = now + until_active_ms;
+    timing.superframe_start_ms = superframe_service_->GetSlotStartTime(0);
+    timing.superframes_completed =
+        superframe_service_->GetSuperframeStats().superframes_completed;
+    timing.slot_duration_ms = superframe_service_->GetSlotDuration();
+    timing.total_slots = superframe_service_->GetTotalSlots();
+    auto blob = storage::ResumeSnapshotCodec::Encode(*snapshot);
+    if (!blob) {
+        LOG_WARNING("No deep sleep: the state cannot be encoded");
+        return false;
+    }
+
+    if (prepare_sleep_callback_) {
+        power::SleepContext ctx{};
+        ctx.requested_state = power::PowerState::DEEP_SLEEP;
+        ctx.current_slot = superframe_service_->GetCurrentSlot();
+        ctx.has_pending_messages = false;
+        ctx.sleep_duration_ms = sleep_ms;
+        if (!prepare_sleep_callback_(ctx).allow_sleep) {
+            LOG_DEBUG("Deep sleep vetoed by user callback");
+            return false;
+        }
+    }
+
+    Result result = store->Save(*blob);
+    if (!result) {
+        LOG_WARNING("No deep sleep: %s", result.GetErrorMessage().c_str());
+        return false;
+    }
+    // The application may have queued a message meanwhile; it would be lost
+    if (message_queue_service_->HasAnyMessages()) {
+        store->Clear();
+        LOG_DEBUG("No deep sleep: messages queued");
+        return false;
+    }
+    LOG_INFO("Deep sleep for %u ms (state %zu bytes, waking %u ms early)",
+             sleep_ms, blob->size(), margin);
+    current_power_state_ = power::PowerState::DEEP_SLEEP;
+    GetRTOS().DeepSleep(static_cast<uint32_t>(sleep_clock.ToClockMs(sleep_ms)));
+    return true;
 }
 
 LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
@@ -1373,8 +1897,12 @@ LoRaMeshProtocol::ServiceConfiguration LoRaMeshProtocol::CreateServiceConfig(
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
     service_config.network_config.guard_time_ms = config.getGuardTime();
+    service_config.network_config.log_routing_capabilities =
+        config.getLogRoutingCapabilities();
 
     // Message queue configuration
     service_config.message_queue_size = 10;
@@ -1399,11 +1927,14 @@ LoRaMeshProtocol::CreateServiceConfigForTest(
         service_config.network_config.hello_interval_ms * 3;
     service_config.network_config.node_timeout_ms =
         service_config.network_config.hello_interval_ms * 3;
+    service_config.network_config.guard_time_ms = config.getGuardTime();
     service_config.network_config.max_hops = config.getMaxHops();
     service_config.network_config.max_packet_size = config.getMaxPacketSize();
     service_config.network_config.default_data_slots =
         config.getDefaultDataSlots();
-    service_config.network_config.max_network_nodes = 50;
+    service_config.network_config.max_network_nodes =
+        config.getMaxNetworkNodes();
+    service_config.network_config.max_data_slots = config.getMaxDataSlots();
 
     // Message queue configuration
     service_config.message_queue_size = 10;
@@ -1511,6 +2042,12 @@ uint8_t LoRaMeshProtocol::GetDataSlotsPerSuperframe() const {
     return count;
 }
 
+uint32_t LoRaMeshProtocol::GetSuperframeDuration() const {
+    if (!superframe_service_)
+        return 0;
+    return superframe_service_->GetSuperframeDuration();
+}
+
 size_t LoRaMeshProtocol::GetTxQueueSize() const {
     return message_queue_service_->GetQueueSize(
         types::protocols::lora_mesh::SlotAllocation::SlotType::TX);
@@ -1566,6 +2103,21 @@ void LoRaMeshProtocol::DrainRadioEventQueue() {
         std::unique_ptr<radio::RadioEvent> event(raw_event_ptr);
         // Event is automatically cleaned up when it goes out of scope
     }
+}
+
+void LoRaMeshProtocol::DrainProtocolQueues() {
+    auto& rtos = GetRTOS();
+    DrainRadioEventQueue();
+
+    ProtocolNotificationType notification;
+    while (protocol_notification_queue_ &&
+           rtos.ReceiveFromQueue(protocol_notification_queue_, &notification,
+                                 0) == os::QueueResult::kOk) {}
+
+    SlotTransitionData transition;
+    while (slot_transition_queue_ &&
+           rtos.ReceiveFromQueue(slot_transition_queue_, &transition, 0) ==
+               os::QueueResult::kOk) {}
 }
 
 void LoRaMeshProtocol::NotifyProtocolTask(

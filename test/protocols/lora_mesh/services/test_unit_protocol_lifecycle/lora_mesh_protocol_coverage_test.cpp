@@ -628,6 +628,15 @@ TEST_F(LoraMeshProtocolCoverageTest, GetSlotDurationBeforeInitReturnsZero) {
     EXPECT_EQ(duration, 0u);
 }
 
+/**
+ * @brief GetSuperframeDuration() returns 0 when superframe_service_ is null.
+ */
+TEST_F(LoraMeshProtocolCoverageTest,
+       GetSuperframeDurationBeforeInitReturnsZero) {
+    auto protocol = std::make_unique<protocols::LoRaMeshProtocol>();
+    EXPECT_EQ(protocol->GetSuperframeDuration(), 0u);
+}
+
 // ---------------------------------------------------------------------------
 // const GetSlotDuration() — exercises the const overload (hpp inline)
 // ---------------------------------------------------------------------------

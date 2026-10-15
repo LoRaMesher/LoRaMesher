@@ -117,9 +117,8 @@ Result PingPongProtocol::Init(
     // Create the timeout checking task
     bool timeout_task_created = GetRTOS().CreateTask(
         TimeoutCheckTaskFunction, "PingPongTimeout",
-        config::TaskConfig::kPingPongTimeoutStackSize /
-            config::TaskConfig::kStackBytesPerWord,
-        this, TIMEOUT_TASK_PRIORITY, &timeout_task_handle_);
+        config::TaskConfig::kPingPongTimeoutStackSize, this,
+        TIMEOUT_TASK_PRIORITY, &timeout_task_handle_);
 
     if (!timeout_task_created) {
         return Result(
@@ -130,9 +129,8 @@ Result PingPongProtocol::Init(
     // Create message processing task
     bool process_task_created = GetRTOS().CreateTask(
         MessageProcessTaskFunction, "PingPongProcess",
-        config::TaskConfig::kPingPongProcessStackSize /
-            config::TaskConfig::kStackBytesPerWord,
-        this, PROCESS_TASK_PRIORITY, &process_task_handle_);
+        config::TaskConfig::kPingPongProcessStackSize, this,
+        PROCESS_TASK_PRIORITY, &process_task_handle_);
 
     if (!process_task_created) {
         // Clean up timeout task

@@ -83,16 +83,19 @@ void Logger::SetLogLevel(LogLevel level) {
     }
 }
 
-void Logger::SetHandler(std::unique_ptr<LogHandler> handler) {
+std::unique_ptr<LogHandler> Logger::SetHandler(
+    std::unique_ptr<LogHandler> handler) {
     EnsureSemaphoreInitialized();
 
     if (!logger_semaphore_ ||
         !GetRTOS().TakeSystemSemaphore(logger_semaphore_, 100)) {
         fprintf(stderr, "Logger::SetHandler: timeout acquiring semaphore\n");
-        return;
+        return nullptr;
     }
+    std::unique_ptr<LogHandler> previous = std::move(handler_);
     handler_ = std::move(handler);
     GetRTOS().GiveSystemSemaphore(logger_semaphore_);
+    return previous;
 }
 
 void Logger::Flush() {

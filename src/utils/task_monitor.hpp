@@ -1,6 +1,8 @@
 // src/utilities/task_monitor.hpp
 #pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -64,14 +66,24 @@ class TaskMonitor {
      * @brief Register the calling task in the global watch list.
      *
      * Called once at task entry. Subsequent PollAllAndWarn() calls iterate
-     * this list to log each task's high-water-mark in bytes.
+     * this list to log each task's high-water-mark in bytes. An entry with
+     * the same name is replaced, so a recreated task is listed once.
      */
     static void RegisterCurrentTask(const char* task_name,
                                     uint32_t configured_bytes) {
 #ifdef LORAMESHER_BUILD_ARDUINO
         os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
         std::lock_guard<std::mutex> lock(GetRegistry().mutex);
-        GetRegistry().entries.push_back({handle, task_name, configured_bytes});
+        auto& entries = GetRegistry().entries;
+        auto it = std::find_if(entries.begin(), entries.end(),
+                               [task_name](const Registration& reg) {
+                                   return std::strcmp(reg.name, task_name) == 0;
+                               });
+        if (it != entries.end()) {
+            *it = {handle, task_name, configured_bytes};
+        } else {
+            entries.push_back({handle, task_name, configured_bytes});
+        }
 #else
         (void)task_name;
         (void)configured_bytes;
@@ -79,19 +91,33 @@ class TaskMonitor {
     }
 
     /**
+     * @brief Remove the calling task from the global watch list.
+     *
+     * Called by a task before it exits, so PollAllAndWarn() never queries
+     * the handle of a deleted task.
+     */
+    static void UnregisterCurrentTask() {
+#ifdef LORAMESHER_BUILD_ARDUINO
+        os::TaskHandle_t handle = xTaskGetCurrentTaskHandle();
+        std::lock_guard<std::mutex> lock(GetRegistry().mutex);
+        auto& entries = GetRegistry().entries;
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                     [handle](const Registration& reg) {
+                                         return reg.handle == handle;
+                                     }),
+                      entries.end());
+#endif
+    }
+
+    /**
      * @brief Iterate every registered task, log its current high-water-mark
      * in bytes, and warn if the value drops below kStackWarnBytes.
-     *
-     * On this FreeRTOS port uxTaskGetStackHighWaterMark returns words, so
-     * we multiply by kStackBytesPerWord to report bytes consistently.
      */
     static void PollAllAndWarn() {
 #ifdef LORAMESHER_BUILD_ARDUINO
         std::lock_guard<std::mutex> lock(GetRegistry().mutex);
         for (const auto& reg : GetRegistry().entries) {
-            UBaseType_t hwm_words = uxTaskGetStackHighWaterMark(reg.handle);
-            uint32_t hwm_bytes = static_cast<uint32_t>(hwm_words) *
-                                 config::TaskConfig::kStackBytesPerWord;
+            uint32_t hwm_bytes = GetRTOS().getTaskStackWatermark(reg.handle);
             LOG_INFO("STACK[%s] total=%u free=%u", reg.name,
                      static_cast<unsigned>(reg.configured_bytes),
                      static_cast<unsigned>(hwm_bytes));

@@ -8,12 +8,10 @@
 
 namespace loramesher {
 
-RoutingTableHeader::RoutingTableHeader(AddressType dest, AddressType src,
-                                       AddressType network_manager_addr,
-                                       uint8_t table_version,
-                                       uint8_t entry_count,
-                                       uint8_t source_capabilities,
-                                       uint8_t source_allocated_data_slots)
+RoutingTableHeader::RoutingTableHeader(
+    AddressType dest, AddressType src, AddressType network_manager_addr,
+    uint8_t table_version, uint8_t entry_count, uint8_t source_capabilities,
+    uint8_t source_allocated_data_slots, uint8_t source_control_slot_index)
     : BaseHeader(
           dest, src, MessageType::ROUTE_TABLE,
           RoutingTableFieldsSize() + RoutingTableEntry::Size() * entry_count),
@@ -21,7 +19,8 @@ RoutingTableHeader::RoutingTableHeader(AddressType dest, AddressType src,
       table_version_(table_version),
       entry_count_(entry_count),
       source_capabilities_(source_capabilities),
-      source_allocated_data_slots_(source_allocated_data_slots) {}
+      source_allocated_data_slots_(source_allocated_data_slots),
+      source_control_slot_index_(source_control_slot_index) {}
 
 Result RoutingTableHeader::SetRoutingTableInfo(AddressType network_manager_addr,
                                                uint8_t table_version,
@@ -46,6 +45,7 @@ Result RoutingTableHeader::Serialize(utils::ByteSerializer& serializer) const {
     serializer.WriteUint8(entry_count_);
     serializer.WriteUint8(source_capabilities_);
     serializer.WriteUint8(source_allocated_data_slots_);
+    serializer.WriteUint8(source_control_slot_index_);
 
     return Result::Success();
 }
@@ -73,10 +73,12 @@ std::optional<RoutingTableHeader> RoutingTableHeader::Deserialize(
     auto entry_count = deserializer.ReadUint8();
     auto source_capabilities = deserializer.ReadUint8();
     auto source_allocated_data_slots = deserializer.ReadUint8();
+    auto source_control_slot_index = deserializer.ReadUint8();
 
     if (!network_id.has_value() || !table_version.has_value() ||
         !entry_count.has_value() || !source_capabilities.has_value() ||
-        !source_allocated_data_slots.has_value()) {
+        !source_allocated_data_slots.has_value() ||
+        !source_control_slot_index.has_value()) {
         LOG_ERROR("Failed to deserialize routing table header fields");
         return std::nullopt;
     }
@@ -85,7 +87,7 @@ std::optional<RoutingTableHeader> RoutingTableHeader::Deserialize(
     RoutingTableHeader header(
         base_header->GetDestination(), base_header->GetSource(), *network_id,
         *table_version, *entry_count, *source_capabilities,
-        *source_allocated_data_slots);
+        *source_allocated_data_slots, *source_control_slot_index);
 
     return header;
 }
