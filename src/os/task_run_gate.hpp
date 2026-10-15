@@ -157,11 +157,14 @@ class TaskRunGate {
 
     /**
      * @brief Block until the owner deletes the task
+     *
+     * Waits in bounded steps, so a missed wake-up never keeps the task
+     * blocked after the owner asked to delete it.
      */
     void WaitForDeletion() {
         auto& rtos = GetRTOS();
         while (!rtos.ShouldStopOrPause()) {
-            rtos.TakeSemaphore(run_sem_, MAX_DELAY);
+            rtos.TakeSemaphore(run_sem_, kParkPollMs);
         }
     }
 
