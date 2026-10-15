@@ -51,7 +51,7 @@ include(FetchContent)
 FetchContent_Declare(
     radiolib
     GIT_REPOSITORY https://github.com/jgromes/RadioLib.git
-    GIT_TAG 7.1.2
+    GIT_TAG 7.7.1
 )
 FetchContent_MakeAvailable(radiolib)
 

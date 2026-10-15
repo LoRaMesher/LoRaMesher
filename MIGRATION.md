@@ -46,6 +46,7 @@ If you set `default_data_slots` explicitly, set the same value on every node.
 
 ### Radio
 
+- Update RadioLib to 7.7.1 or newer.
 - `RadioConfig::CreateDefaultSx1268()` now uses 433 MHz (the SX1268 covers
   410–810 MHz); 1.x used 869.9 MHz, which the chip cannot tune to.
 - `RadioType::kSx1268` was inserted before `kMockRadio`. Code that stores or
