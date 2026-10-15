@@ -9,8 +9,11 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 #include "types/messages/base_header.hpp"
+#include "types/storage/resume_snapshot.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -31,6 +34,18 @@ class MessageCache {
     uint8_t NextSeq() {
         return static_cast<uint8_t>(
             seq_.fetch_add(1, std::memory_order_relaxed) + 1);
+    }
+
+    /// Last sequence number returned by NextSeq() (0 before the first send).
+    uint8_t LastSeq() const { return seq_.load(std::memory_order_relaxed); }
+
+    /**
+     * @brief Continue the sequence after @p last_seq
+     *
+     * Used when the node restarts: the next NextSeq() returns last_seq + 1.
+     */
+    void RestoreLastSeq(uint8_t last_seq) {
+        seq_.store(last_seq, std::memory_order_relaxed);
     }
 
     /// True if (source, seq) is in the cache.
@@ -70,6 +85,41 @@ class MessageCache {
         std::lock_guard<std::mutex> lock(mutex_);
         entries_.fill({});
         head_ = 0;
+    }
+
+    /**
+     * @brief Get the cached messages, oldest first
+     */
+    std::vector<storage::SeenMessage> GetSeenMessages() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<storage::SeenMessage> seen;
+        for (size_t i = 0; i < kCapacity; ++i) {
+            const Entry& entry = entries_[(head_ + i) % kCapacity];
+            if (entry.valid) {
+                seen.push_back({entry.source, entry.seq});
+            }
+        }
+        return seen;
+    }
+
+    /**
+     * @brief Replace the cached messages with ones from GetSeenMessages()
+     *
+     * @param seen Messages, oldest first
+     * @return true if restored; false (cache unchanged) if there are more
+     *         than kCapacity messages
+     */
+    bool RestoreSeenMessages(std::span<const storage::SeenMessage> seen) {
+        if (seen.size() > kCapacity) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        entries_.fill({});
+        for (size_t i = 0; i < seen.size(); ++i) {
+            entries_[i] = {seen[i].source, seen[i].sequence, true};
+        }
+        head_ = static_cast<uint8_t>(seen.size() % kCapacity);
+        return true;
     }
 
    private:

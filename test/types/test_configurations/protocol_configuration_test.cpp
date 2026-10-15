@@ -634,6 +634,37 @@ TEST_F(ProtocolConfigWrapperTest, ValidateReturnsErrorForInvalidLoRaMesh) {
     EXPECT_NE(cfg.Validate(), "");
 }
 
+TEST_F(LoRaMeshConfigTest, DeepSleepPolicyValidatesWithoutAStoreYet) {
+    // Builder steps validate one by one: the store may be set afterwards
+    LoRaMeshProtocolConfig config;
+    power::DeepSleepPolicy policy;
+    policy.enabled = true;
+    config.setDeepSleepPolicy(policy);
+    EXPECT_EQ(config.Validate(), "");
+}
+
+TEST_F(LoRaMeshConfigTest, DeepSleepPolicyAcceptsLongApplicationStartUp) {
+    LoRaMeshProtocolConfig config;
+    power::DeepSleepPolicy policy;
+    policy.enabled = true;
+    policy.boot_time_ms = 60000;
+    config.setDeepSleepPolicy(policy);
+    EXPECT_EQ(config.Validate(), "");
+
+    policy.boot_time_ms = 60001;
+    config.setDeepSleepPolicy(policy);
+    EXPECT_NE(config.Validate(), "");
+}
+
+TEST_F(LoRaMeshConfigTest, NetworkManagerNeverDeepSleeps) {
+    LoRaMeshProtocolConfig config;
+    config.setNodeRole(NodeRole::NETWORK_MANAGER);
+    power::DeepSleepPolicy policy;
+    policy.enabled = true;
+    config.setDeepSleepPolicy(policy);
+    EXPECT_NE(config.Validate(), "");
+}
+
 TEST_F(ProtocolConfigWrapperTest, IsValidReturnsFalseForInvalidPingPong) {
     PingPongProtocolConfig pp_cfg;
     pp_cfg.setDefaultTimeout(50);  // < 100ms, invalid

@@ -34,6 +34,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Sending Packets](#sending-packets)
   - [Reliable and Group Messaging](#reliable-and-group-messaging)
   - [Timing-Aware Sending (TDMA)](#timing-aware-sending-tdma)
+  - [Restarts: OTA Updates and Deep Sleep](#restarts-ota-updates-and-deep-sleep)
   - [Diagnostics & Advanced](#diagnostics--advanced)
   - [Deployment Tips](#deployment-tips)
 - [Configuration](#configuration)
@@ -59,6 +60,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **TDMA superframe** — deterministic slot scheduling; nodes sleep when not transmitting
 - **Auto join / network formation** — nodes discover nearby networks or create a new one
 - **Network manager election** — distributed NM election with configurable priority (see the [`AUTO` role warning](#use-one-network_manager-and-node_only-everywhere-else) before relying on it)
+- **Warm restart** — keep the network id, member slots and sequence numbers across OTA reboots and deep sleep (`SaveState()`)
 - **Runtime role changes** — promote a node to `NETWORK_MANAGER` or demote it back to `NODE_ONLY` at runtime via `SetNodeRole()`
 - **Capability-aware discovery** — find the closest gateway or any node matching a capability bitmap (`GetClosestGateway`, `GetClosestNodeByCapability`)
 - **Multi-module support** — SX1262, SX1268, SX1276, SX1278, SX1280 via RadioLib
@@ -122,7 +124,7 @@ if (!r) {
 }
 ```
 
-`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` parks the library's tasks, puts the radio to sleep and discards the network state, queued messages and pending reliable deliveries. Calling `Start()` again restarts the node, which then rediscovers and rejoins a network from scratch. Both calls are idempotent.
+`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` parks the library's tasks, puts the radio to sleep and discards the network state, queued messages and pending reliable deliveries. Calling `Start()` again restarts the node, which then rediscovers and rejoins a network from scratch — unless `SaveState()` stored a snapshot before `Stop()`, which `Start()` restores (see [Restarts](#restarts-ota-updates-and-deep-sleep)). Both calls are idempotent.
 
 **Common board presets:**
 
@@ -251,6 +253,101 @@ Both functions return `0` when the node has not yet joined a network — pair th
 
 ---
 
+### Restarts: OTA Updates and Deep Sleep
+
+A reset normally makes a node start from scratch: a rebooted network manager forms a new network,
+and every node restarts its message sequence numbers, so neighbours drop its first messages as
+duplicates. With a state store the node saves a small snapshot (at most a few hundred bytes) right
+before the reset and resumes in the same network afterwards:
+
+```cpp
+#include "loramesher.hpp"
+
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    // RtcStateStore survives deep sleep and esp_restart(); NvsStateStore
+    // (flash) also survives a firmware update and power loss
+    .withStateStore(std::make_shared<storage::NvsStateStore>())
+    .Build();
+mesher->Start();  // restores and erases the snapshot, if any
+
+// Before an OTA reboot or deep sleep:
+mesher->SaveState();  // before Stop(), which clears the state
+esp_restart();        // or esp_deep_sleep_start()
+```
+
+| Store | Survives | Notes |
+|---|---|---|
+| `RtcStateStore` | deep sleep, `esp_restart()` | No flash wear; a new firmware image may move it, so use NVS for OTA |
+| `NvsStateStore` | OTA update, any reset, power loss | One flash write per save; save before planned resets only |
+| `MemoryStateStore` | protocol restart in the same process | Native builds and tests |
+
+What a restart restores:
+
+- **Network manager**: listens 1.5 superframes for its network (and joins a successor if one was
+  elected meanwhile), then resumes the network under the same id. Members keep their control
+  slots; slots of members that never come back are released after `node_timeout_ms`.
+- **Every node**: continues its message sequence numbers, so nothing is dropped as a duplicate.
+- **Members**: rejoin automatically; after a reset of the whole network they wait longer before
+  forming a network of their own.
+
+Members wait at least two superframes after losing the manager's beacons before electing a
+successor, so a short reboot of the manager does not hand its role to another node. Routes,
+timing and slot tables are learned again after every restart. See `PROTOCOL_SPEC.md` §6.5.
+
+#### Deep sleep without rejoining
+
+Members can deep-sleep through the long SLEEP run of each superframe and resume their place in the
+mesh when they wake, without discovery or joining. The node saves its routes, link statistics,
+slot table and message sequences (a few hundred bytes) in RTC memory before every sleep, and wakes
+early enough to boot before its next active slot:
+
+```cpp
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    .withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep()  // or withDeepSleep(policy) to tune it
+    .Build();
+mesher->Start();  // after a deep sleep: resumes the membership
+```
+
+| `power::DeepSleepPolicy` field | Default | Meaning |
+|---|---|---|
+| `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
+| `boot_time_ms` | 1200 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms, 900 ms at DEBUG) |
+| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
+| `calibrated_drift_ppm` | 3000 | Worst-case error once the node has calibrated its sleep clock |
+
+- Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
+  awake or light-sleeps.
+- The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
+  light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
+  callback.
+- Deep sleep needs `RtcStateStore`: it is written before every sleep, so with `NvsStateStore`
+  (flash) the node logs a warning and only light-sleeps.
+- The node deep-sleeps through the SLEEP run that leads to its next beacon (usually the long run
+  before the discovery band at the end of the superframe), so it is awake for the discovery band.
+  After waking it listens, without transmitting, until a beacon confirms its schedule;
+  `IsReadyToSend()` fails meanwhile, so check it before queueing messages.
+- A message queued after the node's data slots of a superframe keeps it from deep-sleeping
+  (it light-sleeps until the message is sent). Send right after the node becomes ready, as
+  `examples/battery_optimized_example` does; `IsReadyToSend()` returns `kQueueFull` once the queue
+  holds what the node's data slots carry in a superframe.
+- Light and deep sleep run on the RTC clock, at different rates: the node learns the error of each
+  from the beacons and corrects both kinds of sleep.
+- Nodes stay awake (the radio still sleeps) until they have joined and heard three beacons in a
+  row, while they relay a join, and, for the manager, until it answers a join.
+- Set `boot_time_ms` to cover everything from the wake-up to `Start()`, your application's set-up
+  included; a node that starts late misses its first slots, and the messages sent to it in them.
+  One that wakes more than a superframe late rejoins through a warm restart.
+- Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
+  already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
+  `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).
+
 ### Diagnostics & Advanced
 
 The methods below are public on `LoraMesher` and useful once the basic flow is working.
@@ -279,7 +376,9 @@ NetworkStatus status = mesher->GetNetworkStatus();
 
 ```cpp
 if (Result r = mesher->IsReadyToSend(); !r) {
-    // Not synchronized, no TX slot allocated, or wrong protocol state.
+    // Not synchronized, no TX slot allocated, wrong protocol state,
+    // waiting for a beacon after a deep-sleep resume, or (kQueueFull) the
+    // queue already holds what the node's data slots carry in a superframe.
 }
 if (Result r = mesher->IsReadyToSend(dst); !r) {
     // Same checks plus self-send rejection and route lookup.
@@ -425,7 +524,7 @@ pio test -e test_native --list-tests
 #### Faster local runs (optional)
 
 The commands above work unchanged. Most of the time goes into building, not running: each of
-the 25 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
+the 27 suites is a separate binary, and on WSL with the repo on `/mnt/<drive>` every suite
 recompiles all of `src/` (~100 s per suite, while most suites run in seconds). Optional
 settings that cut this down (measured on WSL2, repo on `/mnt/d`):
 

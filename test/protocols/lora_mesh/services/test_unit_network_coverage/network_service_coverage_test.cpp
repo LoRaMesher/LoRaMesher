@@ -502,7 +502,8 @@ TEST_F(NetworkServiceCoverageTest,
 
 TEST_F(NetworkServiceCoverageTest,
        ProcessNMClaimInFaultRecoveryLowerPriorityWins) {
-    // In FAULT_RECOVERY with better priority than claimant → we win, ignore
+    // In FAULT_RECOVERY with better priority than claimant → we win and
+    // claim at once, so the weaker claimant surrenders
     service_->SetState(INetworkService::ProtocolState::FAULT_RECOVERY);
     service_->StartElectionBackoff();  // sets election_priority_
 
@@ -510,9 +511,9 @@ TEST_F(NetworkServiceCoverageTest,
     BaseMessage claim_msg = MakeNMClaim(kOtherNode, 0xFF, 0x9999);
     Result r = service_->ProcessNMClaim(claim_msg);
     EXPECT_TRUE(r) << r.GetErrorMessage();
-    // We should still be in FAULT_RECOVERY
     EXPECT_EQ(service_->GetState(),
-              INetworkService::ProtocolState::FAULT_RECOVERY);
+              INetworkService::ProtocolState::NM_ELECTION);
+    EXPECT_TRUE(message_queue_->HasMessage(MessageType::NM_CLAIM));
 }
 
 TEST_F(NetworkServiceCoverageTest, ProcessNMClaimInNMElectionState) {

@@ -77,10 +77,11 @@ class TaskRunGate {
      * @brief Wait until the task is parked
      *
      * @param timeout_ms Maximum time to wait in milliseconds
-     * @return true if the task is parked and stays parked until RequestRun()
+     * @return true if the task is parked and stays parked until RequestRun();
+     *         false on timeout or once the task has exited
      */
     bool WaitParked(uint32_t timeout_ms) {
-        return WaitForFlag(parked_sem_, parked_, timeout_ms);
+        return WaitForFlag(parked_sem_, parked_, timeout_ms, &exited_);
     }
 
     /**
@@ -148,11 +149,15 @@ class TaskRunGate {
     }
 
     /**
-     * @brief Report that the task left its loop
+     * @brief Report that the task left its loop; later calls do nothing
      */
     void SignalExited() {
-        exited_.store(true);
+        if (exited_.exchange(true)) {
+            return;
+        }
         GetRTOS().GiveSemaphore(exited_sem_);
+        // An exited task never parks: release a WaitParked() caller too
+        GetRTOS().GiveSemaphore(parked_sem_);
     }
 
     /**
@@ -173,10 +178,14 @@ class TaskRunGate {
     static constexpr uint32_t kParkPollMs = 1000;
 
     bool WaitForFlag(SemaphoreHandle_t semaphore, const std::atomic<bool>& flag,
-                     uint32_t timeout_ms) {
+                     uint32_t timeout_ms,
+                     const std::atomic<bool>* abort_flag = nullptr) {
         auto& rtos = GetRTOS();
         const uint32_t start = rtos.getTickCount();
         while (!flag.load()) {
+            if (abort_flag && abort_flag->load()) {
+                return flag.load();
+            }
             uint32_t elapsed = rtos.getTickCount() - start;
             if (elapsed >= timeout_ms) {
                 return flag.load();
@@ -198,6 +207,25 @@ class TaskRunGate {
     std::atomic<bool> exit_requested_{false};
     std::atomic<bool> parked_{false};
     std::atomic<bool> exited_{false};
+};
+
+/**
+ * @brief Calls TaskRunGate::SignalExited() when it goes out of scope
+ *
+ * Declared at the top of a task function, it reports the exit to the owner
+ * even when the task function unwinds instead of returning.
+ */
+class ScopedExitSignal {
+   public:
+    explicit ScopedExitSignal(TaskRunGate& gate) : gate_(gate) {}
+
+    ~ScopedExitSignal() { gate_.SignalExited(); }
+
+    ScopedExitSignal(const ScopedExitSignal&) = delete;
+    ScopedExitSignal& operator=(const ScopedExitSignal&) = delete;
+
+   private:
+    TaskRunGate& gate_;
 };
 
 }  // namespace os

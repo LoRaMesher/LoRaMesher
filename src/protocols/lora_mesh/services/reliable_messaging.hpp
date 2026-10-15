@@ -37,6 +37,7 @@
 #include "types/messages/loramesher/group_message.hpp"
 #include "types/protocols/lora_mesh/path_rtt.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 
 namespace loramesher {
@@ -170,6 +171,28 @@ class ReliableMessaging {
      * re-delivers a message it already delivered.
      */
     void Reset();
+
+    /**
+     * @brief True when no reliable message or acknowledgement window is open
+     */
+    bool IsIdle() const;
+
+    /**
+     * @brief Store the sequence streams and delivered messages in @p snapshot
+     */
+    void CaptureResumeState(storage::ResumeSnapshot& snapshot) const;
+
+    /**
+     * @brief Restore state stored by CaptureResumeState()
+     *
+     * Replaces the sequence streams and the delivered-message windows.
+     *
+     * @param snapshot Snapshot holding the state
+     * @return Success, or an error (state unchanged) if a sequence stream
+     *         does not name a distinct unicast destination or the delivery
+     *         windows cannot be restored
+     */
+    Result ApplyResumeState(const storage::ResumeSnapshot& snapshot);
 
     /**
      * @brief De-duplicate delivery of a received reliable message

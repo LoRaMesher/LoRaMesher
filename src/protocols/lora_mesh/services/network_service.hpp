@@ -38,6 +38,8 @@
 #include "types/messages/loramesher/sync_beacon_message.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/network_snapshot.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
@@ -62,8 +64,20 @@ static const uint8_t kMaxSurrenderDiscoveryRetries = 5;
 /// Minimum listen window before an election fires (ms).
 static constexpr uint32_t kElectionListenWindowMs = 5000;
 
+/// Superframes a node one hop from the manager listens before an election
+/// fires, so a manager that resets and comes back is heard first.
+static constexpr uint32_t kElectionListenSuperframes = 2;
+
+/// Extra listen superframes per additional hop: every relay on the path has
+/// to rejoin the manager before it forwards the manager's beacons again.
+static constexpr uint32_t kElectionListenSuperframesPerHop = 4;
+
 static constexpr uint32_t kCleanupIntervalMs =
     60000;  ///< Route cleanup every 60s
+
+/// Routing-broadcast rotations a route may go unheard before it expires:
+/// one missed broadcast, plus a rotation of slack for the cleanup's timing
+static constexpr uint32_t kRouteAgingRotations = 3;
 
 /// Superframes after its last direct reception that a node keeps its data RX
 /// slots, whatever the route to it
@@ -298,6 +312,165 @@ class NetworkService : public INetworkService {
      * @return Result Success or error details
      */
     Result StartDiscovery(uint32_t discovery_timeout_ms) override;
+
+    /**
+     * @brief Capture the state this node keeps across a reset
+     *
+     * A network manager also records the control slot of every member it
+     * knows (and of members it still holds slots for after its own restart).
+     * Safe to call from the application thread while the protocol runs.
+     *
+     * @return Snapshot of the current state
+     */
+    storage::NetworkSnapshot CaptureSnapshot() const;
+
+    /**
+     * @brief Restore state captured by CaptureSnapshot() before a reset
+     *
+     * Call after Configure() and before StartDiscovery(). The sequence counter
+     * continues past every number the node may have used. A network manager
+     * snapshot (ignored for NODE_ONLY nodes) makes StartDiscovery() listen
+     * briefly for its network and then resume it with the same network id,
+     * holding the members' control slots until they are heard again. A member
+     * snapshot makes the first discovery wait for the network to come back
+     * before forming a new one.
+     *
+     * @param snapshot Snapshot taken by this node
+     * @return Success, or kInvalidParameter if it was taken by another node
+     */
+    Result ApplySnapshot(const storage::NetworkSnapshot& snapshot);
+
+    /**
+     * @brief Capture the state a member needs to resume after a deep sleep
+     *
+     * Fills every part of the snapshot but the timing, which belongs to the
+     * caller. Call from the protocol task.
+     *
+     * @return The snapshot, or std::nullopt when the node is not a member in
+     *         normal operation
+     */
+    std::optional<storage::ResumeSnapshot> CaptureResumeSnapshot() const;
+
+    /**
+     * @brief Resume the membership saved by CaptureResumeSnapshot()
+     *
+     * Restores the routes, the membership, the message sequences and the
+     * slot table, and enters normal operation. Call after Configure() instead
+     * of StartDiscovery(); the caller then resumes the superframe schedule.
+     *
+     * @param snapshot Snapshot taken by this node before it slept
+     * @return Success, or kInvalidParameter (nothing restored) if the
+     *         snapshot is invalid, was taken by another node or the node is
+     *         configured as network manager
+     */
+    Result ApplyResumeSnapshot(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief Reason the node cannot deep-sleep and resume now
+     *
+     * A node may only resume a state that needs nothing from the network
+     * while it sleeps: a member in normal operation, in sync, with no
+     * reliable message in flight.
+     *
+     * @return The reason, or nullptr if the node may deep-sleep
+     */
+    const char* GetDeepSleepBlocker() const;
+
+    /**
+     * @brief True if a sync beacon arrived in the current superframe
+     *
+     * A beacon up to half a superframe before the node's own superframe
+     * start counts, so a clock slightly ahead of the network's still counts
+     * the beacon it just synchronized to.
+     */
+    bool HeardSyncBeaconThisSuperframe() const;
+
+    /**
+     * @brief True if a sync beacon arrived within the last @p window_ms
+     */
+    bool ReceivedSyncBeaconWithin(uint32_t window_ms) const;
+
+    /**
+     * @brief Reason the MCU must stay awake now, if any
+     *
+     * Sleep makes the clock drift, so the node stays awake while it, or a
+     * join it relays, depends on precise timing: until it has joined and
+     * heard beacons in kSettleSuperframes consecutive superframes, while it
+     * relays a join request or response (until the joiner is reachable or
+     * the superframe after the relay ends), and, as manager, while it answers
+     * a join. The radio still sleeps in SLEEP slots.
+     *
+     * @return The reason, or nullptr if the MCU may sleep
+     */
+    const char* GetSleepHold() const;
+
+    /**
+     * @brief True from a resume until a sync beacon confirms the schedule
+     *
+     * The resumed schedule is only as accurate as the sleep clock, so the
+     * node listens instead of transmitting until then.
+     */
+    bool IsAwaitingResync() const {
+        return awaiting_resync_ && state_ == ProtocolState::NORMAL_OPERATION;
+    }
+
+    /**
+     * @brief Learned error of the sleep clock in @p kind sleep
+     */
+    power::SleepClockCalibration GetSleepClockCalibration(
+        power::SleepKind kind) const {
+        return kind == power::SleepKind::LIGHT ? light_sleep_clock_
+                                               : deep_sleep_clock_;
+    }
+
+    /**
+     * @brief Count a sleep that just ended towards the next calibration
+     *        sample
+     *
+     * At the next sync beacon, the drift the schedule gained since the
+     * previous beacon is the error the sleep clock made over all sleeps in
+     * between (the node runs on its crystal while awake). It calibrates the
+     * kind of sleep that took longer; the other kind counts as corrected by
+     * its own estimate. No sample is taken
+     * if a beacon was missed in between, or if the node was awake for more
+     * than half a superframe before the beacon.
+     *
+     * @param kind Kind of the sleep
+     * @param slept_ms Corrected length of the sleep
+     */
+    void RecordSleepForCalibration(power::SleepKind kind, uint32_t slept_ms);
+
+    /**
+     * @brief Identifier of the network this node belongs to (0 = none)
+     */
+    uint16_t GetNetworkId() const { return network_id_.load(); }
+
+    /**
+     * @brief This node's control slot index (0xFF = unassigned)
+     */
+    uint8_t GetMyControlSlotIndex() const { return my_control_slot_index_; }
+
+    /**
+     * @brief Consecutive superframes without a sync beacon (members only)
+     */
+    uint8_t GetMissedSyncBeaconCount() const {
+        return no_received_sync_beacon_count_;
+    }
+
+    /**
+     * @brief Number of control slots allocated in the slot table.
+     */
+    uint8_t GetAllocatedControlSlots() const {
+        return slot_scheduler_->GetAllocatedControlSlots();
+    }
+
+    /**
+     * @brief Milliseconds until a warm-restarted manager stops listening for
+     *        its network and resumes it
+     *
+     * @return 0 when no such wait is pending, otherwise at least 1
+     */
+    uint32_t GetManagerResumeDelayRemaining() const;
 
     /**
      * @brief Start joining an existing network
@@ -1265,13 +1438,6 @@ class NetworkService : public INetworkService {
     uint16_t GetSlotCount() const { return slot_scheduler_->GetSlotCount(); }
 
     /**
-     * @brief Number of control slots allocated in the slot table.
-     */
-    uint8_t GetAllocatedControlSlots() const {
-        return slot_scheduler_->GetAllocatedControlSlots();
-    }
-
-    /**
      * @brief Build the callbacks through which ReliableMessaging reaches this
      *        service (queue, routing, delivery, configuration and clock).
      */
@@ -1469,7 +1635,86 @@ class NetworkService : public INetworkService {
         0;  ///< Discovery windows spent waiting for the winner after surrender
 
     // Stable network identifier (generated at CreateNetwork, preserved across elections)
-    uint16_t network_id_ = 0;
+    std::atomic<uint16_t> network_id_{0};
+
+    // Warm restart state (see ApplySnapshot())
+    /// Listen time of a warm-restarted manager, in percent of a superframe,
+    /// before it resumes its network
+    static constexpr uint32_t kManagerResumeListenPercent = 150;
+    /// Superframes per hop a warm-restarted member allows the network to
+    /// take to reach it again before forming its own
+    static constexpr uint32_t kWarmDiscoverySuperframesPerHop = 4;
+    /// Listen time before a warm-restarted manager resumes its network
+    /// (0 = no warm resume pending)
+    uint32_t manager_resume_listen_ms_ = 0;
+    bool resume_as_manager_ = false;
+    /// Tick count when a warm-restarted manager resumes its network
+    std::optional<uint32_t> manager_resume_deadline_ms_;
+    /// Extra discovery time of a warm-restarted member (first discovery only)
+    uint32_t warm_discovery_extension_ms_ = 0;
+    /// Resumed after a deep sleep and no sync beacon heard since
+    std::atomic<bool> awaiting_resync_{false};
+    /// Consecutive superframes with a sync beacon a member needs after joining
+    /// before it sleeps
+    static constexpr uint8_t kSettleSuperframes = 3;
+    /// Consecutive superframes with a sync beacon since joining (saturating)
+    uint8_t settled_superframes_ = 0;
+    /// Joiner whose join this node relays (0 = none)
+    AddressType relayed_joiner_ = 0;
+    /// Tick count when the hold for a relayed join ends
+    uint32_t relay_hold_until_ms_ = 0;
+
+    /// Hold sleep while the join of @p joiner is relayed
+    void HoldSleepForRelayedJoin(AddressType joiner);
+    /// Learned errors of the sleep clock (kept across network resets)
+    power::SleepClockCalibration light_sleep_clock_;
+    power::SleepClockCalibration deep_sleep_clock_;
+
+    /// Sleeps since the last sync beacon, for the next calibration sample
+    struct SleepTally {
+        uint32_t light_ms = 0;    ///< Time in light sleep
+        uint32_t deep_ms = 0;     ///< Time in deep sleep
+        uint32_t woke_at_ms = 0;  ///< Tick count at the end of the last sleep
+    };
+
+    SleepTally sleep_tally_;
+    /// How far ahead of the network the schedule was left at the last beacon
+    /// (drifts below the resync threshold are not corrected)
+    int32_t schedule_offset_ms_ = 0;
+
+    /// Fold the drift seen at a beacon into the sleep-clock calibration
+    /// when the node slept since the previous beacon
+    void RecordSleepClockDrift(int32_t drift_ms);
+
+    /**
+     * @brief Control slot a warm-restarted manager holds for a member
+     */
+    struct ControlSlotReservation {
+        AddressType address;
+        uint8_t control_slot_index;
+        uint32_t expires_at_ms;  ///< Tick count when the hold lapses
+    };
+
+    /// Members' control slots held until they are heard again; guarded by
+    /// reservations_mutex_
+    std::vector<ControlSlotReservation> control_slot_reservations_;
+    mutable std::mutex reservations_mutex_;
+
+    /// Resume the network of a warm-restarted manager
+    Result ResumeNetworkAsManager();
+
+    /**
+     * @brief Drop reservations of members that are back or timed out
+     *
+     * @return true if a reservation was dropped
+     */
+    bool PruneControlSlotReservations();
+
+    /// Reserved control slot of @p address (0xFF = none)
+    uint8_t FindReservedControlSlot(AddressType address) const;
+
+    /// Highest reserved control slot index (0 = none)
+    uint8_t GetHighestReservedControlSlot() const;
 
     // State-change notification callback
     StateChangeCallback state_change_callback_;

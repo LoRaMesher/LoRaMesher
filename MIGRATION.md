@@ -79,7 +79,8 @@ role is `AUTO`.
 `Stop()` followed by `Start()` restarts the node; you no longer need to build
 a new `LoraMesher` instance. `Stop()` discards the network state, queued
 messages and pending reliable deliveries, so the restarted node rejoins a
-network from scratch. `Start()` now returns the protocol's error when the
+network from scratch unless `SaveState()` stored a snapshot before `Stop()`;
+`Start()` restores it. `Start()` now returns the protocol's error when the
 protocol fails to start, instead of reporting success.
 
 ### `LoRaMeshProtocol` API

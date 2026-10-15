@@ -24,6 +24,7 @@
 #include "types/messages/base_header.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 
 namespace loramesher {
@@ -63,6 +64,9 @@ class SlotScheduler {
         uint8_t number_of_slots_per_superframe = 0;
         uint8_t beacon_node_count = 1;
         uint8_t my_control_slot_index = 0xFF;
+        /// Highest control slot index the manager holds for members expected
+        /// back after its restart (0 = none)
+        uint8_t reserved_control_slot_max = 0;
         uint8_t no_received_sync_beacon_count = 0;
         uint8_t max_network_nodes = 0;
         uint8_t max_data_slots = 0;
@@ -106,6 +110,17 @@ class SlotScheduler {
 
     /// Mark the slot table dirty so the next rebuild regenerates it.
     void MarkDirty() { slot_table_dirty_ = true; }
+
+    /// The slot table, its band sizes and its dirty flag, for saving them.
+    storage::SlotSchedule GetSchedule() const;
+
+    /**
+     * @brief Restore a schedule returned by GetSchedule()
+     *
+     * @return true if restored; false (table unchanged) if the schedule has
+     *         more than kMaxSlots slots
+     */
+    bool RestoreSchedule(const storage::SlotSchedule& schedule);
 
     /// Clear the slot table (used when the node leaves/resets the network).
     void Reset();

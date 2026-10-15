@@ -7,8 +7,11 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 #include "types/messages/base_header.hpp"
+#include "types/storage/resume_snapshot.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -54,6 +57,21 @@ class DeliveryWindows {
      */
     bool Accept(AddressType source, StreamKind kind, uint8_t seq,
                 uint32_t send_ts, uint32_t restart_regression_ms);
+
+    /**
+     * @brief Get every stream, least recently used first
+     */
+    std::vector<storage::DeliveryStream> GetStreams() const;
+
+    /**
+     * @brief Replace every stream with streams returned by GetStreams()
+     *
+     * @param streams Streams, least recently used first
+     * @return true if restored; false (windows unchanged) if there are more
+     *         than kCapacity streams, a stream appears twice or a stream has
+     *         not delivered its highest sequence
+     */
+    bool RestoreStreams(std::span<const storage::DeliveryStream> streams);
 
    private:
     struct Stream {

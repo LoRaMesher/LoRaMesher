@@ -244,8 +244,40 @@ class VirtualNetwork {
     }
 
     /**
+     * @brief Check whether a node is registered
+     *
+     * @param address Address of the node
+     * @return true if the node is registered
+     */
+    bool IsNodeRegistered(uint32_t address) const {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        return nodes_.find(address) != nodes_.end();
+    }
+
+    /**
+     * @brief Replace the radio of a registered node
+     *
+     * The node keeps its links, delays and loss settings, so a node can be
+     * powered off and rebooted with a new radio without rebuilding the
+     * topology.
+     *
+     * @param address Address of the node
+     * @param radio New radio receiver of the node
+     * @return true if the node was registered and its radio replaced
+     */
+    bool ReplaceRadio(uint32_t address, IRadioReceiver* radio) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        auto it = nodes_.find(address);
+        if (it == nodes_.end()) {
+            return false;
+        }
+        it->second.radio = radio;
+        return true;
+    }
+
+    /**
      * @brief Unregister a node from the network
-     * 
+     *
      * @param address Address of the node to remove
      */
     void UnregisterNode(uint32_t address) {
@@ -255,6 +287,26 @@ class VirtualNetwork {
         }
         std::lock_guard<std::mutex> lock(sent_messages_mutex_);
         sent_messages_.erase(address);
+    }
+
+    /**
+     * @brief Unregister a node only while @p radio is still its radio
+     *
+     * Lets a radio that was replaced by ReplaceRadio() detach without
+     * removing the node that now uses its address.
+     *
+     * @param address Address of the node to remove
+     * @param radio Radio expected to be registered for @p address
+     */
+    void UnregisterNode(uint32_t address, const IRadioReceiver* radio) {
+        {
+            std::lock_guard<std::mutex> lock(nodes_mutex_);
+            auto it = nodes_.find(address);
+            if (it == nodes_.end() || it->second.radio != radio) {
+                return;
+            }
+        }
+        UnregisterNode(address);
     }
 
     /**
@@ -1228,6 +1280,25 @@ class VirtualTimeController {
 inline VirtualTimeController* VirtualTimeController::instance_ = nullptr;
 
 /**
+ * @brief Receiver of a powered-off node
+ *
+ * Installed with VirtualNetwork::ReplaceRadio() while a node is down: every
+ * packet addressed to it is dropped as if its radio were off, and the node's
+ * links stay configured for when it boots again.
+ */
+class PoweredOffReceiver : public IRadioReceiver {
+   public:
+    void ReceiveMessage(const std::vector<uint8_t>& /* data */,
+                        float /* rssi */, float /* snr */) override {}
+
+    bool CanReceive() const override { return false; }
+
+    loramesher::radio::RadioState GetRadioState() const override {
+        return loramesher::radio::RadioState::kSleep;
+    }
+};
+
+/**
  * @brief Adapter class to connect MockRadio to VirtualNetwork
  */
 class RadioToNetworkAdapter : public IRadioReceiver {
@@ -1393,9 +1464,14 @@ class RadioToNetworkAdapter : public IRadioReceiver {
             }
         }
 
-        // Unregister from network
-        network_.UnregisterNode(address_);
+        // Unregister from network unless another radio took over the address
+        network_.UnregisterNode(address_, this);
     }
+
+    /**
+     * @brief Address this adapter transmits from
+     */
+    AddressType GetAddress() const { return address_; }
 
     void ReceiveMessage(const std::vector<uint8_t>& data, float rssi,
                         float snr) override {

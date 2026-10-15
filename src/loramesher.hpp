@@ -18,6 +18,9 @@
 #include "types/configurations/loramesher_configuration.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/node_capabilities.hpp"
+#include "types/storage/memory_state_store.hpp"
+#include "types/storage/nvs_state_store.hpp"
+#include "types/storage/rtc_state_store.hpp"
 #include "utils/compat/span.hpp"
 #include "utils/logger.hpp"
 
@@ -69,8 +72,8 @@ class LoraMesher {
      *
      * Initializes hardware and protocols on the first call, then starts the
      * protocol. Calling Start() again after Stop() restarts the node, which
-     * rediscovers and rejoins a network from scratch. Calling it while
-     * running is a no-op.
+     * rediscovers and rejoins a network from scratch unless SaveState()
+     * stored a snapshot before Stop(). Calling it while running is a no-op.
      *
      * Must not be called from a library callback: the protocol rejects it
      * with kInvalidState.
@@ -343,6 +346,28 @@ class LoraMesher {
      *         protocol is not LoRaMesh or it has not been initialized
      */
     uint32_t GetSuperframeDuration() const;
+
+    /**
+     * @brief Get the identifier of the network this node belongs to
+     *
+     * @return uint16_t Network id, or 0 if the node is not in a network or
+     *         the active protocol is not LoRaMesh
+     */
+    uint16_t GetNetworkId() const;
+
+    /**
+     * @brief Save the mesh state into the state store before a planned reset
+     *
+     * Call right before an OTA reboot or deep sleep (and before Stop()). On the
+     * next Start() the node resumes in the same network: a network manager
+     * keeps its network id and its members' control slots, and every node
+     * continues its message sequence numbers. Requires a store set with
+     * Builder::withStateStore().
+     *
+     * @return Result Success, or an error if no store is configured, the
+     *         active protocol is not LoRaMesh, or the store failed
+     */
+    Result SaveState();
 
     /**
      * @brief Get number of messages pending in the TX queue
@@ -625,6 +650,52 @@ class LoraMesher::Builder {
             protocols::ProtocolType::kLoraMesh) {
             auto lora_config = protocol_config.getLoRaMeshConfig();
             lora_config.setWakeUpCallback(std::move(callback));
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Set the store that keeps the mesh state across resets
+     *
+     * Use an RtcStateStore to survive deep sleep and an NvsStateStore to
+     * survive an OTA reboot or power loss (ESP32). Call
+     * LoraMesher::SaveState() before the reset. Must follow
+     * withLoRaMeshProtocol().
+     *
+     * @param store State store
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withStateStore(std::shared_ptr<storage::IStateStore> store) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            lora_config.setStateStore(std::move(store));
+            protocol_config.setLoRaMeshConfig(lora_config);
+            config_.setProtocolConfig(protocol_config);
+        }
+        return *this;
+    }
+
+    /**
+     * @brief Let a member deep-sleep through long runs of SLEEP slots
+     *
+     * Needs a state store that allows a write before every sleep, such as
+     * an RtcStateStore set with withStateStore(). Must follow
+     * withLoRaMeshProtocol().
+     *
+     * @param policy Deep-sleep policy (enabled is forced to true)
+     * @return Builder& Reference to this builder for method chaining
+     */
+    Builder& withDeepSleep(power::DeepSleepPolicy policy = {}) {
+        auto protocol_config = config_.getProtocolConfig();
+        if (protocol_config.getProtocolType() ==
+            protocols::ProtocolType::kLoraMesh) {
+            auto lora_config = protocol_config.getLoRaMeshConfig();
+            policy.enabled = true;
+            lora_config.setDeepSleepPolicy(policy);
             protocol_config.setLoRaMeshConfig(lora_config);
             config_.setProtocolConfig(protocol_config);
         }
