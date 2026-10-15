@@ -202,6 +202,12 @@ bool NetworkNodeRoute::IsDirectNeighbor() const {
     return routing_entry.hop_count == 1 && is_active;
 }
 
+bool NetworkNodeRoute::HeardDirectlyWithin(uint32_t current_time,
+                                           uint32_t window_ms) const {
+    return link_stats.messages_received > 0 &&
+           current_time - link_stats.last_message_time <= window_ms;
+}
+
 uint16_t NetworkNodeRoute::CalculateRouteCost(uint8_t hop_count,
                                               uint8_t link_quality) {
     // ETX-inspired metric: cost = hop_count * (256 / quality), scaled by 256.

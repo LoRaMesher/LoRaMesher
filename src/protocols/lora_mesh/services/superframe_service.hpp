@@ -11,6 +11,7 @@
 #include <mutex>
 #include <vector>
 #include "os/rtos.hpp"
+#include "os/task_run_gate.hpp"
 #include "protocols/lora_mesh/interfaces/i_superframe_service.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
 #include "types/protocols/lora_mesh/superframe.hpp"
@@ -29,7 +30,8 @@ enum class SuperframeNotificationType : uint8_t {
     CONFIG_CHANGED,  ///< Configuration changed, recalculate timeout
     SYNC_UPDATED,    ///< External sync updated, immediate recalculation
     SYNC_COMPLETE,  ///< Complete sync operation finished (consolidated notification)
-    STOP_REQUESTED  ///< Stop requested, task should exit immediately
+    STOP_REQUESTED,  ///< Stop requested, task should exit immediately
+    WOKE_UP  ///< MCU woke from sleep, recalculate timeout from the current time
 };
 
 /**
@@ -93,6 +95,31 @@ class SuperframeService : public ISuperframeService {
     bool IsSynchronized() const override;
 
     bool IsRunning() const { return is_running_; }
+
+    /**
+     * @brief Tell the update task that the MCU woke from sleep
+     *
+     * While the MCU slept, the update task's wait did not progress; it
+     * recomputes the time to the next slot boundary from the current time.
+     */
+    void NotifyWokeUp();
+
+    /**
+     * @brief Start the superframe on a schedule known from before a sleep
+     *
+     * Projects the schedule forward from a superframe start seen earlier,
+     * keeping the network's phase. Slot callbacks resume at the next slot
+     * boundary; the slot in progress is not reported.
+     *
+     * @param last_known_start Start time of a past superframe (tick ms)
+     * @param total_slots Number of slots in the superframe
+     * @param slot_duration_ms Duration of each slot in milliseconds
+     * @param superframes_completed Superframes completed at last_known_start
+     * @return Result Success, or an error if the service is running or the
+     *         schedule is invalid
+     */
+    Result ResumeAt(uint32_t last_known_start, uint16_t total_slots,
+                    uint32_t slot_duration_ms, uint32_t superframes_completed);
 
     void SetSynchronized(bool synchronized) override;
 
@@ -339,6 +366,8 @@ class SuperframeService : public ISuperframeService {
     void TestSetAutoAdvance(bool v) { auto_advance_ = v; }
 
     void TestSetSyncInProgress(bool v) { sync_in_progress_ = v; }
+
+    os::TaskHandle_t TestGetUpdateTask() const { return update_task_handle_; }
 #endif  // LORAMESHER_BUILD_NATIVE
 
    private:
@@ -350,9 +379,17 @@ class SuperframeService : public ISuperframeService {
     bool CreateUpdateTask();
 
     /**
-      * @brief Delete RTOS task
+      * @brief Stop the update task cooperatively and delete it
       */
     void DeleteUpdateTask();
+
+    /**
+     * @brief Copy of the superframe callback, taken under callback_mutex_
+     *
+     * Callers invoke the copy without holding the mutex, so
+     * SetSuperframeCallback() never waits for a running callback.
+     */
+    SuperframeCallback GetSuperframeCallback() const;
 
     /**
       * @brief Static task function for update task
@@ -384,6 +421,19 @@ class SuperframeService : public ISuperframeService {
      * @return uint32_t End time of the superframe in milliseconds
      */
     uint32_t GetSuperframeEndTime() const;
+
+    /**
+     * @brief Whether the clock is in a slot the update task has not handled
+     *
+     * A slot lower than the last one handled starts a new superframe only
+     * once the superframe's time is over. Before that, the clock was stepped
+     * back (a clock correction after a sleep) into a slot already handled.
+     *
+     * @param current_slot Slot the clock is in now
+     * @param[out] new_superframe Set when the slot starts a new superframe
+     * @return true if the slot has not been handled yet
+     */
+    bool IsUnhandledSlot(uint16_t current_slot, bool& new_superframe) const;
 
     /**
      * @brief Calculate timeout until next significant event
@@ -438,6 +488,7 @@ class SuperframeService : public ISuperframeService {
     uint32_t update_interval_ms_;
     os::TaskHandle_t update_task_handle_;
     os::QueueHandle_t notification_queue_;
+    os::TaskRunGate update_gate_;  ///< Parks and stops the update task
 
     // Statistics
     std::atomic<uint32_t> superframes_completed_;
@@ -450,6 +501,8 @@ class SuperframeService : public ISuperframeService {
     static constexpr uint32_t DEFAULT_UPDATE_INTERVAL_MS = 20;
     static constexpr uint32_t TASK_PRIORITY = 14;
     static constexpr uint32_t NOTIFICATION_QUEUE_SIZE = 32;
+    /// Bound on waiting for the update task to park or exit
+    static constexpr uint32_t kUpdateTaskStopTimeoutMs = 2000;
 };
 
 }  // namespace lora_mesh

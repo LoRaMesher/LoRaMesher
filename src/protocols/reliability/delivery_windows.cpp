@@ -5,6 +5,8 @@
 
 #include "delivery_windows.hpp"
 
+#include <algorithm>
+
 namespace loramesher {
 namespace protocols {
 namespace reliability {
@@ -51,6 +53,59 @@ bool DeliveryWindows::Accept(AddressType source, StreamKind kind, uint8_t seq,
         return false;
     }
     stream->bitmap |= bit;
+    return true;
+}
+
+std::vector<storage::DeliveryStream> DeliveryWindows::GetStreams() const {
+    std::vector<const Stream*> used;
+    for (const auto& stream : streams_) {
+        if (stream.valid) {
+            used.push_back(&stream);
+        }
+    }
+    std::sort(used.begin(), used.end(), [](const Stream* a, const Stream* b) {
+        return a->last_used < b->last_used;
+    });
+
+    std::vector<storage::DeliveryStream> result;
+    result.reserve(used.size());
+    for (const Stream* stream : used) {
+        result.push_back({stream->source, stream->kind == StreamKind::kGroup,
+                          stream->highest, stream->bitmap, stream->last_ts});
+    }
+    return result;
+}
+
+bool DeliveryWindows::RestoreStreams(
+    std::span<const storage::DeliveryStream> streams) {
+    if (streams.size() > kCapacity) {
+        return false;
+    }
+    for (size_t i = 0; i < streams.size(); ++i) {
+        if ((streams[i].bitmap & 1u) == 0) {
+            return false;
+        }
+        for (size_t j = 0; j < i; ++j) {
+            if (streams[j].source == streams[i].source &&
+                streams[j].group == streams[i].group) {
+                return false;
+            }
+        }
+    }
+
+    streams_.fill(Stream{});
+    use_clock_ = 0;
+    for (size_t i = 0; i < streams.size(); ++i) {
+        Stream& stream = streams_[i];
+        stream.valid = true;
+        stream.source = streams[i].source;
+        stream.kind =
+            streams[i].group ? StreamKind::kGroup : StreamKind::kUnicast;
+        stream.highest = streams[i].highest;
+        stream.bitmap = streams[i].bitmap;
+        stream.last_ts = streams[i].last_send_ts;
+        stream.last_used = ++use_clock_;
+    }
     return true;
 }
 

@@ -8,14 +8,17 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <thread>
 #include <vector>
 
 #include "../test/utils/network_testing_impl.hpp"
+#include "../test/utils/protocol_lifecycle_helpers.hpp"
 #include "hardware/hardware_manager.hpp"
 #include "hardware/radiolib/radiolib_radio.hpp"
 #include "mocks/mock_radio_test_helpers.hpp"
@@ -66,6 +69,9 @@ class LoRaMeshTestFixture : public ::testing::Test {
     /// Seed of the per-node random streams and the network's loss decisions
     uint32_t test_seed_ = kDefaultTestSeed;
 
+    /// Virtual time advanced per step while StopNode() waits for Stop()
+    static constexpr uint32_t kStopTimeStepMs = 10;
+
     // File logging support
     FileLogHandler* file_log_handler_ = nullptr;  ///< Owned by LOG while set
     std::string log_directory_;
@@ -83,6 +89,7 @@ class LoRaMeshTestFixture : public ::testing::Test {
             mock->SeedRandom(test_seed_);
             mock->resetReblockTimeoutCount();
         }
+        ResetTaskMisuseCounters();
 // Set up file logging for this test
 #ifdef LORAMESHER_TEST_STORE_LOGS
         SetupFileLogging();
@@ -116,10 +123,20 @@ class LoRaMeshTestFixture : public ::testing::Test {
                       << std::endl;
         }
 
-        // CRITICAL: Stop all protocols FIRST and wait for tasks to exit
+        // Stop every protocol while the clock runs, so tasks finish their
+        // current slot work and park before the protocols are destroyed
         for (auto& node : nodes_) {
             if (node->protocol) {
-                // Stop the protocol and wait for all tasks to exit
+                Result stop_result = StopNode(*node);
+                EXPECT_TRUE(stop_result)
+                    << "Stopping " << node->name
+                    << " failed: " << stop_result.GetErrorMessage();
+            }
+        }
+        ExpectNoTaskMisuse();
+
+        for (auto& node : nodes_) {
+            if (node->protocol) {
                 node->protocol.reset();
             }
         }
@@ -300,6 +317,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
      * @param node Node to power off
      */
     void ShutdownNode(TestNode& node) {
+        // A power cut stops the node's tasks wherever they are, also in a
+        // delay or a deep sleep that would never let them exit on their own
+        if (auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS())) {
+            char addr_str[8];
+            snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+            mock->PowerOffNodeTasks(addr_str);
+        }
         node.protocol.reset();
         if (virtual_network_.IsNodeRegistered(node.address)) {
             virtual_network_.ReplaceRadio(node.address, &powered_off_receiver_);
@@ -421,7 +445,38 @@ class LoRaMeshTestFixture : public ::testing::Test {
             return Result(LoraMesherErrorCode::kInvalidState,
                           "Protocol not initialized");
         }
-        return node.protocol->Stop();
+
+        // Stop() waits for the node's tasks to park, which may take until
+        // the end of the current slot. It runs on a helper thread while this
+        // thread advances virtual time whenever the helper is blocked waiting.
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        std::atomic<bool> done{false};
+        Result result = Result::Success();
+        std::thread stopper([&]() {
+            GetRTOS().SetCurrentTaskNodeAddress(addr_str);
+            result = node.protocol->Stop();
+            done.store(true, std::memory_order_release);
+        });
+
+        auto* mock = dynamic_cast<os::RTOSMock*>(&GetRTOS());
+        while (!done.load(std::memory_order_acquire)) {
+            if (mock != nullptr &&
+                mock->getTimeMode() == os::RTOSMock::TimeMode::kVirtualTime &&
+                mock->HasExternalWait()) {
+                // Let a just-satisfied wait return before moving the clock
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (done.load(std::memory_order_acquire) ||
+                    !mock->HasExternalWait()) {
+                    continue;
+                }
+                time_controller_.AdvanceTime(kStopTimeStepMs);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+        stopper.join();
+        return result;
     }
 
     /**
@@ -463,11 +518,13 @@ class LoRaMeshTestFixture : public ::testing::Test {
         // Continue checking until timeout or condition is met
         while (elapsed_ms < kEffectiveTimeoutMs) {
             // Calculate time to advance in this iteration
-            uint32_t time_to_advance = kOptimalTimeStepMs;
+            const uint32_t time_to_advance = std::max<uint32_t>(
+                1, std::min(kOptimalTimeStepMs, MaxTimeStepMs()));
 
             // Advance simulation time
             time_controller_.AdvanceTime(time_to_advance);
             elapsed_ms += time_to_advance;
+            OnTimeAdvanced();
 
             // Minimal real sleep to allow tasks to execute
             if (real_sleep_ms > 0) {
@@ -482,6 +539,21 @@ class LoRaMeshTestFixture : public ::testing::Test {
         }
 
         return !condition;  // Timeout occurred
+    }
+
+    /**
+     * @brief Called after every AdvanceTime() step
+     *
+     * Lets a fixture act at exact virtual instants (for example power a node
+     * on), together with MaxTimeStepMs().
+     */
+    virtual void OnTimeAdvanced() {}
+
+    /**
+     * @brief Longest step AdvanceTime() may take next
+     */
+    virtual uint32_t MaxTimeStepMs() const {
+        return std::numeric_limits<uint32_t>::max();
     }
 
     /**

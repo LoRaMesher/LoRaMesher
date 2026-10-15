@@ -45,6 +45,33 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   restarted manager resumes its network under the same id and hands members
   their old control slots; see `PROTOCOL_SPEC.md` §6.5.
 - `LoraMesher::GetNetworkId()`.
+- Member deep sleep without rejoining: with `Builder::withDeepSleep()` and an
+  `RtcStateStore`, a member deep-sleeps through long SLEEP runs and, after the
+  reboot, resumes its membership (routes with link statistics, control slot,
+  slot table, message sequences and duplicate state) without discovery or
+  joining; a late wake-up falls back to a warm restart. See
+  `PROTOCOL_SPEC.md` §5.8.4. `RtcStateStore` holds 4 KB, and the battery
+  example has an `ENABLE_DEEP_SLEEP` option. A resumed member listens without
+  transmitting until a beacon confirms its schedule, and `IsReadyToSend()`
+  fails until then.
+- Sleep-clock calibration: members learn the error of their RTC sleep clock
+  from the beacons after light and deep sleeps, and correct both. Light sleep
+  wakes early enough for the clock's worst-case error
+  (`DeepSleepPolicy::clock_drift_ppm` / `calibrated_drift_ppm`).
+- Light and deep sleep are calibrated separately: the RC sleep clock runs at
+  different rates in the two, and each has its own estimate in the resume
+  snapshot (format v3). No calibration sample is taken when the node was
+  awake for more than half a superframe before the beacon.
+- `DeepSleepPolicy::calibrated_drift_ppm` defaults to 3000.
+- A beacon that arrives up to half a superframe before the node's own
+  superframe start counts for the superframe that starts, so a schedule
+  slightly behind the network's no longer counts missed beacons.
+- Route aging spans at least three routing-broadcast rotations, so with long
+  superframes a member that misses one broadcast (a late deep-sleep resume)
+  keeps its route and its data slots in the manager's table.
+- Nodes do not sleep the MCU before they have joined and settled (three
+  consecutive beacons), while they relay a join, or, as manager, while a join
+  is pending.
 - Node reboot test suite (`test_node_reboot`): power-cycles nodes of
   simulated line, star and mesh networks, alone or all together, warm and
   cold.
@@ -87,12 +114,34 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - `battery_level` is removed from `JOIN_REQUEST` and `NM_CLAIM` (and from
   `JoinRequestMessage::Create()` / `NMClaimMessage::Create()`).
 - Cross-network Network Manager merge is disabled.
+- `NodeRole::AUTO` is not safe to deploy while merge is disabled: losing the
+  Network Manager can split the mesh into networks that never merge again.
+  `Start()` logs a warning when the role is `AUTO`; configure one
+  `NETWORK_MANAGER` and `NODE_ONLY` on the other nodes. `AUTO` stays the
+  default for compatibility, and the examples set roles explicitly.
 - Joining: a node sends its `JOIN_REQUEST` in a random even discovery slot
   (sponsored joins in the first one) and the Network Manager answers in the
   next slot; unanswered requests back off 0–3 superframes, the retry count
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
+  `wake_up_guard_ms` before the next active slot, instead of waking at every
+  slot boundary and staying awake for the guard. `PrepareSleepCallback` runs
+  once per run, and `SleepContext::sleep_duration_ms` is the length of the
+  whole sleep. The default wake-up guard is 20 ms (was 100 ms).
+- ESP32: protocol time comes from `esp_timer`, which keeps counting during
+  light sleep; the FreeRTOS tick count it used before stood still while the
+  MCU slept, so slot timing fell behind after every sleep.
+- A slot that began before the superframe timer learned of a wake-up is
+  handled late instead of skipped; the first active slot after a light sleep
+  (often a join or data slot) was lost whenever waking took longer than the
+  wake-up guard.
+- Join responses carry the network id; they carried the manager's address.
+- Synchronization drift is reported relative to the nearest superframe.
+- `battery_optimized_example`: the LoRa power rail stays on during sleep (the
+  radio lost its configuration when it was cut), the wake-up callback no
+  longer re-creates the PMU driver, and the CPU runs at 80 MHz.
 - NM election: the election backoff spans at least two superframes (four more
   per extra hop to the manager), so a manager that resets is heard again
   before a successor is elected when superframes are longer than the old
@@ -100,6 +149,15 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   a weaker claim, so two candidates no longer both create the network.
 - A former network manager rejoining an elected successor no longer gets the
   successor's own control slot 0.
+- A routing-table slice whose transmission was skipped (it did not fit the
+  rest of its control slot) is no longer lost: the rotation moves on only
+  when a slice is sent, and slices are sized to fit the slot's airtime with
+  up to 100 ms of start latency. Neighbours missing from the transmitted
+  slices had marked the sender unidirectional, rerouted it through relays
+  and stopped listening in its data slots, losing its broadcast and group
+  messages.
+- A node keeps listening in the data slots of any node it heard directly in
+  the last 3 superframes, whatever its route to it.
 - ESP32 task stacks: sizes were divided by 4 for an API that takes bytes, so
   tasks ran with a quarter of the configured stack and the stack monitor
   reported four times the real free space. The configured sizes now state
@@ -114,6 +172,16 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - Thread safety: send APIs are safe to call from the application thread, the
   routing table is only read under its lock, and the slot table, protocol
   state and Network Manager address are synchronized with the protocol task.
+- `Stop()`/`Start()` restart the protocol (#112): `Stop()` parks the protocol
+  and superframe tasks where they hold no locks instead of deleting the
+  protocol task, so a restart no longer crashes in `vTaskResume` or deadlocks,
+  and `Start()` reconnects the radio and superframe callbacks. `Stop()` waits
+  at most max(5 s, 3 slots) for the current slot work, discards queued
+  messages, and both calls are idempotent. `LoraMesher::Start()` returns the
+  protocol's error when it fails to start instead of reporting success.
+  Repeating `LoRaMeshProtocol::Init()` with the same hardware and address no
+  longer creates a second protocol task, and `GetNodeRole()` no longer races
+  the protocol task applying a role change.
 - Stop/Start: a network reset no longer deadlocks when a state-change or
   route callback calls back into the library, clears election, sponsor and
   sync-beacon state, and keeps the packet sequence counter so neighbours do

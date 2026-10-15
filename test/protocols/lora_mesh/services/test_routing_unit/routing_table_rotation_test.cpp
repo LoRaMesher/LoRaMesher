@@ -4,7 +4,8 @@
  *
  * Exercises DistanceVectorRoutingTable::GetNextBroadcastSlice() — the
  * rotation cursor used by NetworkService to fit routing broadcasts
- * within the per-frame entry budget at high spreading factors.
+ * within the per-frame entry budget at high spreading factors. The cursor
+ * moves on only when NotifyLocalRoutingBroadcast() reports the slice sent.
  */
 
 #include <gtest/gtest.h>
@@ -51,17 +52,44 @@ class RoutingTableRotationTest : public ::testing::Test {
                                     capabilities, kCurrentTime);
     }
 
+    /// Build the next slice and report it transmitted
+    auto SendSlice(AddressType exclude, size_t max_entries) {
+        auto slice =
+            routing_table_->GetNextBroadcastSlice(exclude, max_entries);
+        routing_table_->NotifyLocalRoutingBroadcast();
+        return slice;
+    }
+
     std::unique_ptr<DistanceVectorRoutingTable> routing_table_;
 };
+
+TEST_F(RoutingTableRotationTest, UnsentSliceIsBuiltAgain) {
+    SeedActiveRoutes(9);
+
+    // A slice whose transmission was skipped must not be lost: the next
+    // broadcast carries the same routes
+    auto skipped = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    auto retried = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    ASSERT_EQ(skipped.size(), 3u);
+    ASSERT_EQ(retried.size(), 3u);
+    for (size_t i = 0; i < skipped.size(); ++i) {
+        EXPECT_EQ(retried[i].destination, skipped[i].destination);
+    }
+
+    // Once sent, the rotation moves on
+    routing_table_->NotifyLocalRoutingBroadcast();
+    auto next = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    ASSERT_EQ(next.size(), 3u);
+    EXPECT_NE(next.front().destination, skipped.front().destination);
+}
 
 TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_RotatesAndWraps) {
     SeedActiveRoutes(9);
 
-    auto slice1 =
-        routing_table_->GetNextBroadcastSlice(kLocalAddress, /*max=*/3);
-    auto slice2 = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
-    auto slice3 = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
-    auto slice4 = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    auto slice1 = SendSlice(kLocalAddress, /*max=*/3);
+    auto slice2 = SendSlice(kLocalAddress, 3);
+    auto slice3 = SendSlice(kLocalAddress, 3);
+    auto slice4 = SendSlice(kLocalAddress, 3);
 
     EXPECT_EQ(slice1.size(), 3u);
     EXPECT_EQ(slice2.size(), 3u);
@@ -91,19 +119,18 @@ TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_RotatesAndWraps) {
 TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_HandlesShrink) {
     SeedActiveRoutes(5);
 
-    auto slice1 =
-        routing_table_->GetNextBroadcastSlice(kLocalAddress, /*max=*/3);
+    auto slice1 = SendSlice(kLocalAddress, /*max=*/3);
     EXPECT_EQ(slice1.size(), 3u);
 
     routing_table_->RemoveNode(0x2003);
     routing_table_->RemoveNode(0x2004);
     routing_table_->RemoveNode(0x2002);
 
-    auto slice2 = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    auto slice2 = SendSlice(kLocalAddress, 3);
     EXPECT_LE(slice2.size(), 2u)
         << "After shrinking to 2 entries, slice must be bounded by table size";
 
-    auto slice3 = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    auto slice3 = SendSlice(kLocalAddress, 3);
     EXPECT_FALSE(slice3.empty())
         << "Cursor must recover after the table shrinks below it";
 }
@@ -111,11 +138,11 @@ TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_HandlesShrink) {
 TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_SingleSliceWhenSmall) {
     SeedActiveRoutes(4);
 
-    auto slice1 = routing_table_->GetNextBroadcastSlice(kLocalAddress,
-                                                        /*max=*/24);
+    auto slice1 = SendSlice(kLocalAddress,
+                            /*max=*/24);
     EXPECT_EQ(slice1.size(), 4u);
 
-    auto slice2 = routing_table_->GetNextBroadcastSlice(kLocalAddress, 24);
+    auto slice2 = SendSlice(kLocalAddress, 24);
     EXPECT_EQ(slice2.size(), 4u)
         << "When the table fits in one slice, subsequent calls return the "
            "same content (no churn)";
@@ -129,14 +156,14 @@ TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_SingleSliceWhenSmall) {
 }
 
 TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_EmptyTableReturnsEmpty) {
-    auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress, 24);
+    auto slice = SendSlice(kLocalAddress, 24);
     EXPECT_TRUE(slice.empty());
 }
 
 TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_ZeroMaxReturnsEmpty) {
     SeedActiveRoutes(4);
-    auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress,
-                                                       /*max=*/0);
+    auto slice = SendSlice(kLocalAddress,
+                           /*max=*/0);
     EXPECT_TRUE(slice.empty());
 }
 
@@ -144,7 +171,7 @@ TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_ExcludesAddress) {
     SeedActiveRoutes(3);
     constexpr AddressType kExclude = 0x2001;
 
-    auto slice = routing_table_->GetNextBroadcastSlice(kExclude, /*max=*/24);
+    auto slice = SendSlice(kExclude, /*max=*/24);
 
     for (const auto& entry : slice) {
         EXPECT_NE(entry.destination, kExclude);
@@ -155,11 +182,11 @@ TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_ExcludesAddress) {
 TEST_F(RoutingTableRotationTest, GetNextBroadcastSlice_ResetsOnClear) {
     SeedActiveRoutes(6);
 
-    routing_table_->GetNextBroadcastSlice(kLocalAddress, /*max=*/3);
+    SendSlice(kLocalAddress, /*max=*/3);
     routing_table_->Clear();
     SeedActiveRoutes(6);
 
-    auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+    auto slice = SendSlice(kLocalAddress, 3);
     EXPECT_EQ(slice.size(), 3u);
     EXPECT_EQ(slice.front().destination, 0x2000)
         << "Cursor must reset to 0 on Clear()";
@@ -175,7 +202,7 @@ TEST_F(RoutingTableRotationTest,
     // cover all 9 normal routes (2 per slice).
     std::set<AddressType> normal_seen;
     for (int i = 0; i < 5; ++i) {
-        auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+        auto slice = SendSlice(kLocalAddress, 3);
         ASSERT_FALSE(slice.empty());
         EXPECT_LE(slice.size(), 3u);
 
@@ -209,7 +236,7 @@ TEST_F(RoutingTableRotationTest,
 
     std::set<AddressType> normal_seen;
     for (int i = 0; i < 3; ++i) {
-        auto slice = routing_table_->GetNextBroadcastSlice(kLocalAddress, 3);
+        auto slice = SendSlice(kLocalAddress, 3);
         ASSERT_FALSE(slice.empty());
         EXPECT_LE(slice.size(), 3u);
         std::set<AddressType> in_slice;

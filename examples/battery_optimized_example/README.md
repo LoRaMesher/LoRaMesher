@@ -14,7 +14,7 @@ Compared to `simple_example`, this example includes:
 
 - **Automatic PMU detection** - Supports both AXP192 (T-Beam v1.0/v1.1) and AXP2101 (T-Beam v1.2+)
 - **Sleep callbacks** - Disable peripherals before sleep
-- **Wake callbacks** - Re-initialize hardware after wake
+- **Wake callbacks** - Restore peripherals after wake
 - **Battery monitoring** - Enable voltage measurement via PMU
 
 ## T-Beam Power Architecture
@@ -48,23 +48,29 @@ Compared to `simple_example`, this example includes:
 
 ## Sleep/Wake Callbacks
 
-LoraMesher calls your callbacks when entering and exiting sleep:
+LoraMesher calls your callbacks once per run of sleep slots: the MCU then
+light-sleeps through the whole run and wakes shortly before the next active
+slot (`ctx.sleep_duration_ms` says for how long):
 
 ```cpp
 SleepResult OnSleep(const SleepContext& ctx) {
-    if (!InitDevices::prepareSleep()) {
+    if (!InitDevices::prepareSleep(ctx.sleep_duration_ms)) {
         Serial.println("Error: Failed to prepare sleep");
         return power::SleepResult{false};  // veto: peripheral state unknown
     }
-    // After returning true, the protocol puts the radio and MCU to sleep.
-    // OnWakeUp will be called before the next active slot.
+    // After returning true, the protocol puts the radio and MCU to sleep
+    // until shortly before the next active slot, when OnWakeUp is called.
     return power::SleepResult{true};
 }
 
 void OnWakeUp(PowerState previous_state) {
-    InitDevices::init();  // Re-enable power to peripherals
+    InitDevices::wakeUp();  // Undo prepareSleep()
 }
 ```
+
+Keep the LoRa power rail on during sleep: the protocol already puts the radio
+into its own sleep mode, and a radio whose rail was cut loses its configuration.
+`prepareSleep()` only cuts the GPS rail for sleeps of 10 s or more.
 
 Register callbacks when building LoraMesher:
 
@@ -94,8 +100,30 @@ mesher->SaveState();  // right before the reset
 esp_restart();
 ```
 
-For deep sleep use `storage::RtcStateStore` instead: it keeps the state in RTC
-memory without writing flash.
+## Deep Sleep (`ENABLE_DEEP_SLEEP`)
+
+Build with `-DENABLE_DEEP_SLEEP=1` to let members deep-sleep through SLEEP runs
+of 30 s or more. They keep the mesh state in RTC memory (`RtcStateStore`) and,
+when the timer wakes them, `setup()` runs again and `Start()` resumes the
+membership without rejoining. The network manager keeps the flash store and
+never deep-sleeps.
+
+```cpp
+builder.withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep();  // power::DeepSleepPolicy defaults
+```
+
+`OnSleep` is asked for `PowerState::DEEP_SLEEP` first; returning `false` makes
+the node light-sleep instead. Long SLEEP runs need a low duty cycle (the
+default target is 1%).
+
+A member is awake only a few seconds per superframe, and a message still
+queued when its long SLEEP run starts keeps it from deep-sleeping. `loop()`
+therefore checks `IsReadyToSend()` every 500 ms while the node is joining or
+waiting for the beacon after a resume, and sends once as soon as it is ready:
+the message goes out in the node's data slots before the SLEEP run.
+`IsReadyToSend()` also fails with `kQueueFull` once the queue holds what the
+node's data slots carry in a superframe.
 
 ## Battery Monitoring
 

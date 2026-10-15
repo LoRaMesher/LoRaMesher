@@ -9,8 +9,11 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 #include "types/messages/base_header.hpp"
+#include "types/storage/resume_snapshot.hpp"
+#include "utils/compat/span.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -82,6 +85,41 @@ class MessageCache {
         std::lock_guard<std::mutex> lock(mutex_);
         entries_.fill({});
         head_ = 0;
+    }
+
+    /**
+     * @brief Get the cached messages, oldest first
+     */
+    std::vector<storage::SeenMessage> GetSeenMessages() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<storage::SeenMessage> seen;
+        for (size_t i = 0; i < kCapacity; ++i) {
+            const Entry& entry = entries_[(head_ + i) % kCapacity];
+            if (entry.valid) {
+                seen.push_back({entry.source, entry.seq});
+            }
+        }
+        return seen;
+    }
+
+    /**
+     * @brief Replace the cached messages with ones from GetSeenMessages()
+     *
+     * @param seen Messages, oldest first
+     * @return true if restored; false (cache unchanged) if there are more
+     *         than kCapacity messages
+     */
+    bool RestoreSeenMessages(std::span<const storage::SeenMessage> seen) {
+        if (seen.size() > kCapacity) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        entries_.fill({});
+        for (size_t i = 0; i < seen.size(); ++i) {
+            entries_[i] = {seen[i].source, seen[i].sequence, true};
+        }
+        head_ = static_cast<uint8_t>(seen.size() % kCapacity);
+        return true;
     }
 
    private:

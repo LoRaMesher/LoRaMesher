@@ -207,6 +207,39 @@ class RTOS {
     virtual uint32_t getTickCount() = 0;
 
     /**
+     * @brief Time of a clock that keeps running through deep sleep
+     *
+     * Only differences between two readings are meaningful. The default has
+     * no such clock and uses the tick count, which restarts after a reset.
+     *
+     * @return Clock time in microseconds
+     */
+    virtual uint64_t GetPersistentTimeUs() {
+        return static_cast<uint64_t>(getTickCount()) * 1000ULL;
+    }
+
+    /**
+     * @brief Make getTickCount() continue from @p tick_ms at this instant
+     *
+     * After a deep sleep the tick count restarts near 0; calling this with the
+     * tick count the node had before sleeping plus the time slept keeps every
+     * stored timestamp valid. Affects only the calling node on the mock.
+     *
+     * @param tick_ms Tick count the clock must read now
+     */
+    virtual void ContinueTickCountFrom(uint32_t /* tick_ms */) {}
+
+    /**
+     * @brief Put the MCU into deep sleep for @p ms milliseconds
+     *
+     * On ESP32 this does not return: the device resets when it wakes up. The
+     * default only light-sleeps.
+     *
+     * @param ms Sleep duration in milliseconds
+     */
+    virtual void DeepSleep(uint32_t ms) { LightSleep(ms); }
+
+    /**
      * @brief Start the RTOS scheduler
      */
     virtual void StartScheduler() = 0;

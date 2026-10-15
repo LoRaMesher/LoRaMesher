@@ -59,7 +59,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 - **Mesh routing** — distance-vector protocol with automatic route discovery and maintenance
 - **TDMA superframe** — deterministic slot scheduling; nodes sleep when not transmitting
 - **Auto join / network formation** — nodes discover nearby networks or create a new one
-- **Network manager election** — distributed NM election with configurable priority
+- **Network manager election** — distributed NM election with configurable priority (see the [`AUTO` role warning](#use-one-network_manager-and-node_only-everywhere-else) before relying on it)
 - **Warm restart** — keep the network id, member slots and sequence numbers across OTA reboots and deep sleep (`SaveState()`)
 - **Runtime role changes** — promote a node to `NETWORK_MANAGER` or demote it back to `NODE_ONLY` at runtime via `SetNodeRole()`
 - **Capability-aware discovery** — find the closest gateway or any node matching a capability bitmap (`GetClosestGateway`, `GetClosestNodeByCapability`)
@@ -124,7 +124,7 @@ if (!r) {
 }
 ```
 
-`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` halts all tasks and releases resources — there is no `resume`, rebuild a new instance to restart.
+`Start()` is `[[nodiscard]] Result`; always check it. `Stop()` parks the library's tasks, puts the radio to sleep and discards the network state, queued messages and pending reliable deliveries. Calling `Start()` again restarts the node, which then rediscovers and rejoins a network from scratch — unless `SaveState()` stored a snapshot before `Stop()`, which `Start()` restores (see [Restarts](#restarts-ota-updates-and-deep-sleep)). Both calls are idempotent.
 
 **Common board presets:**
 
@@ -297,6 +297,57 @@ Members wait at least two superframes after losing the manager's beacons before 
 successor, so a short reboot of the manager does not hand its role to another node. Routes,
 timing and slot tables are learned again after every restart. See `PROTOCOL_SPEC.md` §6.5.
 
+#### Deep sleep without rejoining
+
+Members can deep-sleep through the long SLEEP run of each superframe and resume their place in the
+mesh when they wake, without discovery or joining. The node saves its routes, link statistics,
+slot table and message sequences (a few hundred bytes) in RTC memory before every sleep, and wakes
+early enough to boot before its next active slot:
+
+```cpp
+auto mesher = LoraMesher::Builder()
+    .withPinConfig(pins)
+    .withRadioConfig(radio)
+    .withLoRaMeshProtocol(protocol)
+    .withStateStore(std::make_shared<storage::RtcStateStore>())
+    .withDeepSleep()  // or withDeepSleep(policy) to tune it
+    .Build();
+mesher->Start();  // after a deep sleep: resumes the membership
+```
+
+| `power::DeepSleepPolicy` field | Default | Meaning |
+|---|---|---|
+| `min_sleep_ms` | 30000 | Shortest deep sleep; shorter SLEEP runs light-sleep |
+| `boot_time_ms` | 1200 | Time from the wake-up to `Start()` resuming the protocol (T-Beam: about 850 ms, 900 ms at DEBUG) |
+| `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
+| `calibrated_drift_ppm` | 3000 | Worst-case error once the node has calibrated its sleep clock |
+
+- Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
+  awake or light-sleeps.
+- The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
+  light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
+  callback.
+- Deep sleep needs `RtcStateStore`: it is written before every sleep, so with `NvsStateStore`
+  (flash) the node logs a warning and only light-sleeps.
+- The node deep-sleeps through the SLEEP run that leads to its next beacon (usually the long run
+  before the discovery band at the end of the superframe), so it is awake for the discovery band.
+  After waking it listens, without transmitting, until a beacon confirms its schedule;
+  `IsReadyToSend()` fails meanwhile, so check it before queueing messages.
+- A message queued after the node's data slots of a superframe keeps it from deep-sleeping
+  (it light-sleeps until the message is sent). Send right after the node becomes ready, as
+  `examples/battery_optimized_example` does; `IsReadyToSend()` returns `kQueueFull` once the queue
+  holds what the node's data slots carry in a superframe.
+- Light and deep sleep run on the RTC clock, at different rates: the node learns the error of each
+  from the beacons and corrects both kinds of sleep.
+- Nodes stay awake (the radio still sleeps) until they have joined and heard three beacons in a
+  row, while they relay a join, and, for the manager, until it answers a join.
+- Set `boot_time_ms` to cover everything from the wake-up to `Start()`, your application's set-up
+  included; a node that starts late misses its first slots, and the messages sent to it in them.
+  One that wakes more than a superframe late rejoins through a warm restart.
+- Deep sleep pays off only for long SLEEP runs (low duty cycles); a single light sleep per run
+  already saves most of the energy. See `PROTOCOL_SPEC.md` §5.8.4 and
+  `examples/battery_optimized_example` (`ENABLE_DEEP_SLEEP`).
+
 ### Diagnostics & Advanced
 
 The methods below are public on `LoraMesher` and useful once the basic flow is working.
@@ -325,7 +376,9 @@ NetworkStatus status = mesher->GetNetworkStatus();
 
 ```cpp
 if (Result r = mesher->IsReadyToSend(); !r) {
-    // Not synchronized, no TX slot allocated, or wrong protocol state.
+    // Not synchronized, no TX slot allocated, wrong protocol state,
+    // waiting for a beacon after a deep-sleep resume, or (kQueueFull) the
+    // queue already holds what the node's data slots carry in a superframe.
 }
 if (Result r = mesher->IsReadyToSend(dst); !r) {
     // Same checks plus self-send rejection and route lookup.
@@ -343,8 +396,10 @@ NodeRole current = mesher->GetNodeRole();
 
 Transitions:
 - `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` before joining: node creates a network immediately.
-- `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` while joined: broadcasts NM_CLAIM; incumbent NM yields.
+- `NODE_ONLY`/`AUTO` → `NETWORK_MANAGER` while joined: broadcasts NM_CLAIM; an incumbent NM with a worse election priority surrenders and its members re-elect the claimant (same-network election).
 - `NETWORK_MANAGER` → `NODE_ONLY`/`AUTO` while NM: surrenders and triggers a re-election (~5 superframes of disruption).
+
+Avoid switching nodes to `AUTO` at runtime; see the warning in [Deployment Tips](#use-one-network_manager-and-node_only-everywhere-else).
 
 **Capability-based discovery**
 
@@ -366,13 +421,16 @@ size_t pending_rx = mesher->GetRxQueueSize();
 
 ### Deployment Tips
 
-#### Pre-designate a Network Manager for faster network formation
+#### Use one `NETWORK_MANAGER` and `NODE_ONLY` everywhere else
 
-By default every node boots in `NodeRole::AUTO` and listens for ~30 s (`DEFAULT_DISCOVERY_TIMEOUT_MS`, with up to ±5 s of jitter) before deciding no network is reachable and creating its own. Pre-designating exactly one node as `NETWORK_MANAGER` skips that wait — the NM creates the network at boot and emits `SYNC_BEACON` immediately, so peers join in seconds instead of minutes.
+> **Warning — do not deploy `NodeRole::AUTO` until network merge is implemented.** With `AUTO`, losing the Network Manager starts an election, and an election (or two nodes that both time out discovery) can split the mesh into separate networks. Cross-network merge is disabled (`kNetworkMergeEnabled = false`, see `PROTOCOL_SPEC.md` §10.6.9 and `docs/todo_network_merge.md`), so those networks never merge again. `AUTO` stays the default only for compatibility, and `Start()` logs a warning when it is in effect.
+
+Configure exactly one node as `NETWORK_MANAGER` and every other node as `NODE_ONLY`. The NM creates the network at boot and emits `SYNC_BEACON` immediately, so peers join in seconds instead of waiting ~30 s (`DEFAULT_DISCOVERY_TIMEOUT_MS`, with up to ±5 s of jitter) of discovery. A `NODE_ONLY` node never creates a network: if the NM is lost, it keeps rediscovering until the NM is back.
 
 ```cpp
 LoRaMeshProtocolConfig protocol;
-protocol.setNodeRole(NodeRole::NETWORK_MANAGER);   // one node per network
+protocol.setNodeRole(is_manager ? NodeRole::NETWORK_MANAGER   // one node
+                                : NodeRole::NODE_ONLY);       // all others
 
 auto mesher = LoraMesher::Builder()
     .withPinConfig(pins)
@@ -381,14 +439,14 @@ auto mesher = LoraMesher::Builder()
     .Build();
 ```
 
-All other nodes can stay on the default (`NodeRole::AUTO`) or use `NodeRole::NODE_ONLY` if they should *never* create a network. Avoid configuring two NMs in the same area — automatic merging of two networks is currently disabled (see `PROTOCOL_SPEC.md` §10.6.9), so their networks stay separate.
+Avoid configuring two NMs in the same area — their networks stay separate for the same reason.
 
 **Approximate time from boot to a fully joined node** (at SF7 / BW 125 kHz with the default 10-slot, 10 s discovery-phase superframes):
 
 | Setup | NM up | Peer joined |
 |---|---|---|
-| All nodes `AUTO` (default) | ~30 s (discovery timeout + jitter) | NM time + 1–3 superframes ≈ **40–60 s** |
-| One node `NETWORK_MANAGER`, peers `AUTO` / `NODE_ONLY` | **0 s** (network exists at boot) | 1–3 superframes after first beacon ≈ **10–30 s** |
+| One node `NETWORK_MANAGER`, peers `NODE_ONLY` (recommended) | **0 s** (network exists at boot) | 1–3 superframes after first beacon ≈ **10–30 s** |
+| All nodes `AUTO` (default, not recommended) | ~30 s (discovery timeout + jitter) | NM time + 1–3 superframes ≈ **40–60 s** |
 
 Once the network is operational, the NM scales slot duration to actual time-on-air — expect ~200 ms slots at SF7/BW125 and ~550 ms slots at SF10/BW125 (the formula is `ceil_50(ToA(max_packet_size) + guard + 50 ms margin)`). See [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md) §5 and §6 for the full timing rules.
 

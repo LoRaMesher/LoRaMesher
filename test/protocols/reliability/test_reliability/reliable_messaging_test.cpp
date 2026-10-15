@@ -129,6 +129,71 @@ TEST_F(ReliableMessagingTest, SendReliableRejectsNonUnicastDestinations) {
     EXPECT_EQ(enqueued_, 0);
 }
 
+TEST_F(ReliableMessagingTest, ResumedNodeContinuesItsSequenceStreams) {
+    const uint8_t first = messaging_->SendReliable(kPeer, payload_, 0, 0).seq;
+    const uint8_t group_first =
+        messaging_->SendGroupReliable(kGroup, payload_, 0, 5000).seq;
+    ASSERT_TRUE(messaging_->AcceptReliable(
+        kPeer, reliability::StreamKind::kUnicast, 40, 1234));
+
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+    ASSERT_EQ(snapshot.sequence_streams.size(), 1u);
+    EXPECT_EQ(
+        snapshot.sequence_streams[0],
+        (storage::SequenceStream{kPeer, static_cast<uint8_t>(first + 1)}));
+    EXPECT_EQ(snapshot.group_next_sequence,
+              static_cast<uint8_t>(group_first + 1));
+    ASSERT_EQ(snapshot.delivery_streams.size(), 1u);
+
+    MessageCache cache;
+    ReliableMessaging resumed(cache, MakeHost());
+    ASSERT_TRUE(resumed.ApplyResumeState(snapshot));
+
+    EXPECT_EQ(resumed.SendReliable(kPeer, payload_, 0, 0).seq,
+              static_cast<uint8_t>(first + 1));
+    EXPECT_EQ(resumed.SendGroupReliable(kGroup, payload_, 0, 5000).seq,
+              static_cast<uint8_t>(group_first + 1));
+    EXPECT_FALSE(resumed.AcceptReliable(
+        kPeer, reliability::StreamKind::kUnicast, 40, 1234));
+    EXPECT_TRUE(resumed.AcceptReliable(kPeer, reliability::StreamKind::kUnicast,
+                                       41, 1300));
+}
+
+TEST_F(ReliableMessagingTest, FreshNodeHasNoGroupStream) {
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+    EXPECT_TRUE(snapshot.sequence_streams.empty());
+    EXPECT_FALSE(snapshot.group_next_sequence.has_value());
+    EXPECT_TRUE(snapshot.delivery_streams.empty());
+}
+
+TEST_F(ReliableMessagingTest, InvalidResumeStateIsRefused) {
+    storage::ResumeSnapshot snapshot;
+    snapshot.sequence_streams = {{kPeer, 1}, {kPeer, 2}};
+    EXPECT_FALSE(messaging_->ApplyResumeState(snapshot));
+
+    snapshot.sequence_streams = {{kBroadcastAddress, 1}};
+    EXPECT_FALSE(messaging_->ApplyResumeState(snapshot));
+
+    snapshot.sequence_streams.clear();
+    snapshot.delivery_streams = {{kPeer, false, 1, 0, 0}};
+    EXPECT_FALSE(messaging_->ApplyResumeState(snapshot));
+}
+
+TEST_F(ReliableMessagingTest, IdleOnlyWithoutTrackedMessages) {
+    EXPECT_TRUE(messaging_->IsIdle());
+    messaging_->SendReliable(kPeer, payload_, 0, 0);
+    EXPECT_FALSE(messaging_->IsIdle());
+    messaging_->Reset();
+    EXPECT_TRUE(messaging_->IsIdle());
+
+    messaging_->SendGroupReliable(kGroup, payload_, 0, 5000);
+    EXPECT_FALSE(messaging_->IsIdle());
+    RunFor(20 * kSuperframeMs);
+    EXPECT_TRUE(messaging_->IsIdle());
+}
+
 }  // namespace test
 }  // namespace lora_mesh
 }  // namespace protocols

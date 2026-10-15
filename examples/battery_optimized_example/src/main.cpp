@@ -12,6 +12,8 @@
  * - Periodic message sending with routing table display
  * - Warm restart: the mesh state is kept in flash across restarts (send 'r'
  *   on the serial port to restart the node as an OTA update would)
+ * - Optional deep sleep (ENABLE_DEEP_SLEEP): members deep-sleep through long
+ *   SLEEP runs and resume their place in the mesh when they wake
  */
 
 #include <Arduino.h>
@@ -47,12 +49,19 @@ using namespace loramesher;
 // Network configuration
 #define NODE_MANAGER_ADDRESS 0x3ADF
 
+// Members deep-sleep through SLEEP runs of 30 s or more (low duty cycles)
+#ifndef ENABLE_DEEP_SLEEP
+#define ENABLE_DEEP_SLEEP 0
+#endif
+
 // ============================================================================
 // Global State
 // ============================================================================
 
 std::unique_ptr<LoraMesher> mesher = nullptr;
 uint8_t message_counter = 0;
+/// Retry interval while the node waits to become ready to send (ms)
+constexpr uint32_t kNotReadyRetryMs = 500;
 
 // ============================================================================
 // Power Management Callbacks
@@ -61,17 +70,22 @@ uint8_t message_counter = 0;
 using namespace loramesher::power;
 
 SleepResult OnSleep(const SleepContext& ctx) {
-    if (!InitDevices::prepareSleep()) {
+    if (!InitDevices::prepareSleep(ctx.sleep_duration_ms)) {
         Serial.println("Error: Failed to prepare sleep");
         return power::SleepResult{false};  // veto: peripheral state unknown
     }
-    // After returning true, the protocol puts the radio and MCU to sleep.
-    // OnWakeUp will be called before the next active slot.
+    // After returning true, the protocol puts the radio and MCU to sleep
+    // until shortly before the next active slot. A light sleep ends with
+    // OnWakeUp; a deep sleep ends with a reboot, where setup() powers the
+    // peripherals again.
+    if (ctx.requested_state == PowerState::DEEP_SLEEP) {
+        Serial.flush();
+    }
     return power::SleepResult{true};
 }
 
 void OnWakeUp(PowerState previous_state) {
-    InitDevices::init();
+    InitDevices::wakeUp();
 }
 
 // ============================================================================
@@ -120,23 +134,30 @@ void printNetworkStatus() {
               << std::endl;
 }
 
-void sendTestMessage() {
+/**
+ * @brief Send one message to the next known node, if the node is ready
+ *
+ * @return true if the node is not ready yet for a reason that clears within
+ *         a superframe (joining, or waiting for the beacon after a deep-sleep
+ *         resume), so the caller should try again soon
+ */
+bool sendTestMessage() {
     auto routes = mesher->GetRoutingTable();
     if (routes.empty()) {
-        return;
+        return false;
     }
 
     AddressType dest = routes[message_counter % routes.size()].destination;
     if (dest == mesher->GetNodeAddress()) {
         message_counter++;
-        return;
+        return false;
     }
 
     Result ready = mesher->IsReadyToSend(dest);
     if (!ready) {
         std::cerr << "Not ready to send to 0x" << std::hex << dest << std::dec
                   << ": " << ready.GetErrorMessage() << std::endl;
-        return;
+        return ready.getErrorCode() == LoraMesherErrorCode::kInvalidState;
     }
 
     std::string msg = "Hello from node!";
@@ -149,6 +170,7 @@ void sendTestMessage() {
     } else {
         std::cerr << "Send failed: " << result.GetErrorMessage() << std::endl;
     }
+    return false;
 }
 
 // ============================================================================
@@ -176,15 +198,22 @@ void configureLoraMesher() {
     }
 
     // 4. Build LoraMesher with power callbacks and a state store that keeps
-    //    the mesh state across restarts (flash survives OTA updates)
-    mesher = LoraMesher::Builder()
-                 .withRadioConfig(radio_config)
-                 .withPinConfig(pin_config)
-                 .withLoRaMeshProtocol(mesh_config)
-                 .withPrepareSleepCallback(OnSleep)
-                 .withWakeUpCallback(OnWakeUp)
-                 .withStateStore(std::make_shared<storage::NvsStateStore>())
-                 .Build();
+    //    the mesh state across restarts
+    LoraMesher::Builder builder;
+    builder.withRadioConfig(radio_config)
+        .withPinConfig(pin_config)
+        .withLoRaMeshProtocol(mesh_config)
+        .withPrepareSleepCallback(OnSleep)
+        .withWakeUpCallback(OnWakeUp);
+    if (ENABLE_DEEP_SLEEP && my_address != NODE_MANAGER_ADDRESS) {
+        // RTC memory survives deep sleep and takes a save before every sleep
+        builder.withStateStore(std::make_shared<storage::RtcStateStore>())
+            .withDeepSleep();
+    } else {
+        // Flash survives OTA updates and power loss
+        builder.withStateStore(std::make_shared<storage::NvsStateStore>());
+    }
+    mesher = builder.Build();
 
     // 5. Set data callback
     mesher->SetDataCallback(OnDataReceived);
@@ -220,6 +249,8 @@ void configureLoraMesher() {
 void setup() {
     Serial.begin(115200);
     esp_log_level_set("*", ESP_LOG_INFO);
+    // An idle CPU at 80 MHz draws about a third less than at 240 MHz
+    setCpuFrequencyMhz(80);
 
     InitDevices::init();
     configureLoraMesher();
@@ -230,9 +261,14 @@ void loop() {
         restartPreservingMeshState();
     }
 
+    // A deep-sleeping member is awake for a few seconds per superframe: it
+    // sends once per wake, as soon as the beacon confirms its schedule
+    if (sendTestMessage()) {
+        delay(kNotReadyRetryMs);
+        return;
+    }
     printRoutingTable();
     printNetworkStatus();
-    sendTestMessage();
 
     auto routes = mesher->GetRoutingTable();
     uint32_t delay_ms = routes.empty() ? 10000 : 10000 * routes.size();

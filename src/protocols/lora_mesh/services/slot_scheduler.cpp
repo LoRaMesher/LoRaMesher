@@ -31,6 +31,31 @@ void SlotScheduler::Reset() {
     slot_count_ = 0;
 }
 
+storage::SlotSchedule SlotScheduler::GetSchedule() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    storage::SlotSchedule schedule;
+    schedule.slots.assign(slot_table_.begin(),
+                          slot_table_.begin() + slot_count_);
+    schedule.control_slots = allocated_control_slots_;
+    schedule.discovery_slots = allocated_discovery_slots_;
+    schedule.rebuild_pending = slot_table_dirty_;
+    return schedule;
+}
+
+bool SlotScheduler::RestoreSchedule(const storage::SlotSchedule& schedule) {
+    if (schedule.slots.size() > kMaxSlots) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::copy(schedule.slots.begin(), schedule.slots.end(),
+              slot_table_.begin());
+    slot_count_ = static_cast<uint16_t>(schedule.slots.size());
+    allocated_control_slots_ = schedule.control_slots;
+    allocated_discovery_slots_ = schedule.discovery_slots;
+    slot_table_dirty_ = schedule.rebuild_pending;
+    return true;
+}
+
 std::vector<SlotScheduler::SlotAllocation> SlotScheduler::GetSlotTable() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return {slot_table_.begin(), slot_table_.begin() + slot_count_};
@@ -193,7 +218,12 @@ AddressType SlotScheduler::FindDataSlotOwner(
     AddressType owner = 0;
     uint32_t owner_last_seen = 0;
     for (const auto& node : nodes) {
-        if (!node.IsDirectNeighbor()) {
+        // We listen to every node we hear, whatever our route to it
+        const bool heard = node.IsDirectNeighbor() ||
+                           (ctx.direct_reception_window_ms > 0 &&
+                            node.HeardDirectlyWithin(
+                                ctx.now_ms, ctx.direct_reception_window_ms));
+        if (!heard) {
             continue;
         }
         uint8_t index = node.control_slot_index;

@@ -24,6 +24,7 @@
 #include "types/messages/base_header.hpp"
 #include "types/protocols/lora_mesh/network_node_route.hpp"
 #include "types/protocols/lora_mesh/slot_allocation.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/compat/span.hpp"
 
 namespace loramesher {
@@ -73,6 +74,11 @@ class SlotScheduler {
         float target_duty_cycle = 0.01f;
         float min_sleep_fraction = 0.30f;
         uint8_t churn_margin_slots = 2;
+        /// Current time (ms)
+        uint32_t now_ms = 0;
+        /// A node heard directly within this window gets RX in its data
+        /// slots whatever its route (ms, 0: direct neighbours only)
+        uint32_t direct_reception_window_ms = 0;
     };
 
     /**
@@ -104,6 +110,17 @@ class SlotScheduler {
 
     /// Mark the slot table dirty so the next rebuild regenerates it.
     void MarkDirty() { slot_table_dirty_ = true; }
+
+    /// The slot table, its band sizes and its dirty flag, for saving them.
+    storage::SlotSchedule GetSchedule() const;
+
+    /**
+     * @brief Restore a schedule returned by GetSchedule()
+     *
+     * @return true if restored; false (table unchanged) if the schedule has
+     *         more than kMaxSlots slots
+     */
+    bool RestoreSchedule(const storage::SlotSchedule& schedule);
 
     /// Clear the slot table (used when the node leaves/resets the network).
     void Reset();
@@ -188,7 +205,10 @@ class SlotScheduler {
                              const SlotPlan& plan, uint8_t our_hop_distance);
 
     /**
-     * @brief Active direct neighbour holding @p control_index, or 0 if none.
+     * @brief Node we hear holding @p control_index, or 0 if none.
+     *
+     * An active direct neighbour, or a node heard directly within
+     * Context::direct_reception_window_ms whatever the route to it.
      *
      * The Network Manager is treated as index 0 when its index is unknown.
      * When several neighbours claim the index, the most recently seen wins.

@@ -30,8 +30,10 @@ namespace storage {
  */
 class RtcStateStore : public IStateStore {
    public:
-    /// Largest blob the store holds (a snapshot with up to 163 members)
-    static constexpr size_t kCapacity = 512;
+    /// Largest blob the store holds: a manager snapshot with every member, or
+    /// a member's resume snapshot with about 60 direct neighbours (half of
+    /// the 8 KB RTC slow memory)
+    static constexpr size_t kCapacity = 4096;
 
     Result Save(std::span<const uint8_t> data) override;
     std::optional<std::vector<uint8_t>> Load() override;
