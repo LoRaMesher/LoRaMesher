@@ -18,6 +18,11 @@ NetworkStatus	KEYWORD1
 AddressType	KEYWORD1
 RadioType	KEYWORD1
 NodeRole	KEYWORD1
+MessageId	KEYWORD1
+ReliableOptions	KEYWORD1
+GroupSendOptions	KEYWORD1
+ReceivedData	KEYWORD1
+DeliveryCallback	KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
@@ -53,3 +58,12 @@ withNodeCapabilities	KEYWORD2
 withLoRaMeshProtocol	KEYWORD2
 withPingPongProtocol	KEYWORD2
 Build	KEYWORD2
+SendReliable	KEYWORD2
+SendGroup	KEYWORD2
+JoinGroup	KEYWORD2
+LeaveGroup	KEYWORD2
+IsMemberOfGroup	KEYWORD2
+GetGroups	KEYWORD2
+SetDeliveryCallback	KEYWORD2
+SetDataCallbackEx	KEYWORD2
+GetSuperframeDuration	KEYWORD2
