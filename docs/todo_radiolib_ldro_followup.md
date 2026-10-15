@@ -41,8 +41,9 @@ value, so nodes drift out of sync and drop messages. Present in RadioLib
    `radiolib_ldro_upstream_fix.md` (add `this->ldroEnabled = …` inside the
    `ldroAuto` block of `SX1278::setSpreadingFactor()` / `SX1276` / `SX1272`).
 2. **Bump the pin.** When a RadioLib release contains the fix, update
-   `platformio.ini` (`jgromes/RadioLib#7.6.0`) and `library.json` to that
-   version.
+   all package manifests (`platformio.ini`, `library.json`,
+   `library.properties`, `idf_component.yml`, `CMakeLists.txt`; currently
+   7.7.1) to that version.
 3. **Remove the wrapper workaround.** Delete the `setBandwidth()` re-apply block
    that follows `ModemBegin(config)` in `RadioLibModuleBase::Begin()`
    (`radiolib_modules/radiolib_module_base.hpp`). Confirm

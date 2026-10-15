@@ -39,6 +39,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - Network stress test suite (`test_network_stress`).
 
 ### Changed
+- Requires RadioLib 7.7.1 or newer; all package manifests (`library.json`,
+  `library.properties`, `idf_component.yml`, `CMakeLists.txt`,
+  `platformio.ini`) pin the same version.
 - Wire format: new message types `DATA_RELIABLE`, `DATA_GROUP` and `ACK`
   (with a 6-byte ACK payload: acknowledged sequence, flags, echoed
   timestamp); see `PROTOCOL_SPEC.md` §3.2.6 and §7.2.

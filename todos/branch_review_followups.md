@@ -102,8 +102,4 @@ priority within each section.
 
 ## Packaging
 
-- `library.properties` declares `includes=LoRaMesher.h`, which does not exist
-  (the header is `loramesher.hpp`); the Arduino IDE support work should fix it.
-- `library.json` requires RadioLib `^7.1.2` while `platformio.ini` pins 7.6.0,
-  and the LDRO workaround is written against 7.6.0+.
 - High-SF payload and contention redesign: see `sf12-high-sf-followup.md`.
