@@ -6,10 +6,10 @@ jobs:
   esp32-build:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.x'
 
@@ -32,10 +32,10 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.x'
 
@@ -242,7 +242,7 @@ jobs:
         github.ref == 'refs/heads/main' &&
         steps.badge_secrets.outputs.available == 'true' &&
         env.COVERAGE != ''
-      uses: schneegans/dynamic-badges-action@v1.8.0
+      uses: schneegans/dynamic-badges-action@v1.9.0
       with:
         auth: ${{ secrets.GIST_TOKEN }}
         gistID: ${{ secrets.GIST_ID }}
