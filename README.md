@@ -20,6 +20,8 @@
 
 A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-vector routing protocol. Uses [RadioLib](https://github.com/jgromes/RadioLib) for radio communication and FreeRTOS for task scheduling.
 
+You can join LoRaMesher's and LoRaChat's developers and users on **[Discord](https://discord.gg/KCY78MbpUa)**.
+
 > **Coming from 0.0.x?** The 1.0.0 release is a full rewrite — see [MIGRATION.md](MIGRATION.md) for the porting guide. Per-version changes live in [CHANGELOG.md](CHANGELOG.md); the wire protocol is documented in [PROTOCOL_SPEC.md](PROTOCOL_SPEC.md).
 
 ---
