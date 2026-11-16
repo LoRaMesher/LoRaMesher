@@ -61,13 +61,28 @@ if current_env == "test_native_profile":
 
 global_env = DefaultEnvironment()
 
+def flatten_flags(flags):
+    """
+    @brief Flatten a possibly nested collection of compiler flags into strings
+    @param flags Iterable whose items are flags or nested lists/tuples of flags
+    @return List of flag strings in their original order
+    """
+    result = []
+    for flag in flags:
+        if isinstance(flag, (list, tuple)):
+            result.extend(flatten_flags(flag))
+        else:
+            result.append(str(flag))
+    return result
+
 def set_platform_cpp_standard(environment, platform):
     """
     @brief Apply platform-specific C++ standard flags
     @param environment The environment to modify (can be library or global)
     @param platform The target platform string
     """
-    environment.Replace(CXXFLAGS=[f for f in environment.get("CXXFLAGS", []) if not f.startswith("-std=")])
+    flags = flatten_flags(environment.get("CXXFLAGS", []))
+    environment.Replace(CXXFLAGS=[f for f in flags if not f.startswith("-std=")])
 
     if platform in ["native", "test_native"]:
         environment.Append(CXXFLAGS=["-std=gnu++20"])
