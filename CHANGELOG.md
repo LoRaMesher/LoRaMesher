@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `scripts/extra_script.py` no longer fails with `AttributeError: 'list' object has no
+  attribute 'startswith'` when the framework appends nested flag lists to `CXXFLAGS`
+  (espressif32 8.x / Arduino core 3.x).
+- CI builds the ESP32 example against the checked-out library only, instead of also
+  installing the remote `new_loramesher` branch.
+
 ## [1.0.0] - 2026-05-15
 
 Complete rewrite of LoRaMesher. The public API, configuration model, and wire

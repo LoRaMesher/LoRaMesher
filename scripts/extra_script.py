@@ -1,113 +1,130 @@
 """
 @file extra_script.py
-@brief Script to automatically set platform-specific build flags when library is included.
-@details This script is executed by PlatformIO before the build process and sets
-         appropriate C++ standard flags based on the target platform.
+@brief PlatformIO extra script that applies the build settings LoRaMesher requires.
+@details PlatformIO runs this script before building any project that depends on the
+         library. It enforces the required C++ standard on every build environment
+         (library, project, global and dependency environments), selects clang for
+         native builds and configures the instrumentation used by the native test
+         variants.
 """
 
-Import("env")
 import os
 import subprocess
-from os.path import join, realpath
+
+Import("env", "projenv")
+
+## C++ standard flag required by the library for each supported platform.
+CPP_STANDARD_FLAGS = {
+    "native": "-std=gnu++20",
+    "espressif32": "-std=gnu++2a",
+}
+
+## Native test environment that collects LLVM source-based coverage.
+PROFILE_ENV = "test_native_profile"
+
+## Native test environment that collects LLVM XRay traces.
+XRAY_ENV = "test_native_xray"
 
 current_platform = env.get("PIOPLATFORM", "")
 current_env = env.get("PIOENV", "")
+global_env = DefaultEnvironment()
+project_dir = env.subst("$PROJECT_DIR")
 
-if current_platform in ["native", "test_native"]:
-    env.Replace(CC="clang", CXX="clang++", LINK="clang++")
 
-if current_platform == "native" and current_env not in ("test_native_profile", "test_native_xray"):
-    project_dir = env.subst("$PROJECT_DIR")
-    lsan_supp = os.path.join(project_dir, "lsan.supp")
-    env.Append(ENV={
-        "LSAN_OPTIONS": f"suppressions={lsan_supp}",
-        "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=0:exitcode=1",
-    })
+def set_cpp_standard(environment, std_flag):
+    """
+    @brief Replace every C++ standard flag in CXXFLAGS with the given one
+    @details Frameworks may append their flags as nested lists, so CXXFLAGS is
+             flattened before filtering. Non-string entries are preserved.
+    @param environment SCons environment to modify
+    @param std_flag Standard flag to apply, e.g. "-std=gnu++20"
+    """
+    flags = environment.Flatten(environment.get("CXXFLAGS", []))
+    flags = [f for f in flags if not (isinstance(f, str) and f.startswith("-std="))]
+    environment.Replace(CXXFLAGS=flags + [std_flag])
 
-# For the profile env: create the coverage output directory, wire LLVM_PROFILE_FILE
-# into all available env layers (build-script env changes do not reach the test binary
-# subprocess — set LLVM_PROFILE_FILE in the shell before pio test to control the path),
-# add -fprofile-instr-generate to LINKFLAGS (build_flags only reaches CCFLAGS, not
-# LINKFLAGS), and explicitly link libclang_rt.profile-x86_64.a (clang++ only auto-links
-# it when the flag is present on the link step).
-_profile_rt_lib = None
-if current_env == "test_native_profile":
-    project_dir = env.subst("$PROJECT_DIR")
+
+def use_clang(environment):
+    """
+    @brief Select clang as the C, C++ and link driver of an environment
+    @param environment SCons environment to modify
+    """
+    environment.Replace(CC="clang", CXX="clang++", LINK="clang++")
+
+
+def find_profile_runtime():
+    """
+    @brief Locate the LLVM profiling runtime archive used by clang
+    @details clang++ only links the runtime automatically when the instrumentation
+             flag is present on the link step, so it is linked explicitly.
+    @return Absolute path of the runtime archive, or None when it is unavailable
+    """
+    try:
+        path = subprocess.check_output(
+            ["clang++", "--print-file-name=libclang_rt.profile-x86_64.a"], text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        print(f"LoRaMesher: Warning: could not locate LLVM profiling runtime: {error}")
+        return None
+    if not os.path.exists(path):
+        print("LoRaMesher: Warning: LLVM profiling runtime not found; .profraw will not be written")
+        return None
+    print(f"LoRaMesher: Linking LLVM profiling runtime: {path}")
+    return path
+
+
+def configure_profiling(environments):
+    """
+    @brief Enable LLVM source-based coverage collection on the given environments
+    @details build_flags only reach the compile step, so the instrumentation flag and
+             the profiling runtime are added to LINKFLAGS explicitly. LLVM_PROFILE_FILE
+             is also exported to the process environment because build-script
+             environment changes do not reach the test binary; set it in the shell
+             before running pio test to control the output path.
+    @param environments SCons environments to modify
+    """
     coverage_dir = os.path.join(project_dir, ".pio", "coverage")
     os.makedirs(coverage_dir, exist_ok=True)
     profile_file = os.path.join(coverage_dir, "%e-%p.profraw")
-    env.Append(ENV={"LLVM_PROFILE_FILE": profile_file})
     os.environ["LLVM_PROFILE_FILE"] = profile_file
-    DefaultEnvironment().Replace(ENV={
-        **DefaultEnvironment().get("ENV", {}),
-        "LLVM_PROFILE_FILE": profile_file,
-    })
 
-    env.Append(LINKFLAGS=["-fprofile-instr-generate"])
+    link_flags = ["-fprofile-instr-generate"]
+    runtime = find_profile_runtime()
+    if runtime:
+        link_flags.append(runtime)
 
-    try:
-        rt = subprocess.check_output(
-            ["clang++", "--print-file-name=libclang_rt.profile-x86_64.a"],
-            text=True
-        ).strip()
-        if os.path.exists(rt):
-            _profile_rt_lib = rt
-            env.Append(LINKFLAGS=[rt])
-            print(f"LoRaMesher: Linking LLVM profiling runtime: {rt}")
-        else:
-            print("LoRaMesher: Warning: LLVM profiling runtime not found; .profraw will not be written")
-    except Exception as e:
-        print(f"LoRaMesher: Warning: could not locate LLVM profiling runtime: {e}")
+    for environment in environments:
+        environment.Append(LINKFLAGS=list(link_flags), ENV={"LLVM_PROFILE_FILE": profile_file})
 
-global_env = DefaultEnvironment()
 
-def set_platform_cpp_standard(environment, platform):
+def configure_leak_sanitizer(environment):
     """
-    @brief Apply platform-specific C++ standard flags
-    @param environment The environment to modify (can be library or global)
-    @param platform The target platform string
+    @brief Point the sanitizer runtime at the project leak suppression file
+    @param environment SCons environment to modify
     """
-    environment.Replace(CXXFLAGS=[f for f in environment.get("CXXFLAGS", []) if not f.startswith("-std=")])
+    environment.Append(
+        ENV={
+            "LSAN_OPTIONS": f"suppressions={os.path.join(project_dir, 'lsan.supp')}",
+            "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=0:exitcode=1",
+        }
+    )
 
-    if platform in ["native", "test_native"]:
-        environment.Append(CXXFLAGS=["-std=gnu++20"])
-    elif platform == "espressif32":
-        environment.Append(CXXFLAGS=["-std=gnu++2a"])
 
-set_platform_cpp_standard(env, current_platform)
-set_platform_cpp_standard(global_env, current_platform)
+build_envs = [env, global_env, projenv] + [lb.env for lb in env.GetLibBuilders()]
 
-for lb in env.GetLibBuilders():
-    set_platform_cpp_standard(lb.env, current_platform)
-    if current_platform in ["native", "test_native"]:
-        lb.env.Replace(CC="clang", CXX="clang++", LINK="clang++")
+std_flag = CPP_STANDARD_FLAGS.get(current_platform)
+if std_flag:
+    for environment in build_envs:
+        set_cpp_standard(environment, std_flag)
 
-    # If newer versions of googletest are used, the following lines can be uncommented to include specific paths
-    # # Include specific paths for GoogleTest library
-    # if lb.name in ["googletest", "GoogleTest"]:
-    #     print(f"LoRaMesher: Configuring GoogleTest library")
-    #     lb.env.Append(CPPPATH=[
-    #         join(realpath(lb.path), "googletest", "include"),
-    #         join(realpath(lb.path), "googlemock", "include"),
-    #         join(realpath(lb.path), "googletest", "src"),
-    #         join(realpath(lb.path), "googlemock", "src"),
-    #     ])
-    #     # Exclude google test files from the build process
-    #     lb.env.Replace(SRC_FILTER=["-<googletest/test/*>",])
+if current_platform == "native":
+    for environment in build_envs:
+        use_clang(environment)
 
-Import("projenv")
-set_platform_cpp_standard(projenv, current_platform)
-if current_platform in ["native", "test_native"]:
-    for e in [projenv, global_env]:
-        e.Replace(CC="clang", CXX="clang++", LINK="clang++")
-
-if current_env == "test_native_profile":
-    for e in [projenv, global_env]:
-        e.Append(LINKFLAGS=["-fprofile-instr-generate"])
-        if _profile_rt_lib:
-            e.Append(LINKFLAGS=[_profile_rt_lib])
-        e.Append(ENV={"LLVM_PROFILE_FILE": profile_file})
-
-if current_env == "test_native_xray":
-    for e in [env, projenv, global_env]:
-        e.Append(LINKFLAGS=["-fxray-instrument"])
+    if current_env == PROFILE_ENV:
+        configure_profiling([env, projenv, global_env])
+    elif current_env == XRAY_ENV:
+        for environment in [env, projenv, global_env]:
+            environment.Append(LINKFLAGS=["-fxray-instrument"])
+    else:
+        configure_leak_sanitizer(env)
