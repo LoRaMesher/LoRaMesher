@@ -55,12 +55,25 @@ void Logger::Log(LogLevel level, const char* format, ...) {
 }
 
 void Logger::EnsureSemaphoreInitialized() {
+#ifdef _GLIBCXX_HAS_GTHREADS
     static std::once_flag flag;
     std::call_once(flag, [this] {
         if (!shutdown_requested_) {
             logger_semaphore_ = GetRTOS().CreateSystemSemaphore();
         }
     });
+#else
+    // Toolchains without gthreads (e.g. STM32) do not provide std::call_once.
+    // The logger is initialized during startup before tasks run, so a plain
+    // one-shot guard is sufficient here.
+    static bool initialized = false;
+    if (!initialized) {
+        initialized = true;
+        if (!shutdown_requested_) {
+            logger_semaphore_ = GetRTOS().CreateSystemSemaphore();
+        }
+    }
+#endif
 }
 
 void Logger::LogMessage(LogLevel level, const char* message) {

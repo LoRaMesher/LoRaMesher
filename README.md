@@ -83,6 +83,10 @@ You can join LoRaMesher's and LoRaChat's developers and users on **[Discord](htt
 | `examples/queued_receive_example` | RX should be handled in a separate FreeRTOS task instead of inside the callback |
 | `examples/battery_optimized_example` | Battery-powered nodes that sleep between TDMA slots |
 
+> **STM32:** the library also builds for STM32 boards (via the STM32duino core +
+> STM32FreeRTOS). Use the `stm32` PlatformIO environment (`pio run -e stm32`) —
+> see [docs/STM32.md](docs/STM32.md) for requirements and Arduino-IDE setup.
+
 ---
 
 ## API Usage

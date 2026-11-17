@@ -6,8 +6,8 @@
 #pragma once
 
 #include <array>
-#include <mutex>
 #include <vector>
+#include "os/mutex.hpp"
 
 #include "protocols/lora_mesh/interfaces/i_message_queue_service.hpp"
 #include "types/messages/base_message.hpp"
@@ -111,7 +111,7 @@ class MessageQueueService : public IMessageQueueService {
     std::array<std::vector<std::unique_ptr<BaseMessage>>, kNumSlotTypes>
         message_queues_;
     size_t max_queue_size_;
-    mutable std::mutex queue_mutex_;
+    mutable os::Mutex queue_mutex_;
 };
 
 }  // namespace lora_mesh

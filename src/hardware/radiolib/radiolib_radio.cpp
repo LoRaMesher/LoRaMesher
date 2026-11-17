@@ -48,7 +48,7 @@ RadioLibRadio::~RadioLibRadio() {
 
     // Delete queues (with mutex protection)
     {
-        std::lock_guard<std::mutex> lock(radio_mutex_);
+        os::LockGuard lock(radio_mutex_);
 
         if (receive_queue_ != nullptr) {
             GetRTOS().DeleteQueue(receive_queue_);
@@ -60,7 +60,7 @@ RadioLibRadio::~RadioLibRadio() {
 }
 
 Result RadioLibRadio::Configure(const RadioConfig& config) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
 
     // Create event queue with size based on analysis
     receive_queue_ = GetRTOS().CreateQueue(kMaxQueueSize, sizeof(uint8_t));
@@ -105,7 +105,7 @@ Result RadioLibRadio::Configure(const RadioConfig& config) {
 }
 
 Result RadioLibRadio::Begin(const RadioConfig& config) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     if (!current_module_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
@@ -132,7 +132,7 @@ Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
     Result status = Result::Success();
 
     {
-        std::lock_guard<std::mutex> lock(radio_mutex_);
+        os::LockGuard lock(radio_mutex_);
 
         if (!current_module_) {
             return Result::Error(LoraMesherErrorCode::kNotInitialized);
@@ -165,7 +165,7 @@ Result RadioLibRadio::Send(const uint8_t* data, size_t len) {
 }
 
 Result RadioLibRadio::StartReceive() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     if (!current_module_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
@@ -222,7 +222,7 @@ Result RadioLibRadio::StartReceive() {
 }
 
 Result RadioLibRadio::Sleep() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     if (!current_module_) {
         return Result::Error(LoraMesherErrorCode::kNotInitialized);
     }
@@ -253,12 +253,12 @@ Result RadioLibRadio::Sleep() {
 }
 
 RadioState RadioLibRadio::getState() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_state_;
 }
 
 float RadioLibRadio::getRSSI() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     if (!current_module_) {
         return -255.0f;
     }
@@ -266,7 +266,7 @@ float RadioLibRadio::getRSSI() {
 }
 
 float RadioLibRadio::getSNR() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     if (!current_module_) {
         return -128.0f;
     }
@@ -274,42 +274,42 @@ float RadioLibRadio::getSNR() {
 }
 
 float RadioLibRadio::getLastPacketRSSI() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return last_packet_rssi_;
 }
 
 float RadioLibRadio::getLastPacketSNR() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return last_packet_snr_;
 }
 
 bool RadioLibRadio::IsTransmitting() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_state_ == RadioState::kTransmit;
 }
 
 float RadioLibRadio::getFrequency() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_config_.getFrequency();
 }
 
 uint8_t RadioLibRadio::getSpreadingFactor() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_config_.getSpreadingFactor();
 }
 
 float RadioLibRadio::getBandwidth() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_config_.getBandwidth();
 }
 
 uint8_t RadioLibRadio::getCodingRate() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_config_.getCodingRate();
 }
 
 uint8_t RadioLibRadio::getPower() {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     return current_config_.getPower();
 }
 
@@ -320,13 +320,13 @@ uint32_t RadioLibRadio::getTimeOnAir(uint8_t length) {
 }
 
 Result RadioLibRadio::setFrequency(float frequency) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     current_config_.setFrequency(frequency);
     return current_module_->setFrequency(frequency);
 }
 
 Result RadioLibRadio::setSpreadingFactor(uint8_t sf) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     current_config_.setSpreadingFactor(sf);
     Result result = current_module_->setSpreadingFactor(sf);
     if (result) {
@@ -336,7 +336,7 @@ Result RadioLibRadio::setSpreadingFactor(uint8_t sf) {
 }
 
 Result RadioLibRadio::setBandwidth(float bandwidth) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     current_config_.setBandwidth(bandwidth);
     Result result = current_module_->setBandwidth(bandwidth);
     if (result) {
@@ -346,7 +346,7 @@ Result RadioLibRadio::setBandwidth(float bandwidth) {
 }
 
 Result RadioLibRadio::setCodingRate(uint8_t coding_rate) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     current_config_.setCodingRate(coding_rate);
     Result result = current_module_->setCodingRate(coding_rate);
     if (result) {
@@ -356,13 +356,13 @@ Result RadioLibRadio::setCodingRate(uint8_t coding_rate) {
 }
 
 Result RadioLibRadio::setPower(int8_t power) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     current_config_.setPower(power);
     return current_module_->setPower(power);
 }
 
 Result RadioLibRadio::setSyncWord(uint8_t sync_word) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     Result result = current_config_.setSyncWord(sync_word);
     if (!result) {
         return result;
@@ -371,7 +371,7 @@ Result RadioLibRadio::setSyncWord(uint8_t sync_word) {
 }
 
 Result RadioLibRadio::setCRC(bool enable) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     Result result = current_config_.setCRC(enable);
     if (!result) {
         return result;
@@ -384,7 +384,7 @@ Result RadioLibRadio::setCRC(bool enable) {
 }
 
 Result RadioLibRadio::setPreambleLength(uint16_t length) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     Result result = current_config_.setPreambleLength(length);
     if (!result) {
         return result;
@@ -397,14 +397,14 @@ Result RadioLibRadio::setPreambleLength(uint16_t length) {
 }
 
 Result RadioLibRadio::setCurrentLimit(float current_limit_ma) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     current_config_.setCurrentLimit(current_limit_ma);
     return current_module_->setCurrentLimit(current_limit_ma);
 }
 
 Result RadioLibRadio::setActionReceive(
     std::function<void(std::unique_ptr<RadioEvent>)> callback) {
-    std::lock_guard<std::mutex> lock(radio_mutex_);
+    os::LockGuard lock(radio_mutex_);
     receive_callback_ = std::move(callback);
 
     return Result::Success();
@@ -464,7 +464,7 @@ ISR_ATTR RadioLibRadio::HandleInterruptStatic() {
 }
 
 void RadioLibRadio::HandleInterrupt() {
-    std::unique_lock<std::mutex> lock(radio_mutex_);
+    os::UniqueLock lock(radio_mutex_);
     if (!current_module_) {
         LOG_ERROR("No radio module initialized");
         lock.unlock();
