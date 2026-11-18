@@ -80,6 +80,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - Requires RadioLib 7.7.1 or newer; all package manifests (`library.json`,
   `library.properties`, `idf_component.yml`, `CMakeLists.txt`,
   `platformio.ini`) pin the same version.
+- The examples and the `esp32` environment pin `platform = espressif32@8.0.0`
+  (Arduino core 3.3.12). The README names the tested versions, and a monthly CI
+  job builds the examples against the latest platform and RadioLib releases.
 - Wire format: new message types `DATA_RELIABLE`, `DATA_GROUP` and `ACK`
   (with a 6-byte ACK payload: acknowledged sequence, flags, echoed
   timestamp); see `PROTOCOL_SPEC.md` §3.2.6 and §7.2.
@@ -128,6 +131,9 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- `scripts/extra_script.py` accepts nested flag lists in `CXXFLAGS`. Builds on
+  espressif32 8.x (Arduino core 3.x) no longer stop with `AttributeError: 'list'
+  object has no attribute 'startswith'`.
 - Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
   `wake_up_guard_ms` before the next active slot, instead of waking at every
   slot boundary and staying awake for the guard. `PrepareSleepCallback` runs

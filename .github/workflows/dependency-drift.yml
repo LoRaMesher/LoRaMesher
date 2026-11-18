@@ -1,0 +1,35 @@
+name: Dependency drift
+
+# Builds the ESP32 examples against the latest espressif32 platform and RadioLib
+# releases instead of the pinned ones, to show when the pins need to be raised.
+on:
+  schedule:
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+jobs:
+  esp32-latest:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.x'
+
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install platformio
+
+    - name: Build ESP32 Examples with the latest platform
+      run: |
+        for example in simple_example reliable_example group_example; do
+          (
+            cd "examples/$example"
+            sed -i 's|https://github.com/LoRaMesher/LoRaMesher[^[:space:]]*|symlink://../../|' platformio.ini
+            sed -i 's|^platform = espressif32@[^[:space:]]*|platform = espressif32|' platformio.ini
+            pio run -e ttgo-lora32-v1
+          )
+        done
