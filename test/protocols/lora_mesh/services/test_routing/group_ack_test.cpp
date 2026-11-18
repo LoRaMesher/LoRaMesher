@@ -301,6 +301,60 @@ TEST_F(GroupAckTests, ReliableGroupReportsEachResponder) {
     EXPECT_EQ(Net(*nodes[0])->GetReliablePendingCount(), 0u);
 }
 
+// A group send with no window given derives one from the network, long
+// enough to count a member two hops away.
+TEST_F(GroupAckTests, ReliableGroupDerivedWindowCountsMultiHopMember) {
+    constexpr AddressType kGroup = 0x8001;
+    // Line: N0 (NM) - N1 - N2.
+    auto nodes = GenerateLineTopology(3, 0x1000, "Node", 0);
+    for (auto* node : nodes) {
+        ASSERT_TRUE(StartNode(*node)) << "Failed to start " << node->name;
+    }
+    ASSERT_TRUE(WaitForNetworkFormation(nodes, 2))
+        << "Network formation failed";
+    ASSERT_TRUE(WaitForRoutingStabilization(nodes)) << "Routing unstable";
+
+    ASSERT_TRUE(Net(*nodes[1])->JoinGroup(kGroup));
+    ASSERT_TRUE(Net(*nodes[2])->JoinGroup(kGroup));
+
+    ClearAllReceivedMessages();
+    nodes[0]->delivery_outcomes.clear();
+
+    auto superframe = GetSuperframeDuration(*nodes.front());
+    std::vector<uint8_t> payload = {0x77};
+    auto id = Net(*nodes[0])->SendGroupReliable(
+        kGroup, std::span<const uint8_t>(payload.data(), payload.size()),
+        /*max_retries=*/0, /*window_ms=*/0);
+    ASSERT_EQ(id.source, nodes[0]->address);
+
+    auto window_closed = [&]() {
+        return CountOutcomes(*nodes[0], Outcome::GroupWindowClosed) > 0;
+    };
+
+    // The window stays open across superframes.
+    EXPECT_FALSE(
+        AdvanceTime(superframe * 2, superframe * 2, 50u, 0, window_closed))
+        << "Derived window closed within two superframes";
+
+    ASSERT_TRUE(
+        AdvanceTime(superframe * 8, superframe * 8, 50u, 0, window_closed))
+        << "Group acknowledgement window did not close";
+
+    std::set<AddressType> responders;
+    uint8_t closed_count = 0;
+    for (const auto& r : nodes[0]->delivery_outcomes) {
+        if (r.outcome == Outcome::Delivered) {
+            responders.insert(r.by);
+        } else if (r.outcome == Outcome::GroupWindowClosed) {
+            closed_count = r.ack_count;
+        }
+    }
+    EXPECT_TRUE(responders.count(nodes[1]->address));
+    EXPECT_TRUE(responders.count(nodes[2]->address));
+    EXPECT_EQ(closed_count, 2u);
+    EXPECT_EQ(Net(*nodes[0])->GetReliablePendingCount(), 0u);
+}
+
 // A member that missed the first flood receives a retransmission; every
 // member delivers the message once and is counted once.
 TEST_F(GroupAckTests, ReliableGroupRetransmitsToMemberThatMissedFirstFlood) {
