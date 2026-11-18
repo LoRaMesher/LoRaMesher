@@ -134,6 +134,42 @@ INSTANTIATE_TEST_SUITE_P(
         return std::string(info.param.label);
     });
 
+/// Members whose light sleeps another wake-up source ends before the timer
+class LightSleepEarlyWakeTest : public NodeRebootFixture {};
+
+TEST_F(LightSleepEarlyWakeTest, MembersWokenEarlyCalibrateOnTheTimeSlept) {
+    constexpr int32_t kClockPpm = 20000;
+    NetworkSpec spec;
+    spec.topology = Topology::kStar;
+    spec.node_count = 3;
+    spec.member_role = NodeRole::NODE_ONLY;
+    spec.member_light_sleep = true;
+    spec.member_light_sleep_clock_ppm = kClockPpm;
+    auto nodes = BuildNetwork(spec);
+    StartAndFormNetwork(nodes);
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+
+    // Each member sleeps a quarter of the superframe at most, then stays awake
+    // until its next active slot
+    for (size_t i = 1; i < nodes.size(); ++i) {
+        SetLightSleepWakeAfter(*nodes[i], superframe_ms_ / 4);
+    }
+
+    EXPECT_TRUE(StaysHealthy(nodes, manager.address, superframe_ms_ * 16,
+                             formed_network_id_))
+        << DescribeNetwork(nodes);
+    for (size_t i = 1; i < nodes.size(); ++i) {
+        const auto calibration =
+            nodes[i]
+                ->protocol->GetNetworkServiceForTest()
+                ->GetSleepClockCalibration(power::SleepKind::LIGHT);
+        EXPECT_TRUE(calibration.IsCalibrated()) << nodes[i]->name;
+        EXPECT_NEAR(calibration.GetPpm(), kClockPpm, 2500) << nodes[i]->name;
+    }
+    EXPECT_TRUE(unexpected_managers_.empty());
+}
+
 }  // namespace
 }  // namespace test
 }  // namespace loramesher

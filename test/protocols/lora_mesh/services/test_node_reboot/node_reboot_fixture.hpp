@@ -109,6 +109,14 @@ class NodeRebootFixture : public RoutingTestFixture {
             ->SetSleepClockError(addr_str, ppm);
     }
 
+    /// End every light sleep of @p node after at most @p real_ms
+    static void SetLightSleepWakeAfter(const TestNode& node, uint32_t real_ms) {
+        char addr_str[8];
+        snprintf(addr_str, sizeof(addr_str), "0x%04X", node.address);
+        static_cast<os::RTOSMock*>(&GetRTOS())
+            ->SetLightSleepWakeAfter(addr_str, real_ms);
+    }
+
     /**
      * @brief Start every node and wait until the network is healthy
      *
