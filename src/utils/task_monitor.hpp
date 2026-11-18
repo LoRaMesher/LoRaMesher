@@ -141,8 +141,9 @@ class TaskMonitor {
         for (const auto& stat : stats) {
             LOG_DEBUG("Task: %s", stat.name.c_str());
             LOG_DEBUG("  State: %s", os::RTOS::getTaskStateString(stat.state));
-            LOG_DEBUG("  Stack Watermark: %u bytes", stat.stackWatermark);
-            LOG_DEBUG("  Runtime: %u", stat.runtime);
+            LOG_DEBUG("  Stack Watermark: %u bytes",
+                      static_cast<unsigned>(stat.stackWatermark));
+            LOG_DEBUG("  Runtime: %u", static_cast<unsigned>(stat.runtime));
         }
 #endif
     }
@@ -152,7 +153,7 @@ class TaskMonitor {
     static void log_stack_warning(const char* task_name, uint32_t watermark) {
         static char buffer[50];  // Static buffer to avoid stack allocation
         snprintf(buffer, sizeof(buffer), "Stack warning %s: %u\n", task_name,
-                 watermark);
+                 static_cast<unsigned>(watermark));
 
         LOG_WARNING(buffer);
     }

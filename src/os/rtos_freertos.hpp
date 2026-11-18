@@ -16,7 +16,9 @@
 #include <driver/uart.h>
 #include <esp_sleep.h>
 #include <esp_timer.h>
-#if defined(CONFIG_IDF_TARGET_ESP32)
+#if __has_include(<esp_rtc_time.h>)
+#include <esp_rtc_time.h>
+#elif defined(CONFIG_IDF_TARGET_ESP32)
 #include "esp32/rtc.h"
 #elif defined(CONFIG_IDF_TARGET_ESP32S2)
 #include "esp32s2/rtc.h"
