@@ -128,6 +128,11 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- `GetTimeUntilNextDataSlot()` returns the time until the TX data slot comes
+  round again when that slot has already passed in the current superframe.
+  It returned one full superframe from the moment of the call, so a send loop
+  that ran after its TX slots called `Send()` just after them every time and
+  each message waited a whole superframe in the queue.
 - Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
   `wake_up_guard_ms` before the next active slot, instead of waking at every
   slot boundary and staying awake for the guard. `PrepareSleepCallback` runs

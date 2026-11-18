@@ -462,6 +462,25 @@ class LoRaMeshProtocol : public Protocol {
         uint32_t guard_time_ms = kDefaultDataSlotGuardTimeMs) const;
 
     /**
+     * @brief Compute how long to wait before calling Send() for one slot
+     *
+     * Slots repeat every superframe, so a slot whose start in the current
+     * superframe has passed is targeted at its next occurrence. A slot that
+     * starts within guard_time_ms is skipped in favour of the following
+     * occurrence.
+     *
+     * @param slot_start_ms Start of the slot in the current superframe (tick ms)
+     * @param now_ms Current tick time in milliseconds
+     * @param superframe_duration_ms Superframe duration in milliseconds (non-zero)
+     * @param guard_time_ms Milliseconds subtracted from the slot start
+     * @return uint32_t Milliseconds until guard_time_ms before the slot starts
+     */
+    static uint32_t ComputeWaitUntilSlot(uint32_t slot_start_ms,
+                                         uint32_t now_ms,
+                                         uint32_t superframe_duration_ms,
+                                         uint32_t guard_time_ms);
+
+    /**
      * @brief Get number of TX data slots allocated to this node per superframe
      *
      * @return uint8_t Number of TX slots, or 0 if not in NORMAL_OPERATION
