@@ -378,6 +378,10 @@ class VirtualNetwork {
                 continue;
             }
 
+            if (drop_filter_ && drop_filter_(source, dest_address, data)) {
+                continue;
+            }
+
             PendingMessage msg;
             msg.source = source;
             msg.destination = dest_address;
@@ -593,6 +597,22 @@ class VirtualNetwork {
     void SetLinkLoss(uint32_t node1, uint32_t node2, float rate) {
         SetDirectionalLinkLoss(node1, node2, rate);
         SetDirectionalLinkLoss(node2, node1, rate);
+    }
+
+    /// Decides for one copy of a transmission (source, receiver, frame)
+    /// whether it is lost
+    using DropFilter = std::function<bool(uint32_t from, uint32_t to,
+                                          const std::vector<uint8_t>& data)>;
+
+    /**
+     * @brief Lose the packets @p filter selects (empty: none)
+     *
+     * The filter runs on the transmitting thread with the network locked, so
+     * it must not call the network.
+     */
+    void SetDropFilter(DropFilter filter) {
+        std::lock_guard<std::mutex> lock(nodes_mutex_);
+        drop_filter_ = std::move(filter);
     }
 
     /**
@@ -851,6 +871,7 @@ class VirtualNetwork {
     std::atomic<uint32_t> current_time_;
     std::function<uint32_t()> time_source_;
     float packet_loss_rate_;
+    DropFilter drop_filter_;
     uint32_t seed_ = kDefaultSeed;
     std::atomic<uint32_t> dropped_message_count_{0};
     std::map<uint32_t, uint32_t>

@@ -578,7 +578,7 @@ class LoRaMeshProtocol : public Protocol {
     /**
      * @brief Deep-sleep through the rest of the SLEEP run if the policy allows
      *
-     * A member with nothing in flight saves its resume snapshot and
+     * A member with nothing queued saves its resume snapshot and
      * deep-sleeps until shortly before the next active slot; on hardware the
      * call does not return.
      *

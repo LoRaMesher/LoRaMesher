@@ -13,6 +13,7 @@
 #include "types/messages/loramesher/data_header.hpp"
 #include "types/messages/loramesher/group_message.hpp"
 #include "types/messages/message_type.hpp"
+#include "types/storage/resume_snapshot_codec.hpp"
 #include "utils/byte_operations.h"
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
@@ -23,6 +24,14 @@ namespace lora_mesh {
 
 namespace {
 using SlotType = types::protocols::lora_mesh::SlotAllocation::SlotType;
+
+// A resume snapshot holds every message the state machine can track
+static_assert(storage::ResumeSnapshotCodec::kMaxPendingReliable ==
+              reliability::ReliableDelivery::kMaxPending);
+static_assert(storage::ResumeSnapshotCodec::kMaxPendingPayload ==
+              reliability::ReliableDelivery::kMaxReliablePayload);
+static_assert(storage::ResumeSnapshotCodec::kMaxResponders ==
+              reliability::ReliableDelivery::kMaxGroupResponders);
 }  // namespace
 
 ReliableMessaging::ReliableMessaging(MessageCache& message_cache, Host host)
@@ -726,21 +735,17 @@ void ReliableMessaging::OnReliableOutcome(
             window->valid = false;
         }
     }
+    QueueOutcome(result);
+}
+
+void ReliableMessaging::QueueOutcome(
+    const reliability::DeliveryResult& result) {
     if (outcome_batch_ == nullptr ||
         outcome_batch_->count >= outcome_batch_->results.size()) {
         LOG_ERROR("Reliable outcome for seq=%u dropped", result.id.seq);
         return;
     }
     outcome_batch_->results[outcome_batch_->count++] = result;
-}
-
-bool ReliableMessaging::IsIdle() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (reliable_.PendingCount() != 0) {
-        return false;
-    }
-    return std::none_of(group_windows_.begin(), group_windows_.end(),
-                        [](const GroupWindow& window) { return window.valid; });
 }
 
 void ReliableMessaging::CaptureResumeState(
@@ -757,6 +762,18 @@ void ReliableMessaging::CaptureResumeState(
         snapshot.group_next_sequence = group_next_seq_;
     }
     snapshot.delivery_streams = delivery_windows_.GetStreams();
+    snapshot.pending_reliable = reliable_.GetPending();
+    for (auto& pending : snapshot.pending_reliable) {
+        if (!IsGroupAddress(pending.destination)) {
+            continue;
+        }
+        for (const auto& window : group_windows_) {
+            if (window.valid && window.seq == pending.sequence &&
+                window.group == pending.destination) {
+                pending.window_deadline_ms = window.deadline_ms;
+            }
+        }
+    }
 }
 
 Result ReliableMessaging::ApplyResumeState(
@@ -794,6 +811,52 @@ Result ReliableMessaging::ApplyResumeState(
     group_next_seq_ = snapshot.group_next_sequence.value_or(0);
     delivery_windows_ = windows;
     return Result::Success();
+}
+
+void ReliableMessaging::ResumeOpenMessages(
+    const storage::ResumeSnapshot& snapshot) {
+    RunLocked([&]() {
+        for (const auto& pending : snapshot.pending_reliable) {
+            const bool group = IsGroupAddress(pending.destination);
+            GroupWindow* window = nullptr;
+            if (group && FindGroupWindow(pending.sequence) == nullptr) {
+                for (auto& candidate : group_windows_) {
+                    if (!candidate.valid) {
+                        window = &candidate;
+                        break;
+                    }
+                }
+            }
+            if ((group && window == nullptr) ||
+                !reliable_.Restore(host_.node_address, pending)) {
+                ReportEnded(pending);
+                continue;
+            }
+            if (window != nullptr) {
+                *window = {true, pending.sequence, pending.destination,
+                           pending.window_deadline_ms};
+            }
+        }
+    });
+}
+
+void ReliableMessaging::AbandonOpenMessages(
+    const storage::ResumeSnapshot& snapshot) {
+    RunLocked([&]() {
+        for (const auto& pending : snapshot.pending_reliable) {
+            ReportEnded(pending);
+        }
+    });
+}
+
+void ReliableMessaging::ReportEnded(const storage::PendingReliable& pending) {
+    const bool group = IsGroupAddress(pending.destination);
+    QueueOutcome({{host_.node_address, pending.sequence, pending.destination},
+                  group ? reliability::Outcome::GroupWindowClosed
+                        : reliability::Outcome::Failed,
+                  0,
+                  0,
+                  static_cast<uint8_t>(pending.responders.size())});
 }
 
 void ReliableMessaging::Reset() {

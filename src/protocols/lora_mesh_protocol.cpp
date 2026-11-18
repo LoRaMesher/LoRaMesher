@@ -842,8 +842,11 @@ LoRaMeshProtocol::StartMode LoRaMeshProtocol::RestoreState() {
             return StartMode::kCold;
         }
         if (ResumeAfterDeepSleep(*resume)) {
+            network_service_->ResumeOpenReliableMessages(*resume);
             return StartMode::kResumed;
         }
+        // The reliable messages the node slept with end here
+        network_service_->AbandonOpenReliableMessages(*resume);
         return ApplyWarmRestart(resume->network);
     }
 

@@ -917,10 +917,17 @@ const char* NetworkService::GetDeepSleepBlocker() const {
     if (!HeardSyncBeaconThisSuperframe()) {
         return "no sync beacon in this superframe";
     }
-    if (!reliable_messaging_->IsIdle()) {
-        return "reliable messages in flight";
-    }
     return nullptr;
+}
+
+void NetworkService::ResumeOpenReliableMessages(
+    const storage::ResumeSnapshot& snapshot) {
+    reliable_messaging_->ResumeOpenMessages(snapshot);
+}
+
+void NetworkService::AbandonOpenReliableMessages(
+    const storage::ResumeSnapshot& snapshot) {
+    reliable_messaging_->AbandonOpenMessages(snapshot);
 }
 
 void NetworkService::RecordSleepForCalibration(power::SleepKind kind,

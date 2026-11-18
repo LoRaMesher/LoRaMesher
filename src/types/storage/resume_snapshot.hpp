@@ -145,6 +145,51 @@ struct SeenMessage {
 };
 
 /**
+ * @brief Reliable message the node sent and has not finished
+ *
+ * A unicast message waits for its acknowledgement. A group message collects
+ * acknowledgements until its window closes. Deadlines are protocol clock
+ * values.
+ */
+struct PendingReliable {
+    AddressType destination = 0;           ///< Unicast destination or group
+    uint8_t sequence = 0;                  ///< Message sequence in its stream
+    std::vector<uint8_t> payload;          ///< Application payload
+    uint8_t retries_left = 0;              ///< Retransmissions still allowed
+    uint8_t max_retries = 0;               ///< Retransmissions allowed in total
+    uint8_t consecutive_requeues = 0;      ///< Attempts not queued in a row
+    uint8_t max_consecutive_requeues = 0;  ///< Limit of such attempts
+    uint32_t timeout_ms = 0;               ///< Timeout of the first attempt
+    uint32_t current_timeout_ms = 0;       ///< Timeout of the latest attempt
+    uint32_t max_timeout_ms = 0;           ///< Bound of the timeout (0: none)
+    uint32_t requeue_delay_ms = 0;         ///< Wait after an attempt not queued
+    uint32_t next_deadline_ms = 0;         ///< Next attempt or failure (tick)
+    bool exponential_backoff = false;      ///< The timeout doubles per retry
+    bool requeue = false;                 ///< The latest attempt was not queued
+    bool requeue_is_retry = false;        ///< That attempt was a retransmission
+    uint32_t window_deadline_ms = 0;      ///< Group: end of the window (tick)
+    std::vector<AddressType> responders;  ///< Group: nodes that acknowledged
+
+    bool operator==(const PendingReliable& other) const {
+        return destination == other.destination && sequence == other.sequence &&
+               payload == other.payload && retries_left == other.retries_left &&
+               max_retries == other.max_retries &&
+               consecutive_requeues == other.consecutive_requeues &&
+               max_consecutive_requeues == other.max_consecutive_requeues &&
+               timeout_ms == other.timeout_ms &&
+               current_timeout_ms == other.current_timeout_ms &&
+               max_timeout_ms == other.max_timeout_ms &&
+               requeue_delay_ms == other.requeue_delay_ms &&
+               next_deadline_ms == other.next_deadline_ms &&
+               exponential_backoff == other.exponential_backoff &&
+               requeue == other.requeue &&
+               requeue_is_retry == other.requeue_is_retry &&
+               window_deadline_ms == other.window_deadline_ms &&
+               responders == other.responders;
+    }
+};
+
+/**
  * @brief State a member saves before a deep sleep to resume without rejoining
  *
  * The embedded NetworkSnapshot lets the node fall back to a warm restart when
@@ -166,6 +211,8 @@ struct ResumeSnapshot {
     std::vector<DeliveryStream> delivery_streams;
     /// Recently received messages, oldest first
     std::vector<SeenMessage> seen_messages;
+    /// Reliable messages and group windows still open
+    std::vector<PendingReliable> pending_reliable;
 };
 
 }  // namespace storage

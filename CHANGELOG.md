@@ -57,6 +57,12 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   example has an `ENABLE_DEEP_SLEEP` option. A resumed member listens without
   transmitting until a beacon confirms its schedule, and `IsReadyToSend()`
   fails until then.
+- Deep sleep with reliable messages open: a reliable message that waits for
+  its acknowledgement and an open group acknowledgement window no longer keep
+  a member awake. They are saved in the resume snapshot (format v4, 29 bytes
+  plus the payload per message) and continue after the wake-up with their
+  retry budget, timeouts and responders. A node that cannot resume reports
+  them as failed or closed. Register the delivery callback before `Start()`.
 - Sleep-clock calibration: members learn the error of their RTC sleep clock
   from the beacons after light and deep sleeps, and correct both. Light sleep
   wakes early enough for the clock's worst-case error

@@ -242,6 +242,10 @@ class NodeRebootFixture : public RoutingTestFixture {
                      ->HeardSyncBeaconThisSuperframe()) {
                 ++sleeps_without_beacon_[node->address];
             }
+            if (node->protocol->GetNetworkServiceForTest()
+                    ->GetReliablePendingCount() != 0) {
+                ++sleeps_with_reliable_pending_[node->address];
+            }
             GetRTOS().SetCurrentTaskNodeAddress("0xFFFF");
 
             ShutdownNode(*node);
@@ -650,6 +654,8 @@ class NodeRebootFixture : public RoutingTestFixture {
     std::map<AddressType, size_t> deep_sleeps_;
     /// Deep sleeps entered without a beacon in the current superframe
     std::map<AddressType, size_t> sleeps_without_beacon_;
+    /// Deep sleeps entered with a reliable message or group window open
+    std::map<AddressType, size_t> sleeps_with_reliable_pending_;
     std::map<AddressType, size_t> resumed_boots_;
     std::map<AddressType, size_t> fallback_boots_;
 

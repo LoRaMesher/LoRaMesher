@@ -21,9 +21,13 @@ constexpr AddressType kManager = 0x1000;
 constexpr size_t kScheduleSlots = 3;
 constexpr size_t kRoutesOffset =
     4 + 1 + 1 + 21 + 30 + 31 + 2 + 2 + kScheduleSlots * 5 + 4 + 1;
-/// Size of everything but the route and stream records
+/// Size of everything but the route, stream and open message records
 constexpr size_t kFixedSize =
-    4 + 1 + 1 + 21 + 30 + 31 + 2 + 2 + 4 + 1 + 1 + 1 + 1 + 4;
+    4 + 1 + 1 + 21 + 30 + 31 + 2 + 2 + 4 + 1 + 1 + 1 + 1 + 1 + 4;
+constexpr AddressType kGroup = 0x8001;
+/// Open messages of MakeSnapshot(): a unicast with 3 bytes of payload and a
+/// group message with 2 bytes and two responders
+constexpr size_t kPendingSize = (29 + 3) + (29 + 2 + 5 + 2 * 2);
 
 NetworkNodeRoute MakeOwnEntry() {
     NetworkNodeRoute route(kNode, 1000, false, 0x03, 2, 0);
@@ -71,6 +75,43 @@ NetworkNodeRoute MakeMultiHopRoute() {
     return route;
 }
 
+PendingReliable MakePendingUnicast() {
+    PendingReliable pending;
+    pending.destination = kManager;
+    pending.sequence = 16;
+    pending.payload = {0xA1, 0xA2, 0xA3};
+    pending.retries_left = 2;
+    pending.max_retries = 3;
+    pending.consecutive_requeues = 1;
+    pending.max_consecutive_requeues = 8;
+    pending.timeout_ms = 60000;
+    pending.current_timeout_ms = 120000;
+    pending.max_timeout_ms = 400000;
+    pending.requeue_delay_ms = 20000;
+    pending.next_deadline_ms = 0x00000800u;
+    pending.exponential_backoff = true;
+    pending.requeue = true;
+    pending.requeue_is_retry = true;
+    return pending;
+}
+
+PendingReliable MakePendingGroup() {
+    PendingReliable pending;
+    pending.destination = kGroup;
+    pending.sequence = 199;
+    pending.payload = {0xB1, 0xB2};
+    pending.retries_left = 0;
+    pending.max_retries = 1;
+    pending.max_consecutive_requeues = 8;
+    pending.timeout_ms = 20000;
+    pending.current_timeout_ms = 20000;
+    pending.requeue_delay_ms = 20000;
+    pending.next_deadline_ms = 0xFFFFFE00u;
+    pending.window_deadline_ms = 0x00009000u;
+    pending.responders = {kManager, 0x3003};
+    return pending;
+}
+
 ResumeSnapshot MakeSnapshot() {
     ResumeSnapshot snapshot;
     snapshot.network.node_address = kNode;
@@ -116,6 +157,7 @@ ResumeSnapshot MakeSnapshot() {
                                  {kManager, true, 250, 0x3u, 7},
                                  {0x3003, false, 0, 0x1u, 0}};
     snapshot.seen_messages = {{0x3003, 5}, {kManager, 255}, {0x3003, 6}};
+    snapshot.pending_reliable = {MakePendingUnicast(), MakePendingGroup()};
     return snapshot;
 }
 
@@ -178,6 +220,7 @@ void ExpectSameSnapshot(const ResumeSnapshot& actual,
     EXPECT_EQ(actual.group_next_sequence, expected.group_next_sequence);
     EXPECT_EQ(actual.delivery_streams, expected.delivery_streams);
     EXPECT_EQ(actual.seen_messages, expected.seen_messages);
+    EXPECT_EQ(actual.pending_reliable, expected.pending_reliable);
     EXPECT_EQ(actual.schedule.slots, expected.schedule.slots);
     EXPECT_EQ(actual.schedule.control_slots, expected.schedule.control_slots);
     EXPECT_EQ(actual.schedule.discovery_slots,
@@ -216,7 +259,7 @@ TEST(ResumeSnapshotCodecTest, OnlyRoutesWithHistoryCarryStatistics) {
     // Own entry and multi-hop route: plain records; the neighbour carries its
     // link statistics and round-trip time
     const size_t expected = kFixedSize + kScheduleSlots * 5 + 3 * 22 + 33 + 8 +
-                            2 * 3 + 3 * 12 + 3 * 3;
+                            2 * 3 + 3 * 12 + 3 * 3 + kPendingSize;
     EXPECT_EQ(blob.size(), expected);
     EXPECT_EQ(ResumeSnapshotCodec::EncodedSize(snapshot), expected);
 }
@@ -228,6 +271,7 @@ TEST(ResumeSnapshotCodecTest, EmptyTablesRoundTrip) {
     snapshot.group_next_sequence.reset();
     snapshot.delivery_streams.clear();
     snapshot.seen_messages.clear();
+    snapshot.pending_reliable.clear();
     snapshot.schedule = {};
     const auto blob = EncodeOrFail(snapshot);
     EXPECT_EQ(blob.size(), kFixedSize);
@@ -255,6 +299,7 @@ TEST(ResumeSnapshotCodecTest, FiftyNeighboursFitInRtcMemoryBudget) {
     }
     snapshot.seen_messages.assign(ResumeSnapshotCodec::kMaxSeenMessages,
                                   {0x4000, 1});
+    snapshot.pending_reliable.clear();
     const auto blob = EncodeOrFail(snapshot);
     EXPECT_LE(blob.size(), 4096u);
 
@@ -384,9 +429,10 @@ TEST(ResumeSnapshotCodecTest, InvalidContentIsNotEncoded) {
 
 TEST(ResumeSnapshotCodecTest, UnknownDeliveryStreamKindIsRejected) {
     auto blob = EncodeOrFail(MakeSnapshot());
-    // Kind byte of the first delivery stream: it follows the stream counts
-    // and records, which end 1 + 3 * 3 + 4 bytes before the end
-    const size_t first_delivery = blob.size() - 4 - 1 - 3 * 3 - 3 * 12;
+    // Kind byte of the first delivery stream: its records end before the
+    // seen messages (1 + 3 * 3), the open messages and the CRC
+    const size_t first_delivery =
+        blob.size() - 4 - (1 + kPendingSize) - 1 - 3 * 3 - 3 * 12;
     ASSERT_EQ(blob[first_delivery + 2], 0u);
     blob[first_delivery + 2] = 2;
     FixCrc(blob);
@@ -394,7 +440,7 @@ TEST(ResumeSnapshotCodecTest, UnknownDeliveryStreamKindIsRejected) {
 }
 
 TEST(ResumeSnapshotCodecTest, OtherFormatVersionIsRejected) {
-    for (const uint8_t version : {1, 2, 4}) {
+    for (const uint8_t version : {1, 2, 3, 5}) {
         auto blob = EncodeOrFail(MakeSnapshot());
         blob[4] = version;
         FixCrc(blob);
@@ -428,6 +474,186 @@ TEST(ResumeSnapshotCodecTest, CraftedBlobWithValidCrcIsChecked) {
     blob[manager_offset + 1] = kNode >> 8;
     FixCrc(blob);
     EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value());
+}
+
+TEST(ResumeSnapshotCodecTest, SnapshotOfThePreviousFormatIsRejected) {
+    // Version 3 ended after the seen messages, without open messages
+    ResumeSnapshot snapshot = MakeSnapshot();
+    snapshot.pending_reliable.clear();
+    auto blob = EncodeOrFail(snapshot);
+    const size_t count_offset = blob.size() - 4 - 1;
+    ASSERT_EQ(blob[count_offset], 0u);
+    blob.erase(blob.begin() + count_offset);
+    blob[4] = 3;
+    FixCrc(blob);
+    ASSERT_TRUE(ResumeSnapshotCodec::HasMagic(blob));
+    EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value());
+
+    // The same content is not read as the current version either
+    blob[4] = ResumeSnapshotCodec::kFormatVersion;
+    FixCrc(blob);
+    EXPECT_FALSE(ResumeSnapshotCodec::Decode(blob).has_value());
+}
+
+TEST(ResumeSnapshotCodecTest, OpenMessagesAddTheirRecordsToTheSize) {
+    ResumeSnapshot snapshot = MakeSnapshot();
+    snapshot.pending_reliable.clear();
+    const size_t without = EncodeOrFail(snapshot).size();
+
+    // A typical report of 20 bytes waiting for its acknowledgement
+    PendingReliable report = MakePendingUnicast();
+    report.payload.assign(20, 0x55);
+    snapshot.pending_reliable = {report};
+    EXPECT_EQ(EncodeOrFail(snapshot).size(), without + 29 + 20);
+
+    PendingReliable empty = MakePendingUnicast();
+    empty.sequence = 17;
+    empty.payload.clear();
+    snapshot.pending_reliable = {report, empty};
+    const auto blob = EncodeOrFail(snapshot);
+    EXPECT_EQ(blob.size(), without + 29 + 20 + 29);
+    auto decoded = ResumeSnapshotCodec::Decode(blob);
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(decoded->pending_reliable, snapshot.pending_reliable);
+}
+
+TEST(ResumeSnapshotCodecTest, FullUnicastTableRoundTripsInRtcMemoryBudget) {
+    ResumeSnapshot snapshot = MakeSnapshot();
+    snapshot.pending_reliable.clear();
+    const size_t without = EncodeOrFail(snapshot).size();
+    for (uint8_t i = 0; i < ResumeSnapshotCodec::kMaxPendingReliable; ++i) {
+        PendingReliable pending = MakePendingUnicast();
+        pending.sequence = i;
+        pending.payload.assign(ResumeSnapshotCodec::kMaxPendingPayload, i);
+        snapshot.pending_reliable.push_back(pending);
+    }
+    const auto blob = EncodeOrFail(snapshot);
+    EXPECT_EQ(blob.size(), without + 8 * (29 + 246));
+    EXPECT_LE(blob.size(), 4096u);
+
+    auto decoded = ResumeSnapshotCodec::Decode(blob);
+    ASSERT_TRUE(decoded.has_value());
+    ExpectSameSnapshot(*decoded, snapshot);
+}
+
+TEST(ResumeSnapshotCodecTest, FullGroupTableRoundTripsBeyondRtcMemoryBudget) {
+    ResumeSnapshot snapshot = MakeSnapshot();
+    snapshot.pending_reliable.clear();
+    const size_t without = EncodeOrFail(snapshot).size();
+    for (uint8_t i = 0; i < ResumeSnapshotCodec::kMaxPendingReliable; ++i) {
+        PendingReliable pending = MakePendingGroup();
+        pending.sequence = i;
+        pending.payload.assign(ResumeSnapshotCodec::kMaxPendingPayload, i);
+        pending.responders.clear();
+        for (AddressType r = 0; r < ResumeSnapshotCodec::kMaxResponders; ++r) {
+            pending.responders.push_back(static_cast<AddressType>(0x100 + r));
+        }
+        snapshot.pending_reliable.push_back(pending);
+    }
+    // The codec holds it. A 4 KB store refuses it and the node stays awake
+    const auto blob = EncodeOrFail(snapshot);
+    EXPECT_EQ(blob.size(), without + 8 * (29 + 246 + 5 + 2 * 254));
+    EXPECT_GT(blob.size(), 4096u);
+
+    auto decoded = ResumeSnapshotCodec::Decode(blob);
+    ASSERT_TRUE(decoded.has_value());
+    ExpectSameSnapshot(*decoded, snapshot);
+}
+
+TEST(ResumeSnapshotCodecTest, InvalidOpenMessageIsNotEncoded) {
+    const auto rejects = [](auto&& edit) {
+        ResumeSnapshot snapshot = MakeSnapshot();
+        edit(snapshot.pending_reliable);
+        return !ResumeSnapshotCodec::Encode(snapshot).has_value() &&
+               !ResumeSnapshotCodec::IsValid(snapshot);
+    };
+    using Pending = std::vector<PendingReliable>;
+
+    EXPECT_TRUE(rejects([](Pending& p) { p[0].destination = kNode; }));
+    EXPECT_TRUE(rejects([](Pending& p) { p[0].destination = 0; }));
+    EXPECT_TRUE(
+        rejects([](Pending& p) { p[0].destination = kBroadcastAddress; }));
+    EXPECT_TRUE(rejects([](Pending& p) { p.push_back(p[0]); }));
+    EXPECT_TRUE(rejects([](Pending& p) {
+        p[0].payload.assign(ResumeSnapshotCodec::kMaxPendingPayload + 1, 0);
+    }));
+    // A unicast message has no window
+    EXPECT_TRUE(rejects([](Pending& p) { p[0].window_deadline_ms = 1; }));
+    EXPECT_TRUE(rejects([](Pending& p) { p[0].responders = {0x3003}; }));
+    // Group messages share one sequence stream
+    EXPECT_TRUE(rejects([](Pending& p) {
+        p.push_back(p[1]);
+        p.back().destination = 0x8002;
+    }));
+    EXPECT_TRUE(
+        rejects([](Pending& p) { p[1].responders.push_back(kManager); }));
+    EXPECT_TRUE(rejects([](Pending& p) { p[1].responders.push_back(kGroup); }));
+    EXPECT_TRUE(rejects([](Pending& p) {
+        p[1].responders.clear();
+        for (AddressType r = 0; r <= ResumeSnapshotCodec::kMaxResponders; ++r) {
+            p[1].responders.push_back(static_cast<AddressType>(0x100 + r));
+        }
+    }));
+    EXPECT_TRUE(rejects([](Pending& p) {
+        p.clear();
+        for (uint8_t i = 0; i <= ResumeSnapshotCodec::kMaxPendingReliable;
+             ++i) {
+            p.push_back(MakePendingUnicast());
+            p.back().sequence = i;
+        }
+    }));
+
+    // The same sequence toward two destinations is two messages
+    ResumeSnapshot snapshot = MakeSnapshot();
+    snapshot.pending_reliable.push_back(MakePendingUnicast());
+    snapshot.pending_reliable.back().destination = 0x3003;
+    EXPECT_TRUE(ResumeSnapshotCodec::Encode(snapshot).has_value());
+}
+
+TEST(ResumeSnapshotCodecTest, CraftedOpenMessageIsChecked) {
+    const auto blob = EncodeOrFail(MakeSnapshot());
+    // The open messages end the blob: count, unicast record, group record
+    const size_t first = blob.size() - 4 - kPendingSize;
+    ASSERT_EQ(blob[first - 1], 2u);
+    ASSERT_EQ(blob[first + 2], 16u);
+
+    // An unknown flag
+    auto crafted = blob;
+    ASSERT_EQ(crafted[first + 3], 0x07u);
+    crafted[first + 3] = 0x0F;
+    FixCrc(crafted);
+    EXPECT_FALSE(ResumeSnapshotCodec::Decode(crafted).has_value());
+
+    // A payload longer than the blob
+    crafted = blob;
+    ASSERT_EQ(crafted[first + 28], 3u);
+    crafted[first + 28] = 200;
+    FixCrc(crafted);
+    EXPECT_FALSE(ResumeSnapshotCodec::Decode(crafted).has_value());
+
+    // More messages announced than present, or than the table holds
+    for (const uint8_t count : {3, 9, 255}) {
+        crafted = blob;
+        crafted[first - 1] = count;
+        FixCrc(crafted);
+        EXPECT_FALSE(ResumeSnapshotCodec::Decode(crafted).has_value())
+            << static_cast<int>(count);
+    }
+
+    // A message the node sent to itself
+    crafted = blob;
+    crafted[first] = kNode & 0xFF;
+    crafted[first + 1] = kNode >> 8;
+    FixCrc(crafted);
+    EXPECT_FALSE(ResumeSnapshotCodec::Decode(crafted).has_value());
+
+    // More responders announced than present
+    crafted = blob;
+    const size_t responder_count = blob.size() - 4 - 2 * 2 - 1;
+    ASSERT_EQ(crafted[responder_count], 2u);
+    crafted[responder_count] = 3;
+    FixCrc(crafted);
+    EXPECT_FALSE(ResumeSnapshotCodec::Decode(crafted).has_value());
 }
 
 TEST(SlidingWindowPdrStateTest, StateRoundTripsAndInvalidStateIsRefused) {

@@ -62,7 +62,7 @@ enum class PowerState : uint8_t {
 /**
  * @brief When a member deep-sleeps through a run of SLEEP slots
  *
- * A member in normal operation with nothing in flight saves its state in
+ * A member in normal operation with nothing queued saves its state in
  * the state store, deep-sleeps and, when it boots again, resumes its
  * membership without rejoining. It wakes early enough to boot and to absorb
  * the error of the sleep clock before its next active slot. Network managers

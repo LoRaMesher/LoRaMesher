@@ -15,10 +15,12 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include "types/error_codes/result.hpp"
 #include "types/messages/base_message.hpp"
 #include "types/messages/loramesher/data_header.hpp"
+#include "types/storage/resume_snapshot.hpp"
 #include "utils/byte_operations.h"
 #include "utils/compat/span.hpp"
 
@@ -210,6 +212,28 @@ class ReliableDelivery {
      *        GroupWindowClosed with its responder count for a group window.
      */
     void AbortAll();
+
+    /**
+     * @brief State of every tracked message, to track it again after a reset
+     *
+     * Group entries come without their window deadline, which the owner of
+     * the window knows.
+     */
+    std::vector<storage::PendingReliable> GetPending() const;
+
+    /**
+     * @brief Track a message again with the state GetPending() returned
+     *
+     * No attempt is made now: the next one happens when the saved deadline
+     * is reached, on the clock the deadline was taken from.
+     * A message to a group address is tracked as a group window.
+     *
+     * @param source Originator of the message (this node)
+     * @param pending Saved state of the message
+     * @return false if the table is full, the message is already tracked,
+     *         or the payload or the responders exceed the capacity
+     */
+    bool Restore(AddressType source, const storage::PendingReliable& pending);
 
     /// Number of currently tracked messages.
     size_t PendingCount() const;

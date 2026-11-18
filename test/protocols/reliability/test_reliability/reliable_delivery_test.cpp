@@ -359,6 +359,259 @@ TEST_F(ReliableDeliveryTest, TrackFailsWhenPayloadTooLarge) {
     EXPECT_EQ(delivery_->PendingCount(), 0u);
 }
 
+/**
+ * @brief Fixture of a message saved before a reset and tracked again after it
+ *
+ * The state machine after the reset is a new instance on the same clock, as
+ * on a node whose protocol clock continues across a deep sleep.
+ */
+class ReliableDeliveryResumeTest : public ReliableDeliveryTest {
+   protected:
+    static constexpr AddressType kSource = 0x10;
+    static constexpr AddressType kGroup = 0x8001;
+
+    /// Replace the state machine by a new one holding the saved messages
+    void SaveAndRestore() {
+        const auto saved = delivery_->GetPending();
+        SetUp();
+        for (const auto& pending : saved) {
+            ASSERT_TRUE(delivery_->Restore(kSource, pending));
+        }
+    }
+
+    static Policy Backoff(uint32_t timeout_ms, uint8_t max_retries) {
+        Policy policy;
+        policy.timeout_ms = timeout_ms;
+        policy.max_retries = max_retries;
+        policy.exponential_backoff = true;
+        policy.max_timeout_ms = 3000;
+        return policy;
+    }
+
+    const std::vector<uint8_t> payload_ = {9, 8, 7, 6};
+};
+
+TEST_F(ReliableDeliveryResumeTest, SavedStateDescribesTheMessage) {
+    clock_ms_ = 500;
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, Backoff(1000, 3)));
+    clock_ms_ = 1500;
+    delivery_->Tick();
+
+    const auto saved = delivery_->GetPending();
+    ASSERT_EQ(saved.size(), 1u);
+    const storage::PendingReliable& pending = saved.front();
+    EXPECT_EQ(pending.destination, kDest);
+    EXPECT_EQ(pending.sequence, 5u);
+    EXPECT_EQ(pending.payload, payload_);
+    EXPECT_EQ(pending.retries_left, 2u);
+    EXPECT_EQ(pending.max_retries, 3u);
+    EXPECT_EQ(pending.timeout_ms, 1000u);
+    EXPECT_EQ(pending.current_timeout_ms, 2000u);
+    EXPECT_EQ(pending.max_timeout_ms, 3000u);
+    EXPECT_EQ(pending.next_deadline_ms, 3500u);
+    EXPECT_TRUE(pending.exponential_backoff);
+    EXPECT_FALSE(pending.requeue);
+    EXPECT_TRUE(pending.responders.empty());
+}
+
+TEST_F(ReliableDeliveryResumeTest, RestoringSendsNothing) {
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, {1000, 3, false}));
+    SaveAndRestore();
+
+    EXPECT_TRUE(sent_.size() == 1u);
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 1u);
+    EXPECT_TRUE(results_.empty());
+}
+
+TEST_F(ReliableDeliveryResumeTest, AckAfterTheResetCompletesTheMessage) {
+    clock_ms_ = 100;
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, {5000, 3, false}));
+    clock_ms_ = 400;
+    SaveAndRestore();
+
+    // The acknowledgement echoes the send time of the attempt it answers
+    clock_ms_ = 2600;
+    EXPECT_TRUE(delivery_->OnAck(Id(kSource, 5), kDest, 100));
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].outcome, Outcome::Delivered);
+    EXPECT_EQ(results_[0].id, Id(kSource, 5));
+    EXPECT_EQ(results_[0].by, kDest);
+    EXPECT_EQ(results_[0].rtt_ms, 2500u);
+    EXPECT_EQ(delivery_->PendingCount(), 0u);
+
+    // A second acknowledgement finds nothing
+    EXPECT_FALSE(delivery_->OnAck(Id(kSource, 5), kDest, 100));
+    EXPECT_EQ(results_.size(), 1u);
+}
+
+TEST_F(ReliableDeliveryResumeTest, RetransmissionKeepsItsDeadline) {
+    clock_ms_ = 100;
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, {1000, 3, false}));
+    clock_ms_ = 300;
+    SaveAndRestore();
+
+    clock_ms_ = 1099;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 1u);
+    clock_ms_ = 1100;
+    delivery_->Tick();
+    ASSERT_EQ(sent_.size(), 2u);
+    EXPECT_EQ(sent_[1].id, Id(kSource, 5));
+    EXPECT_EQ(sent_[1].payload, payload_);
+}
+
+TEST_F(ReliableDeliveryResumeTest, DeadlinePassedDuringTheResetIsServedAtOnce) {
+    clock_ms_ = 100;
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, {1000, 3, false}));
+    SaveAndRestore();
+
+    // The node was down while the deadline passed
+    clock_ms_ = 4000;
+    delivery_->Tick();
+    ASSERT_EQ(sent_.size(), 2u);
+    // One retransmission, however long the reset lasted, and the next
+    // timeout runs from it
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 2u);
+    const auto saved = delivery_->GetPending();
+    ASSERT_EQ(saved.size(), 1u);
+    EXPECT_EQ(saved[0].retries_left, 2u);
+    EXPECT_EQ(saved[0].next_deadline_ms, 5000u);
+}
+
+TEST_F(ReliableDeliveryResumeTest, DeadlineSurvivesTheClockWrapping) {
+    clock_ms_ = 0xFFFFFF00u;
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, {1000, 3, false}));
+    SaveAndRestore();
+
+    clock_ms_ = 0xFFFFFFFFu;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 1u);
+    clock_ms_ = 1000 - 0x100;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 2u);
+}
+
+TEST_F(ReliableDeliveryResumeTest, RetryBudgetAndBackoffSpanSeveralResets) {
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, Backoff(1000, 2)));
+
+    // Attempts at 0, 1000 and 3000. The timeout doubles up to its bound
+    const std::vector<uint32_t> deadlines = {1000, 3000, 6000};
+    for (size_t i = 0; i < deadlines.size(); ++i) {
+        SCOPED_TRACE(i);
+        SaveAndRestore();
+        clock_ms_ = deadlines[i] - 1;
+        delivery_->Tick();
+        EXPECT_EQ(sent_.size(), 1u + i);
+        EXPECT_TRUE(results_.empty());
+        clock_ms_ = deadlines[i];
+        delivery_->Tick();
+    }
+
+    EXPECT_EQ(sent_.size(), 3u);
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].outcome, Outcome::Failed);
+    EXPECT_EQ(results_[0].id, Id(kSource, 5));
+    EXPECT_EQ(delivery_->PendingCount(), 0u);
+    SaveAndRestore();
+    EXPECT_EQ(delivery_->PendingCount(), 0u);
+}
+
+TEST_F(ReliableDeliveryResumeTest, AttemptWaitingToBeQueuedIsRepeated) {
+    Policy policy{1000, 1, false};
+    policy.requeue_delay_ms = 200;
+    policy.max_consecutive_requeues = 2;
+    failing_sends_ = 1;
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, policy));
+    ASSERT_TRUE(sent_.empty());
+
+    const auto saved = delivery_->GetPending();
+    ASSERT_EQ(saved.size(), 1u);
+    EXPECT_TRUE(saved[0].requeue);
+    EXPECT_FALSE(saved[0].requeue_is_retry);
+    EXPECT_EQ(saved[0].consecutive_requeues, 1u);
+    EXPECT_EQ(saved[0].next_deadline_ms, 200u);
+    SaveAndRestore();
+
+    // The repeated first attempt does not spend the retry budget
+    clock_ms_ = 200;
+    delivery_->Tick();
+    ASSERT_EQ(sent_.size(), 1u);
+    EXPECT_EQ(delivery_->GetPending()[0].retries_left, 1u);
+    EXPECT_EQ(delivery_->GetPending()[0].next_deadline_ms, 1200u);
+}
+
+TEST_F(ReliableDeliveryResumeTest, GroupWindowKeepsItsResponders) {
+    const MessageId id{kSource, 7, kGroup};
+    ASSERT_TRUE(Track(id, payload_, {1000, 1, /*collect_multiple=*/true}));
+    ASSERT_TRUE(delivery_->OnAck(id, 0x21, 0));
+    ASSERT_TRUE(delivery_->OnAck(id, 0x22, 0));
+    results_.clear();
+
+    const auto saved = delivery_->GetPending();
+    ASSERT_EQ(saved.size(), 1u);
+    EXPECT_EQ(saved[0].responders, (std::vector<AddressType>{0x21, 0x22}));
+    SaveAndRestore();
+
+    // A responder is reported once, also when it answers the re-flood
+    clock_ms_ = 1000;
+    delivery_->Tick();
+    EXPECT_EQ(sent_.size(), 2u);
+    EXPECT_FALSE(delivery_->OnAck(id, 0x21, 1000));
+    EXPECT_TRUE(delivery_->OnAck(id, 0x23, 1000));
+    ASSERT_EQ(results_.size(), 1u);
+    EXPECT_EQ(results_[0].by, 0x23);
+    EXPECT_EQ(results_[0].ack_count, 3u);
+
+    // The window stays open until its owner closes it
+    clock_ms_ = 10000;
+    delivery_->Tick();
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
+    delivery_->CloseGroup(id);
+    ASSERT_EQ(results_.size(), 2u);
+    EXPECT_EQ(results_[1].outcome, Outcome::GroupWindowClosed);
+    EXPECT_EQ(results_[1].ack_count, 3u);
+}
+
+TEST_F(ReliableDeliveryResumeTest, EveryTrackedMessageIsSavedAndRestored) {
+    for (uint8_t seq = 0; seq < ReliableDelivery::kMaxPending; ++seq) {
+        const std::vector<uint8_t> payload(
+            seq == 0 ? ReliableDelivery::MaxReliablePayload() : seq, seq);
+        ASSERT_TRUE(Track(Id(kSource, seq), payload, {1000, 3, false}));
+    }
+    const auto saved = delivery_->GetPending();
+    ASSERT_EQ(saved.size(), ReliableDelivery::kMaxPending);
+    SaveAndRestore();
+
+    EXPECT_EQ(delivery_->GetPending(), saved);
+    // The table is full again
+    storage::PendingReliable extra = saved.front();
+    extra.sequence = 200;
+    EXPECT_FALSE(delivery_->Restore(kSource, extra));
+}
+
+TEST_F(ReliableDeliveryResumeTest, InvalidSavedStateIsRefused) {
+    ASSERT_TRUE(Track(Id(kSource, 5), payload_, {1000, 3, false}));
+    const storage::PendingReliable saved = delivery_->GetPending().front();
+
+    // Already tracked
+    EXPECT_FALSE(delivery_->Restore(kSource, saved));
+
+    storage::PendingReliable too_long = saved;
+    too_long.sequence = 6;
+    too_long.payload.assign(ReliableDelivery::MaxReliablePayload() + 1, 0);
+    EXPECT_FALSE(delivery_->Restore(kSource, too_long));
+
+    storage::PendingReliable crowded = saved;
+    crowded.sequence = 7;
+    crowded.destination = kGroup;
+    crowded.responders.assign(ReliableDelivery::kMaxGroupResponders + 1, 0x21);
+    EXPECT_FALSE(delivery_->Restore(kSource, crowded));
+    EXPECT_EQ(delivery_->PendingCount(), 1u);
+}
+
 }  // namespace test
 }  // namespace reliability
 }  // namespace protocols

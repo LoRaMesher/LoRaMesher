@@ -50,6 +50,8 @@ namespace storage {
  * |         | bitmap (4), last send timestamp (4)                    |
  * | 1       | Seen message count M                                   |
  * | 3 x M   | Seen messages: source (2), sequence (1)                |
+ * | 1       | Open reliable message count P                          |
+ * | P x var | Open reliable messages, see below                      |
  * | 4       | CRC-32 of all previous bytes                           |
  *
  * Each route is a 22-byte record: destination (2), next hop (2), hop count,
@@ -59,12 +61,21 @@ namespace storage {
  * manager and active flags. Bit 2 appends the link statistics (33 bytes) and
  * bit 3 the path round-trip time (8 bytes); both are omitted while they hold
  * their initial values.
+ *
+ * Each open reliable message is a 29-byte record followed by its payload:
+ * destination (2), sequence (1), flags (1), retries left, retries allowed,
+ * attempts not queued in a row and their limit (1 each), first timeout,
+ * current timeout, timeout bound, requeue delay and next deadline (4 each),
+ * payload length (1). Flag bit 0 is exponential backoff, bit 1 an attempt
+ * waiting to be queued again and bit 2 that this attempt is a
+ * retransmission. A message to a group address then carries its window:
+ * window deadline (4), responder count (1) and the responders (2 each).
  */
 class ResumeSnapshotCodec {
    public:
     /// Magic "LMR1" read as a little-endian 32-bit value
     static constexpr uint32_t kMagic = 0x31524D4C;
-    static constexpr uint8_t kFormatVersion = 3;
+    static constexpr uint8_t kFormatVersion = 4;
     static constexpr size_t kRouteSize = 22;
     static constexpr size_t kLinkStatsSize = 33;
     static constexpr size_t kPathRttSize = 8;
@@ -77,6 +88,11 @@ class ResumeSnapshotCodec {
     static constexpr size_t kMaxSeenMessages = 32;
     static constexpr size_t kSlotSize = 5;
     static constexpr size_t kMaxSlots = 256;
+    static constexpr size_t kPendingReliableSize = 29;
+    static constexpr size_t kGroupWindowSize = 5;
+    static constexpr size_t kMaxPendingReliable = 8;
+    static constexpr size_t kMaxPendingPayload = 246;
+    static constexpr size_t kMaxResponders = 254;
 
     /**
      * @brief Size in bytes of the encoded @p snapshot
@@ -115,7 +131,11 @@ class ResumeSnapshotCodec {
      * (delivery streams: per kind) and fit their counts; every delivery
      * stream has delivered its highest sequence; seen messages come from
      * unicast nodes and fit their count; the slot table fits kMaxSlots and
-     * holds known slot types.
+     * holds known slot types. Open reliable messages fit their count, go to
+     * another unicast node or to a group, differ in destination or sequence
+     * (group messages: in sequence) and carry at most kMaxPendingPayload
+     * bytes. Only group messages have a window deadline and responders, which
+     * are distinct unicast nodes.
      */
     static bool IsValid(const ResumeSnapshot& snapshot);
 };
