@@ -37,6 +37,12 @@
 - [ ] `Implementation_status.md` updated for any newly completed or changed features
 - [ ] Any features removed or deprecated are noted
 
+## Dependencies
+
+- [ ] Latest `espressif32` platform and RadioLib releases checked; the "Dependency drift" workflow is green
+- [ ] Pins raised to the versions tested on hardware: `platform = espressif32@…` in `examples/*/platformio.ini` and `platformio.ini`, RadioLib in the package manifests
+- [ ] Versions named in the `README.md` Quick Start match the pins
+
 ## Housekeeping
 
 - [ ] Badge condition in `.github/workflows/test.yml` reverted to `main`-only after merge
