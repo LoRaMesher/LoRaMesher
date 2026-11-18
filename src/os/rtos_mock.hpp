@@ -1268,14 +1268,24 @@ class RTOSMock : public RTOS {
      * With a sleep-clock error (SetSleepClockError()) less or more real time
      * passes. The node's clock stands still during the sleep, as no task runs
      * on a sleeping MCU, and then jumps forward by the count, as ESP32
-     * esp_timer does after a light sleep.
+     * esp_timer does after a light sleep. A wake-up set with
+     * SetLightSleepWakeAfter() ends the sleep before @p ms.
+     *
+     * @return Milliseconds the sleep clock counted
      */
-    void LightSleep(uint32_t ms) override {
+    uint32_t LightSleep(uint32_t ms) override {
         const std::string node = GetCurrentTaskNodeAddress();
         const int32_t ppm = SleepClockErrorOfCurrentNode();
-        const auto real_ms = static_cast<uint32_t>(
-            static_cast<uint64_t>(ms) * 1000000 /
-            static_cast<uint64_t>(1000000 + static_cast<int64_t>(ppm)));
+        const uint64_t clock_per_million =
+            static_cast<uint64_t>(1000000 + static_cast<int64_t>(ppm));
+        auto real_ms = static_cast<uint32_t>(static_cast<uint64_t>(ms) *
+                                             1000000 / clock_per_million);
+        const uint32_t wake_after_ms = LightSleepWakeOfCurrentNode();
+        if (wake_after_ms != 0 && wake_after_ms < real_ms) {
+            real_ms = wake_after_ms;
+            ms = static_cast<uint32_t>(static_cast<uint64_t>(real_ms) *
+                                       clock_per_million / 1000000);
+        }
         const uint32_t tick_before = getTickCount();
         {
             std::lock_guard<std::mutex> lock(node_clock_mutex_);
@@ -1286,6 +1296,7 @@ class RTOSMock : public RTOS {
         std::lock_guard<std::mutex> lock(node_clock_mutex_);
         frozen_ticks_ms_.erase(node);
         node_tick_offsets_ms_[node] = tick_before + ms - BaseTickCount();
+        return ms;
     }
 
     /**
@@ -1298,6 +1309,22 @@ class RTOSMock : public RTOS {
     void SetSleepClockError(const std::string& node_address, int32_t ppm) {
         std::lock_guard<std::mutex> lock(node_clock_mutex_);
         sleep_clock_errors_ppm_[node_address] = ppm;
+    }
+
+    /**
+     * @brief Wake a node from every light sleep after a given real time
+     *
+     * Models a wake-up source other than the sleep timer, such as a GPIO.
+     * Light sleeps shorter than @p real_ms end on their timer.
+     *
+     * @param node_address Node address as passed to
+     *        SetCurrentTaskNodeAddress() (e.g. "0x1001")
+     * @param real_ms Longest real time a light sleep lasts, 0 for no limit
+     */
+    void SetLightSleepWakeAfter(const std::string& node_address,
+                                uint32_t real_ms) {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        light_sleep_wake_after_ms_[node_address] = real_ms;
     }
 
     /**
@@ -1378,6 +1405,7 @@ class RTOSMock : public RTOS {
         node_tick_offsets_ms_.clear();
         frozen_ticks_ms_.clear();
         sleep_clock_errors_ppm_.clear();
+        light_sleep_wake_after_ms_.clear();
         has_node_tick_offsets_.store(false, std::memory_order_release);
     }
 
@@ -2910,11 +2938,19 @@ class RTOSMock : public RTOS {
     /// Clock of each light-sleeping node, which stands still
     std::map<std::string, uint32_t> frozen_ticks_ms_;
     std::map<std::string, int32_t> sleep_clock_errors_ppm_;
+    /// Longest real time each node light-sleeps, 0 for no limit
+    std::map<std::string, uint32_t> light_sleep_wake_after_ms_;
 
     int32_t SleepClockErrorOfCurrentNode() {
         std::lock_guard<std::mutex> lock(node_clock_mutex_);
         auto it = sleep_clock_errors_ppm_.find(GetCurrentTaskNodeAddress());
         return it == sleep_clock_errors_ppm_.end() ? 0 : it->second;
+    }
+
+    uint32_t LightSleepWakeOfCurrentNode() {
+        std::lock_guard<std::mutex> lock(node_clock_mutex_);
+        auto it = light_sleep_wake_after_ms_.find(GetCurrentTaskNodeAddress());
+        return it == light_sleep_wake_after_ms_.end() ? 0 : it->second;
     }
 
     /// Fast path of getTickCount() while no node has a tick offset or sleeps

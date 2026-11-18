@@ -196,9 +196,11 @@ class RTOS {
      *
      * On embedded targets (ESP32) reduces power beyond task blocking.
      * On native/desktop this is a no-op — virtual time handles slot timing.
+     * The sleep can end before @p ms when another wake-up source fires.
      * @param ms Sleep duration in milliseconds
+     * @return Milliseconds slept as counted by the sleep clock, at most @p ms
      */
-    virtual void LightSleep(uint32_t ms) = 0;
+    virtual uint32_t LightSleep(uint32_t ms) = 0;
 
     /**
      * @brief Get current tick count

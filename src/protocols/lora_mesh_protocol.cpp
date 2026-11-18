@@ -1782,10 +1782,11 @@ void LoRaMeshProtocol::SleepThroughSleepRun() {
 
     // The sleep timer and the clock after the sleep run on the RC sleep
     // clock: ask for the sleep in its time and remove its learned error from
-    // the clock afterwards
-    const auto counted_ms =
+    // the clock afterwards. Another wake-up source can end the sleep before
+    // the timer, so the time the sleep clock counted is what the RTOS reports
+    const auto requested_ms =
         static_cast<uint32_t>(sleep_clock.ToClockMs(ctx.sleep_duration_ms));
-    GetRTOS().LightSleep(counted_ms);
+    const uint32_t counted_ms = GetRTOS().LightSleep(requested_ms);
     const auto real_ms =
         static_cast<uint32_t>(sleep_clock.ToRealMs(counted_ms));
     if (counted_ms != real_ms) {

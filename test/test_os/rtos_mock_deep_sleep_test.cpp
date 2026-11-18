@@ -129,6 +129,7 @@ TEST_F(RTOSMockDeepSleepTest, LightSleepWithAFastClockEndsEarlyAndGainsTime) {
         std::atomic<bool> done{false};
         uint32_t tick_before = 0;
         uint32_t tick_after = 0;
+        uint32_t counted_ms = 0;
     } state;
 
     mock_->SetSleepClockError("0x1001", 10000);  // 1 % fast
@@ -138,7 +139,7 @@ TEST_F(RTOSMockDeepSleepTest, LightSleepWithAFastClockEndsEarlyAndGainsTime) {
             auto* s = static_cast<State*>(param);
             GetRTOS().SetCurrentTaskNodeAddress("0x1001");
             s->tick_before = GetRTOS().getTickCount();
-            GetRTOS().LightSleep(10100);
+            s->counted_ms = GetRTOS().LightSleep(10100);
             s->tick_after = GetRTOS().getTickCount();
             s->done = true;
             while (true) {
@@ -161,6 +162,78 @@ TEST_F(RTOSMockDeepSleepTest, LightSleepWithAFastClockEndsEarlyAndGainsTime) {
     EXPECT_EQ(mock_->getVirtualTime() - start, 10000u);
     // The node's clock advanced by the sleep clock's count
     EXPECT_EQ(state.tick_after - state.tick_before, 10100u);
+    EXPECT_EQ(state.counted_ms, 10100u);
+}
+
+TEST_F(RTOSMockDeepSleepTest, LightSleepWokenEarlyReturnsTheTimeSlept) {
+    struct State {
+        std::atomic<bool> done{false};
+        uint32_t tick_before = 0;
+        uint32_t tick_after = 0;
+        uint32_t counted_ms = 0;
+    } state;
+
+    mock_->SetSleepClockError("0x1001", 10000);  // 1 % fast
+    mock_->SetLightSleepWakeAfter("0x1001", 4000);
+
+    ASSERT_TRUE(GetRTOS().CreateTask(
+        [](void* param) {
+            auto* s = static_cast<State*>(param);
+            GetRTOS().SetCurrentTaskNodeAddress("0x1001");
+            s->tick_before = GetRTOS().getTickCount();
+            s->counted_ms = GetRTOS().LightSleep(10100);
+            s->tick_after = GetRTOS().getTickCount();
+            s->done = true;
+            while (true) {
+                GetRTOS().delay(1000);
+            }
+        },
+        "Sleeper", 2048, &state, 1, &task_));
+    for (int i = 0; i < 200 && state.tick_before == 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    mock_->waitForTasksToReblock(1000);
+
+    mock_->advanceTime(3999);
+    EXPECT_FALSE(state.done);
+    mock_->advanceTime(1);
+    mock_->waitForTasksToReblock(1000);
+    ASSERT_TRUE(state.done);
+    // The sleep clock counted 4040 ms in the 4000 ms that really passed
+    EXPECT_EQ(state.counted_ms, 4040u);
+    EXPECT_EQ(state.tick_after - state.tick_before, 4040u);
+}
+
+TEST_F(RTOSMockDeepSleepTest, LightSleepShorterThanTheWakeUpEndsOnItsTimer) {
+    struct State {
+        std::atomic<bool> done{false};
+        std::atomic<bool> asleep{false};
+        uint32_t counted_ms = 0;
+    } state;
+
+    mock_->SetLightSleepWakeAfter("0x1001", 4000);
+
+    ASSERT_TRUE(GetRTOS().CreateTask(
+        [](void* param) {
+            auto* s = static_cast<State*>(param);
+            GetRTOS().SetCurrentTaskNodeAddress("0x1001");
+            s->asleep = true;
+            s->counted_ms = GetRTOS().LightSleep(3000);
+            s->done = true;
+            while (true) {
+                GetRTOS().delay(1000);
+            }
+        },
+        "Sleeper", 2048, &state, 1, &task_));
+    for (int i = 0; i < 200 && !state.asleep; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    mock_->waitForTasksToReblock(1000);
+
+    mock_->advanceTime(3000);
+    mock_->waitForTasksToReblock(1000);
+    ASSERT_TRUE(state.done);
+    EXPECT_EQ(state.counted_ms, 3000u);
 }
 
 TEST_F(RTOSMockDeepSleepTest, ClockOfALightSleepingNodeStandsStill) {

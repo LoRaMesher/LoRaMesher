@@ -181,12 +181,20 @@ class RTOSFreeRTOS : public RTOS {
 
     void delay(uint32_t ms) override { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
-    void LightSleep(uint32_t ms) override {
+    uint32_t LightSleep(uint32_t ms) override {
 #ifdef ARDUINO_ARCH_ESP32
+        const int64_t start_us = esp_timer_get_time();
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(ms) * 1000ULL);
         esp_light_sleep_start();
+        // esp_timer advances by the time slept, also when another wake-up
+        // source ends the sleep before the timer
+        const int64_t slept_ms = (esp_timer_get_time() - start_us) / 1000;
+        return slept_ms < static_cast<int64_t>(ms)
+                   ? static_cast<uint32_t>(slept_ms)
+                   : ms;
 #else
         delay(ms);
+        return ms;
 #endif
     }
 
