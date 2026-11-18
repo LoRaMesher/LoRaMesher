@@ -134,6 +134,8 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
 - `scripts/extra_script.py` accepts nested flag lists in `CXXFLAGS`. Builds on
   espressif32 8.x (Arduino core 3.x) no longer stop with `AttributeError: 'list'
   object has no attribute 'startswith'`.
+- Builds on espressif32 8.x no longer warn about the deprecated `rtc.h` header
+  or a `%u` format mismatch in `task_monitor.hpp`.
 - Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
   `wake_up_guard_ms` before the next active slot, instead of waking at every
   slot boundary and staying awake for the guard. `PrepareSleepCallback` runs
