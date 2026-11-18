@@ -206,6 +206,86 @@ TEST_F(ProtocolCoverageExtraTest, GetTimeUntilNextDataSlotAfterStart) {
 }
 
 // ---------------------------------------------------------------------------
+// ComputeWaitUntilSlot: wait until guard time before a slot's next occurrence
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr uint32_t kSlotMs = 650;
+constexpr uint32_t kSuperframeMs = 184 * kSlotMs;
+constexpr uint32_t kGuardMs = 200;
+constexpr uint32_t kSuperframeStartMs = 314370;
+constexpr uint32_t kTxSlotStartMs = kSuperframeStartMs + 6 * kSlotMs;
+}  // namespace
+
+TEST(ComputeWaitUntilSlotTest, SlotAheadWaitsUntilGuardBeforeSlot) {
+    const uint32_t now = kSuperframeStartMs + 2 * kSlotMs;
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  kTxSlotStartMs, now, kSuperframeMs, kGuardMs),
+              4 * kSlotMs - kGuardMs);
+}
+
+TEST(ComputeWaitUntilSlotTest, SlotAlreadyPastTargetsNextSuperframe) {
+    // Three slots after the TX slot started: the next occurrence is one
+    // superframe after the slot start, not one superframe after now.
+    const uint32_t now = kTxSlotStartMs + 3 * kSlotMs;
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  kTxSlotStartMs, now, kSuperframeMs, kGuardMs),
+              kSuperframeMs - 3 * kSlotMs - kGuardMs);
+}
+
+TEST(ComputeWaitUntilSlotTest, SlotStartingNowTargetsNextSuperframe) {
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  kTxSlotStartMs, kTxSlotStartMs, kSuperframeMs, kGuardMs),
+              kSuperframeMs - kGuardMs);
+}
+
+TEST(ComputeWaitUntilSlotTest, SlotWithinGuardTargetsNextSuperframe) {
+    const uint32_t now = kTxSlotStartMs - kGuardMs / 2;
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  kTxSlotStartMs, now, kSuperframeMs, kGuardMs),
+              kSuperframeMs + kGuardMs / 2 - kGuardMs);
+}
+
+TEST(ComputeWaitUntilSlotTest, SlotJustOutsideGuardIsUsed) {
+    const uint32_t now = kTxSlotStartMs - kGuardMs - 1;
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  kTxSlotStartMs, now, kSuperframeMs, kGuardMs),
+              1u);
+}
+
+TEST(ComputeWaitUntilSlotTest, StaleSuperframeStartStillFindsNextOccurrence) {
+    // Slot start is more than one superframe old.
+    const uint32_t now = kTxSlotStartMs + kSuperframeMs + 3 * kSlotMs;
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  kTxSlotStartMs, now, kSuperframeMs, kGuardMs),
+              kSuperframeMs - 3 * kSlotMs - kGuardMs);
+}
+
+TEST(ComputeWaitUntilSlotTest, TickCounterWrapIsHandled) {
+    // Slot start lies just after the 32-bit tick counter wraps.
+    const uint32_t now = UINT32_MAX - 999;
+    const uint32_t slot_start = 1000;
+    EXPECT_EQ(protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+                  slot_start, now, kSuperframeMs, kGuardMs),
+              2000u - kGuardMs);
+}
+
+TEST(ComputeWaitUntilSlotTest, SendAlwaysLandsGuardTimeBeforeTheSlot) {
+    for (uint32_t offset = 0; offset < 2 * kSuperframeMs; offset += 37) {
+        const uint32_t now = kSuperframeStartMs + offset;
+        const uint32_t wait = protocols::LoRaMeshProtocol::ComputeWaitUntilSlot(
+            kTxSlotStartMs, now, kSuperframeMs, kGuardMs);
+        EXPECT_LE(wait, kSuperframeMs) << "offset=" << offset;
+        // Compared modulo the superframe; the added superframe keeps the
+        // dividend positive before the first slot occurrence.
+        EXPECT_EQ((now + wait + kGuardMs + kSuperframeMs - kTxSlotStartMs) %
+                      kSuperframeMs,
+                  0u)
+            << "offset=" << offset;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SendMessage with SYNC_BEACON type routes to default TX slot
 // ---------------------------------------------------------------------------
 

@@ -2012,22 +2012,40 @@ uint32_t LoRaMeshProtocol::GetTimeUntilNextDataSlot(
             types::protocols::lora_mesh::SlotAllocation::SlotType::TX)
             continue;
 
-        uint32_t slot_start =
-            superframe_service_->GetSlotStartTime(slot.slot_number);
-        uint32_t time_until = (slot_start > now) ? (slot_start - now) : 0;
-
-        // If the slot is too close or already past, push to the next superframe
-        if (time_until <= guard_time_ms) {
-            time_until += superframe_duration;
-        }
-
-        uint32_t adjusted = time_until - guard_time_ms;
-        if (adjusted < best_wait) {
-            best_wait = adjusted;
+        const uint32_t wait = ComputeWaitUntilSlot(
+            superframe_service_->GetSlotStartTime(slot.slot_number), now,
+            superframe_duration, guard_time_ms);
+        if (wait < best_wait) {
+            best_wait = wait;
         }
     }
 
     return (best_wait == UINT32_MAX) ? 0 : best_wait;
+}
+
+uint32_t LoRaMeshProtocol::ComputeWaitUntilSlot(uint32_t slot_start_ms,
+                                                uint32_t now_ms,
+                                                uint32_t superframe_duration_ms,
+                                                uint32_t guard_time_ms) {
+    // Signed distance to the slot start, valid across tick counter wrap
+    const int32_t delta = static_cast<int32_t>(slot_start_ms - now_ms);
+
+    uint32_t time_until;
+    if (delta > 0) {
+        time_until = static_cast<uint32_t>(delta);
+    } else {
+        // Slot start has passed: the slot recurs every superframe
+        const uint32_t elapsed = now_ms - slot_start_ms;
+        time_until =
+            superframe_duration_ms - (elapsed % superframe_duration_ms);
+    }
+
+    // Too close to prepare the send: use the following occurrence
+    if (time_until <= guard_time_ms) {
+        time_until += superframe_duration_ms;
+    }
+
+    return (time_until > guard_time_ms) ? (time_until - guard_time_ms) : 0;
 }
 
 uint8_t LoRaMeshProtocol::GetDataSlotsPerSuperframe() const {

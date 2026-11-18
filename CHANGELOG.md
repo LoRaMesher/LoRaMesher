@@ -131,6 +131,11 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   survives a rejoin, and the join timeout is 13 superframes (was 3).
 
 ### Fixed
+- `GetTimeUntilNextDataSlot()` returns the time until the TX data slot comes
+  round again when that slot has already passed in the current superframe.
+  It returned one full superframe from the moment of the call, so a send loop
+  that ran after its TX slots called `Send()` just after them every time and
+  each message waited a whole superframe in the queue.
 - `scripts/extra_script.py` accepts nested flag lists in `CXXFLAGS`. Builds on
   espressif32 8.x (Arduino core 3.x) no longer stop with `AttributeError: 'list'
   object has no attribute 'startswith'`.
