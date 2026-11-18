@@ -26,11 +26,13 @@ mesher->JoinGroup(0x8001);
 
 GroupSendOptions options;
 options.request_acks = true;  // Members acknowledge the message
-options.window_ms = 8000;     // How long to collect acknowledgements
 options.max_retries = 1;      // Re-floods inside the window
+options.window_ms = 0;        // How long to collect acknowledgements (0 = automatic)
 
 LoraMesher::MessageId id = mesher->SendGroup(0x8001, payload, options);
 ```
+
+With `window_ms = 0` (the default) the window follows the network: `(max_retries + 2 × network depth + 1)` superframes, enough for every re-flood to reach the farthest member and for its acknowledgement to come back. Set `window_ms` yourself to wait a fixed time instead; a window shorter than a superframe only collects acknowledgements from members that answer in the same superframe.
 
 With `request_acks = false` the send is best effort and nothing is reported through `SetDeliveryCallback()`.
 

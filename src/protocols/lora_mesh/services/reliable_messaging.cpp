@@ -527,10 +527,17 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     }
 
     reliability::Policy policy;
-    // Attempts are spread evenly over the window, at most one per superframe.
-    policy.timeout_ms =
-        std::max(window_ms / (static_cast<uint32_t>(max_retries) + 1),
-                 SuperframeOrDefault());
+    if (window_ms == 0) {
+        // Derived window: attempts one superframe apart, then a round trip.
+        window_ms = ComputeGroupWindow(max_retries);
+        policy.timeout_ms = SuperframeOrDefault();
+    } else {
+        // Attempts are spread evenly over the window, at most one per
+        // superframe.
+        policy.timeout_ms =
+            std::max(window_ms / (static_cast<uint32_t>(max_retries) + 1),
+                     SuperframeOrDefault());
+    }
     policy.max_retries = max_retries;
     policy.collect_multiple = true;
     policy.requeue_delay_ms = SuperframeOrDefault();
@@ -570,6 +577,20 @@ reliability::MessageId ReliableMessaging::SendGroupReliable(
     LOG_INFO("Sending reliable GROUP to 0x%04X (seq=%u, window=%u)", group,
              id.seq, window_ms);
     return id;
+}
+
+uint32_t ReliableMessaging::ComputeGroupWindow(uint8_t max_retries) const {
+    uint32_t depth = host_.network_depth ? host_.network_depth() : 0;
+    if (depth == 0) {
+        depth = 1;
+    }
+
+    // One superframe per retry, then a round trip across the network depth
+    // plus one superframe of slot-phase guard for the last attempt.
+    const uint64_t superframes =
+        static_cast<uint64_t>(max_retries) + 2u * depth + 1u;
+    return static_cast<uint32_t>(
+        std::min<uint64_t>(superframes * SuperframeOrDefault(), UINT32_MAX));
 }
 
 void ReliableMessaging::EnqueueAck(AddressType dest, uint8_t acked_seq,

@@ -163,8 +163,9 @@ bool sendGroupMessage() {
 
     GroupSendOptions options;
     options.request_acks = true;  // Members acknowledge; see OnDeliveryResult
-    options.window_ms = 8000;     // How long to collect acknowledgements
     options.max_retries = 1;      // Re-floods inside the window
+    // options.window_ms is left at 0: the acknowledgement window is derived
+    // from the network depth and the superframe duration.
 
     // Set before sending: a send that fails at once reports its outcome
     // before SendGroup() returns.

@@ -93,6 +93,27 @@ Accept(src, kind, seq, ts, regression_ms) -> new?
   counted once (`RecordResponder`).
 - Cost: (R+1) floods plus up to (R+1)·members ACKs.
 
+### Group ACK window
+- `window_ms = 0` (the `GroupSendOptions` default) derives the window:
+  `(R + 2·D + 1) · superframe`, `D` = current network depth (≥ 1), with
+  attempts exactly one superframe apart. The last attempt at `R · superframe`
+  then still has `2·D + 1` superframes, the same round-trip budget as the
+  unicast timeout `(2·hops + 1) · superframe`.
+- Why not a fixed default: a node transmits once per superframe, so each
+  flood hop and each ACK hop can cost up to one superframe. A fixed window
+  (it was 8 s) is shorter than one superframe in most configurations (about
+  2 minutes for a small SF7 network at 1 % duty cycle), so it only ever
+  collected ACKs from members answering in the same superframe, and a retry
+  (≥ 1 superframe later) fired after the window had closed.
+- The network depth is used rather than the configured `max_hops`: the member
+  set is unknown, so the farthest node bounds the round trip, while
+  `max_hops` would stretch the window far beyond the real network.
+- Trade-off: the window closes later (3 superframes in a 1-hop network), so
+  an application that sends the next message only after `GroupWindowClosed`
+  is paced by it. Per-member `Delivered` outcomes are still reported as each
+  ACK arrives; an application that knows its topology can set a shorter
+  explicit `window_ms`.
+
 ### Locking
 `DeliveryWindows` and the stream table live in `ReliableMessaging` under its
 mutex. `AcceptReliable` calls no host closure, so it adds no lock-order edge.

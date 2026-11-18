@@ -85,6 +85,8 @@ class ReliableMessaging {
             max_packet_size;        ///< Configured max packet size
         HopsToDestFn hops_to_dest;  ///< Routing hop-count lookup
         SuperframeDurationFn superframe_duration;  ///< Superframe duration (ms)
+        /// Current network depth in hops (0 when not yet known).
+        std::function<uint8_t()> network_depth;
         /// Stored round-trip estimate toward a destination (nullopt if the
         /// destination is unknown).
         std::function<std::optional<types::protocols::lora_mesh::PathRtt>(
@@ -141,10 +143,16 @@ class ReliableMessaging {
                                         uint32_t timeout_override_ms);
 
     /// Track a reliable group send with an acknowledgement-collection window.
+    /// A @p window_ms of 0 uses ComputeGroupWindow().
     reliability::MessageId SendGroupReliable(AddressType group,
                                              std::span<const uint8_t> data,
                                              uint8_t max_retries,
                                              uint32_t window_ms);
+
+    /// Acknowledgement-collection window (ms) for a group send derived from
+    /// the network: one superframe per retry, plus a round trip across the
+    /// network depth and one superframe of slot-phase guard.
+    uint32_t ComputeGroupWindow(uint8_t max_retries) const;
 
     /// Process an inbound ACK message (match, forward, or ignore).
     Result ProcessAckMessage(const BaseMessage& message);

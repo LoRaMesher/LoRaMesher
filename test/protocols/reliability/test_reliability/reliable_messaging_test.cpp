@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "protocols/lora_mesh/services/reliable_messaging.hpp"
@@ -71,7 +72,20 @@ class ReliableMessagingTest : public ::testing::Test {
         host.superframe_duration = []() -> uint32_t {
             return kSuperframeMs;
         };
+        host.network_depth = [this]() -> uint8_t {
+            return network_depth_;
+        };
         return host;
+    }
+
+    /// Number of GroupWindowClosed outcomes reported so far.
+    size_t ClosedWindows() const {
+        return static_cast<size_t>(
+            std::count_if(outcomes_.begin(), outcomes_.end(),
+                          [](const reliability::DeliveryResult& result) {
+                              return result.outcome ==
+                                     reliability::Outcome::GroupWindowClosed;
+                          }));
     }
 
     /// Advance the clock superframe by superframe, running the timers.
@@ -89,8 +103,69 @@ class ReliableMessagingTest : public ::testing::Test {
     uint32_t now_ms_ = 1000;
     bool queue_accepts_ = true;
     int enqueued_ = 0;
+    uint8_t network_depth_ = 1;
     const std::vector<uint8_t> payload_ = {1, 2, 3};
 };
+
+/**
+ * @brief A zero window is derived from the network: a round trip across its
+ *        depth plus one superframe.
+ */
+TEST_F(ReliableMessagingTest, DerivedGroupWindowCoversARoundTrip) {
+    network_depth_ = 1;
+    ASSERT_NE(messaging_->SendGroupReliable(kGroup, payload_, 0, 0).source, 0u);
+
+    RunFor(2 * kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 0u);
+    RunFor(kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 1u);
+}
+
+TEST_F(ReliableMessagingTest, DerivedGroupWindowScalesWithNetworkDepth) {
+    network_depth_ = 3;
+    ASSERT_NE(messaging_->SendGroupReliable(kGroup, payload_, 0, 0).source, 0u);
+
+    RunFor(6 * kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 0u);
+    RunFor(kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 1u);
+}
+
+TEST_F(ReliableMessagingTest, DerivedGroupWindowTreatsUnknownDepthAsOneHop) {
+    network_depth_ = 0;
+    ASSERT_NE(messaging_->SendGroupReliable(kGroup, payload_, 0, 0).source, 0u);
+
+    RunFor(2 * kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 0u);
+    RunFor(kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 1u);
+}
+
+/**
+ * @brief Each retry adds one superframe, so the last attempt still has a
+ *        full round trip before the window closes.
+ */
+TEST_F(ReliableMessagingTest, DerivedGroupWindowAddsASuperframePerRetry) {
+    network_depth_ = 1;
+    ASSERT_NE(messaging_->SendGroupReliable(kGroup, payload_, 2, 0).source, 0u);
+
+    RunFor(4 * kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 0u);
+    EXPECT_EQ(enqueued_, 3);
+    RunFor(kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 1u);
+}
+
+TEST_F(ReliableMessagingTest, ExplicitGroupWindowIsRespected) {
+    network_depth_ = 1;
+    ASSERT_NE(messaging_->SendGroupReliable(kGroup, payload_, 0, 5000).source,
+              0u);
+
+    RunFor(4 * kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 0u);
+    RunFor(kSuperframeMs);
+    EXPECT_EQ(ClosedWindows(), 1u);
+}
 
 /**
  * @brief A group send whose attempts can never be queued fails and releases

@@ -21,7 +21,10 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   `GetGroups` and `SendGroup(group, data, GroupSendOptions)`. An acknowledged
   group send reports every responder and closes with the responder count;
   `GroupSendOptions::max_retries` re-floods the message inside the ACK window,
-  and members still deliver it once.
+  and members still deliver it once. The ACK window defaults to
+  `(max_retries + 2 × network depth + 1)` superframes
+  (`GroupSendOptions::window_ms = 0`); a non-zero `window_ms` sets a fixed
+  window.
 - `SetDataCallbackEx(const ReceivedData&)` reports each received message
   with its destination, sender sequence number and hops travelled.
 - `LoraMesher::GetSuperframeDuration()` returns the current superframe

@@ -130,6 +130,9 @@ ReliableMessaging::Host NetworkService::MakeReliableMessagingHost() {
                    ? superframe_service_->GetSuperframeDuration()
                    : 0;
     };
+    host.network_depth = [this]() -> uint8_t {
+        return current_network_depth_;
+    };
     host.get_path_rtt = [this](AddressType dest) {
         return routing_table_->GetPathRtt(dest);
     };
