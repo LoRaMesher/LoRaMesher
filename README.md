@@ -78,7 +78,7 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
 1. Install [Visual Studio Code](https://code.visualstudio.com/) and the [PlatformIO extension](https://platformio.org/install/ide?install=vscode).
 2. Clone this repository.
 3. Open PlatformIO Home → **Projects** → **Add Existing** → pick the example below that matches your use case.
-4. Build with PlatformIO (⌘/Ctrl+Alt+B).
+4. Build with PlatformIO (⌘/Ctrl+Alt+B). The examples pin `platform = espressif32@8.0.0` and are tested with RadioLib 7.8.1.
 5. Upload to your LoRa board (tested on TTGO T-Beam v1.1).
 
 | Example | Use when |

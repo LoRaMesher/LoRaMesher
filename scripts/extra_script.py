@@ -77,10 +77,14 @@ global_env = DefaultEnvironment()
 def set_platform_cpp_standard(environment, platform):
     """
     @brief Apply platform-specific C++ standard flags
+    @details CXXFLAGS may contain nested lists of flags, so it is flattened before
+             the existing standard flags are removed.
     @param environment The environment to modify (can be library or global)
     @param platform The target platform string
     """
-    environment.Replace(CXXFLAGS=[f for f in environment.get("CXXFLAGS", []) if not f.startswith("-std=")])
+    flags = environment.Flatten(environment.get("CXXFLAGS", []))
+    environment.Replace(
+        CXXFLAGS=[f for f in flags if not (isinstance(f, str) and f.startswith("-std="))])
 
     if platform in ["native", "test_native"]:
         environment.Append(CXXFLAGS=["-std=gnu++20"])
