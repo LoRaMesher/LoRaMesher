@@ -903,8 +903,9 @@ class NetworkService : public INetworkService {
      *
      * @param group Destination group address
      * @param data User data payload
-     * @param max_retries Reserved for whole-group rebroadcast (currently unused)
-     * @param window_ms Acknowledgement-collection window duration
+     * @param max_retries Number of times the message is re-flooded
+     * @param window_ms Acknowledgement-collection window duration; 0 derives
+     *        it from the network depth, the superframe duration and max_retries
      * @return reliability::MessageId Assigned id, or {0,0} if the send failed
      */
     reliability::MessageId SendGroupReliable(AddressType group,

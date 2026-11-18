@@ -223,6 +223,8 @@ group_options.request_acks = true;
 LoraMesher::MessageId gid = mesher->SendGroup(0x8001, payload, group_options);
 ```
 
+Acknowledgements for a group send are collected for `GroupSendOptions::window_ms`. Left at `0`, the window is derived from the network: `(max_retries + 2 × network depth + 1)` superframes.
+
 The three callbacks report different things:
 
 | Callback | Reports |

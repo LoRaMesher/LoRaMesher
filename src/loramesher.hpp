@@ -35,7 +35,9 @@ struct ReliableOptions {
 /// Options for group sends.
 struct GroupSendOptions {
     bool request_acks = false;
-    uint32_t window_ms = 8000;
+    /// How long acknowledgements are collected. 0 = derive from the network
+    /// depth, the superframe duration and max_retries.
+    uint32_t window_ms = 0;
     uint8_t max_retries = 0;
 };
 
