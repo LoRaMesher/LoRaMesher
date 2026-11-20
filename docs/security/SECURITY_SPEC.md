@@ -1,6 +1,6 @@
 # LoRaMesher Wire Security Specification
 
-Version 3, 2026-11-20. Draft for implementation. Target branch `release/2.0.0` (checked at 368c359).
+Version 3.1, 2026-11-20. Draft for implementation. Target branch `release/2.0.0` (checked at 368c359).
 This text is written to become Section 12 of `PROTOCOL_SPEC.md`. Section numbers below are local (S1 to S14).
 
 All multi-byte fields are little-endian unless a field says big-endian. Byte offsets start at 0. `‖` is concatenation. `X[a..b]` means bytes a to b inclusive. Hex strings list bytes in wire order.
@@ -16,6 +16,22 @@ Words used with a fixed meaning: **origin** is the node named in the BaseHeader 
 | S9.5 (recovery), S8.2, V7 | **Provisional.** Formats are fixed. The request timing is derived from code and has not been simulated. | none yet (step 5b) |
 
 Step 2 implements only what S9.4 lists from S9. The snapshot layout of S7.7 is final for step 2c.
+
+## Change log, version 3 to version 3.1
+
+Source: the implementer of step 1 (branch `feat/security-crypto-core`). His C++ code reproduces all eleven derived keys and the vectors V1 to V7 on every backend. He reported nine places with two possible readings. All nine are resolved with the reading he implemented. No wire byte and no vector changes.
+
+| # | Section | Resolution |
+|---|---|---|
+| 1 | S7.4 | A verified frame that carries the all-ones counter of its space is dropped. |
+| 2 | S7.4, S7.7 | The end-to-end window has its own epoch. Only a frame with a valid end-to-end tag moves it. A hop frame under K_net never touches it. |
+| 3 | S7.7 rule 3 | Sealing stays locked from capture until resume. A capture can be discarded explicitly, which unlocks sealing. |
+| 4 | S7.7 rule 4 | "Invalid" is defined: the epoch and the three limits of the snapshot must equal the stored record. |
+| 5 | S11.3 | `Load()` keeps its signature. Absent, corrupt and read failure all stop the node. A store may expose the reason. |
+| 6 | S7.2, S12.9 | Decode rules for the counter record are stated. Two record vectors are added. |
+| 7 | S7.3 | Volatile counters are allowed only when no store is configured. |
+| 8 | S1.3 | The portable backend is the library's own AES-128 block. RadioLib's AES is not used. |
+| 9 | S13 | File names follow `src/security/` as implemented. |
 
 ## Change log, version 2 to version 3
 
@@ -93,8 +109,10 @@ AES-CCM is not used. CCM cannot serve as the hop MIC, because the origin nonce r
 | Platform | AES block backend | Checked |
 |---|---|---|
 | ESP32, any Arduino or ESP-IDF core | `mbedtls_aes_crypt_ecb` (hardware AES, `CONFIG_MBEDTLS_HARDWARE_AES=y`) | sdkconfig of Arduino 2.0.14 and of the 3.3.x libs package |
-| Native tests, other MCUs | `RadioLibAES128::encryptECB` from RadioLib `src/utils/Cryptography.h`, one private instance | header read in RadioLib 7.1.0, see S14 |
+| Native tests, other MCUs, cross-check on ESP32 | the library's own AES-128 block encryption (`software_aes128.cpp`), encrypt direction only | FIPS 197 vector and cross-check against mbedTLS in step 1 |
 | Server and tools | Python `cryptography` (AES, CMAC, HMAC-SHA256) | used for the vectors in S12 |
+
+RadioLib's AES is not used. Its instance is a global shared with the LoRaWAN code, it can be compiled out, and its interface changes between releases. The library contains no AES-CCM code.
 
 ---
 
@@ -498,6 +516,16 @@ The application supplies a counter store (S11.3). It holds one record:
 
 40 bytes. `limit` is the first value that is not yet allowed. `ceiling` is the first value the node may never use (default: the all-ones value of the space). The ceiling of C_rec is fixed at 0xFFFFFFFF.
 
+Decoding. A record is valid only if all of the following hold. Any other blob is treated as corrupt (S7.3).
+
+1. The length is exactly 40 bytes, the magic is `"LMC1"` and the format version is 1.
+2. Bytes 6 and 7 are zero.
+3. The CRC matches.
+4. The transmit epoch is at most 254.
+5. For each of C_bcn, C_ctl and C_data: `ceiling` is at most the all-ones value of the space (0x00FFFFFF, 0xFFFFFFFF, 0x3FFFFFFF) and `limit ≤ ceiling`.
+
+The C_rec limit may hold any value. Encoding a record that breaks rule 4 or 5 is refused. Vectors are in S12.9.
+
 Rules:
 
 1. **Boot.** Load the record. Each counter starts at its `limit`. Boot itself writes nothing.
@@ -530,7 +558,7 @@ Steady state write rate: about one save per 48 beacons, plus one per 192 control
 
 ### S7.3 Missing or erased storage
 
-The library never creates the record on its own in production. In secured mode, if the store is empty or the record fails its CRC, `Start()` fails with `kCounterStoreError` and the node stays silent. The flashing tool writes the first record together with the keys. A build for tests or development may call `setAllowVolatileCounters(true)`, which starts all counters at 0 without a store.
+The library never creates the record on its own in production. In secured mode, if the store is empty or the record fails its CRC, `Start()` fails with `kCounterStoreError` and the node stays silent. The flashing tool writes the first record together with the keys. A build for tests or development may call `setAllowVolatileCounters(true)`, which starts all counters at 0. Volatile counters are used only when no counter store is configured. When a store is configured it is always authoritative: an empty or corrupt store stops the node even if volatile counters are allowed.
 
 Requirements on the application and the tool:
 
@@ -550,13 +578,16 @@ State per peer address, in RAM:
 | g_high | 4 | hop window G: highest accepted C_data of E = 0 frames, 0x3FFFFFFF = none |
 | g_bitmap | 4 | bit b set: value `g_high − b` accepted |
 | r_high, r_bitmap | 4 + 4 | hop window R: same for E = 1 DATA, DATA_RELIABLE and ACK that this node relayed |
+| e2e_epoch | 1 | epoch of the last frame of this peer whose end-to-end tag was valid, only for peers with a node key |
 | e2e_high, e2e_bitmap | 4 + 4 | end-to-end window: same for E = 1 frames whose tag was valid, only at the destination and only for peers with a node key |
 
-RAM per peer: 24 bytes (1 + 3 + 4 + 8 + 8), plus 8 bytes for each peer with a node key. With the 2-byte address, a table of 43 peers (35 nodes + 8) takes 1,118 bytes.
+RAM per peer: 24 bytes (1 + 3 + 4 + 8 + 8), plus 9 bytes for each peer with a node key. With the 2-byte address, a table of 43 peers (35 nodes + 8) takes 1,118 bytes.
 
 Rules, applied only after the MIC of the frame is valid:
 
-1. **Epoch.** A frame under an epoch older than the peer's recorded epoch is dropped. A frame under a newer epoch resets all fields of that peer to "none" and records the new epoch. A new epoch therefore also clears a hop window that a K_net holder pushed.
+0. **All-ones counter.** A frame whose counter equals the all-ones value of its space (0xFFFFFF for C_bcn, 0xFFFFFFFF for C_ctl, 0x3FFFFFFF for C_data) is dropped, even if its MIC is valid. No honest node sends that value (S7.1), and accepting it would set the field to "none" and reopen replay.
+1. **Epoch, hop state.** `epoch` belongs to the fields bcn_last, ctl_last and the windows G and R. A hop-layer frame (beacon, control, or a class D frame checked in window G or R) under an epoch older than `epoch` is dropped. Under a newer epoch it resets these fields to "none" and records the new epoch. A new epoch therefore also clears a hop window that a K_net holder pushed.
+1a. **Epoch, end-to-end state.** `e2e_epoch` belongs to the end-to-end window alone. It is compared and moved only at the destination, only by a frame whose end-to-end tag verified: older than `e2e_epoch` drops the frame, newer resets `e2e_high` and `e2e_bitmap` to "none" and records the new epoch. No frame that is authenticated under K_net keys only can change `e2e_epoch` or the end-to-end window. Rule 1 never touches them.
 2. **Beacon and control (strict).** Accept iff the field is "none" or `c > last`. Then `last = c`. These frames travel one hop, so they arrive in order.
 3. **Data (window of 32).** Let `d = c − high`.
    - Field is "none": accept, `high = c`, bitmap = 0xFFFFFFFF.
@@ -626,8 +657,8 @@ Rules:
 
 1. Bitmaps are not stored. On resume every bitmap is all ones, so only values above `high` are accepted.
 2. On resume the counters and the ramp continue where they stopped. Nothing is wasted.
-3. After the security state has been captured into a snapshot, the codec refuses to seal (`kInvalidState`) until the node resumes or the snapshot is taken again. A frame sent between capture and sleep would otherwise reuse a counter after wake-up.
-4. The snapshot is consumed once (existing behaviour: `Start()` erases it). If it is absent or invalid, the node falls back to S7.2 rule 1, which is always safe because the stored limits are never below a used value.
+3. After the security state has been captured into a snapshot, the codec refuses to seal (`kInvalidState`) until the node resumes from that snapshot. If the sleep is called off, the caller discards the capture explicitly (`DiscardCapture()`), which unlocks sealing. The discarded snapshot MUST NOT be used afterwards. A later sleep takes a new capture. A frame sent between capture and sleep would otherwise reuse a counter after wake-up.
+4. The snapshot is consumed once (existing behaviour: `Start()` erases it). On resume the library loads the stored counter record (one store read). The security section is valid only if its transmit epoch and its three saved limits equal those of the stored record and each next value is at most its limit. A stale snapshot, taken before a later save, fails this test and could otherwise repeat counters. If the section is absent or invalid, the node falls back to S7.2 rule 1, which is always safe because the stored limits are never below a used value. Receive state is then empty, as after a cold boot.
 5. Keys are never written to the snapshot. The provider supplies them again.
 6. C_rec is not in the snapshot. Its block size is 1, so the store always holds the exact value.
 
@@ -1012,6 +1043,8 @@ class ICounterStore {
 
 The library ships `MemoryCounterStore` (tests) and `NvsCounterStore` (ESP32, 40-byte blob of S7.2 under one NVS key). `EncodeCounterRecord` and `DecodeCounterRecord` are public so the flashing tool and other stores use the same bytes.
 
+`Load()` returns `std::nullopt` for an absent record, a corrupt record and a failed read alike. The library treats all three the same way: the node does not start (S7.3). A store MAY expose the reason for diagnostics. `NvsCounterStore` has a `LoadStatus` query (`kNotLoaded`, `kOk`, `kAbsent`, `kCorrupt`, `kReadFailed`). The library never branches on it.
+
 ### S11.4 Maximum payload
 
 ```cpp
@@ -1297,6 +1330,32 @@ KEY_RELAY body, gateway to 0x0A02 = 01 030A 03 DAC4A8CE528B55C9F0BB2FEB5697BD6B 
 
 The two KEY_RELAY frames are ordinary class D frames with E = 1 under the keys of 0x0A02. They follow V6 in construction and are not worked out here.
 
+### S12.9 V8: counter records
+
+Verified with Python `struct` and `zlib.crc32` and by the C++ test `counter_record_codec_test.cpp`.
+
+V8a, transmit epoch 3, limits C_bcn 0x123, C_ctl 0x457, C_data 0x29, C_rec 7, default ceilings:
+
+```
+4C4D4331 01 03 0000
+23010000 FFFFFF00
+57040000 FFFFFFFF
+29000000 FFFFFF3F
+07000000
+D3F06313
+```
+
+V8b, the record of a freshly provisioned node at epoch 0 (all limits 0, default ceilings):
+
+```
+4C4D4331 01 00 0000
+00000000 FFFFFF00
+00000000 FFFFFFFF
+00000000 FFFFFF3F
+00000000
+F40FFB9F
+```
+
 ---
 
 ## S13. Implementation steps
@@ -1305,9 +1364,9 @@ Each step is one pull request against `release/2.0.0`. New code lives in `src/se
 
 | Step | Content | Files | Tests | Compatibility |
 |---|---|---|---|---|
-| 1a | AES block backends, CMAC, CTR, KDF, constant-time compare | new `src/security/aes128.hpp`, `aes128_mbedtls.cpp`, `aes128_portable.cpp`, `cmac.hpp/.cpp`, `ctr.hpp`, `kdf.hpp`, `src/CMakeLists.txt`, `library.json` | FIPS 197 block vector, RFC 4493 examples 1 to 4, SP 800-38A CTR vector, S12.1 keys. One ESP32 build per pinned core (6.5.0 and 8.0.0) | no behaviour change |
-| 1b | Frame counters and counter store | new `frame_counter.hpp/.cpp`, `i_counter_store.hpp`, `memory_counter_store.hpp`, `nvs_counter_store.hpp/.cpp`, `counter_record_codec.cpp` | block ramp 1, 2, 4 up to B, boot cost `3n + 1`, no write on a boot without frames, failed save, ceiling, exhaustion, empty store refused, record CRC, epoch switch keeps ceiling and C_rec | no behaviour change |
-| 2a | Type bits, codec for classes B, C1, C2, D with E = 0, receive state, join nonce | `message_type.hpp`, `base_header.cpp`, `base_message.hpp/.cpp` (SecurityContext), new `frame_codec.hpp/.cpp`, `replay_state.hpp/.cpp`, `i_key_provider.hpp`, `security_config.hpp`, the three `CreateForwarded` functions | vectors V1, V2, V4, V5a, V5b, V5c byte for byte, every bit of a frame flipped once must fail, beacon with a non-zero byte 11 refused, window rules with shifts of 31, 32 and 33, overheard rule, epoch selection, `Seal` refuses a forwarded `kPlain` body, H flag dropped | codec is not wired in, no behaviour change |
+| 1a (done) | AES block backends, CMAC, CTR, KDF, constant-time compare | `src/security/i_crypto_backend.hpp`, `crypto_backend.hpp`, `mbedtls_aes128.hpp`, `software_aes128.hpp/.cpp`, `aes_modes.hpp/.cpp` (CMAC, CTR, compare), `kdf.hpp/.cpp`. Tests in `test/test_security/`: `crypto_backend_test.cpp`, `aes_modes_test.cpp`, `crypto_cross_check_test.cpp`, `spec_vectors_test.cpp` | FIPS 197 block vector, RFC 4493 examples 1 to 4, SP 800-38A CTR vector, the derived keys of S2.2 with the values of S12.1, vectors V1 to V7. One ESP32 build per pinned core (6.5.0 and 8.0.0) | no behaviour change |
+| 1b (done) | Frame counters, counter store, receive windows | `src/security/frame_counter.hpp/.cpp`, `i_counter_store.hpp`, `memory_counter_store.hpp`, `nvs_counter_store.hpp/.cpp`, `counter_record_codec.hpp/.cpp`, `replay_state.hpp`. Tests: `frame_counter_test.cpp`, `counter_record_codec_test.cpp`, `replay_state_test.cpp` | block ramp 1, 2, 4 up to B, boot cost `3n + 1`, no write on a boot without frames, failed save, ceiling, exhaustion, empty store refused also in volatile mode, record vectors V8a and V8b, decode rules of S7.2, epoch switch keeps ceiling and C_rec, all-ones counter dropped, end-to-end epoch untouched by hop frames, window rules with shifts of 31, 32 and 33 | no behaviour change |
+| 2a | Type bits, codec for classes B, C1, C2, D with E = 0, receive state, join nonce | `message_type.hpp`, `base_header.cpp`, `base_message.hpp/.cpp` (SecurityContext), new `frame_codec.hpp/.cpp`, `i_key_provider.hpp`, `security_config.hpp`, the three `CreateForwarded` functions | vectors V1, V2, V4, V5a, V5b, V5c byte for byte, every bit of a frame flipped once must fail, beacon with a non-zero byte 11 refused, window rules with shifts of 31, 32 and 33, overheard rule, epoch selection, `Seal` refuses a forwarded `kPlain` body, H flag dropped | codec is not wired in, no behaviour change |
 | 2b | Wiring, sizes, timing, API | `hardware_manager.cpp`, `radiolib_radio.cpp`, `mock_radio.cpp`, `radio_event.hpp`, `lora_mesh_protocol.cpp`, `network_service.cpp` (sites of S10.7, beacon ToA fix at 1550, join nonce table, `OpenBody` at delivery), `reliable_messaging.cpp`, `protocol_configuration.hpp`, `loramesher.hpp/.cpp`, `loramesher_error_codes.hpp`, `PROTOCOL_SPEC.md` | full mesh tests in secured mode, multi-hop sync test with 3 hops checking resync error under 25 ms, beacon size assertion, MTU rejection, routing fragments of 8 entries, replayed JOIN_RESPONSE rejected, response to the previous nonce accepted, first reservation saved at state entry, flood relay sends the received ciphertext bytes, saves only outside active slots, `kAuthFailureBurst`, plain node and secured node ignore each other, 2.0.0 golden frames unchanged in `kDisabled` | `kDisabled` is byte compatible with 2.0.0. Turning on `kSecured` is the flag day for a deployment |
 | 2c | Resume snapshot section | `resume_snapshot.hpp`, `resume_snapshot_codec.cpp` (version bump), `lora_mesh_protocol.cpp` (seal lock after capture) | resume keeps counters, ramp and all three windows, seal refused after capture, power loss falls back to the store, snapshot size at 35 peers | an old snapshot is rejected by its version and the node starts cold once |
 | 3 | End-to-end layer, E = 1 | `frame_codec.cpp`, `replay_state.cpp`, `network_service.cpp` (send path asks `GetNodeKey`), `reliable_messaging.cpp` | vector V3 on both hops, relay cannot open, downgrade rule, ACK of a reliable message end to end, relay drops a replayed E = 1 DATA frame in window R, destination ignores window R, **finding 1 regression: a forged broadcast with source = gateway and the maximal counter does not block a later E = 1 frame of the gateway**, `SaveRxFloor` stride and interval | relays of step 2 forward E = 1 frames unchanged. Both ends of a pair must run step 3 and must be given the node key together |
@@ -1353,9 +1412,9 @@ Each step is one pull request against `release/2.0.0`. New code lives in `src/se
 
 ### S14.2 Not verified
 
-1. No vector is unverified any more. The C++ code has still to reproduce them (steps 1 and 2).
+1. Verified since version 3: the C++ code of step 1 reproduces all eleven derived keys and the vectors V1 to V7 on the mbedTLS and the software backend, and the record vectors V8a and V8b. What remains for step 2 is to reproduce the frame vectors through the real codec.
 2. The recovery timing of S9.5 is derived from `slot_scheduler.cpp` and from the subslot model. It was not simulated or run on a board. Open in particular: whether `depth` is at least 1 in a network of one node, whether a member with a deep-sleep policy keeps its DISCOVERY_RX slots, how often a member turns a discovery slot into DISCOVERY_TX, and the tolerance of the period estimate against clock drift. This also decides S8.2.
-3. `RadioLibAES128::encryptECB` was read only as a declaration in RadioLib 7.1.0 (the copy in `.pio/libdeps`). Its padding behaviour for one 16-byte block, its thread safety and its presence under that name in 7.7.1 are unchecked. If it does not fit, step 1a writes a small portable AES.
+3. Closed. RadioLib's AES is no longer used (S1.3).
 4. `CONFIG_MBEDTLS_CMAC_C` is absent in Arduino 2.0.14 and present in the 3.3.x libs package found on this machine. The exact core that `espressif32@8.0.0` installs for the library's own `esp32` environment was not opened. The design does not depend on it.
 5. CPU time of sealing and opening is an estimate from block counts (4 AES blocks for a beacon, about 16 for a relayed 115-byte data frame). Step 6 measures it.
 6. The subslot band table of S10.6 is a model written from the code. It reproduces the band named in the decisions file. The 13 to 17 byte and 49 to 53 byte bands were not confirmed on a board or in a test. The reviewer did not verify the model either.
