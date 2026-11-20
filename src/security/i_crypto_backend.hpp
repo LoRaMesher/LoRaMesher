@@ -1,0 +1,118 @@
+/**
+ * @file i_crypto_backend.hpp
+ * @brief Interface of the AES-128 primitives used to protect frames
+ */
+
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
+#include "utils/compat/span.hpp"
+
+namespace loramesher {
+namespace security {
+
+/// Size of an AES block and of an AES-128 key, in bytes
+constexpr size_t kAesBlockSize = 16;
+/// Shortest truncated CMAC tag, in bytes
+constexpr size_t kCmacMinTagSize = 3;
+/// Full CMAC tag length, in bytes
+constexpr size_t kCmacMaxTagSize = kAesBlockSize;
+
+using AesBlock = std::array<uint8_t, kAesBlockSize>;
+using Aes128Key = std::array<uint8_t, kAesBlockSize>;
+
+/**
+ * @brief Outcome of a crypto primitive
+ *
+ * A plain enum keeps the failure path free of heap allocation. A frame with
+ * a bad tag is an expected event on a radio link.
+ */
+enum class CryptoStatus : uint8_t {
+    kOk = 0,           ///< Operation completed
+    kInvalidArgument,  ///< A length is outside what the primitive accepts
+    kAuthFailed,       ///< The tag does not match, nothing was released
+    kBackendError,     ///< The AES implementation reported a failure
+};
+
+/**
+ * @brief AES-128 block, CTR and CMAC behind one interface
+ *
+ * Every call takes the key, so one backend serves any number of keys and
+ * holds no key material between calls. Calls work on caller buffers and do
+ * not allocate. A backend instance has no mutable state, so concurrent calls
+ * from several tasks are safe.
+ *
+ * The caller owns counter block uniqueness. A counter block must never be
+ * used twice with the same key.
+ */
+class ICryptoBackend {
+   public:
+    virtual ~ICryptoBackend() = default;
+
+    /**
+     * @brief Compute the AES-128-CMAC of a message (RFC 4493)
+     *
+     * @param key AES-128 key
+     * @param message Message to authenticate, may be empty
+     * @param mac Receives the leading bytes of the MAC. Its size selects the
+     *        tag length, from kCmacMinTagSize to kCmacMaxTagSize
+     * @return kOk, kInvalidArgument with mac left untouched, or
+     *         kBackendError with mac zeroed
+     */
+    virtual CryptoStatus Cmac(const Aes128Key& key,
+                              std::span<const uint8_t> message,
+                              std::span<uint8_t> mac) const = 0;
+
+    /**
+     * @brief Check a full or truncated AES-128-CMAC tag
+     *
+     * The comparison runs in constant time.
+     *
+     * @param key AES-128 key
+     * @param message Message the tag was computed over
+     * @param tag Received tag of kCmacMinTagSize to kCmacMaxTagSize bytes,
+     *        compared with the leading bytes of the MAC
+     * @return kOk when the tag matches, kAuthFailed when it does not, or
+     *         kInvalidArgument or kBackendError
+     */
+    virtual CryptoStatus CmacVerify(const Aes128Key& key,
+                                    std::span<const uint8_t> message,
+                                    std::span<const uint8_t> tag) const = 0;
+
+    /**
+     * @brief Encrypt or decrypt data in place with AES-128-CTR
+     *
+     * Implements NIST SP 800-38A counter mode. The counter block is treated
+     * as one 128-bit big-endian number and grows by one for every 16 bytes
+     * of data. Encryption and decryption are the same operation.
+     *
+     * CTR gives no authenticity. The caller pairs it with a MAC and makes
+     * sure that no counter block is ever used twice with the same key.
+     *
+     * @param key AES-128 key
+     * @param initial_counter Counter block of the first 16 bytes of data
+     * @param data Data to transform in place, of any length
+     * @return kOk, or kBackendError with data zeroed
+     */
+    virtual CryptoStatus CtrCrypt(const Aes128Key& key,
+                                  const AesBlock& initial_counter,
+                                  std::span<uint8_t> data) const = 0;
+
+    /**
+     * @brief Encrypt one block with AES-128
+     *
+     * @param key AES-128 key
+     * @param input Block to encrypt
+     * @param output Receives the encrypted block, may be the same as input
+     * @return kOk, or kBackendError with output zeroed
+     */
+    virtual CryptoStatus EncryptBlock(const Aes128Key& key,
+                                      const AesBlock& input,
+                                      AesBlock& output) const = 0;
+};
+
+}  // namespace security
+}  // namespace loramesher

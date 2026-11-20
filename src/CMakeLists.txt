@@ -18,6 +18,8 @@ if(ESP_PLATFORM)
         REQUIRES 
             driver
             esp_timer
+            mbedtls
+            nvs_flash
     )
     
     # Add Arduino define for ESP-IDF when using Arduino as framework
