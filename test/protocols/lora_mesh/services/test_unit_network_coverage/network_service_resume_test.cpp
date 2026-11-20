@@ -13,6 +13,8 @@
 #include "protocols/lora_mesh/services/message_queue_service.hpp"
 #include "protocols/lora_mesh/services/network_service.hpp"
 #include "protocols/lora_mesh/services/superframe_service.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
+#include "types/messages/loramesher/data_message.hpp"
 #include "types/messages/loramesher/join_request_message.hpp"
 #include "types/messages/loramesher/join_response_message.hpp"
 #include "types/messages/loramesher/sync_beacon_message.hpp"
@@ -585,14 +587,90 @@ TEST_F(NetworkServiceResumeTest, SuperframeWithoutItsBeaconIsAMiss) {
     EXPECT_EQ(member.service->GetMissedSyncBeaconCount(), 2u);
 }
 
-TEST_F(NetworkServiceResumeTest, ReliableMessageInFlightBlocksDeepSleep) {
+TEST_F(NetworkServiceResumeTest, OpenReliableMessageSurvivesTheSleep) {
     Node& member = MakeSettledMember();
+    std::vector<reliability::DeliveryResult> outcomes;
+    const auto record = [&](const reliability::DeliveryResult& result) {
+        outcomes.push_back(result);
+    };
+    member.service->SetDeliveryCallback(record);
     ASSERT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
 
+    const std::vector<uint8_t> payload = {1, 2, 3};
+    const uint32_t sent_at_ms = GetRTOS().getTickCount();
+    const auto id = member.service->SendReliable(kNeighbour, payload, 2, 0);
+    ASSERT_NE(id.source, 0u);
+    EXPECT_EQ(member.service->GetDeepSleepBlocker(), nullptr);
+
+    auto snapshot = member.service->CaptureResumeSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+    FillTiming(*snapshot, *member.superframe);
+    ASSERT_EQ(snapshot->pending_reliable.size(), 1u);
+    EXPECT_EQ(snapshot->pending_reliable[0].destination, kNeighbour);
+    EXPECT_EQ(snapshot->pending_reliable[0].sequence, id.seq);
+    EXPECT_EQ(snapshot->pending_reliable[0].payload, payload);
+    EXPECT_EQ(snapshot->pending_reliable[0].retries_left, 2u);
+    const auto blob = storage::ResumeSnapshotCodec::Encode(*snapshot);
+    ASSERT_TRUE(blob.has_value());
+    const auto decoded = storage::ResumeSnapshotCodec::Decode(*blob);
+    ASSERT_TRUE(decoded.has_value());
+
+    // Less than the timeout toward the neighbour passes
+    mock_->advanceTime(2000);
+    Node& resumed = MakeNode(kMember);
+    resumed.service->SetDeliveryCallback(record);
+    ASSERT_TRUE(resumed.service->ApplyResumeSnapshot(*decoded));
+    EXPECT_EQ(resumed.service->GetReliablePendingCount(), 0u);
+    resumed.service->ResumeOpenReliableMessages(*decoded);
+    EXPECT_EQ(resumed.service->GetReliablePendingCount(), 1u);
+    resumed.service->ProcessReliableTimers();
+    EXPECT_FALSE(resumed.queue->HasAnyMessages());
+    EXPECT_TRUE(outcomes.empty());
+
+    // The acknowledgement of the attempt sent before the sleep
+    AckPayload ack;
+    ack.acked_seq = id.seq;
+    ack.echo_timestamp = sent_at_ms;
+    const auto bytes = ack.Serialize();
+    auto message =
+        DataMessage::Create(kMember, kNeighbour, kMember,
+                            std::vector<uint8_t>(bytes.begin(), bytes.end()), 5,
+                            0, MessageType::ACK);
+    ASSERT_TRUE(message.has_value());
+    ASSERT_TRUE(resumed.service->ProcessReceivedMessage(
+        message->ToBaseMessage(), GetRTOS().getTickCount()));
+
+    ASSERT_EQ(outcomes.size(), 1u);
+    EXPECT_EQ(outcomes[0].outcome, reliability::Outcome::Delivered);
+    EXPECT_EQ(outcomes[0].id, id);
+    EXPECT_EQ(outcomes[0].by, kNeighbour);
+    EXPECT_EQ(outcomes[0].rtt_ms, 2000u);
+    EXPECT_EQ(resumed.service->GetReliablePendingCount(), 0u);
+    // The round trip also updates the estimate toward the destination
+    auto route = resumed.service->GetRoutingTable()->FindNode(kNeighbour);
+    ASSERT_TRUE(route.has_value());
+    EXPECT_NE(route->path_rtt.srtt_ms, 3000u);
+}
+
+TEST_F(NetworkServiceResumeTest, OpenReliableMessageOfAnAbandonedSnapshot) {
+    Node& member = MakeSettledMember();
     const auto id = member.service->SendReliable(kNeighbour, {1, 2, 3}, 2, 0);
     ASSERT_NE(id.source, 0u);
-    EXPECT_STREQ(member.service->GetDeepSleepBlocker(),
-                 "reliable messages in flight");
+    auto snapshot = member.service->CaptureResumeSnapshot();
+    ASSERT_TRUE(snapshot.has_value());
+
+    // A node that starts without resuming ends the message
+    Node& restarted = MakeNode(kMember);
+    std::vector<reliability::DeliveryResult> outcomes;
+    restarted.service->SetDeliveryCallback(
+        [&](const reliability::DeliveryResult& result) {
+            outcomes.push_back(result);
+        });
+    restarted.service->AbandonOpenReliableMessages(*snapshot);
+    ASSERT_EQ(outcomes.size(), 1u);
+    EXPECT_EQ(outcomes[0].outcome, reliability::Outcome::Failed);
+    EXPECT_EQ(outcomes[0].id, id);
+    EXPECT_EQ(restarted.service->GetReliablePendingCount(), 0u);
 }
 
 TEST_F(NetworkServiceResumeTest, RouteOutlivesOneMissedSuperframe) {

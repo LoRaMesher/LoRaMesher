@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "protocols/lora_mesh/services/reliable_messaging.hpp"
+#include "types/messages/loramesher/ack_payload.hpp"
 
 namespace loramesher {
 namespace protocols {
@@ -256,17 +257,154 @@ TEST_F(ReliableMessagingTest, InvalidResumeStateIsRefused) {
     EXPECT_FALSE(messaging_->ApplyResumeState(snapshot));
 }
 
-TEST_F(ReliableMessagingTest, IdleOnlyWithoutTrackedMessages) {
-    EXPECT_TRUE(messaging_->IsIdle());
-    messaging_->SendReliable(kPeer, payload_, 0, 0);
-    EXPECT_FALSE(messaging_->IsIdle());
-    messaging_->Reset();
-    EXPECT_TRUE(messaging_->IsIdle());
+TEST_F(ReliableMessagingTest, OpenMessagesAreSavedWithTheirWindows) {
+    const auto unicast = messaging_->SendReliable(kPeer, payload_, 2, 0);
+    now_ms_ += 100;
+    const auto group = messaging_->SendGroupReliable(kGroup, payload_, 1, 5000);
+    ASSERT_NE(unicast.source, 0u);
+    ASSERT_NE(group.source, 0u);
 
-    messaging_->SendGroupReliable(kGroup, payload_, 0, 5000);
-    EXPECT_FALSE(messaging_->IsIdle());
-    RunFor(20 * kSuperframeMs);
-    EXPECT_TRUE(messaging_->IsIdle());
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+    ASSERT_EQ(snapshot.pending_reliable.size(), 2u);
+    const auto& saved_unicast = snapshot.pending_reliable[0];
+    EXPECT_EQ(saved_unicast.destination, kPeer);
+    EXPECT_EQ(saved_unicast.sequence, unicast.seq);
+    EXPECT_EQ(saved_unicast.payload, payload_);
+    EXPECT_EQ(saved_unicast.retries_left, 2u);
+    EXPECT_EQ(saved_unicast.window_deadline_ms, 0u);
+    const auto& saved_group = snapshot.pending_reliable[1];
+    EXPECT_EQ(saved_group.destination, kGroup);
+    EXPECT_EQ(saved_group.sequence, group.seq);
+    EXPECT_EQ(saved_group.window_deadline_ms, now_ms_ + 5000);
+}
+
+TEST_F(ReliableMessagingTest, ResumedNodeCompletesItsOpenMessages) {
+    const auto unicast = messaging_->SendReliable(kPeer, payload_, 2, 3000);
+    const auto group = messaging_->SendGroupReliable(kGroup, payload_, 0, 5000);
+    const uint32_t sent_at_ms = now_ms_;
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+    const int enqueued_before = enqueued_;
+
+    // The node resets and its clock continues
+    now_ms_ += 2000;
+    outcomes_.clear();
+    messaging_ =
+        std::make_unique<ReliableMessaging>(message_cache_, MakeHost());
+    messaging_->SetDeliveryCallback(
+        [this](const reliability::DeliveryResult& result) {
+            outcomes_.push_back(result);
+        });
+    ASSERT_TRUE(messaging_->ApplyResumeState(snapshot));
+    messaging_->ResumeOpenMessages(snapshot);
+    EXPECT_EQ(messaging_->GetReliablePendingCount(), 2u);
+    messaging_->ProcessReliableTimers();
+    EXPECT_EQ(enqueued_, enqueued_before);
+    EXPECT_TRUE(outcomes_.empty());
+
+    // The acknowledgements of both messages arrive after the reset
+    for (const bool was_group : {false, true}) {
+        AckPayload ack;
+        ack.acked_seq = was_group ? group.seq : unicast.seq;
+        ack.flags = was_group ? AckPayload::kFlagWasGroup : 0;
+        ack.echo_timestamp = sent_at_ms;
+        const auto bytes = ack.Serialize();
+        auto message = DataMessage::Create(
+            kLocal, kPeer, kLocal,
+            std::vector<uint8_t>(bytes.begin(), bytes.end()), 5, 0,
+            MessageType::ACK);
+        ASSERT_TRUE(message.has_value());
+        ASSERT_TRUE(messaging_->ProcessAckMessage(message->ToBaseMessage()));
+    }
+    ASSERT_EQ(outcomes_.size(), 2u);
+    for (const auto& outcome : outcomes_) {
+        EXPECT_EQ(outcome.outcome, reliability::Outcome::Delivered);
+        EXPECT_EQ(outcome.by, kPeer);
+        EXPECT_EQ(outcome.rtt_ms, 2000u);
+    }
+    EXPECT_EQ(outcomes_[0].id, unicast);
+    EXPECT_EQ(outcomes_[1].id, group);
+
+    // The group window closes at the deadline it had before the reset
+    outcomes_.clear();
+    RunFor(2 * kSuperframeMs);
+    EXPECT_TRUE(outcomes_.empty());
+    RunFor(kSuperframeMs);
+    ASSERT_EQ(outcomes_.size(), 1u);
+    EXPECT_EQ(outcomes_[0].outcome, reliability::Outcome::GroupWindowClosed);
+    EXPECT_EQ(outcomes_[0].ack_count, 1u);
+    EXPECT_EQ(messaging_->GetReliablePendingCount(), 0u);
+
+    // The window is free again
+    EXPECT_NE(messaging_->SendGroupReliable(kGroup, payload_, 0, 5000).source,
+              0u);
+}
+
+TEST_F(ReliableMessagingTest, ResumedNodeRetransmitsWhenDue) {
+    ASSERT_NE(messaging_->SendReliable(kPeer, payload_, 1, 3000).source, 0u);
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+
+    messaging_ =
+        std::make_unique<ReliableMessaging>(message_cache_, MakeHost());
+    messaging_->SetDeliveryCallback(
+        [this](const reliability::DeliveryResult& result) {
+            outcomes_.push_back(result);
+        });
+    ASSERT_TRUE(messaging_->ApplyResumeState(snapshot));
+    messaging_->ResumeOpenMessages(snapshot);
+
+    RunFor(2 * kSuperframeMs);
+    EXPECT_EQ(enqueued_, 1);
+    RunFor(kSuperframeMs);
+    EXPECT_EQ(enqueued_, 2);
+    EXPECT_TRUE(outcomes_.empty());
+    RunFor(3 * kSuperframeMs);
+    EXPECT_EQ(enqueued_, 2);
+    ASSERT_EQ(outcomes_.size(), 1u);
+    EXPECT_EQ(outcomes_[0].outcome, reliability::Outcome::Failed);
+}
+
+TEST_F(ReliableMessagingTest, AbandonedOpenMessagesAreReportedOnce) {
+    const auto unicast = messaging_->SendReliable(kPeer, payload_, 2, 0);
+    const auto group = messaging_->SendGroupReliable(kGroup, payload_, 0, 5000);
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+    snapshot.pending_reliable[1].responders = {kPeer, 0x0003};
+
+    outcomes_.clear();
+    messaging_ =
+        std::make_unique<ReliableMessaging>(message_cache_, MakeHost());
+    messaging_->SetDeliveryCallback(
+        [this](const reliability::DeliveryResult& result) {
+            outcomes_.push_back(result);
+        });
+    messaging_->AbandonOpenMessages(snapshot);
+
+    ASSERT_EQ(outcomes_.size(), 2u);
+    EXPECT_EQ(outcomes_[0].id, unicast);
+    EXPECT_EQ(outcomes_[0].outcome, reliability::Outcome::Failed);
+    EXPECT_EQ(outcomes_[1].id, group);
+    EXPECT_EQ(outcomes_[1].outcome, reliability::Outcome::GroupWindowClosed);
+    EXPECT_EQ(outcomes_[1].ack_count, 2u);
+    EXPECT_EQ(messaging_->GetReliablePendingCount(), 0u);
+    RunFor(10 * kSuperframeMs);
+    EXPECT_EQ(outcomes_.size(), 2u);
+}
+
+TEST_F(ReliableMessagingTest, OpenMessageThatCannotBeTrackedIsReported) {
+    const auto first = messaging_->SendReliable(kPeer, payload_, 2, 0);
+    ASSERT_NE(first.source, 0u);
+    storage::ResumeSnapshot snapshot;
+    messaging_->CaptureResumeState(snapshot);
+    outcomes_.clear();
+
+    // The message is still tracked: restoring it again reports the copy
+    messaging_->ResumeOpenMessages(snapshot);
+    ASSERT_EQ(outcomes_.size(), 1u);
+    EXPECT_EQ(outcomes_[0].outcome, reliability::Outcome::Failed);
+    EXPECT_EQ(messaging_->GetReliablePendingCount(), 1u);
 }
 
 }  // namespace test

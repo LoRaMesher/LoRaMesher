@@ -341,8 +341,15 @@ mesher->Start();  // after a deep sleep: resumes the membership
 | `clock_drift_ppm` | 10000 | Worst-case error of the RTC sleep clock before it is calibrated (light sleep uses it too) |
 | `calibrated_drift_ppm` | 3000 | Worst-case error once the node has calibrated its sleep clock |
 
-- Only members deep-sleep, and only with nothing queued or in flight; the network manager stays
-  awake or light-sleeps.
+- Only members deep-sleep, and only with an empty TX queue. The network manager stays awake or
+  light-sleeps.
+- A reliable message that waits for its acknowledgement, or an open group acknowledgement window,
+  does not keep the node awake. It is saved with the state (29 bytes plus the payload) and
+  continues after the wake-up: the acknowledgement is matched, a retransmission goes out when it
+  is due, and the delivery callback fires once. The application restarts with the node, so call
+  `SetDeliveryCallback()` before `Start()` and keep any `MessageId` you need across the sleep
+  (for example in `RTC_DATA_ATTR` memory). If the node wakes too late to resume, `Start()` reports
+  each open message as `Failed`.
 - The prepare-sleep callback is asked for `PowerState::DEEP_SLEEP` first; a veto lets the node
   light-sleep instead. A deep sleep ends in a reboot (`setup()` runs again), never in the wake-up
   callback.

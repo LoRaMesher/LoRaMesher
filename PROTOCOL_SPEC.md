@@ -2096,15 +2096,17 @@ before. It deep-sleeps for `T − M` when `T − M ≥ min_sleep_ms` and:
   start belongs to the superframe that starts: a schedule slightly behind the network's hears
   each beacon just before its own start;
 - its TX queue is empty;
-- no reliable message and no group acknowledgement window is open;
 - no sleep hold applies (Section 5.8.3).
+
+A reliable message that waits for its acknowledgement and an open group acknowledgement window do
+not keep the node awake. They are saved in the snapshot and continue after the wake-up (below).
 
 It encodes a resume snapshot, asks the `PrepareSleepCallback` with `requested_state = DEEP_SLEEP`
 (after a veto it may light-sleep instead), saves the snapshot and arms the wake-up timer for
 `T − M` scaled by the learned clock error. If the application queued a message meanwhile, it erases
 the snapshot and stays up.
 
-**Resume snapshot.** Little-endian, magic `"LMR1"`, format version 3, protected by a CRC-32, and
+**Resume snapshot.** Little-endian, magic `"LMR1"`, format version 4, protected by a CRC-32, and
 embedding the warm-restart snapshot (Section 6.5.1):
 
 | Part | Size (bytes) |
@@ -2119,11 +2121,19 @@ embedding the warm-restart snapshot (Section 6.5.1):
 | Reliable unicast sequence streams: count (1); destination (2), next sequence (1) | 1 + 3 per stream |
 | Delivered reliable messages: count (1); source (2), kind (1), highest sequence (1), bitmap (4), last send timestamp (4) | 1 + 12 per stream |
 | Duplicate cache: count (1); source (2), sequence (1), oldest first | 1 + 3 per entry |
+| Open reliable messages: count (1). Per message: destination (2), sequence (1), flags (1), retries left, retries allowed, attempts not queued in a row and their limit (1 each), first timeout, current timeout, timeout bound, requeue delay and next deadline (4 each), payload length (1), payload. A group message adds its window deadline (4), responder count (1) and responders (2 each) | 1 + 29 + payload per message, plus 5 + 2 per responder for a group message |
 | CRC-32 of all previous bytes | 4 |
 
+Flag bit 0 of an open reliable message is exponential backoff, bit 1 an attempt that could not be
+queued and waits to be repeated, bit 2 that this attempt is a retransmission.
+
 A member with a few neighbours saves about 300 bytes; 50 direct neighbours with their statistics
-fit in the 4 KB `RtcStateStore`. A snapshot that is truncated, fails the CRC, has another magic or
-version, or is inconsistent is rejected and the node starts cold.
+fit in the 4 KB `RtcStateStore`. An open reliable message with a 20-byte payload adds 49 bytes.
+Eight unicast messages of 246 bytes, the most a node can have open, add 2 200 bytes. A group
+window with all 254 responders adds up to 788 bytes. When the store refuses a snapshot because it
+is too large, the node does not deep-sleep in that SLEEP run and keeps its state. A snapshot that
+is truncated, fails the CRC, has another magic or version, or is inconsistent is rejected and the
+node starts cold.
 
 **Waking.** `Start()` reads the store once. From the persistent clock (`esp_rtc_get_time_us()` on
 ESP32) it takes the time slept, corrected by the learned clock error. If the node wakes at most
@@ -2134,9 +2144,24 @@ one superframe after its planned wake deadline, it:
    delivered-message windows, the duplicate cache and the slot table as it was (a pending rebuild
    runs at the next sync beacon);
 3. moves the saved superframe start forward by whole superframes to the present and resumes the
-   schedule at the next slot boundary, in NORMAL_OPERATION.
+   schedule at the next slot boundary, in NORMAL_OPERATION;
+4. tracks the open reliable messages again, each with its retry budget, timeout, deadline and
+   responders. It transmits nothing for them at this point.
 
-Otherwise it applies the embedded warm-restart snapshot and rejoins (Section 6.5.2).
+Otherwise it applies the embedded warm-restart snapshot and rejoins (Section 6.5.2). It then
+reports each open reliable message as failed and each open group window as closed with the
+responders it had. A node that starts cold from a rejected snapshot reports nothing.
+
+**Reliable messages across a sleep.** The deadlines of an open message are protocol clock values,
+and the protocol clock continues across the sleep, so they keep their meaning. An acknowledgement
+arrives in one of the node's RX slots, for which the node is awake, and is matched by destination
+and sequence as usual. Its round-trip time is taken on the continued clock and includes the error
+the sleep clock made, at most the sleep-clock allowance of the sleeps in between. A retransmission
+that came due during a sleep is queued when the node resumes and goes out in its next TX data
+slot. This is the slot it would have used awake, because the node only deep-sleeps where it has no
+TX slot before its next beacon. The timeout of that retransmission runs from the moment it was
+queued. A message with no retries left that came due during a sleep fails when the node resumes,
+and a group window that came due closes then.
 
 **Until the first beacon** the resumed schedule is only as accurate as the sleep clock. The node
 keeps its radio receiving in every slot, SLEEP slots included, and transmits nothing; once its

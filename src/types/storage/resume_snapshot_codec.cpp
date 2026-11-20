@@ -35,6 +35,12 @@ constexpr size_t kPrefixSize = 6;
 constexpr size_t kStateSize = 30 + 31 + 2 + 2 + 4;
 constexpr uint8_t kFlagRebuildPending = 0x01;
 
+constexpr uint8_t kFlagBackoff = 0x01;
+constexpr uint8_t kFlagRequeue = 0x02;
+constexpr uint8_t kFlagRequeueIsRetry = 0x04;
+constexpr uint8_t kKnownPendingFlags =
+    kFlagBackoff | kFlagRequeue | kFlagRequeueIsRetry;
+
 using types::protocols::lora_mesh::SlotAllocation;
 
 bool IsKnownSlotType(SlotAllocation::SlotType type) {
@@ -254,13 +260,118 @@ std::optional<power::SleepClockCalibration> ReadSleepClock(FieldReader& in) {
     return power::SleepClockCalibration(ppm, samples);
 }
 
+size_t PendingReliableSize(const PendingReliable& pending) {
+    size_t size =
+        ResumeSnapshotCodec::kPendingReliableSize + pending.payload.size();
+    if (IsGroupAddress(pending.destination)) {
+        size += ResumeSnapshotCodec::kGroupWindowSize +
+                pending.responders.size() * sizeof(AddressType);
+    }
+    return size;
+}
+
+void WritePendingReliable(utils::ByteSerializer& out,
+                          const PendingReliable& pending) {
+    uint8_t flags = 0;
+    flags |= pending.exponential_backoff ? kFlagBackoff : 0;
+    flags |= pending.requeue ? kFlagRequeue : 0;
+    flags |= pending.requeue_is_retry ? kFlagRequeueIsRetry : 0;
+
+    out.WriteUint16(pending.destination);
+    out.WriteUint8(pending.sequence);
+    out.WriteUint8(flags);
+    out.WriteUint8(pending.retries_left);
+    out.WriteUint8(pending.max_retries);
+    out.WriteUint8(pending.consecutive_requeues);
+    out.WriteUint8(pending.max_consecutive_requeues);
+    out.WriteUint32(pending.timeout_ms);
+    out.WriteUint32(pending.current_timeout_ms);
+    out.WriteUint32(pending.max_timeout_ms);
+    out.WriteUint32(pending.requeue_delay_ms);
+    out.WriteUint32(pending.next_deadline_ms);
+    out.WriteUint8(static_cast<uint8_t>(pending.payload.size()));
+    if (!pending.payload.empty()) {
+        out.WriteBytes(pending.payload.data(), pending.payload.size());
+    }
+    if (IsGroupAddress(pending.destination)) {
+        out.WriteUint32(pending.window_deadline_ms);
+        out.WriteUint8(static_cast<uint8_t>(pending.responders.size()));
+        for (const AddressType responder : pending.responders) {
+            out.WriteUint16(responder);
+        }
+    }
+}
+
+std::optional<PendingReliable> ReadPendingReliable(FieldReader& in) {
+    PendingReliable pending;
+    pending.destination = in.U16();
+    pending.sequence = in.U8();
+    const uint8_t flags = in.U8();
+    pending.retries_left = in.U8();
+    pending.max_retries = in.U8();
+    pending.consecutive_requeues = in.U8();
+    pending.max_consecutive_requeues = in.U8();
+    pending.timeout_ms = in.U32();
+    pending.current_timeout_ms = in.U32();
+    pending.max_timeout_ms = in.U32();
+    pending.requeue_delay_ms = in.U32();
+    pending.next_deadline_ms = in.U32();
+    const auto payload = in.Bytes(in.U8());
+    if (!in.ok() || (flags & ~kKnownPendingFlags) != 0) {
+        return std::nullopt;
+    }
+    pending.exponential_backoff = (flags & kFlagBackoff) != 0;
+    pending.requeue = (flags & kFlagRequeue) != 0;
+    pending.requeue_is_retry = (flags & kFlagRequeueIsRetry) != 0;
+    pending.payload.assign(payload.begin(), payload.end());
+
+    if (IsGroupAddress(pending.destination)) {
+        pending.window_deadline_ms = in.U32();
+        const uint8_t responder_count = in.U8();
+        pending.responders.reserve(responder_count);
+        for (uint8_t i = 0; i < responder_count && in.ok(); ++i) {
+            pending.responders.push_back(in.U16());
+        }
+    }
+    if (!in.ok()) {
+        return std::nullopt;
+    }
+    return pending;
+}
+
+/// True if @p pending is a message @p node can have open
+bool IsValidPendingReliable(const PendingReliable& pending, AddressType node) {
+    if (pending.payload.size() > ResumeSnapshotCodec::kMaxPendingPayload) {
+        return false;
+    }
+    if (!IsGroupAddress(pending.destination)) {
+        return IsUnicastAddress(pending.destination) &&
+               pending.destination != node && pending.window_deadline_ms == 0 &&
+               pending.responders.empty();
+    }
+    if (pending.responders.size() > ResumeSnapshotCodec::kMaxResponders) {
+        return false;
+    }
+    std::set<AddressType> responders;
+    for (const AddressType responder : pending.responders) {
+        if (!IsUnicastAddress(responder) ||
+            !responders.insert(responder).second) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 size_t ResumeSnapshotCodec::EncodedSize(const ResumeSnapshot& snapshot) {
     size_t size = kPrefixSize + SnapshotCodec::EncodedSize(snapshot.network) +
-                  kStateSize + 1 + 1 + kCrcSize;
+                  kStateSize + 1 + 1 + 1 + kCrcSize;
     for (const auto& route : snapshot.routes) {
         size += RouteSize(route);
+    }
+    for (const auto& pending : snapshot.pending_reliable) {
+        size += PendingReliableSize(pending);
     }
     size += snapshot.schedule.slots.size() * kSlotSize;
     return size + 1 + 1 +
@@ -340,6 +451,20 @@ bool ResumeSnapshotCodec::IsValid(const ResumeSnapshot& snapshot) {
     }
     for (const auto& message : snapshot.seen_messages) {
         if (!IsUnicastAddress(message.source)) {
+            return false;
+        }
+    }
+
+    if (snapshot.pending_reliable.size() > kMaxPendingReliable) {
+        return false;
+    }
+    // Group messages share one sequence stream
+    std::set<std::pair<AddressType, uint8_t>> pending_ids;
+    for (const auto& pending : snapshot.pending_reliable) {
+        const AddressType stream =
+            IsGroupAddress(pending.destination) ? 0 : pending.destination;
+        if (!IsValidPendingReliable(pending, network.node_address) ||
+            !pending_ids.insert({stream, pending.sequence}).second) {
             return false;
         }
     }
@@ -423,6 +548,10 @@ std::optional<std::vector<uint8_t>> ResumeSnapshotCodec::Encode(
     for (const auto& message : snapshot.seen_messages) {
         out.WriteUint16(message.source);
         out.WriteUint8(message.sequence);
+    }
+    out.WriteUint8(static_cast<uint8_t>(snapshot.pending_reliable.size()));
+    for (const auto& pending : snapshot.pending_reliable) {
+        WritePendingReliable(out, pending);
     }
 
     const size_t payload_size = out.getOffset();
@@ -558,6 +687,19 @@ std::optional<ResumeSnapshot> ResumeSnapshotCodec::Decode(
         message.source = in.U16();
         message.sequence = in.U8();
         snapshot.seen_messages.push_back(message);
+    }
+
+    const uint8_t pending_count = in.U8();
+    if (pending_count > kMaxPendingReliable) {
+        return std::nullopt;
+    }
+    snapshot.pending_reliable.reserve(pending_count);
+    for (uint8_t i = 0; i < pending_count && in.ok(); ++i) {
+        auto pending = ReadPendingReliable(in);
+        if (!pending) {
+            return std::nullopt;
+        }
+        snapshot.pending_reliable.push_back(std::move(*pending));
     }
 
     // The blob must end exactly after the announced content

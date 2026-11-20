@@ -366,11 +366,27 @@ class NetworkService : public INetworkService {
     Result ApplyResumeSnapshot(const storage::ResumeSnapshot& snapshot);
 
     /**
+     * @brief Continue the reliable messages that were open in @p snapshot
+     *
+     * Call once the node has resumed from @p snapshot. Each message keeps
+     * its retry budget and its deadlines. Nothing is transmitted now.
+     */
+    void ResumeOpenReliableMessages(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief End the reliable messages that were open in @p snapshot
+     *
+     * Call when the node does not resume from @p snapshot. Each message is
+     * reported through the delivery callback.
+     */
+    void AbandonOpenReliableMessages(const storage::ResumeSnapshot& snapshot);
+
+    /**
      * @brief Reason the node cannot deep-sleep and resume now
      *
      * A node may only resume a state that needs nothing from the network
-     * while it sleeps: a member in normal operation, in sync, with no
-     * reliable message in flight.
+     * while it sleeps: a member in normal operation, in sync. Reliable
+     * messages still open are saved with the state.
      *
      * @return The reason, or nullptr if the node may deep-sleep
      */

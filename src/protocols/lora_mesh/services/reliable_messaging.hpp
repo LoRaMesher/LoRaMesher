@@ -181,19 +181,17 @@ class ReliableMessaging {
     void Reset();
 
     /**
-     * @brief True when no reliable message or acknowledgement window is open
-     */
-    bool IsIdle() const;
-
-    /**
-     * @brief Store the sequence streams and delivered messages in @p snapshot
+     * @brief Store the sequence streams, the delivered messages and the open
+     *        reliable messages in @p snapshot
      */
     void CaptureResumeState(storage::ResumeSnapshot& snapshot) const;
 
     /**
      * @brief Restore state stored by CaptureResumeState()
      *
-     * Replaces the sequence streams and the delivered-message windows.
+     * Replaces the sequence streams and the delivered-message windows. The
+     * open reliable messages are continued with ResumeOpenMessages() or
+     * ended with AbandonOpenMessages().
      *
      * @param snapshot Snapshot holding the state
      * @return Success, or an error (state unchanged) if a sequence stream
@@ -201,6 +199,25 @@ class ReliableMessaging {
      *         windows cannot be restored
      */
     Result ApplyResumeState(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief Track again the open reliable messages of @p snapshot
+     *
+     * Each message keeps its retry budget, timeout and deadline, and each
+     * group window its deadline and responders. Nothing is transmitted now.
+     * A message that cannot be tracked is reported as ended.
+     *
+     * @param snapshot Snapshot applied with ApplyResumeState()
+     */
+    void ResumeOpenMessages(const storage::ResumeSnapshot& snapshot);
+
+    /**
+     * @brief Report the open reliable messages of @p snapshot as ended
+     *
+     * For a snapshot the node does not resume: each message is reported as
+     * Failed, each group window as closed with its responder count.
+     */
+    void AbandonOpenMessages(const storage::ResumeSnapshot& snapshot);
 
     /**
      * @brief De-duplicate delivery of a received reliable message
@@ -237,6 +254,10 @@ class ReliableMessaging {
     void RecordRttSample(AddressType peer, uint32_t echo_ts);
     uint32_t SuperframeOrDefault() const;
     void OnReliableOutcome(const reliability::DeliveryResult& result);
+    /// Keep @p result for the delivery callback. The mutex must be held.
+    void QueueOutcome(const reliability::DeliveryResult& result);
+    /// Report @p pending as ended without an acknowledgement.
+    void ReportEnded(const storage::PendingReliable& pending);
     void CloseExpiredGroupWindows();
     reliability::Host BuildReliableHost();
 

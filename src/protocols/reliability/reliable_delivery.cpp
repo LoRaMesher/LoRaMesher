@@ -214,6 +214,74 @@ void ReliableDelivery::AbortAll() {
     }
 }
 
+std::vector<storage::PendingReliable> ReliableDelivery::GetPending() const {
+    std::vector<storage::PendingReliable> pending;
+    for (const auto& entry : entries_) {
+        if (!entry.valid) {
+            continue;
+        }
+        storage::PendingReliable state;
+        state.destination = entry.id.dest;
+        state.sequence = entry.id.seq;
+        state.payload.assign(entry.payload.begin(),
+                             entry.payload.begin() + entry.len);
+        state.retries_left = entry.retries_left;
+        state.max_retries = entry.policy.max_retries;
+        state.consecutive_requeues = entry.consecutive_requeues;
+        state.max_consecutive_requeues = entry.policy.max_consecutive_requeues;
+        state.timeout_ms = entry.policy.timeout_ms;
+        state.current_timeout_ms = entry.current_timeout_ms;
+        state.max_timeout_ms = entry.policy.max_timeout_ms;
+        state.requeue_delay_ms = entry.policy.requeue_delay_ms;
+        state.next_deadline_ms = entry.next_deadline_ms;
+        state.exponential_backoff = entry.policy.exponential_backoff;
+        state.requeue = entry.requeue;
+        state.requeue_is_retry = entry.requeue_is_retry;
+        state.responders.assign(
+            entry.responders.begin(),
+            entry.responders.begin() + entry.responder_count);
+        pending.push_back(std::move(state));
+    }
+    return pending;
+}
+
+bool ReliableDelivery::Restore(AddressType source,
+                               const storage::PendingReliable& pending) {
+    const MessageId id{source, pending.sequence, pending.destination};
+    if (pending.payload.size() > kMaxReliablePayload ||
+        pending.responders.size() > kMaxGroupResponders ||
+        FindEntry(id) != nullptr) {
+        return false;
+    }
+    PendingEntry* entry = FindFreeSlot();
+    if (!entry) {
+        return false;
+    }
+
+    entry->valid = true;
+    entry->id = id;
+    entry->len = static_cast<uint8_t>(pending.payload.size());
+    std::copy(pending.payload.begin(), pending.payload.end(),
+              entry->payload.begin());
+    entry->policy.timeout_ms = pending.timeout_ms;
+    entry->policy.max_retries = pending.max_retries;
+    entry->policy.collect_multiple = IsGroupAddress(pending.destination);
+    entry->policy.requeue_delay_ms = pending.requeue_delay_ms;
+    entry->policy.max_consecutive_requeues = pending.max_consecutive_requeues;
+    entry->policy.max_timeout_ms = pending.max_timeout_ms;
+    entry->policy.exponential_backoff = pending.exponential_backoff;
+    entry->next_deadline_ms = pending.next_deadline_ms;
+    entry->current_timeout_ms = pending.current_timeout_ms;
+    entry->requeue = pending.requeue;
+    entry->requeue_is_retry = pending.requeue_is_retry;
+    entry->consecutive_requeues = pending.consecutive_requeues;
+    entry->retries_left = pending.retries_left;
+    entry->responder_count = static_cast<uint8_t>(pending.responders.size());
+    std::copy(pending.responders.begin(), pending.responders.end(),
+              entry->responders.begin());
+    return true;
+}
+
 uint8_t ReliableDelivery::PendingSeqSpan(bool group_stream, AddressType dest,
                                          uint8_t seq) const {
     uint8_t span = 0;
