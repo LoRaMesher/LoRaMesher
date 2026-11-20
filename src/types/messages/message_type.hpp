@@ -17,6 +17,11 @@ namespace loramesher {
  * - Bits 3-0 (low nibble): Subtype within the category
  * 
  * This allows for 16 main categories with 16 subtypes each, all within a single byte.
+ *
+ * A secured frame reuses two bits of the type byte on the wire (see the
+ * wire type helpers below): bit 7 marks the frame as secured and bit 3
+ * carries the parity of the key epoch. For this reason a valid type uses
+ * the categories 1 to 5 and the subtypes 1 to 7 only.
  * 
  * @attention When adding more types, update the IsValidMessageType function
  * in base_header.cpp accordingly.
@@ -29,6 +34,7 @@ enum class MessageType : uint8_t {
     CONTROL_MSG = 0x20,  ///< 0010 xxxx: Control message category
     ROUTING_MSG = 0x30,  ///< 0011 xxxx: Routing message category
     SYSTEM_MSG = 0x40,   ///< 0100 xxxx: System message category
+    KEY_MSG = 0x50,      ///< 0101 xxxx: Key management category
 
     // Predefined complete message types
 
@@ -56,6 +62,13 @@ enum class MessageType : uint8_t {
     SLOT_ALLOCATION = 0x45,  ///< 0100 0101: Slot allocation response
     SYNC_BEACON = 0x46,      ///< 0100 0110: Multi-hop sync beacon
     NM_CLAIM = 0x47,         ///< 0100 0111: Network Manager election claim
+
+    // Key management messages (0x5x), wire security specification S3.1
+    KEY_UPDATE = 0x51,      ///< 0101 0001: Next network key for one node
+    KEY_UPDATE_ACK = 0x52,  ///< 0101 0010: Answer to KEY_UPDATE
+    KEY_REQUEST = 0x53,     ///< 0101 0011: Orphan asks for the network key
+    KEY_GRANT = 0x54,       ///< 0101 0100: Neighbour hands over the grant
+    KEY_RELAY = 0x55,  ///< 0101 0101: Request or grant to or from the gateway
 };
 
 /**
@@ -135,6 +148,59 @@ inline MessageType CreateType(MessageType main_type, MessageType subtype) {
 }
 
 /**
+ * @brief Check if a type belongs to the Key management category
+ *
+ * @param type The message type to check
+ * @return bool True if it's a Key management message
+ */
+inline bool IsKeyMessage(MessageType type) {
+    return GetMainType(type) == MessageType::KEY_MSG;
+}
+
+/// Bit 7 of the type byte on the wire: the frame is secured
+constexpr uint8_t kSecuredFlag = 0x80;
+/// Bit 3 of the type byte on the wire: parity of the key epoch
+constexpr uint8_t kEpochParityFlag = 0x08;
+/// Bits of the type byte that hold the category and the subtype
+constexpr uint8_t kPlainTypeMask = 0x77;
+
+/**
+ * @brief Type byte of a secured frame
+ *
+ * @param plain_type Message type as the protocol uses it
+ * @param epoch Key epoch the frame is sealed under
+ * @return uint8_t Type byte as sent on the wire
+ */
+constexpr uint8_t ToWireType(MessageType plain_type, uint8_t epoch) {
+    return static_cast<uint8_t>(
+        kSecuredFlag | ((epoch & 1u) != 0 ? kEpochParityFlag : 0u) |
+        (static_cast<uint8_t>(plain_type) & kPlainTypeMask));
+}
+
+/**
+ * @brief Message type carried by the type byte of a secured frame
+ */
+constexpr MessageType ToPlainType(uint8_t wire_type) {
+    return static_cast<MessageType>(wire_type & kPlainTypeMask);
+}
+
+/**
+ * @brief True when the type byte marks a secured frame
+ */
+constexpr bool IsSecuredWireType(uint8_t wire_type) {
+    return (wire_type & kSecuredFlag) != 0;
+}
+
+/**
+ * @brief Epoch parity carried by the type byte of a secured frame
+ *
+ * @return uint8_t 0 or 1
+ */
+constexpr uint8_t GetEpochParity(uint8_t wire_type) {
+    return (wire_type & kEpochParityFlag) != 0 ? 1 : 0;
+}
+
+/**
  * @brief Check if a message type is valid
  * 
  * @param type The message type to validate
@@ -148,12 +214,15 @@ inline bool IsValidType(MessageType type) {
     if (main_type != MessageType::DATA_MSG &&
         main_type != MessageType::CONTROL_MSG &&
         main_type != MessageType::ROUTING_MSG &&
-        main_type != MessageType::SYSTEM_MSG) {
+        main_type != MessageType::SYSTEM_MSG &&
+        main_type != MessageType::KEY_MSG) {
         return false;
     }
 
-    // Check if subtype is valid (must be between 1-15, 0 is invalid)
-    if (subtype == static_cast<MessageType>(0)) {
+    // Check if subtype is valid (must be between 1-7, 0 is invalid). Bit 3
+    // of the type byte is the epoch parity of a secured frame.
+    if (subtype == static_cast<MessageType>(0) ||
+        static_cast<uint8_t>(subtype) > 7) {
         return false;
     }
 
