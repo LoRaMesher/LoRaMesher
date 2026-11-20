@@ -1,6 +1,6 @@
 /**
  * @file frame_counter.hpp
- * @brief Transmit frame counter that never repeats a value across resets
+ * @brief Transmit frame counters that never repeat a value across resets
  */
 
 #pragma once
@@ -9,119 +9,221 @@
 #include <memory>
 
 #include "security/i_counter_store.hpp"
-#include "types/error_codes/result.hpp"
 
 namespace loramesher {
 namespace security {
 
 /**
- * @brief Monotonic 32-bit transmit counter with reserve-ahead persistence
+ * @brief Outcome of a frame counter operation
+ */
+enum class CounterStatus : uint8_t {
+    kOk = 0,
+    kNotStarted,       ///< Start() or Restore() has not succeeded
+    kStoreError,       ///< Record missing or corrupt, save failed, or the
+                       ///< saved limit was reached before the refill
+    kExhausted,        ///< The space reached its ceiling
+    kSealLocked,       ///< The state was captured for deep sleep
+    kInvalidArgument,  ///< Epoch or snapshot not acceptable
+};
+
+/**
+ * @brief The four transmit counter spaces with reserve-ahead persistence
  *
- * A frame counter feeds the nonce, so a value must never be used twice with
- * the same key, including after a crash. Writing flash for every frame would
- * wear it out, so the counter reserves a block of values at a time. It
- * persists a high-water mark first and then hands out the values below it.
- * After a reset it continues from the persisted mark and skips whatever was
- * left of the interrupted block.
+ * A counter value feeds a nonce, so no value may be used twice under one
+ * key, including after a crash. The counters therefore hand out only values
+ * below a limit that is already durable in the counter store.
  *
- * Invariant: every value handed out is lower than the persisted mark.
- *
- * The value 0xFFFFFFFF is never handed out. When the counter reaches it the
- * key is used up and Next() reports an error until the key is replaced.
+ * Reservation rules:
+ * - A boot reads the record and writes nothing. Each counter starts at its
+ *   saved limit.
+ * - A space gets its first reservation when the node first needs to transmit
+ *   in it. The owner calls EnsureReserved() at that point.
+ * - The k-th reservation of a space since boot covers min(2^(k-1), B)
+ *   values, with B = 64 for beacons and 256 for control and data. A boot
+ *   that seals n frames in a space consumes at most 3n + 1 values, and none
+ *   when the space is never used.
+ * - Next() never touches the store. After a value is taken, a refill is
+ *   scheduled when a quarter of the last block or less is left. The owner
+ *   runs it with RunPendingSave() at a time when no frame is due.
+ * - The recovery space is reserved one value at a time and has no refill.
+ * - An epoch switch saves the new epoch with the three traffic limits at 0
+ *   and restarts the ramp. Ceilings and the recovery space are kept.
  *
  * The class is not thread safe. Its owner serializes the calls.
  */
-class FrameCounter {
+class FrameCounters {
    public:
-    /// Values reserved by one write of the store
-    static constexpr uint32_t kDefaultBlockSize = 1024;
+    /// Largest reservation of each space
+    static constexpr uint32_t kMaxBlock[kCounterSpaceCount] = {64, 256, 256, 1};
 
-    /// First value that is never handed out
-    static constexpr uint32_t kCounterLimit = 0xFFFFFFFFu;
+    /// Marks a space without a reservation since boot in State
+    static constexpr uint8_t kNoReservation = 0xFF;
 
     /**
-     * @brief Exact position of the counter, for the deep sleep snapshot
+     * @brief Exact position of the traffic counters, for the resume snapshot
+     *
+     * The recovery space is not part of it. Its block size is 1, so the
+     * store always holds its exact value.
      */
     struct State {
-        uint32_t next = 0;          ///< Value the next call hands out
-        uint32_t reserved_end = 0;  ///< Persisted mark that covers next
+        uint8_t tx_epoch = 0;
+        uint32_t next[kTrafficSpaceCount] = {0, 0, 0};
+        uint32_t limit[kTrafficSpaceCount] = {0, 0, 0};
+        /// log2 of the size of the last reservation, or kNoReservation
+        uint8_t reservation_log2[kTrafficSpaceCount] = {
+            kNoReservation, kNoReservation, kNoReservation};
 
-        bool operator==(const State& other) const {
-            return next == other.next && reserved_end == other.reserved_end;
-        }
+        bool operator==(const State& other) const;
     };
 
     /**
-     * @param store Store of the high-water mark
-     * @param block_size Values reserved per store write, at least 1
+     * @param store Store of the counter record. May be null only when
+     *        StartVolatile() is used
      */
-    explicit FrameCounter(std::shared_ptr<ICounterStore> store,
-                          uint32_t block_size = kDefaultBlockSize);
+    explicit FrameCounters(std::shared_ptr<ICounterStore> store);
 
     /**
-     * @brief Continue from the persisted mark
+     * @brief Continue from the stored record after a cold boot
      *
-     * Call once after a cold start. Reading the mark writes nothing. The
-     * first Next() reserves a block.
+     * Writes nothing.
      *
-     * @return Success, or the error of the store. The counter stays stopped
-     *         on an error
+     * @return kOk, or kStoreError when there is no store or no valid record.
+     *         The counters then stay stopped and the node must stay silent
      */
-    Result Start();
+    CounterStatus Start();
 
     /**
-     * @brief Hand out the next counter value
+     * @brief Start every counter at 0 in epoch 0 without any persistence
      *
-     * When the reserved block is used up, the new mark is stored before the
-     * value is returned.
-     *
-     * @param counter Receives the value, valid only on success
-     * @return Success, or an error when the counter is not started, the
-     *         store write failed, or the counter space is exhausted. A value
-     *         is never handed out on an error. A failed store write is
-     *         tried again by the next call
+     * For tests and development builds only. A reset repeats counter values.
      */
-    Result Next(uint32_t& counter);
+    CounterStatus StartVolatile();
 
     /**
-     * @brief Snapshot of the exact position
+     * @brief Make sure the space has at least one value to hand out
      *
-     * Save it with the resume snapshot before deep sleep.
+     * Call at the first need of a space: state entry for beacons and control
+     * frames, first send for data, every key request for recovery. The save
+     * runs inside the call. Does nothing when values are left.
+     *
+     * @return kOk, kStoreError when the save failed, kExhausted
      */
-    State GetState() const { return {next_, reserved_end_}; }
+    CounterStatus EnsureReserved(CounterSpace space);
 
     /**
-     * @brief Continue from a snapshot taken before deep sleep
+     * @brief Hand out the next value of a space
      *
-     * Writes nothing, so a resume does not burn a block. The snapshot is
-     * accepted only when its mark equals the persisted mark, which shows
-     * that no block was reserved after the snapshot was taken.
+     * Never touches the store.
      *
-     * A snapshot must be restored at most once. The resume snapshot store
-     * erases the snapshot when it is read, which gives that guarantee.
-     *
-     * @param state Snapshot from GetState()
-     * @return Success, or an error when the store cannot be read or the
-     *         snapshot does not match it. On an error the counter is left
-     *         as it was and the caller falls back to Start()
+     * @param value Receives the value, valid only on kOk
+     * @return kOk, kStoreError when the saved limit is reached (the frame
+     *         stays queued until a save succeeded), kExhausted, kSealLocked
+     *         or kNotStarted. A value is never handed out on an error
      */
-    Result Restore(const State& state);
+    CounterStatus Next(CounterSpace space, uint32_t& value);
 
-    /// True once Start() or Restore() succeeded
+    /// True when a refill is scheduled
+    bool HasPendingSave() const;
+
+    /**
+     * @brief Run the scheduled refills with one save
+     *
+     * A failed save leaves the old limits in force and stays scheduled.
+     *
+     * @return kOk, also when nothing was scheduled, or kStoreError
+     */
+    CounterStatus RunPendingSave();
+
+    /**
+     * @brief Move to a higher key epoch
+     *
+     * Saves the record for the new epoch before any frame is sent under it.
+     *
+     * @param new_epoch Epoch above the current one, at most kMaxEpoch
+     * @return kOk, kInvalidArgument, or kStoreError with the state unchanged
+     */
+    CounterStatus SwitchEpoch(uint8_t new_epoch);
+
+    /**
+     * @brief Capture the state for the resume snapshot and lock sealing
+     *
+     * After the capture Next() returns kSealLocked, so no value is used
+     * that the snapshot does not know of. Saves are refused in the same
+     * way, so the stored record stays the one the snapshot matches.
+     */
+    State Capture();
+
+    /**
+     * @brief Unlock sealing after a captured snapshot was thrown away
+     *
+     * Only for a sleep that did not happen. The snapshot must not be used.
+     */
+    void DiscardCapture() { seal_locked_ = false; }
+
+    /**
+     * @brief Continue from a snapshot after a deep sleep
+     *
+     * Writes nothing, so a resume wastes no value. The snapshot is accepted
+     * only when its epoch and limits equal the stored record. The snapshot
+     * must be restored at most once.
+     *
+     * @return kOk, kStoreError when the record cannot be read, or
+     *         kInvalidArgument when the snapshot does not match it. On an
+     *         error nothing changes and the caller falls back to Start()
+     */
+    CounterStatus Restore(const State& state);
+
     bool IsStarted() const { return started_; }
 
-    /// True when every value has been handed out
-    bool IsExhausted() const { return started_ && next_ == kCounterLimit; }
+    /// Transmit epoch. After Start() it is the epoch of the stored record
+    uint8_t GetEpoch() const { return epoch_; }
 
-    /// Values left before the counter space is exhausted
-    uint32_t GetRemaining() const { return kCounterLimit - next_; }
+    uint32_t GetNext(CounterSpace space) const { return next_[Index(space)]; }
+
+    uint32_t GetLimit(CounterSpace space) const { return limit_[Index(space)]; }
+
+    uint32_t GetCeiling(CounterSpace space) const {
+        return ceiling_[Index(space)];
+    }
+
+    /// True when the space reached its ceiling
+    bool IsExhausted(CounterSpace space) const {
+        return started_ && next_[Index(space)] >= ceiling_[Index(space)];
+    }
+
+    /**
+     * @brief True when few values are left before the ceiling
+     *
+     * Fewer than 2^18 for beacons and fewer than 2^24 for the other spaces.
+     */
+    bool IsLow(CounterSpace space) const;
+
+    /// Number of successful saves since construction
+    uint32_t GetStoreWrites() const { return store_writes_; }
 
    private:
+    static size_t Index(CounterSpace space) {
+        return static_cast<size_t>(space);
+    }
+
+    void Load(const CounterRecord& record);
+    CounterRecord MakeRecord() const;
+    Result Save(const CounterRecord& record);
+    CounterStatus Reserve(const bool spaces[kCounterSpaceCount]);
+    void ScheduleRefillIfDue(size_t index);
+
     std::shared_ptr<ICounterStore> store_;
-    uint32_t block_size_;
-    uint32_t next_ = 0;
-    uint32_t reserved_end_ = 0;
+    uint8_t epoch_ = 0;
+    uint32_t next_[kCounterSpaceCount] = {0, 0, 0, 0};
+    uint32_t limit_[kCounterSpaceCount] = {0, 0, 0, 0};
+    uint32_t ceiling_[kCounterSpaceCount] = {0, 0, 0, 0};
+    uint8_t reservation_log2_[kCounterSpaceCount] = {
+        kNoReservation, kNoReservation, kNoReservation, kNoReservation};
+    bool refill_pending_[kCounterSpaceCount] = {false, false, false, false};
+    uint32_t store_writes_ = 0;
     bool started_ = false;
+    bool volatile_ = false;
+    bool seal_locked_ = false;
 };
 
 }  // namespace security

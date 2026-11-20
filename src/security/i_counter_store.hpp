@@ -1,44 +1,64 @@
 /**
  * @file i_counter_store.hpp
- * @brief Interface of the store that persists a frame counter mark
+ * @brief Interface of the store that persists the frame counter record
  */
 
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
+#include "security/counter_record_codec.hpp"
 #include "types/error_codes/result.hpp"
+#include "types/messages/base_header.hpp"
 
 namespace loramesher {
 namespace security {
 
 /**
- * @brief Non-volatile slot holding one 32-bit high-water mark
+ * @brief Non-volatile slot holding the counter record
  *
- * FrameCounter writes the mark before it uses the counter values below it,
- * so the store must survive a reset and a power loss. A Store() that returns
- * success must be durable.
+ * FrameCounters saves a higher limit before it uses the counter values
+ * below it, so the store must survive a reset and a power loss. The record
+ * and the keys share one fate: when one is erased the node is provisioned
+ * again.
  */
 class ICounterStore {
    public:
     virtual ~ICounterStore() = default;
 
     /**
-     * @brief Read the persisted mark
+     * @brief Read the record
      *
-     * @param mark Receives the mark. A store that was never written yields 0
-     * @return Success, or an error when the store cannot be read. A read
-     *         failure must be reported and never be turned into a mark of 0
+     * @return The record, or std::nullopt when none exists, it is corrupt
+     *         or it cannot be read. A store never invents a record
      */
-    virtual Result Load(uint32_t& mark) = 0;
+    virtual std::optional<CounterRecord> Load() = 0;
 
     /**
-     * @brief Persist a new mark
+     * @brief Replace the record
      *
-     * @param mark Mark to write
-     * @return Success once the mark is durable, or an error
+     * @return Success only once the record is durable
      */
-    virtual Result Store(uint32_t mark) = 0;
+    virtual Result Save(const CounterRecord& record) = 0;
+
+    /**
+     * @brief Saved floor of the end-to-end receive window of a peer
+     *
+     * Optional. A store that does not keep floors returns std::nullopt.
+     */
+    virtual std::optional<uint32_t> LoadRxFloor(AddressType /*peer*/,
+                                                uint8_t /*epoch*/) {
+        return std::nullopt;
+    }
+
+    /**
+     * @brief Save the floor of the end-to-end receive window of a peer
+     *
+     * Optional. A store may ignore the call.
+     */
+    virtual void SaveRxFloor(AddressType /*peer*/, uint8_t /*epoch*/,
+                             uint32_t /*high*/) {}
 };
 
 }  // namespace security
