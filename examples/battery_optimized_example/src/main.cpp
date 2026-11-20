@@ -9,7 +9,8 @@
  * Demonstrates LoRa mesh networking with power management:
  * - Automatic PMU detection (AXP192/AXP2101)
  * - Sleep/wake callbacks for power optimization
- * - Periodic message sending with routing table display
+ * - Periodic message sending with routing table display, paced by millis()
+ *   because delay() stands still while the MCU light-sleeps
  * - Warm restart: the mesh state is kept in flash across restarts (send 'r'
  *   on the serial port to restart the node as an OTA update would)
  * - Optional deep sleep (ENABLE_DEEP_SLEEP): members deep-sleep through long
@@ -62,6 +63,12 @@ std::unique_ptr<LoraMesher> mesher = nullptr;
 uint8_t message_counter = 0;
 /// Retry interval while the node waits to become ready to send (ms)
 constexpr uint32_t kNotReadyRetryMs = 500;
+/// Interval between two messages, per known route (ms)
+constexpr uint32_t kSendIntervalPerRouteMs = 10000;
+/// Longest single delay() of the loop (ms)
+constexpr uint32_t kWaitStepMs = 100;
+/// millis() at which the loop sends its next message
+uint32_t next_send_ms = 0;
 
 // ============================================================================
 // Power Management Callbacks
@@ -261,17 +268,25 @@ void loop() {
         restartPreservingMeshState();
     }
 
+    // The FreeRTOS tick count stands still while the MCU light-sleeps, so a
+    // single delay(60000) would last a minute of awake time. millis() keeps
+    // counting through the sleep: the send time is a millis() deadline, and
+    // the loop waits for it in short delay() steps.
+    if (static_cast<int32_t>(millis() - next_send_ms) < 0) {
+        delay(kWaitStepMs);
+        return;
+    }
+
     // A deep-sleeping member is awake for a few seconds per superframe: it
     // sends once per wake, as soon as the beacon confirms its schedule
     if (sendTestMessage()) {
-        delay(kNotReadyRetryMs);
+        next_send_ms = millis() + kNotReadyRetryMs;
         return;
     }
     printRoutingTable();
     printNetworkStatus();
 
-    auto routes = mesher->GetRoutingTable();
-    uint32_t delay_ms = routes.empty() ? 10000 : 10000 * routes.size();
-    delay(delay_ms);
+    const size_t routes = mesher->GetRoutingTable().size();
+    next_send_ms = millis() + kSendIntervalPerRouteMs * (routes ? routes : 1);
 }
 #endif

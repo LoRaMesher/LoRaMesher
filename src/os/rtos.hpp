@@ -197,6 +197,10 @@ class RTOS {
      * On embedded targets (ESP32) reduces power beyond task blocking.
      * On native/desktop this is a no-op — virtual time handles slot timing.
      * The sleep can end before @p ms when another wake-up source fires.
+     * On ESP32 the FreeRTOS tick count stands still during the sleep and is
+     * not advanced afterwards: delay() and the timeouts of the queue,
+     * semaphore and notification waits count awake time only, while
+     * getTickCount() keeps counting.
      * @param ms Sleep duration in milliseconds
      * @return Milliseconds slept as counted by the sleep clock, at most @p ms
      */

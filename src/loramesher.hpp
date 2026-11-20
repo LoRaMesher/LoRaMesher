@@ -625,6 +625,12 @@ class LoraMesher::Builder {
     /**
      * @brief Set the callback invoked before device enters sleep
      *
+     * Setting this callback enables MCU light sleep through runs of SLEEP
+     * slots (ESP32 only). The FreeRTOS tick count stands still during that
+     * sleep, so tick-based waits of the application (vTaskDelay(), Arduino
+     * delay(), queue timeouts, software timers) count awake time only. Pace
+     * periodic work with esp_timer_get_time() or millis().
+     *
      * @param callback Function to call before sleep
      * @return Builder& Reference to this builder for method chaining
      */
