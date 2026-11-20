@@ -16,16 +16,6 @@ namespace security {
 
 /// Size of an AES block and of an AES-128 key, in bytes
 constexpr size_t kAesBlockSize = 16;
-/// Size of the CCM nonce, in bytes
-constexpr size_t kCcmNonceSize = 13;
-/// Short CCM tag length, in bytes
-constexpr size_t kCcmShortTagSize = 4;
-/// Long CCM tag length, in bytes
-constexpr size_t kCcmLongTagSize = 8;
-/// Largest payload one CCM call takes with a 13-byte nonce, in bytes
-constexpr size_t kCcmMaxDataSize = 65535;
-/// Largest associated data one CCM call takes, in bytes
-constexpr size_t kCcmMaxAssociatedDataSize = 0xFEFF;
 /// Shortest truncated CMAC tag, in bytes
 constexpr size_t kCmacMinTagSize = 3;
 /// Full CMAC tag length, in bytes
@@ -33,7 +23,6 @@ constexpr size_t kCmacMaxTagSize = kAesBlockSize;
 
 using AesBlock = std::array<uint8_t, kAesBlockSize>;
 using Aes128Key = std::array<uint8_t, kAesBlockSize>;
-using CcmNonce = std::array<uint8_t, kCcmNonceSize>;
 
 /**
  * @brief Outcome of a crypto primitive
@@ -49,55 +38,19 @@ enum class CryptoStatus : uint8_t {
 };
 
 /**
- * @brief AES-128 block, CTR, CMAC and CCM behind one interface
+ * @brief AES-128 block, CTR and CMAC behind one interface
  *
  * Every call takes the key, so one backend serves any number of keys and
  * holds no key material between calls. Calls work on caller buffers and do
  * not allocate. A backend instance has no mutable state, so concurrent calls
  * from several tasks are safe.
  *
- * The caller owns nonce uniqueness. A nonce must never be used twice with
- * the same key.
+ * The caller owns counter block uniqueness. A counter block must never be
+ * used twice with the same key.
  */
 class ICryptoBackend {
    public:
     virtual ~ICryptoBackend() = default;
-
-    /**
-     * @brief Encrypt data in place and compute its CCM tag
-     *
-     * @param key AES-128 key
-     * @param nonce Nonce, unique for this key
-     * @param associated_data Bytes that are authenticated and stay readable
-     * @param data Plaintext on entry, ciphertext of the same length on return
-     * @param tag Receives the tag. Its size selects the tag length and must
-     *        be kCcmShortTagSize or kCcmLongTagSize
-     * @return kOk, kInvalidArgument with the buffers left untouched, or
-     *         kBackendError with data and tag zeroed
-     */
-    virtual CryptoStatus CcmSeal(const Aes128Key& key, const CcmNonce& nonce,
-                                 std::span<const uint8_t> associated_data,
-                                 std::span<uint8_t> data,
-                                 std::span<uint8_t> tag) const = 0;
-
-    /**
-     * @brief Verify a CCM tag and decrypt data in place
-     *
-     * The tag comparison runs in constant time.
-     *
-     * @param key AES-128 key
-     * @param nonce Nonce the sender used
-     * @param associated_data Bytes that were authenticated with the data
-     * @param data Ciphertext on entry, plaintext of the same length on return
-     * @param tag Received tag of kCcmShortTagSize or kCcmLongTagSize bytes
-     * @return kOk when the tag matches. On kAuthFailed and kBackendError
-     *         data is zeroed, so no unauthenticated plaintext is released.
-     *         kInvalidArgument leaves data untouched
-     */
-    virtual CryptoStatus CcmOpen(const Aes128Key& key, const CcmNonce& nonce,
-                                 std::span<const uint8_t> associated_data,
-                                 std::span<uint8_t> data,
-                                 std::span<const uint8_t> tag) const = 0;
 
     /**
      * @brief Compute the AES-128-CMAC of a message (RFC 4493)

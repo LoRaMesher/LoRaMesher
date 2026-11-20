@@ -15,7 +15,6 @@
 #include "security/crypto_backend.hpp"
 
 #if LORAMESHER_SECURITY_USE_MBEDTLS
-#include <mbedtls/ccm.h>
 #include <mbedtls/cipher.h>
 #include <mbedtls/cmac.h>
 #endif
@@ -49,58 +48,15 @@ class ByteSource {
 /// One random frame: sizes sweep the range a LoRa frame can hold
 struct RandomFrame {
     Aes128Key key;
-    CcmNonce nonce;
-    std::vector<uint8_t> associated_data;
     std::vector<uint8_t> plaintext;
-    size_t tag_size;
 
-    RandomFrame(ByteSource& source, size_t index)
-        : associated_data(index % 23),
-          plaintext(index % 131),
-          tag_size(index % 2 == 0 ? kCcmShortTagSize : kCcmLongTagSize) {
+    RandomFrame(ByteSource& source, size_t index) : plaintext(index % 131) {
         source.Fill(key);
-        source.Fill(nonce);
-        source.Fill(associated_data);
         source.Fill(plaintext);
     }
 };
 
 constexpr size_t kFrameCount = 600;
-
-TEST(CryptoCrossCheckTest, PortableAndMbedTlsBackendsAgreeOnCcm) {
-    const PortableCryptoBackend portable;
-    const MbedTlsCryptoBackend mbedtls;
-    ByteSource source;
-    for (size_t index = 0; index < kFrameCount; ++index) {
-        SCOPED_TRACE(index);
-        const RandomFrame frame(source, index);
-
-        std::vector<uint8_t> portable_data = frame.plaintext;
-        std::vector<uint8_t> portable_tag(frame.tag_size);
-        ASSERT_EQ(
-            CryptoStatus::kOk,
-            portable.CcmSeal(frame.key, frame.nonce, frame.associated_data,
-                             portable_data, portable_tag));
-        std::vector<uint8_t> mbedtls_data = frame.plaintext;
-        std::vector<uint8_t> mbedtls_tag(frame.tag_size);
-        ASSERT_EQ(CryptoStatus::kOk,
-                  mbedtls.CcmSeal(frame.key, frame.nonce, frame.associated_data,
-                                  mbedtls_data, mbedtls_tag));
-        ASSERT_EQ(portable_data, mbedtls_data);
-        ASSERT_EQ(portable_tag, mbedtls_tag);
-
-        // Each backend opens what the other one sealed
-        ASSERT_EQ(
-            CryptoStatus::kOk,
-            portable.CcmOpen(frame.key, frame.nonce, frame.associated_data,
-                             mbedtls_data, mbedtls_tag));
-        ASSERT_EQ(frame.plaintext, mbedtls_data);
-        ASSERT_EQ(CryptoStatus::kOk,
-                  mbedtls.CcmOpen(frame.key, frame.nonce, frame.associated_data,
-                                  portable_data, portable_tag));
-        ASSERT_EQ(frame.plaintext, portable_data);
-    }
-}
 
 TEST(CryptoCrossCheckTest, PortableAndMbedTlsBackendsAgreeOnCmac) {
     const PortableCryptoBackend portable;
@@ -170,58 +126,6 @@ TEST(CryptoCrossCheckTest, PortableAndMbedTlsBackendsAgreeOnCtrAndBlock) {
         ASSERT_EQ(portable_block, mbedtls_block);
     }
 }
-
-#if defined(MBEDTLS_CCM_C)
-TEST(CryptoCrossCheckTest, BackendsMatchTheMbedTlsCcmModule) {
-    const PortableCryptoBackend portable;
-    const MbedTlsCryptoBackend mbedtls;
-    ByteSource source;
-    for (size_t index = 0; index < kFrameCount; ++index) {
-        SCOPED_TRACE(index);
-        const RandomFrame frame(source, index);
-
-        mbedtls_ccm_context context;
-        mbedtls_ccm_init(&context);
-        ASSERT_EQ(0, mbedtls_ccm_setkey(&context, MBEDTLS_CIPHER_ID_AES,
-                                        frame.key.data(), 128));
-        std::vector<uint8_t> reference_data(frame.plaintext.size());
-        std::vector<uint8_t> reference_tag(frame.tag_size);
-        ASSERT_EQ(0, mbedtls_ccm_encrypt_and_tag(
-                         &context, frame.plaintext.size(), frame.nonce.data(),
-                         frame.nonce.size(), frame.associated_data.data(),
-                         frame.associated_data.size(), frame.plaintext.data(),
-                         reference_data.data(), reference_tag.data(),
-                         reference_tag.size()));
-
-        for (const ICryptoBackend* backend :
-             {static_cast<const ICryptoBackend*>(&portable),
-              static_cast<const ICryptoBackend*>(&mbedtls)}) {
-            std::vector<uint8_t> data = frame.plaintext;
-            std::vector<uint8_t> tag(frame.tag_size);
-            ASSERT_EQ(CryptoStatus::kOk,
-                      backend->CcmSeal(frame.key, frame.nonce,
-                                       frame.associated_data, data, tag));
-            ASSERT_EQ(reference_data, data);
-            ASSERT_EQ(reference_tag, tag);
-        }
-
-        // mbedTLS opens a frame sealed by the library
-        std::vector<uint8_t> opened(frame.plaintext.size());
-        ASSERT_EQ(
-            0, mbedtls_ccm_auth_decrypt(
-                   &context, reference_data.size(), frame.nonce.data(),
-                   frame.nonce.size(), frame.associated_data.data(),
-                   frame.associated_data.size(), reference_data.data(),
-                   opened.data(), reference_tag.data(), reference_tag.size()));
-        ASSERT_EQ(frame.plaintext, opened);
-        mbedtls_ccm_free(&context);
-    }
-}
-#else
-TEST(CryptoCrossCheckTest, BackendsMatchTheMbedTlsCcmModule) {
-    GTEST_SKIP() << "This mbedTLS build has no CCM module";
-}
-#endif  // MBEDTLS_CCM_C
 
 #if defined(MBEDTLS_CMAC_C)
 TEST(CryptoCrossCheckTest, BackendsMatchTheMbedTlsCmacModule) {

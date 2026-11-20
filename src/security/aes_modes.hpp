@@ -1,6 +1,6 @@
 /**
  * @file aes_modes.hpp
- * @brief CTR, CCM and CMAC built on any AES-128 block encryption
+ * @brief CTR and CMAC built on any AES-128 block encryption
  */
 
 #pragma once
@@ -13,7 +13,7 @@ namespace security {
 /**
  * @brief One keyed AES-128 block encryption
  *
- * CCM and CMAC only need the encrypt direction of the cipher.
+ * CTR and CMAC only need the encrypt direction of the cipher.
  */
 class IAes128Block {
    public:
@@ -53,38 +53,6 @@ void SecureZero(std::span<uint8_t> buffer);
  */
 void CtrCrypt(IAes128Block& cipher, const AesBlock& initial_counter,
               std::span<uint8_t> data);
-
-/**
- * @brief CCM seal over a keyed block cipher (RFC 3610, NIST SP 800-38C)
- *
- * Accepts every nonce length from 7 to 13 bytes and every even tag length
- * from 4 to 16 bytes. ICryptoBackend narrows these to what frames use.
- *
- * @param cipher Keyed block cipher
- * @param nonce Nonce of 7 to 13 bytes
- * @param associated_data Authenticated bytes, at most kCcmMaxAssociatedDataSize
- * @param data Plaintext on entry, ciphertext on return
- * @param tag Receives the tag, its size selects the tag length
- * @return kOk, or kInvalidArgument with data and tag left untouched
- */
-CryptoStatus CcmSeal(IAes128Block& cipher, std::span<const uint8_t> nonce,
-                     std::span<const uint8_t> associated_data,
-                     std::span<uint8_t> data, std::span<uint8_t> tag);
-
-/**
- * @brief CCM open over a keyed block cipher
- *
- * @param cipher Keyed block cipher
- * @param nonce Nonce of 7 to 13 bytes
- * @param associated_data Authenticated bytes
- * @param data Ciphertext on entry, plaintext on return
- * @param tag Received tag
- * @return kOk, kAuthFailed with data zeroed, or kInvalidArgument with data
- *         left untouched
- */
-CryptoStatus CcmOpen(IAes128Block& cipher, std::span<const uint8_t> nonce,
-                     std::span<const uint8_t> associated_data,
-                     std::span<uint8_t> data, std::span<const uint8_t> tag);
 
 /**
  * @brief CMAC over a keyed block cipher (RFC 4493)

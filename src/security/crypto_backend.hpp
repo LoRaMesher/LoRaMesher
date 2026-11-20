@@ -18,7 +18,7 @@ namespace security {
 /**
  * @brief ICryptoBackend over one AES-128 block implementation
  *
- * The CTR, CCM and CMAC code is the same for every block implementation, so a
+ * The CTR and CMAC code is the same for every block implementation, so a
  * platform only supplies the block encryption. The block object lives on the
  * stack for the length of one call and wipes its key schedule afterwards.
  *
@@ -28,41 +28,6 @@ namespace security {
 template <typename Block>
 class BlockCryptoBackend final : public ICryptoBackend {
    public:
-    CryptoStatus CcmSeal(const Aes128Key& key, const CcmNonce& nonce,
-                         std::span<const uint8_t> associated_data,
-                         std::span<uint8_t> data,
-                         std::span<uint8_t> tag) const override {
-        if (!IsFrameTagSize(tag.size())) {
-            return CryptoStatus::kInvalidArgument;
-        }
-        Block block(key);
-        CryptoStatus status =
-            security::CcmSeal(block, nonce, associated_data, data, tag);
-        if (status == CryptoStatus::kOk && !block.IsHealthy()) {
-            SecureZero(data);
-            SecureZero(tag);
-            status = CryptoStatus::kBackendError;
-        }
-        return status;
-    }
-
-    CryptoStatus CcmOpen(const Aes128Key& key, const CcmNonce& nonce,
-                         std::span<const uint8_t> associated_data,
-                         std::span<uint8_t> data,
-                         std::span<const uint8_t> tag) const override {
-        if (!IsFrameTagSize(tag.size())) {
-            return CryptoStatus::kInvalidArgument;
-        }
-        Block block(key);
-        CryptoStatus status =
-            security::CcmOpen(block, nonce, associated_data, data, tag);
-        if (status == CryptoStatus::kOk && !block.IsHealthy()) {
-            SecureZero(data);
-            status = CryptoStatus::kBackendError;
-        }
-        return status;
-    }
-
     CryptoStatus Cmac(const Aes128Key& key, std::span<const uint8_t> message,
                       std::span<uint8_t> mac) const override {
         if (!IsCmacTagSize(mac.size())) {
@@ -119,10 +84,6 @@ class BlockCryptoBackend final : public ICryptoBackend {
     }
 
    private:
-    static bool IsFrameTagSize(size_t size) {
-        return size == kCcmShortTagSize || size == kCcmLongTagSize;
-    }
-
     static bool IsCmacTagSize(size_t size) {
         return size >= kCmacMinTagSize && size <= kCmacMaxTagSize;
     }

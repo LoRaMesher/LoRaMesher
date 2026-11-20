@@ -14,7 +14,7 @@ namespace security {
  * @brief AES-128 block encryption in plain C++ (FIPS 197)
  *
  * Runs on every platform and needs no hardware support. It only implements
- * the encrypt direction, which is all that CCM and CMAC use. The S-box is a
+ * the encrypt direction, which is all that CTR and CMAC use. The S-box is a
  * lookup table, so the running time can depend on the data on processors
  * with a data cache. Targets with hardware AES use their own block class.
  */
