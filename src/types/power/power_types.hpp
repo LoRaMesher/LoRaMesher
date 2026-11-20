@@ -206,6 +206,12 @@ struct SleepResult {
  *           slot (ESP32 only), or into deep sleep when the request is
  *           DEEP_SLEEP.
  *        Use this callback to power down user peripherals (GPS, sensors) before sleep.
+ * @note  The FreeRTOS tick count stands still while the MCU light-sleeps and
+ *        is not advanced afterwards. Tick-based waits of the application
+ *        (vTaskDelay(), Arduino delay(), queue and notification timeouts,
+ *        software timers) count awake time only. Take deadlines from
+ *        esp_timer_get_time() or millis(), which keep counting, and wait for
+ *        them in short tick steps.
  * @note  Returning SleepResult{false} vetoes MCU sleep. The radio still sleeps for
  *        power savings, but the MCU stays running and OnWakeUp will not fire.
  * @warning Do not perform lengthy operations in this callback as it

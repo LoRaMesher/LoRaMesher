@@ -82,7 +82,36 @@ mesher = LoraMesher::Builder()
              .Build();
 ```
 
-## Restarting Without Leaving the Mesh
+## Periodic Tasks and Light Sleep
+
+The FreeRTOS tick count stands still while the MCU light-sleeps, and the
+library does not advance it after the wake-up. Every tick-based wait counts
+awake time only: `delay()`, `vTaskDelay()`, the timeouts of `xQueueReceive()`
+and `ulTaskNotifyTake()`, and FreeRTOS software timers. A node that sleeps
+85 % of the superframe finishes a `delay(300000)` after about 33 minutes.
+
+`millis()` and `esp_timer_get_time()` keep counting through the sleep. Take the
+deadline from one of them and wait for it in short steps, as `loop()` does:
+
+```cpp
+constexpr uint32_t kWaitStepMs = 100;
+uint32_t next_send_ms = 0;  // millis() of the next send
+
+void loop() {
+    if (static_cast<int32_t>(millis() - next_send_ms) < 0) {
+        delay(kWaitStepMs);  // stretched by at most one sleep
+        return;
+    }
+    sendTestMessage();
+    next_send_ms = millis() + 300000;
+}
+```
+
+A step that is running when the MCU goes to sleep ends up to 100 ms after the
+wake-up, so the message is queued at the first wake-up after the deadline. A
+one-shot `esp_timer` is the other option. Its callback runs at the first
+wake-up after it expires, because the timer does not wake the MCU.
+
 
 The example keeps the mesh state in flash (`NvsStateStore`). Before a planned
 restart, such as an OTA update, it calls `SaveState()`; after the restart the
@@ -174,4 +203,4 @@ Sent to 0x1A2B
 1. **Reduce TX power** - Use minimum power needed for your range
 2. **Increase hello interval** - Longer intervals reduce radio activity
 3. **Disable GPS** - If not needed, call `PMU->disablePowerOutput(XPOWERS_LDO3)` or `ALDO3`
-4. **MCU light sleep** - The protocol automatically puts the MCU into light sleep during SLEEP slots (ESP32 only). Use `OnSleep` to power down peripherals before sleep.
+4. **MCU light sleep** - The protocol automatically puts the MCU into light sleep during SLEEP slots (ESP32 only). Use `OnSleep` to power down peripherals before sleep, and pace periodic work with `millis()` (see [Periodic Tasks and Light Sleep](#periodic-tasks-and-light-sleep)).

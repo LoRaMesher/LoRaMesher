@@ -270,6 +270,10 @@ for (uint8_t i = 0; i < slots; i++) {
 
 Both functions return `0` when the node has not yet joined a network — pair them with `IsReadyToSend()` (see [Diagnostics & Advanced](#diagnostics--advanced)) for a robust send loop.
 
+> **Light sleep:** the FreeRTOS tick count stops while the MCU light-sleeps, so `vTaskDelay()` and
+> `delay()` end late. Time your waits with `millis()` or `esp_timer_get_time()` instead (see
+> `examples/battery_optimized_example`).
+
 ---
 
 ### Restarts: OTA Updates and Deep Sleep

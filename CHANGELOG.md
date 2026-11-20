@@ -144,6 +144,11 @@ Upgrading from `1.x`? See [MIGRATION.md](MIGRATION.md).
   object has no attribute 'startswith'`.
 - Builds on espressif32 8.x no longer warn about the deprecated `rtc.h` header
   or a `%u` format mismatch in `task_monitor.hpp`.
+- `examples/battery_optimized_example` paces its sends with a `millis()`
+  deadline. Its `delay()` between sends stood still while the MCU
+  light-sleeps, so a node that sleeps 85 % of the superframe sent about seven
+  times less often than configured. The example's README describes which
+  waits stop during light sleep and the pattern to use. The library does not advance the FreeRTOS tick count after a sleep.
 - Light sleep: the MCU sleeps once through each run of SLEEP slots and wakes
   `wake_up_guard_ms` before the next active slot, instead of waking at every
   slot boundary and staying awake for the guard. `PrepareSleepCallback` runs
