@@ -99,6 +99,20 @@ class BroadcastMessage : public IConvertibleToBaseMessage {
     BaseMessage ToBaseMessage() const override;
     std::optional<std::vector<uint8_t>> Serialize() const override;
 
+    /**
+     * @brief Security fields of the frame this message was received in
+     *
+     * A forwarded copy keeps them, so the relay sends the received body
+     * bytes, counter field and tag unchanged.
+     */
+    const security::SecurityContext& GetSecurityContext() const {
+        return security_context_;
+    }
+
+    void SetSecurityContext(const security::SecurityContext& context) {
+        security_context_ = context;
+    }
+
    private:
     BroadcastMessage(AddressType src, uint8_t ttl, uint8_t seq_num,
                      const std::vector<uint8_t>& payload);
@@ -107,6 +121,7 @@ class BroadcastMessage : public IConvertibleToBaseMessage {
     uint8_t ttl_;
     uint8_t seq_num_;
     std::vector<uint8_t> payload_;
+    security::SecurityContext security_context_;  ///< Body layer fields
 };
 
 }  // namespace loramesher
