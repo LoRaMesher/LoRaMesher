@@ -121,7 +121,10 @@ std::optional<BroadcastMessage> BroadcastMessage::CreateFromBaseMessage(
                             payload.end());
     }
 
-    return BroadcastMessage(message.GetSource(), *ttl, *seq_num, user_payload);
+    BroadcastMessage broadcast(message.GetSource(), *ttl, *seq_num,
+                               user_payload);
+    broadcast.security_context_ = message.GetSecurityContext();
+    return broadcast;
 }
 
 std::optional<BroadcastMessage> BroadcastMessage::CreateForwarded(
@@ -131,8 +134,11 @@ std::optional<BroadcastMessage> BroadcastMessage::CreateForwarded(
         return std::nullopt;
     }
 
-    return BroadcastMessage(original.source_, original.ttl_ - 1,
-                            original.seq_num_, original.payload_);
+    BroadcastMessage forwarded(original.source_, original.ttl_ - 1,
+                               original.seq_num_, original.payload_);
+    // The body, the counter field and the tag travel unchanged
+    forwarded.security_context_ = original.security_context_;
+    return forwarded;
 }
 
 BaseMessage BroadcastMessage::ToBaseMessage() const {
@@ -153,9 +159,11 @@ BaseMessage BroadcastMessage::ToBaseMessage() const {
         serializer.WriteBytes(payload_.data(), payload_.size());
     }
 
-    return BaseMessage(
+    BaseMessage base_message(
         kBroadcastAddress, source_, MessageType::DATA_BROADCAST,
         std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
+    base_message.SetSecurityContext(security_context_);
+    return base_message;
 }
 
 std::optional<std::vector<uint8_t>> BroadcastMessage::Serialize() const {

@@ -74,8 +74,10 @@ std::optional<GroupMessage> GroupMessage::CreateFromBaseMessage(
         user_payload.assign(payload.begin() + kGroupFieldsSize, payload.end());
     }
 
-    return GroupMessage(message.GetDestination(), message.GetSource(), *ttl,
-                        *flags, *seq_num, user_payload);
+    GroupMessage group_message(message.GetDestination(), message.GetSource(),
+                               *ttl, *flags, *seq_num, user_payload);
+    group_message.security_context_ = message.GetSecurityContext();
+    return group_message;
 }
 
 std::optional<GroupMessage> GroupMessage::CreateForwarded(
@@ -85,8 +87,12 @@ std::optional<GroupMessage> GroupMessage::CreateForwarded(
         return std::nullopt;
     }
 
-    return GroupMessage(original.group_, original.source_, original.ttl_ - 1,
-                        original.flags_, original.seq_num_, original.payload_);
+    GroupMessage forwarded(original.group_, original.source_, original.ttl_ - 1,
+                           original.flags_, original.seq_num_,
+                           original.payload_);
+    // The body, the counter field and the tag travel unchanged
+    forwarded.security_context_ = original.security_context_;
+    return forwarded;
 }
 
 BaseMessage GroupMessage::ToBaseMessage() const {
@@ -104,9 +110,11 @@ BaseMessage GroupMessage::ToBaseMessage() const {
         serializer.WriteBytes(payload_.data(), payload_.size());
     }
 
-    return BaseMessage(
+    BaseMessage base_message(
         group_, source_, MessageType::DATA_GROUP,
         std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
+    base_message.SetSecurityContext(security_context_);
+    return base_message;
 }
 
 std::optional<std::vector<uint8_t>> GroupMessage::Serialize() const {

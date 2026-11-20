@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "base_header.hpp"
+#include "security/security_context.hpp"
 #include "types/error_codes/result.hpp"
 #include "utils/byte_operations.h"
 #include "utils/compat/span.hpp"
@@ -193,6 +194,27 @@ class BaseMessage {
     MessageType GetType() const { return header_.GetType(); }
 
     /**
+     * @brief Gets the security fields of a received data frame
+     *
+     * The frame codec fills them when it opens a data frame. A message
+     * built by the application holds the default value.
+     *
+     * @return Const reference to the security context
+     */
+    const security::SecurityContext& GetSecurityContext() const {
+        return security_context_;
+    }
+
+    /**
+     * @brief Sets the security fields of the message
+     *
+     * @param context Context to store
+     */
+    void SetSecurityContext(const security::SecurityContext& context) {
+        security_context_ = context;
+    }
+
+    /**
      * @brief Sets a callback to be invoked just before message transmission
      *
      * This allows messages to update time-sensitive fields right before
@@ -232,6 +254,9 @@ class BaseMessage {
     /// Fixed-size payload array — avoids heap fragmentation on ESP32
     uint8_t payload_data_[kMaxPayloadSize] = {};
     uint8_t payload_size_ = 0;  ///< Actual number of bytes in payload_data_
+
+    /// Body layer fields of a secured data frame
+    security::SecurityContext security_context_;
 
     ///< Optional callback to invoke before transmission
     std::function<void(BaseMessage&)> pre_send_callback_;

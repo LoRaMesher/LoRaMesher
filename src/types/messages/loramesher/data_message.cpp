@@ -51,10 +51,15 @@ std::optional<DataMessage> DataMessage::CreateForwarded(
         return std::nullopt;
     }
 
-    return DataMessage::Create(original.GetDestination(), original.GetSource(),
-                               new_next_hop, original.GetPayload(),
-                               original.GetTTL() - 1, original.GetSeqNum(),
-                               original.GetType());
+    auto forwarded = DataMessage::Create(
+        original.GetDestination(), original.GetSource(), new_next_hop,
+        original.GetPayload(), original.GetTTL() - 1, original.GetSeqNum(),
+        original.GetType());
+    if (forwarded) {
+        // The body, the counter field and the tag travel unchanged
+        forwarded->security_context_ = original.security_context_;
+    }
+    return forwarded;
 }
 
 std::optional<DataMessage> DataMessage::CreateFromSerialized(
@@ -127,7 +132,9 @@ std::optional<DataMessage> DataMessage::CreateFromBaseMessage(
     DataHeader header(message.GetDestination(), message.GetSource(), *next_hop,
                       user_payload.size(), *ttl, *seq_num, message.GetType());
 
-    return DataMessage(header, user_payload);
+    DataMessage data_message(header, user_payload);
+    data_message.security_context_ = message.GetSecurityContext();
+    return data_message;
 }
 
 AddressType DataMessage::GetDestination() const {
@@ -188,9 +195,11 @@ BaseMessage DataMessage::ToBaseMessage() const {
     }
 
     // Create the base message with the correct type and our payload
-    return BaseMessage(
+    BaseMessage base_message(
         header_.GetDestination(), header_.GetSource(), header_.GetType(),
         std::span<const uint8_t>(payload_buf.data(), serializer.getOffset()));
+    base_message.SetSecurityContext(security_context_);
+    return base_message;
 }
 
 std::optional<std::vector<uint8_t>> DataMessage::Serialize() const {

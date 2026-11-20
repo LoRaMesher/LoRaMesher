@@ -21,6 +21,7 @@ BaseMessage::BaseMessage(AddressType dest, AddressType src, MessageType type,
 BaseMessage::BaseMessage(const BaseMessage& other)
     : header_(other.header_),
       payload_size_(other.payload_size_),
+      security_context_(other.security_context_),
       pre_send_callback_(other.pre_send_callback_) {
     if (payload_size_ > 0) {
         std::memcpy(payload_data_, other.payload_data_, payload_size_);
@@ -31,6 +32,7 @@ BaseMessage& BaseMessage::operator=(const BaseMessage& other) {
     if (this != &other) {
         header_ = other.header_;
         payload_size_ = other.payload_size_;
+        security_context_ = other.security_context_;
         if (payload_size_ > 0) {
             std::memcpy(payload_data_, other.payload_data_, payload_size_);
         }
@@ -42,6 +44,7 @@ BaseMessage& BaseMessage::operator=(const BaseMessage& other) {
 BaseMessage::BaseMessage(BaseMessage&& other) noexcept
     : header_(other.header_),
       payload_size_(other.payload_size_),
+      security_context_(other.security_context_),
       pre_send_callback_(std::move(other.pre_send_callback_)) {
     if (payload_size_ > 0) {
         std::memcpy(payload_data_, other.payload_data_, payload_size_);
@@ -53,6 +56,7 @@ BaseMessage& BaseMessage::operator=(BaseMessage&& other) noexcept {
     if (this != &other) {
         header_ = other.header_;
         payload_size_ = other.payload_size_;
+        security_context_ = other.security_context_;
         if (payload_size_ > 0) {
             std::memcpy(payload_data_, other.payload_data_, payload_size_);
         }
@@ -80,6 +84,8 @@ Result BaseMessage::SetMessage(AddressType dest, AddressType src,
     if (payload_size_ > 0) {
         std::memcpy(payload_data_, data.data(), payload_size_);
     }
+    // New content was never sealed, so no received security fields apply
+    security_context_ = security::SecurityContext{};
 
     return Result::Success();
 }
