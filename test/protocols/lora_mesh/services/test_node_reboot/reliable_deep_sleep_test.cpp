@@ -47,7 +47,8 @@ class ReliableDeepSleepTest : public NodeRebootFixture {
     }
 
     /// Form a three-node network whose members deep-sleep every superframe
-    std::vector<TestNode*> FormNetwork(Topology topology) {
+    std::vector<TestNode*> FormNetwork(Topology topology,
+                                       bool light_sleep = false) {
         power::DeepSleepPolicy policy;
         policy.enabled = true;
         policy.min_sleep_ms = 1000;
@@ -59,6 +60,7 @@ class ReliableDeepSleepTest : public NodeRebootFixture {
         spec.node_count = 3;
         spec.member_role = NodeRole::NODE_ONLY;
         spec.member_deep_sleep = policy;
+        spec.member_light_sleep = light_sleep;
         auto nodes = BuildNetwork(spec);
         StartAndFormNetwork(nodes);
         return nodes;
@@ -97,16 +99,32 @@ class ReliableDeepSleepTest : public NodeRebootFixture {
 
     /// Send a reliable unicast as the application of @p from, and watch it
     MessageId SendReliable(TestNode& from, TestNode& to, uint8_t max_retries,
-                           uint32_t timeout_ms) {
+                           uint32_t timeout_ms,
+                           const std::vector<uint8_t>& payload = Payload()) {
         sender_ = &from;
         sent_at_ms_ = VirtualNow();
         return AsNode(from, [&]() {
             return from.protocol->GetNetworkServiceForTest()->SendReliable(
-                to.address, Payload(), max_retries, timeout_ms);
+                to.address, payload, max_retries, timeout_ms);
         });
     }
 
     static std::vector<uint8_t> Payload() { return {kDataMarker, 0xAC, 0x01}; }
+
+    /// A payload that does not fit in the room LimitStore() leaves
+    static std::vector<uint8_t> BigPayload() {
+        return std::vector<uint8_t>(2 * kSpareStoreBytes, 0xB6);
+    }
+
+    /**
+     * @brief Leave the store of @p node room for the state it last slept
+     *        with and kSpareStoreBytes more
+     */
+    void LimitStore(const TestNode& node) {
+        LimitedStateStore& store = *stores_.at(node.address);
+        ASSERT_GT(store.GetLastSavedSize(), 0u);
+        store.SetCapacity(store.GetLastSavedSize() + kSpareStoreBytes);
+    }
 
     /// Lose the first @p count acknowledgements @p from sends to @p to
     void LoseAcks(const TestNode& from, const TestNode& to, size_t count) {
@@ -195,11 +213,12 @@ class ReliableDeepSleepTest : public NodeRebootFixture {
     }
 
     /// Times the watched payload reached the application of @p node
-    static size_t TimesReceived(const TestNode& node) {
+    static size_t TimesReceived(
+        const TestNode& node,
+        const std::vector<uint8_t>& expected = Payload()) {
         size_t count = 0;
         for (const auto& msg : node.received_messages) {
             const auto payload = msg.GetPayload();
-            const auto expected = Payload();
             count += std::equal(payload.begin(), payload.end(),
                                 expected.begin(), expected.end());
         }
@@ -213,6 +232,9 @@ class ReliableDeepSleepTest : public NodeRebootFixture {
 
     /// Slack of a measured time: the observation step and the slot guards
     uint32_t SlackMs() const { return superframe_ms_ / 10; }
+
+    /// Room LimitStore() leaves above the state without open messages
+    static constexpr size_t kSpareStoreBytes = 40;
 
     TestNode* sender_ = nullptr;
     MessageType attempt_type_ = MessageType::DATA_RELIABLE;
@@ -498,6 +520,141 @@ TEST_F(ReliableDeepSleepTest, GroupWindowStaysOpenAcrossSleeps) {
     EXPECT_EQ(member.delivery_outcomes.size(), 2u);
     EXPECT_EQ(TimesReceived(manager), 1u);
     EXPECT_EQ(CountOf(fallback_boots_, member.address), 0u);
+}
+
+TEST_F(ReliableDeepSleepTest, StateTooBigForTheStoreKeepsTheNodeUp) {
+    auto nodes = FormNetwork(Topology::kStar);
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& member = *nodes.back();
+    ASSERT_TRUE(WaitUntilReady(nodes, member, manager));
+
+    // The store has room for the member's state, but not with this message
+    LimitedStateStore& store = *stores_.at(member.address);
+    LimitStore(member);
+    ASSERT_FALSE(HasFatalFailure());
+    const size_t sleeps = CountOf(deep_sleeps_, member.address);
+
+    // The message stays open for three superframes: its acknowledgement is
+    // lost and the retransmission is acknowledged
+    LoseAcks(manager, member, 1);
+    const uint32_t timeout_ms = 3 * superframe_ms_;
+    const MessageId id =
+        SendReliable(member, manager, 3, timeout_ms, BigPayload());
+    ASSERT_NE(id.source, 0u);
+    bool slept = false;
+    bool held_a_snapshot = false;
+    ASSERT_TRUE(RunUntil(superframe_ms_ * 8, [&]() {
+        slept = slept || IsSleeping(member);
+        held_a_snapshot = held_a_snapshot || store.Load().has_value();
+        return !member.delivery_outcomes.empty();
+    })) << DescribeNetwork(nodes);
+
+    // Every SLEEP run the save was refused and the member stayed up, with
+    // nothing written to the store
+    EXPECT_FALSE(slept);
+    EXPECT_EQ(CountOf(deep_sleeps_, member.address), sleeps);
+    EXPECT_EQ(CountOf(sleeps_with_reliable_pending_, member.address), 0u);
+    EXPECT_GE(store.GetRejectedSaves(), 2u);
+    EXPECT_GT(store.GetLastRejectedSize(), store.GetCapacity());
+    EXPECT_FALSE(held_a_snapshot);
+
+    // The message was not dropped: it was retransmitted when due and
+    // delivered once
+    ASSERT_EQ(attempt_times_ms_.size(), 2u);
+    EXPECT_GE(AttemptDelayMs(1), timeout_ms);
+    EXPECT_LE(AttemptDelayMs(1), timeout_ms + superframe_ms_ + SlackMs());
+    ASSERT_EQ(member.delivery_outcomes.size(), 1u);
+    EXPECT_EQ(member.delivery_outcomes.front().outcome, Outcome::Delivered);
+    EXPECT_EQ(member.delivery_outcomes.front().id, id);
+    EXPECT_EQ(member.delivery_outcomes.front().by, manager.address);
+
+    // With the message closed the state fits again and the member goes back
+    // to deep-sleeping every superframe
+    const size_t rejected = store.GetRejectedSaves();
+    RunUntil(superframe_ms_ * 4, []() { return false; });
+    EXPECT_GE(CountOf(deep_sleeps_, member.address), sleeps + 3);
+    EXPECT_EQ(store.GetRejectedSaves(), rejected);
+    EXPECT_EQ(member.delivery_outcomes.size(), 1u);
+    EXPECT_EQ(attempt_times_ms_.size(), 2u);
+    EXPECT_EQ(TimesReceived(manager, BigPayload()), 1u);
+    EXPECT_EQ(CountOf(fallback_boots_, member.address), 0u);
+    EXPECT_TRUE(IsHealthy(nodes, manager.address, formed_network_id_))
+        << DescribeNetwork(nodes);
+}
+
+TEST_F(ReliableDeepSleepTest, StateTooBigForTheStoreFallsBackToLightSleep) {
+    // The members have a prepare-sleep callback, so they can light-sleep
+    auto nodes = FormNetwork(Topology::kStar, true);
+    ASSERT_FALSE(HasFatalFailure());
+    TestNode& manager = *nodes.front();
+    TestNode& member = *nodes.back();
+    ASSERT_TRUE(WaitUntilReady(nodes, member, manager));
+
+    // While the state fits, the callback is only asked for deep sleeps
+    const auto requests_before = SleepRequestsOf(member);
+    ASSERT_FALSE(requests_before.empty());
+    EXPECT_EQ(std::count(requests_before.begin(), requests_before.end(),
+                         power::PowerState::LIGHT_SLEEP),
+              0);
+
+    LimitedStateStore& store = *stores_.at(member.address);
+    LimitStore(member);
+    ASSERT_FALSE(HasFatalFailure());
+    const size_t sleeps = CountOf(deep_sleeps_, member.address);
+
+    LoseAcks(manager, member, 1);
+    const uint32_t timeout_ms = 3 * superframe_ms_;
+    const MessageId id =
+        SendReliable(member, manager, 3, timeout_ms, BigPayload());
+    ASSERT_NE(id.source, 0u);
+    ASSERT_TRUE(RunUntil(superframe_ms_ * 8, [&]() {
+        return !member.delivery_outcomes.empty();
+    })) << DescribeNetwork(nodes);
+
+    EXPECT_EQ(CountOf(deep_sleeps_, member.address), sleeps);
+    EXPECT_EQ(CountOf(sleeps_with_reliable_pending_, member.address), 0u);
+    const size_t rejected = store.GetRejectedSaves();
+    EXPECT_GE(rejected, 2u);
+
+    // The size is only known when the store refuses the save, after the
+    // callback approved the deep sleep. So in each of those SLEEP runs the
+    // callback is asked for a deep sleep that does not happen, and then for
+    // the light sleep that replaces it
+    auto requests = SleepRequestsOf(member);
+    requests.erase(
+        requests.begin(),
+        requests.begin() + static_cast<std::ptrdiff_t>(requests_before.size()));
+    ASSERT_EQ(requests.size(), 2 * rejected);
+    for (size_t i = 0; i < requests.size(); i += 2) {
+        EXPECT_EQ(requests[i], power::PowerState::DEEP_SLEEP) << i;
+        EXPECT_EQ(requests[i + 1], power::PowerState::LIGHT_SLEEP) << i;
+    }
+
+    // Light-sleeping changed nothing for the message
+    ASSERT_EQ(attempt_times_ms_.size(), 2u);
+    EXPECT_GE(AttemptDelayMs(1), timeout_ms);
+    EXPECT_LE(AttemptDelayMs(1), timeout_ms + superframe_ms_ + SlackMs());
+    ASSERT_EQ(member.delivery_outcomes.size(), 1u);
+    EXPECT_EQ(member.delivery_outcomes.front().outcome, Outcome::Delivered);
+    EXPECT_EQ(member.delivery_outcomes.front().id, id);
+
+    // Afterwards the member deep-sleeps again and is not asked for a light
+    // sleep any more
+    const size_t requests_after_hold = SleepRequestsOf(member).size();
+    RunUntil(superframe_ms_ * 4, []() { return false; });
+    EXPECT_GE(CountOf(deep_sleeps_, member.address), sleeps + 3);
+    EXPECT_EQ(store.GetRejectedSaves(), rejected);
+    auto later = SleepRequestsOf(member);
+    later.erase(later.begin(), later.begin() + static_cast<std::ptrdiff_t>(
+                                                   requests_after_hold));
+    EXPECT_EQ(
+        std::count(later.begin(), later.end(), power::PowerState::LIGHT_SLEEP),
+        0);
+    EXPECT_EQ(TimesReceived(manager, BigPayload()), 1u);
+    EXPECT_EQ(CountOf(fallback_boots_, member.address), 0u);
+    EXPECT_TRUE(IsHealthy(nodes, manager.address, formed_network_id_))
+        << DescribeNetwork(nodes);
 }
 
 }  // namespace

@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -28,6 +29,46 @@
 
 namespace loramesher {
 namespace test {
+
+/**
+ * @brief MemoryStateStore with an optional capacity
+ *
+ * Like the RTC memory of a real device, it refuses a blob larger than its
+ * capacity and keeps what it held before.
+ */
+class LimitedStateStore : public storage::MemoryStateStore {
+   public:
+    Result Save(std::span<const uint8_t> data) override {
+        if (data.size() > capacity_) {
+            last_rejected_size_ = data.size();
+            ++rejected_saves_;
+            return Result(LoraMesherErrorCode::kBufferOverflow,
+                          "State does not fit in the store");
+        }
+        last_saved_size_ = data.size();
+        return MemoryStateStore::Save(data);
+    }
+
+    /// Refuse every blob larger than @p capacity bytes from now on
+    void SetCapacity(size_t capacity) { capacity_ = capacity; }
+
+    size_t GetCapacity() const { return capacity_; }
+
+    /// Size of the last blob saved (0 before the first)
+    size_t GetLastSavedSize() const { return last_saved_size_; }
+
+    /// Size of the last blob refused (0 before the first)
+    size_t GetLastRejectedSize() const { return last_rejected_size_; }
+
+    /// Number of Save() calls refused for their size
+    size_t GetRejectedSaves() const { return rejected_saves_; }
+
+   private:
+    std::atomic<size_t> capacity_{std::numeric_limits<size_t>::max()};
+    std::atomic<size_t> last_saved_size_{0};
+    std::atomic<size_t> last_rejected_size_{0};
+    std::atomic<size_t> rejected_saves_{0};
+};
 
 class NodeRebootFixture : public RoutingTestFixture {
    public:
@@ -79,8 +120,7 @@ class NodeRebootFixture : public RoutingTestFixture {
             const NodeRole role =
                 (i == 0) ? NodeRole::NETWORK_MANAGER : spec.member_role;
             if (spec.with_store) {
-                stores_[address] =
-                    std::make_shared<storage::MemoryStateStore>();
+                stores_[address] = std::make_shared<LimitedStateStore>();
             }
             TestNode& node =
                 CreateNode("Node" + std::to_string(i), address, role,
@@ -147,9 +187,15 @@ class NodeRebootFixture : public RoutingTestFixture {
             }
             if (address != kBaseAddress && spec_.member_light_sleep) {
                 config.setPrepareSleepCallback(
-                    [this](const power::SleepContext& ctx) {
+                    [this, address](const power::SleepContext& ctx) {
                         const bool deep = ctx.requested_state ==
                                           power::PowerState::DEEP_SLEEP;
+                        {
+                            std::lock_guard<std::mutex> lock(
+                                sleep_requests_mutex_);
+                            sleep_requests_[address].push_back(
+                                ctx.requested_state);
+                        }
                         return power::SleepResult{!(deep && veto_deep_sleep_)};
                     });
             }
@@ -324,6 +370,14 @@ class NodeRebootFixture : public RoutingTestFixture {
         } else {
             ++fallback_boots_[node.address];
         }
+    }
+
+    /// Sleeps the prepare-sleep callback of @p node was asked for, in order
+    std::vector<power::PowerState> SleepRequestsOf(const TestNode& node) {
+        std::lock_guard<std::mutex> lock(sleep_requests_mutex_);
+        auto it = sleep_requests_.find(node.address);
+        return it == sleep_requests_.end() ? std::vector<power::PowerState>{}
+                                           : it->second;
     }
 
     /// True while @p node is in deep sleep
@@ -625,7 +679,7 @@ class NodeRebootFixture : public RoutingTestFixture {
     static constexpr uint32_t kSettleSuperframes = 4;
 
     NetworkSpec spec_;
-    std::map<AddressType, std::shared_ptr<storage::MemoryStateStore>> stores_;
+    std::map<AddressType, std::shared_ptr<LimitedStateStore>> stores_;
     uint32_t superframe_ms_ = 0;
     uint32_t discovery_timeout_ms_ = 0;
     uint16_t formed_network_id_ = 0;
@@ -649,6 +703,9 @@ class NodeRebootFixture : public RoutingTestFixture {
     int32_t sleep_clock_ppm_ = 0;
     /// Light-sleeping members veto deep sleep (they light-sleep instead)
     std::atomic<bool> veto_deep_sleep_{false};
+    /// Requests each light-sleeping member's prepare-sleep callback received
+    std::mutex sleep_requests_mutex_;
+    std::map<AddressType, std::vector<power::PowerState>> sleep_requests_;
     /// Real length of each node's current deep sleep
     std::map<AddressType, uint64_t> sleep_lengths_ms_;
     std::map<AddressType, size_t> deep_sleeps_;
