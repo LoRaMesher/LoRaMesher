@@ -34,7 +34,6 @@ A C++20 mesh networking library for LoRa nodes, built on a TDMA-based distance-v
   - [Sending Packets](#sending-packets)
   - [Reliable and Group Messaging](#reliable-and-group-messaging)
   - [Timing-Aware Sending (TDMA)](#timing-aware-sending-tdma)
-  - [Periodic Tasks and Light Sleep](#periodic-tasks-and-light-sleep)
   - [Restarts: OTA Updates and Deep Sleep](#restarts-ota-updates-and-deep-sleep)
   - [Diagnostics & Advanced](#diagnostics--advanced)
   - [Deployment Tips](#deployment-tips)
@@ -271,78 +270,9 @@ for (uint8_t i = 0; i < slots; i++) {
 
 Both functions return `0` when the node has not yet joined a network — pair them with `IsReadyToSend()` (see [Diagnostics & Advanced](#diagnostics--advanced)) for a robust send loop.
 
-With MCU light sleep enabled, a `vTaskDelay()` that spans a SLEEP run ends late. Wait for a
-deadline as shown in [Periodic Tasks and Light Sleep](#periodic-tasks-and-light-sleep).
-
----
-
-### Periodic Tasks and Light Sleep
-
-A node built with `withPrepareSleepCallback()` or `withDeepSleep()` light-sleeps its MCU through
-each run of SLEEP slots (ESP32 only). This changes how time passes for the application.
-
-**What stops.** The FreeRTOS tick count stands still while the MCU light-sleeps. Everything based
-on ticks counts awake time only:
-
-- `vTaskDelay()`, `vTaskDelayUntil()` and Arduino `delay()`
-- the timeouts of `xQueueReceive()`, `xSemaphoreTake()` and `ulTaskNotifyTake()`
-- FreeRTOS software timers (`xTimerCreate()`)
-- `xTaskGetTickCount()`
-
-Each wait grows by the time the MCU slept while it was pending. A node that sleeps 85 % of its
-superframe finishes a 5 minute `vTaskDelay()` after about 33 minutes.
-
-**What keeps counting.** `esp_timer_get_time()` and Arduino `millis()` and `micros()` advance by
-the time slept. The library runs on that clock, so slot timing and `GetTimeUntilNextDataSlot()`
-stay correct.
-
-**The library does not compensate.** It does not advance the tick count after a wake-up. The
-Arduino core is built without tickless idle, so `vTaskStepTick()` is not available.
-`xTaskCatchUpTicks()` replays every missed tick inside one critical section. That costs an
-estimated tens of milliseconds per minute slept, right before an active slot, where the wake-up
-guard is 20 ms. The application has to pace itself on a clock that keeps counting.
-
-**The pattern.** Take the deadline from `millis()` or `esp_timer_get_time()` and wait for it in
-short tick steps:
-
-```cpp
-constexpr uint32_t kReportIntervalMs = 5 * 60 * 1000;
-constexpr uint32_t kWaitStepMs = 100;
-
-void ReportTask(void*) {
-    uint32_t next_report_ms = millis();
-    for (;;) {
-        // A step that is pending when the MCU goes to sleep ends up to
-        // kWaitStepMs after the wake-up
-        while (static_cast<int32_t>(millis() - next_report_ms) < 0) {
-            vTaskDelay(pdMS_TO_TICKS(kWaitStepMs));
-        }
-        next_report_ms += kReportIntervalMs;
-        mesher->Send(dst, BuildReport());
-    }
-}
-```
-
-The task runs only while the MCU is awake, so a deadline that falls inside a sleep is served at
-the next wake-up. The same applies to the wait before a data slot:
-
-```cpp
-const uint32_t send_at_ms = millis() + mesher->GetTimeUntilNextDataSlot();
-while (static_cast<int32_t>(millis() - send_at_ms) < 0) {
-    vTaskDelay(pdMS_TO_TICKS(10));
-}
-```
-
-An `esp_timer` also works. Its callback runs at the first wake-up after the timer expires, because
-the timer does not wake the MCU. Create a periodic `esp_timer` with `skip_unhandled_events = true`.
-Without it the callback runs once for every period that passed during the sleep.
-
-A wait for an event with a timeout, such as `xQueueReceive(queue, &item, timeout)`, still returns
-as soon as the event arrives. Only the timeout is stretched. Use a short timeout and compare
-`millis()` with your deadline when it expires.
-
-`examples/battery_optimized_example` paces its sends this way. Deep sleep ends in a reboot, so no
-wait survives it.
+> **Light sleep:** the FreeRTOS tick count stops while the MCU light-sleeps, so `vTaskDelay()` and
+> `delay()` end late. Time your waits with `millis()` or `esp_timer_get_time()` instead (see
+> `examples/battery_optimized_example`).
 
 ---
 

@@ -2016,7 +2016,7 @@ Invoked once per run of consecutive SLEEP slots (SLEEP slots also appear inside 
 
 Runs not longer than the wake margin plus 10 ms only put the radio to sleep. On ESP32 the protocol's clock is `esp_timer` time, which the RTC sleep clock advances through light sleep, and the superframe timer recomputes its next slot boundary after every wake-up; a slot that began before it did so is handled late rather than skipped.
 
-The FreeRTOS tick count stands still during the light sleep and the protocol does not advance it afterwards. Tick-based waits of the application (`vTaskDelay()`, timeouts of queue and notification waits, software timers) therefore count awake time only. The application takes its deadlines from `esp_timer_get_time()` and waits for them in short tick steps (see the README section "Periodic Tasks and Light Sleep").
+The FreeRTOS tick count stands still during the light sleep and the protocol does not advance it afterwards. Tick-based waits of the application (`vTaskDelay()`, timeouts of queue and notification waits, software timers) therefore count awake time only. The application takes its deadlines from `esp_timer_get_time()` and waits for them in short tick steps (see `examples/battery_optimized_example`).
 
 The light sleep is timed by the RC sleep clock, which runs at another rate in light sleep than in deep sleep; each kind has its own calibration (Section 5.8.4). The node asks for the light sleep scaled by the learned light-sleep error and, after waking, removes that error from its clock. A clock correction that moves the clock back into a slot already handled neither repeats the slot nor starts a new superframe.
 
