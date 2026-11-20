@@ -235,7 +235,7 @@ TEST(FrameFormat, LargestPayloadSealsToExactlyTheLimit) {
                     EXPECT_EQ(frame.size(),
                               node.codec.OnAirSize(send.type, plain.size()));
                 } else {
-                    EXPECT_EQ(node.last_seal, SealStatus::kBufferOverflow);
+                    EXPECT_EQ(node.last_seal, SealStatus::kTooLarge);
                     EXPECT_TRUE(frame.empty());
                 }
             }
@@ -255,7 +255,7 @@ TEST(FrameFormat, NothingExceedsTheDefaultLimit) {
     const Bytes ten = PlainFrame(0xFFFF, kNode, MessageType::ROUTE_TABLE,
                                  Bytes(7 + 10 * 10, 0x11));
     EXPECT_TRUE(node.Seal(ten).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kBufferOverflow);
+    EXPECT_EQ(node.last_seal, SealStatus::kTooLarge);
     // The refused frame took no counter
     EXPECT_EQ(node.counters.GetNext(CounterSpace::kControl),
               control_before + 1);

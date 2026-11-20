@@ -193,7 +193,7 @@ class TestNode {
     /// Forward the frame opened last to a next hop
     Bytes Forward(Bytes opened, AddressType next_hop) {
         if (!FrameCodec::RewriteForForward(opened, next_hop)) {
-            last_seal = SealStatus::kInvalidParameter;
+            last_seal = SealStatus::kMalformed;
             return {};
         }
         Bytes out(kMaxSealedFrameSize);

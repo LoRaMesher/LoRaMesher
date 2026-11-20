@@ -315,9 +315,9 @@ TEST(FrameCodecReject, SealingAControlFrameOfAnotherSourceIsRefused) {
     const uint32_t control_before =
         node.counters.GetNext(CounterSpace::kControl);
     EXPECT_TRUE(node.Seal(Beacon(kNode)).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(node.last_seal, SealStatus::kForeignSource);
     EXPECT_TRUE(node.Seal(Claim(kNode)).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(node.last_seal, SealStatus::kForeignSource);
     EXPECT_EQ(node.counters.GetNext(CounterSpace::kBeacon), beacon_before);
     EXPECT_EQ(node.counters.GetNext(CounterSpace::kControl), control_before);
     // A join frame keeps its source across hops and is sealed by any member
@@ -387,7 +387,7 @@ TEST(FrameCodecReject, DisabledModeKeepsThePlainFormat) {
                   PlainData(kGateway, kRelay, MessageType::DATA, kGateway, 5, 1,
                             kBody),
                   context, out, out_len),
-              SealStatus::kInvalidState);
+              SealStatus::kNotReady);
 }
 
 TEST(FrameCodecReject, UnknownAndRecoveryTypes) {
@@ -406,7 +406,7 @@ TEST(FrameCodecReject, UnknownAndRecoveryTypes) {
         node.Seal(PlainFrame(kRelay, kNode, static_cast<MessageType>(0xC6),
                              kBeaconPayload))
             .empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(node.last_seal, SealStatus::kMalformed);
     EXPECT_EQ(node.codec.GetStats().tx_refused, 3u);
 
     // KEY_REQUEST (V7) and KEY_GRANT are dropped until their step exists
@@ -442,12 +442,12 @@ TEST(FrameCodecReject, DataFrameShorterThanItsExtension) {
                     .Seal(PlainFrame(kGateway, kNode, MessageType::DATA,
                                      FromHex("010A0A")))
                     .empty());
-    EXPECT_EQ(origin.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(origin.last_seal, SealStatus::kMalformed);
     EXPECT_TRUE(origin
                     .Seal(PlainFrame(kGroup, kNode, MessageType::DATA_GROUP,
                                      FromHex("FFFF0A00")))
                     .empty());
-    EXPECT_EQ(origin.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(origin.last_seal, SealStatus::kMalformed);
     // An empty body is fine
     const Bytes empty = origin.Seal(
         PlainData(kGateway, kNode, MessageType::DATA, kGateway, 10, 1, {}));
@@ -467,16 +467,16 @@ TEST(FrameCodecReject, DataFrameShorterThanItsExtension) {
 TEST(FrameCodecReject, MalformedPlainFrame) {
     TestNode node(kNode);
     EXPECT_TRUE(node.Seal(FromHex("FFFF030A")).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(node.last_seal, SealStatus::kMalformed);
     Bytes claim = Claim(kNode);
     claim.push_back(0);  // longer than payload_size says
     EXPECT_TRUE(node.Seal(claim).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(node.last_seal, SealStatus::kMalformed);
     // Output buffer too small
     Bytes small(9);
     size_t out_len = 99;
     EXPECT_EQ(node.codec.SealFrame(Claim(kNode), {}, small, out_len),
-              SealStatus::kBufferOverflow);
+              SealStatus::kTooLarge);
     EXPECT_EQ(out_len, 0u);
     TestNode receiver(kRelay);
     TestNode sender(kGateway);
@@ -497,7 +497,7 @@ TEST(FrameCodecBeacon, NonZeroTopDelayByteIsRefused) {
     Bytes beacon = Beacon(kRelay);
     beacon[6 + 11] = 0x01;
     EXPECT_TRUE(node.Seal(beacon).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+    EXPECT_EQ(node.last_seal, SealStatus::kBeaconDelayRange);
     EXPECT_EQ(node.counters.GetNext(CounterSpace::kBeacon), before);
     // The largest delay of the format still fits
     beacon[6 + 11] = 0x00;
@@ -515,7 +515,7 @@ TEST(FrameCodecBeacon, WrongPayloadSizeIsRefused) {
             node.Seal(PlainFrame(0xFFFF, kRelay, MessageType::SYNC_BEACON,
                                  Bytes(size, 0)))
                 .empty());
-        EXPECT_EQ(node.last_seal, SealStatus::kInvalidParameter);
+        EXPECT_EQ(node.last_seal, SealStatus::kMalformed);
     }
     // A received beacon with another payload size, with a valid MIC
     const NetworkTrafficKeys keys = Keys1();
@@ -606,8 +606,13 @@ TEST(FrameCodecReplay, JoinFramesUseTheControlCounterOfTheTrailerTransmitter) {
 
 TEST(FrameCodecReplay, DataWindowAtTheDestination) {
     TestNode destination(kGateway);
+    // The destination commits window G when the body opened
     const auto open = [&](uint32_t counter) {
-        destination.Open(GroupData(kGateway, kGateway, counter));
+        const Bytes opened =
+            destination.Open(GroupData(kGateway, kGateway, counter));
+        if (destination.last_open == OpenStatus::kOk) {
+            destination.OpenBody(opened);
+        }
         return destination.last_open;
     };
     EXPECT_EQ(open(100), OpenStatus::kOk);
@@ -691,7 +696,8 @@ TEST(FrameCodecReplay, DestinationUsesNoHopWindowForEndToEndFrames) {
 
     // A forged group-keyed frame with the maximal counter pushes window G
     // and does not block a later end-to-end frame of the same origin
-    destination.Open(GroupData(kGateway, kGateway, 0x3FFFFFFE));
+    destination.OpenBody(
+        destination.Open(GroupData(kGateway, kGateway, 0x3FFFFFFE)));
     EXPECT_EQ(destination.last_open, OpenStatus::kOk);
     destination.Open(EndToEndData(kGateway, kGateway, 78));
     EXPECT_EQ(destination.last_open, OpenStatus::kOk);
@@ -726,7 +732,7 @@ TEST(FrameCodecReplay, KeyTypesUseNoHopWindowAtRelayOrDestination) {
         EXPECT_TRUE(
             origin.Seal(PlainData(kGateway, kNode, type, kRelay, 10, 1, kBody))
                 .empty());
-        EXPECT_EQ(origin.last_seal, SealStatus::kKeyUnavailable);
+        EXPECT_EQ(origin.last_seal, SealStatus::kNoKey);
         EXPECT_EQ(origin.counters.GetNext(CounterSpace::kData), 0u);
     }
 }
@@ -768,7 +774,7 @@ TEST(FrameCodecReplay, AllOnesCounterIsDroppedAndClearsNothing) {
     receiver.Open(RefControl(keys, 1, Claim(kRelay), kRelay, 5, false));
     EXPECT_EQ(receiver.last_open, OpenStatus::kReplay);
     // Data, group keyed and end to end, at destination and at a relay
-    receiver.Open(GroupData(kGateway, kGateway, 5));
+    receiver.OpenBody(receiver.Open(GroupData(kGateway, kGateway, 5)));
     ASSERT_EQ(receiver.last_open, OpenStatus::kOk);
     receiver.Open(GroupData(kGateway, kGateway, 0x3FFFFFFF));
     EXPECT_EQ(receiver.last_open, OpenStatus::kReplay);
@@ -827,6 +833,81 @@ TEST(FrameCodecReplay, OverheardDataFrameLeavesStateUntouched) {
     EXPECT_FALSE(state->relayed.HasSeenAny());
 }
 
+TEST(FrameCodecReplay, BadTagLeavesWindowGUntouchedAtTheDestination) {
+    // A copy with a valid hop MIC whose body was damaged on the way
+    const NetworkTrafficKeys keys = Keys1();
+    const Bytes plain =
+        PlainData(kGateway, kNode, MessageType::DATA, kGateway, 10, 1, kBody);
+    const Bytes genuine = RefGroupData(keys, 1, plain, 40);
+    Bytes header(genuine.begin(), genuine.begin() + 6);
+    Bytes damaged_body(genuine.begin() + 10, genuine.end() - 12);
+    damaged_body[0] ^= 0x01;
+    const Bytes damaged =
+        RefHopLayer(keys, header, Bytes(plain.begin() + 6, plain.begin() + 10),
+                    damaged_body, Bytes(genuine.end() - 12, genuine.end() - 8),
+                    Bytes(genuine.end() - 8, genuine.end() - 4));
+
+    TestNode destination(kGateway);
+    const Bytes opened = destination.Open(damaged);
+    ASSERT_EQ(destination.last_open, OpenStatus::kOk);
+    EXPECT_EQ(destination.info.role, RxRole::kDestination);
+    // Opening alone commits nothing at a node that verifies the tag
+    EXPECT_EQ(destination.codec.GetPeers().Find(kNode), nullptr);
+    EXPECT_TRUE(destination.OpenBody(opened).empty());
+    EXPECT_EQ(destination.last_open, OpenStatus::kTagFailed);
+    EXPECT_EQ(destination.codec.GetPeers().Find(kNode), nullptr);
+
+    // The intact copy with the same counter is still accepted, once
+    const Bytes intact = destination.Open(genuine);
+    ASSERT_EQ(destination.last_open, OpenStatus::kOk);
+    EXPECT_EQ(destination.OpenBody(intact), plain);
+    const HopReplayState* state = destination.codec.GetPeers().Find(kNode);
+    ASSERT_NE(state, nullptr);
+    EXPECT_EQ(state->group.GetHigh(), 40u);
+    destination.Open(genuine);
+    EXPECT_EQ(destination.last_open, OpenStatus::kReplay);
+    // A second body call for the frame opened before is a replay as well
+    EXPECT_TRUE(destination.OpenBody(intact).empty());
+    EXPECT_EQ(destination.last_open, OpenStatus::kReplay);
+    EXPECT_EQ(destination.codec.GetStats().rx_tag_failed, 1u);
+    EXPECT_EQ(destination.codec.GetStats().rx_replay, 2u);
+}
+
+TEST(FrameCodecReplay, FloodNodeCommitsWindowGAfterTheTagAndRelayAtOnce) {
+    const NetworkTrafficKeys keys = Keys1();
+    const NodeTrafficKeys other = NodeKeys();
+    // Flood frame whose tag is wrong: nothing is committed
+    const Bytes group_plain = PlainGroup(kGroup, kNode, 10, 0, 1, kBody);
+    TestNode listener(kGateway);
+    const Bytes bad = listener.Open(
+        RefData(keys, 1, group_plain, 12, 0x03, other.ee, other.em));
+    ASSERT_EQ(listener.last_open, OpenStatus::kOk);
+    EXPECT_TRUE(listener.OpenBody(bad).empty());
+    EXPECT_EQ(listener.last_open, OpenStatus::kTagFailed);
+    EXPECT_EQ(listener.codec.GetPeers().Size(), 0u);
+    const Bytes good = listener.Open(RefGroupData(keys, 1, group_plain, 12));
+    ASSERT_EQ(listener.last_open, OpenStatus::kOk);
+    EXPECT_EQ(listener.OpenBody(good), group_plain);
+    // Two copies opened before either body: the second body call loses
+    const Bytes copy_a = listener.Open(RefGroupData(keys, 1, group_plain, 13));
+    const SecurityContext context_a = listener.info.context;
+    const Bytes copy_b = listener.Open(RefGroupData(keys, 1, group_plain, 13));
+    ASSERT_EQ(listener.last_open, OpenStatus::kOk);
+    EXPECT_EQ(listener.OpenBody(copy_b), group_plain);
+    Bytes out(kMaxPlainFrameSize);
+    size_t out_len = 0;
+    EXPECT_EQ(listener.codec.OpenFrameBody(copy_a, context_a, out, out_len),
+              OpenStatus::kReplay);
+
+    // A unicast frame in transit commits when it is opened: the relay
+    // does not verify the tag
+    TestNode relay(kRelay);
+    relay.Open(GroupData(kGateway, kRelay, 20));
+    ASSERT_EQ(relay.last_open, OpenStatus::kOk);
+    ASSERT_NE(relay.codec.GetPeers().Find(kNode), nullptr);
+    EXPECT_EQ(relay.codec.GetPeers().Find(kNode)->group.GetHigh(), 20u);
+}
+
 TEST(FrameCodecReplay, FloodCopyThatArrivesTwiceEndsAtTheHopWindow) {
     TestNode origin(kNode);
     TestNode first(kRelay);
@@ -854,7 +935,7 @@ TEST(FrameCodecReplay, NewerEpochClearsThePeerAndOlderEpochIsDropped) {
     const NetworkTrafficKeys keys2 = RefNetKeys(NetKey2(), 2);
     receiver.Open(RefBeacon(keys1, 1, Beacon(kRelay), 500));
     ASSERT_EQ(receiver.last_open, OpenStatus::kOk);
-    receiver.Open(GroupData(kGateway, kGateway, 500));
+    receiver.OpenBody(receiver.Open(GroupData(kGateway, kGateway, 500)));
     ASSERT_EQ(receiver.last_open, OpenStatus::kOk);
 
     // The counters restart in the new epoch
@@ -871,9 +952,10 @@ TEST(FrameCodecReplay, NewerEpochClearsThePeerAndOlderEpochIsDropped) {
     EXPECT_EQ(receiver.codec.GetPeers().Find(kRelay)->epoch, 2);
 
     // Another peer is still in the old epoch and is accepted there
-    receiver.Open(GroupData(kGateway, kGateway, 501));
+    receiver.OpenBody(receiver.Open(GroupData(kGateway, kGateway, 501)));
     EXPECT_EQ(receiver.last_open, OpenStatus::kOk);
-    receiver.Open(GroupData(kGateway, kGateway, 3, 2, NetKey2()));
+    receiver.OpenBody(
+        receiver.Open(GroupData(kGateway, kGateway, 3, 2, NetKey2())));
     EXPECT_EQ(receiver.last_open, OpenStatus::kOk);
     receiver.Open(GroupData(kGateway, kGateway, 502));
     EXPECT_EQ(receiver.last_open, OpenStatus::kReplay);
@@ -1005,13 +1087,13 @@ TEST(FrameCodecRelay, NoPathEncryptsABodyUnderAnotherNodesCounter) {
     const uint32_t data_before = relay.counters.GetNext(CounterSpace::kData);
     // A plain body of another source through the general entry point
     EXPECT_TRUE(relay.Seal(foreign).empty());
-    EXPECT_EQ(relay.last_seal, SealStatus::kInvalidState);
+    EXPECT_EQ(relay.last_seal, SealStatus::kPlainForwardBody);
     // And through the relay entry point
     Bytes out(kMaxSealedFrameSize);
     size_t out_len = 0;
     EXPECT_EQ(
         relay.codec.SealForwarded(foreign, SecurityContext{}, out, out_len),
-        SealStatus::kInvalidState);
+        SealStatus::kPlainForwardBody);
     EXPECT_EQ(relay.counters.GetNext(CounterSpace::kData), data_before);
 
     // A decrypted delivery copy cannot be forwarded either
@@ -1025,7 +1107,7 @@ TEST(FrameCodecRelay, NoPathEncryptsABodyUnderAnotherNodesCounter) {
     EXPECT_EQ(copy->GetSecurityContext().body_state, BodyState::kPlain);
     EXPECT_EQ(received->GetSecurityContext().body_state, BodyState::kCipher);
     EXPECT_EQ(flood_relay.codec.Seal(*copy, out, out_len),
-              SealStatus::kInvalidState);
+              SealStatus::kPlainForwardBody);
     EXPECT_EQ(flood_relay.codec.Seal(*received, out, out_len), SealStatus::kOk);
     // The opened body cannot be opened twice
     OpenStatus status = OpenStatus::kOk;
@@ -1038,10 +1120,10 @@ TEST(FrameCodecRelay, NoPathEncryptsABodyUnderAnotherNodesCounter) {
         relay.codec.SealForwarded(PlainData(kGateway, kRelay, MessageType::DATA,
                                             kGateway, 9, 1, kBody),
                                   cipher_context, out, out_len),
-        SealStatus::kInvalidParameter);
+        SealStatus::kMalformed);
     cipher_context.ctr_field |= kHopCounterFlag;
     EXPECT_EQ(relay.codec.SealForwarded(foreign, cipher_context, out, out_len),
-              SealStatus::kInvalidParameter);
+              SealStatus::kMalformed);
 }
 
 TEST(FrameCodecRelay, RelayChangingAFieldItMayNotChangeFailsAtTheBody) {
@@ -1154,7 +1236,7 @@ TEST(FrameCodecRelay, ForwardsUnderTheEpochTheFrameArrivedWith) {
     relay.provider->SetKeys({{2, NetKey2()}});
     EXPECT_EQ(relay.codec.LoadKeys(), 1u);
     EXPECT_TRUE(relay.Forward(opened, kGateway).empty());
-    EXPECT_EQ(relay.last_seal, SealStatus::kKeyUnavailable);
+    EXPECT_EQ(relay.last_seal, SealStatus::kNoKey);
 }
 
 TEST(FrameCodecRelay, TypedMessagesCarryTheContextThroughCreateForwarded) {
@@ -1183,7 +1265,7 @@ TEST(FrameCodecRelay, TypedMessagesCarryTheContextThroughCreateForwarded) {
                                                5, 1, MessageType::DATA);
         EXPECT_EQ(fresh->GetSecurityContext(), SecurityContext{});
         EXPECT_EQ(relay.codec.Seal(fresh->ToBaseMessage(), out, out_len),
-                  SealStatus::kInvalidState);
+                  SealStatus::kPlainForwardBody);
     }
     // DATA_BROADCAST through BroadcastMessage
     {
@@ -1254,7 +1336,7 @@ TEST(FrameCodecSeal, CounterProblemsRefuseTheFrameAndRepeatNothing) {
               RefGroupData(Keys1(), 1, plain, 0));
     node.store->SetSaveFailure(true);
     EXPECT_EQ(node.codec.SealFrame(plain, {}, out, out_len),
-              SealStatus::kCounterStoreError);
+              SealStatus::kCounterUnavailable);
     EXPECT_EQ(out_len, 0u);
     EXPECT_EQ(node.counters.GetNext(CounterSpace::kData), 1u);
     node.store->SetSaveFailure(false);
@@ -1264,7 +1346,7 @@ TEST(FrameCodecSeal, CounterProblemsRefuseTheFrameAndRepeatNothing) {
     // discarded
     node.counters.Capture();
     EXPECT_EQ(node.codec.SealFrame(plain, {}, out, out_len),
-              SealStatus::kInvalidState);
+              SealStatus::kSealLocked);
     node.counters.DiscardCapture();
     EXPECT_EQ(node.Seal(plain), RefGroupData(Keys1(), 1, plain, 2));
     EXPECT_EQ(node.codec.GetStats().tx_sealed, 3u);
@@ -1291,8 +1373,7 @@ TEST(FrameCodecSeal, ExhaustedSpaceAndStoppedCounters) {
     Bytes out(kMaxSealedFrameSize);
     size_t out_len = 0;
     // Counters not started
-    EXPECT_EQ(codec.SealFrame(plain, {}, out, out_len),
-              SealStatus::kInvalidState);
+    EXPECT_EQ(codec.SealFrame(plain, {}, out, out_len), SealStatus::kNotReady);
     ASSERT_EQ(counters.Start(), CounterStatus::kOk);
     ASSERT_EQ(counters.EnsureReserved(CounterSpace::kData), CounterStatus::kOk);
     EXPECT_EQ(codec.SealFrame(plain, {}, out, out_len), SealStatus::kOk);
@@ -1304,13 +1385,13 @@ TEST(FrameCodecSeal, NoKeyForTheTransmitEpoch) {
     // The counter record says epoch 2 and the provider only has epoch 1
     TestNode node(kNode, 2, {}, {{1, NetKey1()}});
     EXPECT_TRUE(node.Seal(Beacon(kNode)).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kKeyUnavailable);
+    EXPECT_EQ(node.last_seal, SealStatus::kNoKey);
     EXPECT_TRUE(node.Seal(Claim(kNode)).empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kKeyUnavailable);
+    EXPECT_EQ(node.last_seal, SealStatus::kNoKey);
     EXPECT_TRUE(node.Seal(PlainData(kGateway, kNode, MessageType::DATA,
                                     kGateway, 10, 1, kBody))
                     .empty());
-    EXPECT_EQ(node.last_seal, SealStatus::kKeyUnavailable);
+    EXPECT_EQ(node.last_seal, SealStatus::kNoKey);
     for (const CounterSpace space :
          {CounterSpace::kBeacon, CounterSpace::kControl, CounterSpace::kData}) {
         EXPECT_EQ(node.counters.GetNext(space), 0u);
@@ -1388,7 +1469,7 @@ TEST(FrameCodecJoin, ResponseWithoutTheNonceFailsAtTheJoiner) {
 TEST(FrameCodecJoin, AfterJoiningTheNodeVerifiesWithoutANonce) {
     TestNode node(kNode);
     node.Seal(JoinRequest(kNode, kRelay, FromHex("C0FFEE42")));
-    node.codec.ClearOwnJoinNonces();
+    node.codec.ClearJoinNonces();
     EXPECT_EQ(node.codec.GetOwnJoinNonceCount(), 0u);
     // A response relayed toward this node as a sponsor has no bound nonce
     TestNode member(kOther);
@@ -1435,7 +1516,14 @@ TEST(FrameCodecJoin, OverhearerCountsAnUnverifiableResponseApart) {
     EXPECT_EQ(sponsor.last_open, OpenStatus::kOk);
 }
 
-TEST(FrameCodecJoin, SponsorStoresOnlyRequestsHeardFromTheJoinerItself) {
+/// JOIN_RESPONSE on its way to the sponsor: the target names the joiner
+Bytes JoinResponseToSponsor(AddressType sponsor, AddressType joiner) {
+    return PlainFrame(
+        sponsor, kGateway, MessageType::JOIN_RESPONSE,
+        Concat({FromHex("EFBE0100"), Le16(sponsor), Le16(joiner), {2}}));
+}
+
+TEST(FrameCodecJoin, SponsorStoresOnlyRequestsThatNameItAndComeFromTheJoiner) {
     const NetworkTrafficKeys keys = Keys1();
     TestNode sponsor(kRelay);
     // Forwarded by another member: the trailer transmitter is not the joiner
@@ -1445,7 +1533,8 @@ TEST(FrameCodecJoin, SponsorStoresOnlyRequestsHeardFromTheJoinerItself) {
     ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
     EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
               RefControl(keys, 1, JoinResponse(kNode), kRelay, 0, true));
-    // Heard from the joiner, with another member as its first hop
+    // Heard from the joiner, with another member as next hop and sponsor:
+    // this node is an overhearer and stores nothing
     sponsor.Open(RefControl(keys, 1,
                             JoinRequest(kNode, kOther, FromHex("C0FFEE42")),
                             kNode, 1, true));
@@ -1457,43 +1546,116 @@ TEST(FrameCodecJoin, SponsorStoresOnlyRequestsHeardFromTheJoinerItself) {
                             JoinRequest(kNode, kRelay, FromHex("C0FFEE42")),
                             kNode, 2, true));
     ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
-    EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
-              RefControl(keys, 1, JoinResponse(kNode), kRelay, 2, true,
-                         FromHex("C0FFEE42")));
-    // A response for another destination is sealed without a nonce
+    // A response for another destination is sealed without a nonce and
+    // leaves the entry alone
     EXPECT_EQ(sponsor.Seal(JoinResponse(kOther)),
-              RefControl(keys, 1, JoinResponse(kOther), kRelay, 3, true));
+              RefControl(keys, 1, JoinResponse(kOther), kRelay, 2, true));
+    EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
+              RefControl(keys, 1, JoinResponse(kNode), kRelay, 3, true,
+                         FromHex("C0FFEE42")));
     // A newer request of the same joiner replaces the nonce
     sponsor.Open(RefControl(keys, 1,
-                            JoinRequest(kNode, kRelay, FromHex("0A0B0C0D")),
+                            JoinRequest(kNode, kRelay, FromHex("01010101")),
                             kNode, 3, true));
-    EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
-              RefControl(keys, 1, JoinResponse(kNode), kRelay, 4, true,
-                         FromHex("0A0B0C0D")));
-    // A replayed request does not bring the old nonce back
+    sponsor.Open(RefControl(keys, 1,
+                            JoinRequest(kNode, kRelay, FromHex("0A0B0C0D")),
+                            kNode, 4, true));
+    // A replayed request does not bring an old nonce back
     sponsor.Open(RefControl(keys, 1,
                             JoinRequest(kNode, kRelay, FromHex("C0FFEE42")),
                             kNode, 2, true));
     EXPECT_EQ(sponsor.last_open, OpenStatus::kReplay);
     EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
-              RefControl(keys, 1, JoinResponse(kNode), kRelay, 5, true,
+              RefControl(keys, 1, JoinResponse(kNode), kRelay, 4, true,
                          FromHex("0A0B0C0D")));
+    // A request whose payload is not the 6 join fields and the nonce
+    sponsor.Open(RefControl(keys, 1,
+                            JoinRequest(kNode, kRelay, FromHex("C0FFEE4200")),
+                            kNode, 5, true));
+    ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
+    EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
+              RefControl(keys, 1, JoinResponse(kNode), kRelay, 5, true));
+}
+
+TEST(FrameCodecJoin, StoredNonceIsBoundOnlyOnce) {
+    const NetworkTrafficKeys keys = Keys1();
+    TestNode joiner(kNode);
+    TestNode sponsor(kRelay);
+    sponsor.Open(joiner.Seal(JoinRequest(kNode, kRelay, FromHex("C0FFEE42"))));
+    ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
+    const Bytes first = sponsor.Seal(JoinResponse(kNode));
+    EXPECT_EQ(first, RefControl(keys, 1, JoinResponse(kNode), kRelay, 0, true,
+                                FromHex("C0FFEE42")));
+    // The entry is gone: a second response carries no nonce
+    const Bytes second = sponsor.Seal(JoinResponse(kNode));
+    EXPECT_EQ(second,
+              RefControl(keys, 1, JoinResponse(kNode), kRelay, 1, true));
+    joiner.Open(second);
+    EXPECT_EQ(joiner.last_open, OpenStatus::kAuthFailed);
+    joiner.Open(first);
+    EXPECT_EQ(joiner.last_open, OpenStatus::kOk);
+    // A refused seal does not use the entry up
+    sponsor.Open(joiner.Seal(JoinRequest(kNode, kRelay, FromHex("00000007"))));
+    ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
+    sponsor.counters.Capture();
+    EXPECT_TRUE(sponsor.Seal(JoinResponse(kNode)).empty());
+    EXPECT_EQ(sponsor.last_seal, SealStatus::kSealLocked);
+    sponsor.counters.DiscardCapture();
+    joiner.Open(sponsor.Seal(JoinResponse(kNode)));
+    EXPECT_EQ(joiner.last_open, OpenStatus::kOk);
+}
+
+TEST(FrameCodecJoin, RelayThatSponsoredTheSponsorNeverBindsOnThePath) {
+    // 0x0A03 joined through the relay 0x0A02 a moment ago, so the relay
+    // still holds a nonce for it. Now 0x0A03 sponsors 0x0A04, and the
+    // response of the manager travels to 0x0A03 through that relay
+    TestNode manager(kGateway);
+    TestNode relay(kRelay);
+    TestNode sponsor(kNode);
+    TestNode joiner(kOther);
+
+    // The earlier join of 0x0A03. Its final response was lost, so the
+    // entry at the relay is still there
+    relay.Open(sponsor.Seal(JoinRequest(kNode, kRelay, FromHex("0000AAAA"))));
+    ASSERT_EQ(relay.last_open, OpenStatus::kOk);
+    sponsor.codec.ClearJoinNonces();
+
+    // 0x0A04 asks 0x0A03
+    sponsor.Open(joiner.Seal(JoinRequest(kOther, kNode, FromHex("0000BBBB"))));
+    ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
+
+    // Manager to relay to sponsor: target is the joiner, so B stays empty
+    const Bytes to_sponsor = JoinResponseToSponsor(kNode, kOther);
+    EXPECT_EQ(relay.Open(manager.Seal(to_sponsor)), to_sponsor);
+    const Bytes forwarded = relay.Seal(to_sponsor);
+    EXPECT_EQ(forwarded, RefControl(Keys1(), 1, to_sponsor, kRelay, 0, true));
+    EXPECT_EQ(sponsor.Open(forwarded), to_sponsor);
+    ASSERT_EQ(sponsor.last_open, OpenStatus::kOk);
+
+    // Sponsor to joiner: target 0, bound to the nonce of 0x0A04
+    const Bytes final_response = sponsor.Seal(JoinResponse(kOther));
+    EXPECT_EQ(joiner.Open(final_response), JoinResponse(kOther));
+    EXPECT_EQ(joiner.last_open, OpenStatus::kOk);
+
+    // The relay's own entry for 0x0A03 was not used up on the way
+    EXPECT_EQ(relay.Seal(JoinResponse(kNode)),
+              RefControl(Keys1(), 1, JoinResponse(kNode), kRelay, 1, true,
+                         FromHex("0000AAAA")));
 }
 
 TEST(FrameCodecJoin, StoredNonceExpiresAfterTheJoiningTimeout) {
     const NetworkTrafficKeys keys = Keys1();
-    TestNode sponsor(kRelay);
-    sponsor.now_ms = 1000;
-    sponsor.Open(RefControl(keys, 1,
-                            JoinRequest(kNode, kRelay, FromHex("C0FFEE42")),
-                            kNode, 0, true));
-    sponsor.now_ms = 1000 + 29999;
-    EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
-              RefControl(keys, 1, JoinResponse(kNode), kRelay, 0, true,
-                         FromHex("C0FFEE42")));
-    sponsor.now_ms = 1000 + 30000;
-    EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
-              RefControl(keys, 1, JoinResponse(kNode), kRelay, 1, true));
+    for (const uint32_t age : {29999u, 30000u}) {
+        TestNode sponsor(kRelay);
+        sponsor.now_ms = 1000;
+        sponsor.Open(RefControl(keys, 1,
+                                JoinRequest(kNode, kRelay, FromHex("C0FFEE42")),
+                                kNode, 0, true));
+        sponsor.now_ms = 1000 + age;
+        EXPECT_EQ(sponsor.Seal(JoinResponse(kNode)),
+                  RefControl(keys, 1, JoinResponse(kNode), kRelay, 0, true,
+                             age < 30000 ? FromHex("C0FFEE42") : Bytes{}));
+    }
 }
 
 TEST(FrameCodecJoin, SponsorTableHoldsFourJoiners) {
@@ -1514,6 +1676,9 @@ TEST(FrameCodecJoin, SponsorTableHoldsFourJoiners) {
     table.Store(0x0B09, {9, 9, 9, 9}, 30150, 30000);
     EXPECT_FALSE(table.Find(0x0B01, 30150, 30000, nonce));
     EXPECT_TRUE(table.Find(0x0B02, 30150, 30000, nonce));
+    EXPECT_TRUE(table.Find(0x0B09, 30150, 30000, nonce));
+    table.Remove(0x0B02);
+    EXPECT_FALSE(table.Find(0x0B02, 30150, 30000, nonce));
     EXPECT_TRUE(table.Find(0x0B09, 30150, 30000, nonce));
     table.Clear();
     EXPECT_FALSE(table.Find(0x0B09, 30150, 30000, nonce));

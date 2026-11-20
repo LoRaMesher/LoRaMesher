@@ -32,15 +32,21 @@ namespace security {
  */
 enum class SealStatus : uint8_t {
     kOk = 0,
-    kInvalidParameter,   ///< Malformed plain frame, or beacon delay too large
-    kUnsupportedType,    ///< Type a secured node does not send
-    kBufferOverflow,     ///< Longer than max_packet_size or the output buffer
-    kKeyUnavailable,     ///< No key for the epoch or the peer
-    kCounterStoreError,  ///< Saved limit reached, the frame stays queued
-    kCounterExhausted,   ///< The counter space reached its ceiling
-    kInvalidState,       ///< Sealing locked, counters stopped, or a
-                         ///< forwarded frame without the received ciphertext
-    kCryptoError,        ///< The AES backend failed
+    kUnsupportedType,     ///< Plain type has no class
+    kForeignSource,       ///< Class B or C1 with a source other than this node
+    kTooLarge,            ///< On-air length above max_packet_size, or above
+                          ///< the output buffer
+    kBeaconDelayRange,    ///< Beacon payload byte 11 is not zero
+    kNoKey,               ///< No key for the epoch or the peer
+    kCounterUnavailable,  ///< Saved limit reached, the frame stays queued
+    kCounterExhausted,    ///< The counter space reached its ceiling
+    kSealLocked,          ///< State captured for deep sleep
+    kPlainForwardBody,    ///< Forwarded data frame without the received
+                          ///< ciphertext
+    // The values below are outside the table of the specification
+    kMalformed,    ///< The plain frame does not parse
+    kNotReady,     ///< Counters not started, or security disabled
+    kCryptoError,  ///< The AES backend failed
 };
 
 /**
@@ -123,8 +129,9 @@ struct OpenInfo {
  *   for byte and can only recompute the hop MIC and the mask.
  *
  * Receive order: length and type checks, epoch selection, MIC, then the
- * replay check. No state changes before the MIC verified. The replay state
- * is committed last. An overheard data frame changes nothing.
+ * replay check. No state changes before every check the node can make has
+ * passed. The replay state is committed last. An overheard data frame
+ * changes nothing.
  *
  * This step covers bodies under the group keys (E = 0). A frame with E = 1
  * is verified and forwarded by a relay. Sealing or opening an E = 1 body
@@ -219,8 +226,11 @@ class FrameCodec {
      *   call through RewriteForForward() and SealForwarded()
      * - kRelay: forward in the same way, the body stays closed
      *
-     * State changes happen only after every check passed: the replay state
-     * of the peer, and the join nonce of a request heard from the joiner.
+     * State changes happen only after every check this node can make has
+     * passed: the replay state of the peer, and the join nonce of a request
+     * heard from the joiner. For a frame in transit (kRelay) the hop window
+     * is committed here. For kDestination and kFlood the hop window is only
+     * checked here and OpenFrameBody() commits it after the tag verified.
      *
      * @param frame On-air bytes
      * @param out Receives the plain frame. kMaxPlainFrameSize always fits
@@ -233,7 +243,11 @@ class FrameCodec {
     /**
      * @brief Verify the body tag of an opened data frame and decrypt a copy
      *
-     * The input stays untouched, so it can still be forwarded.
+     * The input stays untouched, so it can still be forwarded. When this
+     * node is the destination or the type is a flood type, the call checks
+     * hop window G again and commits it after the tag verified. A second
+     * call for the same frame therefore returns kReplay, and a frame with
+     * a bad tag leaves the window untouched.
      *
      * @param opened Output of OpenFrame() for a data frame
      * @param context info.context of the same call
@@ -280,9 +294,8 @@ class FrameCodec {
      * bytes as they are now. Uses the epoch the frame arrived under. Takes
      * no counter and runs no encryption of the body.
      *
-     * @return kInvalidState when the context does not mark the body as
-     *         received ciphertext, kInvalidParameter when the source is this
-     *         node
+     * @return kPlainForwardBody when the context does not mark the body as
+     *         received ciphertext, kMalformed when the source is this node
      */
     SealStatus SealForwarded(std::span<const uint8_t> opened,
                              const SecurityContext& context,
@@ -322,8 +335,9 @@ class FrameCodec {
     // State
     // ------------------------------------------------------------------
 
-    /// Forget the join nonces of this node. Call when it leaves JOINING
-    void ClearOwnJoinNonces() { own_join_nonces_.Clear(); }
+    /// Forget the join nonces of this node. Call when the join completed
+    /// or was abandoned. Until then the node counts as joining
+    void ClearJoinNonces() { own_join_nonces_.Clear(); }
 
     /// Number of own join nonces kept, 0 when the node is not joining
     size_t GetOwnJoinNonceCount() const { return own_join_nonces_.Count(); }

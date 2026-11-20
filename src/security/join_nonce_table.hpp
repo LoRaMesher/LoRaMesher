@@ -21,8 +21,8 @@ using JoinNonce = std::array<uint8_t, kJoinNonceSize>;
  * @brief Nonces of the joiners a member heard directly
  *
  * The member binds the stored nonce into the MIC of the final
- * JOIN_RESPONSE. An entry is replaced by a newer request of the same joiner
- * and expires after the joining timeout.
+ * JOIN_RESPONSE. An entry is replaced by a newer request of the same joiner,
+ * is removed once it was bound, and expires after the joining timeout.
  */
 class SponsorNonceTable {
    public:
@@ -78,6 +78,15 @@ class SponsorNonceTable {
             }
         }
         return false;
+    }
+
+    /// Remove the entry of a joiner, after its nonce was bound once
+    void Remove(AddressType joiner) {
+        for (Entry& entry : entries_) {
+            if (entry.used && entry.joiner == joiner) {
+                entry.used = false;
+            }
+        }
     }
 
     void Clear() {

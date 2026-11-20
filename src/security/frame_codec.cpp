@@ -29,6 +29,9 @@ constexpr size_t kPayloadSizeOffset = 5;
 constexpr size_t kJoinNextHopOffset = 1;
 constexpr size_t kJoinSponsorOffset = 3;
 
+/// Offset of target_address inside the join fields of a JOIN_RESPONSE
+constexpr size_t kJoinTargetOffset = 6;
+
 /// Size of the counter field in a class C or class D trailer
 constexpr size_t kCounterFieldSize = 4;
 
@@ -232,16 +235,16 @@ SealStatus FrameCodec::SealChecked(std::span<const uint8_t> plain,
                                    const SecurityContext& context,
                                    std::span<uint8_t> out, size_t& out_len) {
     if (plain.size() < kBaseHeaderSize) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kMalformed;
     }
     const Header header = Header::Parse(plain.data());
     if (plain.size() != kBaseHeaderSize + header.payload_size) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kMalformed;
     }
     if (config_.mode != SecurityMode::kSecured) {
         // 2.0.0 behaviour: the plain frame is the on-air frame
         if (out.size() < plain.size()) {
-            return SealStatus::kBufferOverflow;
+            return SealStatus::kTooLarge;
         }
         std::memcpy(out.data(), plain.data(), plain.size());
         out_len = plain.size();
@@ -249,10 +252,10 @@ SealStatus FrameCodec::SealChecked(std::span<const uint8_t> plain,
     }
     if (!counters_.IsStarted()) {
         // Without a valid counter record the node stays silent
-        return SealStatus::kInvalidState;
+        return SealStatus::kNotReady;
     }
     if (!IsPlainTypeByte(header.type)) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kMalformed;
     }
     switch (ClassOf(static_cast<MessageType>(header.type))) {
         case FrameClass::kBeacon:
@@ -276,11 +279,13 @@ SealStatus FrameCodec::TakeCounter(CounterSpace space, uint32_t& value) {
         case CounterStatus::kOk:
             return SealStatus::kOk;
         case CounterStatus::kStoreError:
-            return SealStatus::kCounterStoreError;
+            return SealStatus::kCounterUnavailable;
         case CounterStatus::kExhausted:
             return SealStatus::kCounterExhausted;
+        case CounterStatus::kSealLocked:
+            return SealStatus::kSealLocked;
         default:
-            return SealStatus::kInvalidState;
+            return SealStatus::kNotReady;
     }
 }
 
@@ -288,23 +293,25 @@ SealStatus FrameCodec::SealBeacon(const Header& header,
                                   std::span<const uint8_t> plain,
                                   std::span<uint8_t> out, size_t& out_len) {
     // The nonce names the BaseHeader source, so it must be this node
-    if (header.source != config_.node_address ||
-        header.payload_size != kBeaconPlainPayloadSize) {
-        return SealStatus::kInvalidParameter;
+    if (header.source != config_.node_address) {
+        return SealStatus::kForeignSource;
+    }
+    if (header.payload_size != kBeaconPlainPayloadSize) {
+        return SealStatus::kMalformed;
     }
     const uint8_t* payload = plain.data() + kBaseHeaderSize;
     if (payload[kBeaconDelayHighOffset] != 0) {
         // The delay does not fit the 3 bytes of the wire format
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kBeaconDelayRange;
     }
     const uint8_t epoch = counters_.GetEpoch();
     const NetworkTrafficKeys* keys = keys_.FindByEpoch(epoch);
     if (keys == nullptr) {
-        return SealStatus::kKeyUnavailable;
+        return SealStatus::kNoKey;
     }
     if (kSecuredSyncBeaconSize > config_.max_packet_size ||
         out.size() < kSecuredSyncBeaconSize) {
-        return SealStatus::kBufferOverflow;
+        return SealStatus::kTooLarge;
     }
     uint32_t counter = 0;
     const SealStatus counter_status =
@@ -354,7 +361,7 @@ SealStatus FrameCodec::SealControl(const Header& header,
     // the nonce is built from it. Sealing another source would put this
     // node's counter under a foreign address
     if (!is_join && header.source != config_.node_address) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kForeignSource;
     }
     const size_t trailer_size = SecuredTrailerLen(type);
     const size_t body_end = kBaseHeaderSize + header.payload_size;
@@ -362,17 +369,21 @@ SealStatus FrameCodec::SealControl(const Header& header,
     const uint8_t epoch = counters_.GetEpoch();
     const NetworkTrafficKeys* keys = keys_.FindByEpoch(epoch);
     if (keys == nullptr) {
-        return SealStatus::kKeyUnavailable;
+        return SealStatus::kNoKey;
     }
     if (total > config_.max_packet_size || out.size() < total) {
-        return SealStatus::kBufferOverflow;
+        return SealStatus::kTooLarge;
     }
 
-    // The final JOIN_RESPONSE binds the nonce of the joiner into its MIC.
-    // The nonce is not sent
+    // The last hop of a JOIN_RESPONSE has target_address 0 and binds the
+    // nonce of the joiner into its MIC. A response on its way to the
+    // sponsor names the joiner as target and is never bound, whatever the
+    // table holds. The nonce is not sent
     JoinNonce bound_nonce{};
     const bool has_bound_nonce =
         type == MessageType::JOIN_RESPONSE &&
+        header.payload_size >= kJoinResponseFieldsSize &&
+        ReadU16(plain.data() + kBaseHeaderSize + kJoinTargetOffset) == 0 &&
         sponsor_nonces_.Find(header.destination, NowMs(),
                              config_.join_nonce_lifetime_ms, bound_nonce);
 
@@ -414,10 +425,15 @@ SealStatus FrameCodec::SealControl(const Header& header,
         return SealStatus::kCryptoError;
     }
 
+    if (has_bound_nonce) {
+        // An entry is bound once
+        sponsor_nonces_.Remove(header.destination);
+    }
+
     // A joiner remembers the nonce of the request it just sealed
     if (type == MessageType::JOIN_REQUEST &&
         header.source == config_.node_address &&
-        header.payload_size >= kJoinRequestFieldsSize + kJoinNonceSize) {
+        header.payload_size == kJoinRequestFieldsSize + kJoinNonceSize) {
         JoinNonce own_nonce;
         std::memcpy(own_nonce.data(),
                     plain.data() + kBaseHeaderSize + kJoinRequestFieldsSize,
@@ -437,21 +453,21 @@ SealStatus FrameCodec::SealOriginData(const Header& header,
     const MessageType type = static_cast<MessageType>(header.type);
     const size_t extension_len = DataExtensionLen(type);
     if (header.payload_size < extension_len) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kMalformed;
     }
     if (IsKeyDataType(type)) {
         // Key messages exist only under a node key (E = 1)
-        return SealStatus::kKeyUnavailable;
+        return SealStatus::kNoKey;
     }
     const uint8_t epoch = counters_.GetEpoch();
     const NetworkTrafficKeys* keys = keys_.FindByEpoch(epoch);
     if (keys == nullptr) {
-        return SealStatus::kKeyUnavailable;
+        return SealStatus::kNoKey;
     }
     const size_t body_end = kBaseHeaderSize + header.payload_size;
     const size_t total = body_end + kDataTrailerSize;
     if (total > config_.max_packet_size || out.size() < total) {
-        return SealStatus::kBufferOverflow;
+        return SealStatus::kTooLarge;
     }
     uint32_t counter = 0;
     const SealStatus counter_status = TakeCounter(CounterSpace::kData, counter);
@@ -503,10 +519,10 @@ SealStatus FrameCodec::SealForwardedChecked(std::span<const uint8_t> opened,
                                             std::span<uint8_t> out,
                                             size_t& out_len) {
     if (config_.mode != SecurityMode::kSecured) {
-        return SealStatus::kInvalidState;
+        return SealStatus::kNotReady;
     }
     if (opened.size() < kBaseHeaderSize) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kMalformed;
     }
     const Header header = Header::Parse(opened.data());
     const MessageType type = static_cast<MessageType>(header.type);
@@ -516,22 +532,22 @@ SealStatus FrameCodec::SealForwardedChecked(std::span<const uint8_t> opened,
         header.payload_size < extension_len ||
         header.source == config_.node_address ||
         (context.ctr_field & kHopCounterFlag) != 0) {
-        return SealStatus::kInvalidParameter;
+        return SealStatus::kMalformed;
     }
     if (context.body_state != BodyState::kCipher) {
         // No path may encrypt a body under the counter of another node
-        return SealStatus::kInvalidState;
+        return SealStatus::kPlainForwardBody;
     }
     // The frame keeps the epoch it arrived under, also when this node
     // already transmits under a newer one
     const NetworkTrafficKeys* keys = keys_.FindByEpoch(context.epoch);
     if (keys == nullptr) {
-        return SealStatus::kKeyUnavailable;
+        return SealStatus::kNoKey;
     }
     const size_t body_end = kBaseHeaderSize + header.payload_size;
     const size_t total = body_end + kDataTrailerSize;
     if (total > config_.max_packet_size || out.size() < total) {
-        return SealStatus::kBufferOverflow;
+        return SealStatus::kTooLarge;
     }
     uint8_t* frame = out.data();
     std::memcpy(frame, opened.data(), body_end);
@@ -861,16 +877,16 @@ OpenStatus FrameCodec::OpenControl(const Header& header,
         state->control.Commit(counter);
     }
 
-    // A request heard from the joiner itself and handed to this node as its
-    // first hop: keep the nonce for the final response
+    // A request heard from the joiner itself that names this node as next
+    // hop or sponsor: keep the nonce for the final response. An overhearer
+    // stores nothing
     if (type == MessageType::JOIN_REQUEST && transmitter == header.source &&
-        header.payload_size >= kJoinRequestFieldsSize + kJoinNonceSize) {
+        header.payload_size == kJoinRequestFieldsSize + kJoinNonceSize) {
         const uint8_t* fields = plain + kBaseHeaderSize;
         const AddressType next_hop = ReadU16(fields + kJoinNextHopOffset);
         const AddressType sponsor = ReadU16(fields + kJoinSponsorOffset);
         if (next_hop == config_.node_address ||
-            sponsor == config_.node_address || next_hop == 0 ||
-            next_hop == kBroadcastAddress) {
+            sponsor == config_.node_address) {
             JoinNonce join_nonce;
             std::memcpy(join_nonce.data(), fields + kJoinRequestFieldsSize,
                         join_nonce.size());
@@ -1008,7 +1024,9 @@ OpenStatus FrameCodec::OpenData(std::span<const uint8_t> frame,
 
     // Step 5: hop replay check. E = 0 uses window G everywhere. E = 1 data
     // uses window R at a relay and no hop window at its destination. The
-    // key types use no hop window at all
+    // key types use no hop window at all. A frame in transit commits its
+    // window here. A node that will verify the tag only checks window G
+    // here and commits it in OpenFrameBody()
     if (info.counter == kDataCounterNone) {
         return OpenStatus::kReplay;
     }
@@ -1031,15 +1049,17 @@ OpenStatus FrameCodec::OpenData(std::span<const uint8_t> frame,
         if (!fresh) {
             return OpenStatus::kReplay;
         }
-        HopReplayState* state = peers_.Touch(origin, info.epoch);
-        if (state == nullptr) {
-            return OpenStatus::kReplay;
-        }
-        state->AcceptEpoch(info.epoch);
-        if (use_group) {
-            state->group.Commit(counter);
-        } else {
-            state->relayed.Commit(counter);
+        if (role == RxRole::kRelay) {
+            HopReplayState* state = peers_.Touch(origin, info.epoch);
+            if (state == nullptr) {
+                return OpenStatus::kReplay;
+            }
+            state->AcceptEpoch(info.epoch);
+            if (use_group) {
+                state->group.Commit(counter);
+            } else {
+                state->relayed.Commit(counter);
+            }
         }
     }
     info.role = role;
@@ -1109,6 +1129,22 @@ OpenStatus FrameCodec::OpenBodyChecked(std::span<const uint8_t> opened,
         return OpenStatus::kCryptoError;
     }
 
+    // Step 6 for a node that verifies the tag: window G was only checked
+    // when the frame was opened. Check it again, since another copy may
+    // have been accepted meanwhile
+    const uint32_t counter = context.ctr_field & kDataCounterMask;
+    const bool commits_window =
+        IsFloodType(type) || header.destination == config_.node_address;
+    if (commits_window) {
+        if (counter == kDataCounterNone ||
+            !PeerAccepts(peers_.Find(header.source), context.epoch,
+                         [counter](const HopReplayState& state) {
+                             return state.group.Check(counter);
+                         })) {
+            return OpenStatus::kReplay;
+        }
+    }
+
     // Decrypt a copy. The input keeps the received ciphertext
     std::memcpy(out.data(), opened.data(), body_end);
     const CryptoStatus crypto = backend_.CtrCrypt(
@@ -1116,6 +1152,15 @@ OpenStatus FrameCodec::OpenBodyChecked(std::span<const uint8_t> opened,
         std::span<uint8_t>(out.data() + body_offset, body_end - body_offset));
     if (crypto != CryptoStatus::kOk) {
         return OpenStatus::kCryptoError;
+    }
+    if (commits_window) {
+        // Every check passed. Commit window G
+        HopReplayState* state = peers_.Touch(header.source, context.epoch);
+        if (state == nullptr) {
+            return OpenStatus::kReplay;
+        }
+        state->AcceptEpoch(context.epoch);
+        state->group.Commit(counter);
     }
     out_len = body_end;
     return OpenStatus::kOk;
