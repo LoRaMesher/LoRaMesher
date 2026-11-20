@@ -1,6 +1,6 @@
 # LoRaMesher Wire Security Specification
 
-Version 3.1, 2026-11-20. Draft for implementation. Target branch `release/2.0.0` (checked at 368c359).
+Version 3.2, 2026-11-20. Draft for implementation. Target branch `release/2.0.0` (checked at 368c359).
 This text is written to become Section 12 of `PROTOCOL_SPEC.md`. Section numbers below are local (S1 to S14).
 
 All multi-byte fields are little-endian unless a field says big-endian. Byte offsets start at 0. `‖` is concatenation. `X[a..b]` means bytes a to b inclusive. Hex strings list bytes in wire order.
@@ -16,6 +16,26 @@ Words used with a fixed meaning: **origin** is the node named in the BaseHeader 
 | S9.5 (recovery), S8.2, V7 | **Provisional.** Formats are fixed. The request timing is derived from code and has not been simulated. | none yet (step 5b) |
 
 Step 2 implements only what S9.4 lists from S9. The snapshot layout of S7.7 is final for step 2c.
+
+## Change log, version 3.1 to version 3.2
+
+Source: the implementer of step 2a (branch `feat/security-frame-codec`). His codec reproduces V1, V2, V4, V5a to V5c at frame level, V3 across the relay and V6 at the relay. He reported thirteen points. No wire byte and no vector changes. Two points change behaviour (6 and 8).
+
+| # | Section | Resolution |
+|---|---|---|
+| 1 | S12.4 | Text corrected: the V3 relay checks and commits hop window R. His reading. |
+| 2 | S10.7, S11.7 | `TrailerLen` and `OnAirSize` are free functions with a mode parameter, plus codec members. His reading. |
+| 3 | S11.7 | `Seal` returns a `SealStatus`. Step 2b maps it to error codes. His reading. |
+| 4 | S4.1, S5.1 | Sealing a class B or C1 frame whose source is another node is refused. His reading. |
+| 5 | S4.5 | A nonce is stored only when the request names this node as next hop or sponsor. His reading. |
+| 6 | S4.5 | **Changed.** The nonce is bound only into a response whose `target_address` is 0. A response on its way to the sponsor has a non-zero target and is never bound, so a relay cannot be taken for the sponsor. |
+| 7 | S4.5 | A node counts as joining while it holds own nonces. His reading. |
+| 8 | S6.6, S7.4 | **Changed.** Hop window G is checked in step 5 and committed only after the tag verified, at every node that verifies the tag. |
+| 9 | S11.6 | Every drop reason has a named counter or is named as silent. His reading. |
+| 10 | S3.1 | `IsValidType` accepts category 5 in every mode. Side effect stated. His reading. |
+| 11 | S5.1 | A received beacon whose payload_size is not 13 is dropped. His reading. |
+| 12 | S7.4 rule 5 | With every peer routed, the least recently heard peer is replaced. His reading. |
+| 13 | S9.4 | Step 2b extends `DataHeader::IsDataHeaderType` to the three key types. |
 
 ## Change log, version 3 to version 3.1
 
@@ -178,6 +198,7 @@ Grace period: after a node switches its own transmit epoch to `e + 1` it keeps a
 
 Consequences that implementers MUST enforce:
 - Subtypes are limited to 1..7 in every category. `message_type::IsValidType` rejects a subtype above 7. All 2.0.0 types already satisfy this.
+- `IsValidType` accepts category 5 (0x50) in every security mode, because relays must parse the key types. Side effect: a node with security disabled no longer rejects a plain frame of type 0x51 to 0x57 in the header parser. It drops it at dispatch, since no handler exists. The result for the network is the same.
 - A 2.0.0 node without security rejects every secured frame in `BaseHeader::Deserialize`, because the category nibble is 9 or above.
 - A node in secured mode drops every frame with S = 0 and increments `rx_plain_dropped`. There is no mixed mode.
 
@@ -271,7 +292,9 @@ In class C1 `tx` is the BaseHeader source and is not repeated in the trailer.
 4. Replay check on `(tx, C_ctl)` (S7.4). On failure drop, `rx_replay`.
 5. `P = CTR(K_he[e], A, C)`. Restore the plain type and hand `H ‖ P` to the parser.
 
-A frame from `tx` equal to the node's own address is dropped before step 3.
+A frame from `tx` equal to the node's own address is dropped before step 3, without a counter.
+
+**Source rule for sealing.** A node seals a class B or class C1 frame only if the BaseHeader source is its own address. Any other source is refused (`SealStatus::kForeignSource`), because the frame would put this node's counter under another node's address in the nonce. Class C2 frames may carry a foreign source, since their nonce uses `tx` from the trailer, and `tx` is always the sealing node.
 
 ### S4.3 Forwarding
 
@@ -302,12 +325,18 @@ Both forwarders pass `{}` as additional info today. This behaviour is kept: the 
 ### S4.5 Join nonce
 
 1. A joiner draws a fresh random 4-byte `join_nonce` for every JOIN_REQUEST it sends, retries included. The request payload is the 6 bytes of join fields followed by the nonce (payload_size 10, 26 bytes on air).
-2. A member that receives a JOIN_REQUEST directly from the joiner (trailer `tx` equals the BaseHeader source) stores `(joiner address, join_nonce)`. The table has 4 entries. An entry is replaced by a newer request of the same joiner and expires after the joining timeout.
-3. When that member seals a JOIN_RESPONSE whose BaseHeader destination is a joiner in its table, it appends the stored nonce to the MIC input (`B` in S4.1 step 4). The nonce is not sent. Without a table entry the member seals with `B` empty.
-4. A node in JOINING verifies every JOIN_RESPONSE addressed to itself with `B` = the nonce of its latest request and, if that fails, with the nonce of the request before it. It keeps exactly these two. Any other receiver verifies with `B` empty.
-5. A JOIN_RESPONSE whose BaseHeader destination is another node and whose MIC fails is dropped and counted in `rx_join_unverified`. It does not count toward `rx_auth_failed` or `kAuthFailureBurst`, because an overhearer cannot know the nonce of a final response.
+2. **Storing.** A member stores `(joiner address, join_nonce)` when it opens a JOIN_REQUEST for which all of these hold: the trailer `tx` equals the BaseHeader source (first hop), the payload carries a nonce (payload_size 10), and the join fields name this node as `next_hop` or as `sponsor_address`. An overhearer stores nothing. The table has 4 entries. An entry is replaced by a newer request of the same joiner, is removed when it has been bound once (rule 3), and expires after the joining timeout. When the table is full the oldest entry is replaced.
+3. **Binding.** A node appends a stored nonce to the MIC input (`B` in S4.1 step 4) of a JOIN_RESPONSE it seals only if both hold: the plain `target_address` of the response is 0, and the table has an entry for the BaseHeader destination. In every other case `B` is empty. The nonce is not sent.
 
-A recorded JOIN_RESPONSE therefore fails at the joiner, because its MIC was bound to an older nonce. A response sealed without the nonce fails as well, and the joiner retries.
+   | Hop of the response | destination | target_address | B |
+   |---|---|---|---|
+   | manager toward an external sponsor, and every relay on that path | sponsor | joiner (non-zero) | empty, always |
+   | sponsor to joiner (`network_service.cpp:3748-3757`) | joiner | 0 | nonce of that joiner |
+   | manager to joiner when the manager is the sponsor (`network_service.cpp:2199-2205`, direct case) | joiner | 0 | nonce of that joiner |
+
+   A relay on the path never binds, whatever its table holds, because the frame it forwards has a non-zero target. Only the node that builds the last hop sets the target to 0, and that node received the request directly. A response with target 0 for a destination without a table entry is sealed with `B` empty and fails at the joiner, which retries.
+4. **Verifying.** A node holds its own nonces from the moment it seals a JOIN_REQUEST of its own until the network service reports that the join completed or was abandoned (`ClearJoinNonces()`). It keeps the last two. While it holds any, it counts as joining: a JOIN_RESPONSE addressed to it verifies only with `B` = its latest nonce or, if that fails, the one before. `B` empty is not tried. A node that holds no own nonce, and any node for a response addressed elsewhere, verifies with `B` empty. The codec needs no knowledge of the protocol state.
+5. A JOIN_RESPONSE whose BaseHeader destination is another node and whose MIC fails is dropped and counted in `rx_join_unverified`. It does not count toward `rx_auth_failed` or `kAuthFailureBurst`, because an overhearer cannot know the nonce of a final response.
 
 ---
 
@@ -338,7 +367,7 @@ Sealing:
 2. `P13` = plain payload without byte 11. Set payload_size to 13 and the type to `wire_type`.
 3. `A = 0x02 ‖ source ‖ ctr(3) ‖ 0x00 ‖ 0^7 ‖ 0^2`, `C = CTR(K_he[e], A, P13)`, `mic = MIC_4(K_hm[e], A ‖ H ‖ C)`.
 
-Opening follows S4.2 with the replay check on `(source, C_bcn)`. After decryption the codec inserts a zero byte at offset 11 and sets payload_size to 14, so the parser sees the 2.0.0 layout.
+Opening follows S4.2 with the replay check on `(source, C_bcn)`. A received beacon whose wire payload_size is not 13 is dropped (`rx_malformed`). After decryption the codec inserts a zero byte at offset 11 and sets payload_size to 14, so the parser sees the 2.0.0 layout.
 
 ### S5.2 Relay and timing rules
 
@@ -426,9 +455,9 @@ For every received class D frame, in this order:
 
 1. Length rule (S3.2), `payload_size ≥ len(X)`, H flag is 0, epoch selection (S2.3).
 2. Unmask `X` (S6.5). Verify `hmic` (S6.4). On mismatch drop, `rx_auth_failed`.
-3. If the origin is this node, drop.
-4. If `next_hop` is neither this node nor 0xFFFF, the frame is overheard: drop it here. No replay state is touched. This rule is required: the same origin counter will arrive again from the proper relay.
-5. **Hop replay check.** Three cases, by frame:
+3. If the origin is this node, drop, without a counter.
+4. If `next_hop` is neither this node nor 0xFFFF, the frame is overheard: drop it here, without a counter. No replay state is touched. This rule is required: the same origin counter will arrive again from the proper relay.
+5. **Hop replay check.** The window named in the table is checked here. Whether it is also committed here depends on step 6. Three cases, by frame:
 
    | Frame | Node is the destination | Node is a relay |
    |---|---|---|
@@ -437,8 +466,12 @@ For every received class D frame, in this order:
    | KEY_UPDATE, KEY_UPDATE_ACK, KEY_RELAY | no hop window | no hop window, forwarding cap below |
 
    On failure drop, `rx_replay`. A flood copy that arrives a second time ends here.
-6. If this node is the destination, or the type is DATA_BROADCAST or DATA_GROUP: verify `tag` on the received ciphertext and decrypt **a copy** of the body (S6.3). For E = 1 the destination then runs the end-to-end replay check. A failure drops the frame (`rx_tag_failed` or `rx_replay`).
+
+   Commit rule. If this node will verify the tag in step 6 (it is the destination, or the type is a flood type), window G is only checked in step 5 and is committed after the tag verified. If this node only relays the frame (unicast in transit), it cannot or need not verify the tag, and the window (G or R) is committed in step 5.
+6. If this node is the destination, or the type is DATA_BROADCAST or DATA_GROUP: verify `tag` on the received ciphertext and decrypt **a copy** of the body (S6.3). For E = 0 the node now commits window G. For E = 1 the destination runs the end-to-end replay check and commits that window. A failure drops the frame (`rx_tag_failed` or `rx_replay`) and commits nothing.
 7. Deliver the decrypted copy. Forward the received message, whose body is still the received ciphertext.
+
+Who can advance window G. Before step 5 the frame is authenticated by `hmic` under K_hm, a key derived from K_net. The tag of an E = 0 frame is under K_gm, also derived from K_net. So nobody without K_net can advance G in either order, and a K_net holder can advance it in either order (S1.2 item 2). The order therefore closes no attack. Committing after the tag is still the rule, for two reasons: no replay state anywhere in this specification is written before every check the node can make has passed, and a copy whose body was damaged by a faulty relay does not use up the counter, so the intact copy from another relay is still accepted. This differs from the blocker of the first review, where the missing check was under a different key (the node key).
 
 Why three cases. Both hop windows are driven by K_net alone, so a K_net holder can push them. At a destination, E = 1 frames are therefore judged only by the end-to-end window, which needs the node key to move. At a relay, window R stops an outsider from having old E = 1 recordings forwarded again and again (N1). The key types use no hop window anywhere, so a forged counter can never block a KEY_UPDATE or a recovery (finding 1 of the first review stays fixed).
 
@@ -595,8 +628,8 @@ Rules, applied only after the MIC of the frame is valid:
    - `c > high` and `d < 32`: accept, `bitmap = (bitmap << d) | 1`, `high = c`.
    - `c ≤ high` and `high − c < 32` and bit `high − c` is clear: accept and set it.
    - Otherwise drop.
-4. Which window a frame uses is fixed by the table in S6.6 step 5. Window G: E = 0 frames, at relays and destinations. Window R: E = 1 DATA, DATA_RELIABLE and ACK, at relays only. End-to-end window: E = 1 frames, at the destination only, after the tag verified. No frame is checked in two windows at one node, and the key types are checked only in the end-to-end window.
-5. The table holds `max_network_nodes + 8` peers. When it is full, the least recently heard peer that is absent from the routing table is replaced.
+4. Which window a frame uses, and when it is committed, is fixed by S6.6 steps 5 and 6. Window G: E = 0 frames, at relays and destinations. Window R: E = 1 DATA, DATA_RELIABLE and ACK, at relays only. End-to-end window: E = 1 frames, at the destination only, after the tag verified. No frame is checked in two windows at one node, and the key types are checked only in the end-to-end window.
+5. The table holds `max_network_nodes + 8` peers. When it is full, the least recently heard peer that is absent from the routing table is replaced. If every peer in the table is routed, the least recently heard peer is replaced.
 6. Receive state is kept across DISCOVERY, JOINING and FAULT_RECOVERY. Only a reboot or rule 1 clears it.
 
 The existing duplicate caches and reliable delivery streams stay as they are.
@@ -758,7 +791,7 @@ After a deep sleep resume the state and its deadline come from the snapshot (S7.
 
 ### S9.4 What step 2 must already do so that S9 needs no format change
 
-Reserve the K bit, the types 0x51 to 0x55, the domains 0x05, 0x09, 0x0A and the labels `LMKE`, `LMKM`, `LMRE`, `LMRM`. Relay the class D types 0x51, 0x52 and 0x55 like DATA. Drop 0x53 and 0x54 until step 5. Keep the per-peer epoch in the receive state. Take keys from the provider as a list of up to two epochs. Keep the C_rec field in the counter record.
+Reserve the K bit, the types 0x51 to 0x55, the domains 0x05, 0x09, 0x0A and the labels `LMKE`, `LMKM`, `LMRE`, `LMRM`. Relay the class D types 0x51, 0x52 and 0x55 like DATA. For this, step 2b extends `DataHeader::IsDataHeaderType` (and any other type gate on the forwarding path) to accept the three key types. They are forwarded only. A node without step 5 that is their destination drops them. Drop 0x53 and 0x54 until step 5. Keep the per-peer epoch in the receive state. Take keys from the provider as a list of up to two epochs. Keep the C_rec field in the counter record.
 
 ### S9.5 Recovery of an orphan over the air
 
@@ -938,7 +971,7 @@ Secured frames sent in such slots: SYNC_BEACON 26, JOIN_REQUEST 26 and 22, JOIN_
 
 ### S10.7 Sites that need the on-air length
 
-Every site computes from one function `security::OnAirSize(type, plain_total_size)`. In secured mode it returns `plain_total_size + TrailerLen(type)`, minus 1 for SYNC_BEACON. Otherwise it returns `plain_total_size`. Sites: `lora_mesh_protocol.cpp:1429`, `1473-1477`. `hardware_manager.cpp:123,132`. `network_service.cpp:1324-1341`, `1550`, `1741-1747`, `2437`. `reliable_messaging.cpp:162`, `462`, `522`. `reliable_delivery.hpp:157`.
+Every site computes from one free function `security::OnAirSize(mode, type, plain_total_size)`, or from the codec member of the same name, which supplies its own mode. In secured mode it returns `plain_total_size + TrailerLen(type)`, minus 1 for SYNC_BEACON. Otherwise it returns `plain_total_size`. Sites: `lora_mesh_protocol.cpp:1429`, `1473-1477`. `hardware_manager.cpp:123,132`. `network_service.cpp:1324-1341`, `1550`, `1741-1747`, `2437`. `reliable_messaging.cpp:162`, `462`, `522`. `reliable_delivery.hpp:157`.
 
 ---
 
@@ -1072,6 +1105,23 @@ Appended after `kQueueFull`, so existing values keep their numbers:
 
 Dropped received frames never surface as errors to the application. They are counted.
 
+Counter for every reason a received frame is dropped:
+
+| Reason | Counter |
+|---|---|
+| S = 0 in secured mode | `rx_plain_dropped` |
+| wrong on-air length, payload shorter than `X`, H flag set, beacon payload_size not 13 | `rx_malformed` |
+| plain type without a class, or class R type before step 5b | `rx_malformed` |
+| no held epoch with the frame's parity | `rx_unknown_epoch` |
+| MIC or hop MIC mismatch | `rx_auth_failed` |
+| JOIN_RESPONSE for another node with MIC mismatch | `rx_join_unverified` |
+| body tag, kcv, rtag or gtag mismatch | `rx_tag_failed` |
+| counter outside its window, flood duplicate, all-ones counter, epoch older than the peer's recorded epoch | `rx_replay` |
+| unicast E = 0 from a peer with a node key, or a key type with E = 0 | `rx_e2e_required` |
+| E = 1 on a flood type, or E = 1 without a node key for the origin | `rx_key_unavailable` |
+| own frame heard back (source or `tx` is this node) | none, silent |
+| overheard class D frame (`next_hop` is another node) | none, silent |
+
 ### S11.6 Counters and events
 
 ```cpp
@@ -1108,19 +1158,41 @@ void LoraMesher::SetSecurityEventCallback(std::function<void(SecurityEvent, uint
 ### S11.7 Internal codec (one implementation for three paths)
 
 ```cpp
+/// Free functions: usable without a codec instance.
+size_t TrailerLen(SecurityMode mode, MessageType plain_type);   // 0 when disabled
+size_t OnAirSize(SecurityMode mode, MessageType plain_type, size_t plain_total_size);
+
+enum class SealStatus : uint8_t {
+    kOk,
+    kUnsupportedType,     ///< plain type has no class
+    kForeignSource,       ///< class B or C1 with a source other than this node
+    kTooLarge,            ///< on-air length above max_packet_size
+    kBeaconDelayRange,    ///< beacon payload byte 11 is not zero
+    kNoKey,               ///< no key for the epoch or peer
+    kCounterUnavailable,  ///< limit reached, refill pending
+    kCounterExhausted,
+    kSealLocked,          ///< state captured for deep sleep
+    kPlainForwardBody,    ///< forwarded class D message with a decrypted body
+};
+
 class FrameCodec {
    public:
-    static size_t TrailerLen(MessageType plain_type);          // 0 when disabled
+    size_t TrailerLen(MessageType plain_type) const;           // uses the codec's mode
+    size_t OnAirSize(MessageType plain_type, size_t plain_total_size) const;
     /// Message in, on-air bytes out. Takes the counter for frames this node
     /// originates.
-    Result Seal(const BaseMessage& message, std::span<uint8_t> out, size_t& out_len);
+    SealStatus Seal(const BaseMessage& message, std::span<uint8_t> out, size_t& out_len);
     /// On-air bytes in, message out. Steps 1 to 5 of S6.6, all of S4.2 and S5.1.
     std::optional<BaseMessage> Open(std::span<const uint8_t> frame);
-    /// Class D only: verify the tag and return a copy with the body decrypted
-    /// (S6.6 step 6). The input message is left untouched.
+    /// Class D only: verify the tag, commit the window of S6.6 step 6 and
+    /// return a copy with the body decrypted. The input message is untouched.
     std::optional<BaseMessage> OpenBody(const BaseMessage& message);
+    /// Join nonces of this node (S4.5 rule 4).
+    void ClearJoinNonces();
 };
 ```
+
+`SealStatus` keeps the codec free of the error codes that step 2b adds. Step 2b maps it at the call site: `kTooLarge` to `kBufferOverflow`, `kBeaconDelayRange` to `kInvalidParameter`, `kNoKey` to `kKeyUnavailable`, `kCounterUnavailable` to `kCounterStoreError`, `kCounterExhausted` to `kCounterExhausted`, `kSealLocked` and `kPlainForwardBody` to `kInvalidState`, the other two to `kInvalidArgument`.
 
 - TX: `HardwareManager::SendMessage` calls `Seal` where it calls `Serialize` today.
 - RX: `RadioLibRadio::HandleInterrupt` calls `Open` where it calls `BaseMessage::CreateFromSerialized` today. `MockRadio` calls the same two functions, so native tests exercise the real codec.
@@ -1224,7 +1296,7 @@ X_wire   = 2366EEB6
 frame    = 010A030A990E2366EEB6204E67B19EF7FDA87A3A290000805E7BC82CCF6288E4      (32 bytes)
 ```
 
-Hop 2, sent by relay 0x0A02 (next_hop 0x0A01, ttl 9). The relay verified hmic of hop 1, copied H, C, ctr and tag, touched no replay window (E = 1), and used no key of the node:
+Hop 2, sent by relay 0x0A02 (next_hop 0x0A01, ttl 9). The relay verified hmic of hop 1, copied H, C, ctr and tag, checked and committed hop window R of origin 0x0A03 (E = 1, relay), and used no key of the node:
 
 ```
 X        = 010A0937
